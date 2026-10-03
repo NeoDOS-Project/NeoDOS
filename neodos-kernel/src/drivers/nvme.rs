@@ -141,16 +141,16 @@ unsafe impl Send for NvmeDriver {}
 
 impl NvmeDriver {
     fn mmio_read32(&self, off: u64) -> u32 {
-        unsafe { (self.regs_virt as *mut u32).add((off / 4) as usize).read_volatile() }
+        unsafe { crate::hal::mmio::read32((self.regs_virt + off) as usize) }
     }
     fn mmio_write32(&self, off: u64, val: u32) {
-        unsafe { (self.regs_virt as *mut u32).add((off / 4) as usize).write_volatile(val) }
+        unsafe { crate::hal::mmio::write32((self.regs_virt + off) as usize, val) }
     }
     fn mmio_read64(&self, off: u64) -> u64 {
-        unsafe { (self.regs_virt as *mut u64).add((off / 8) as usize).read_volatile() }
+        unsafe { crate::hal::mmio::read64((self.regs_virt + off) as usize) }
     }
     fn mmio_write64(&self, off: u64, val: u64) {
-        unsafe { (self.regs_virt as *mut u64).add((off / 8) as usize).write_volatile(val) }
+        unsafe { crate::hal::mmio::write64((self.regs_virt + off) as usize, val) }
     }
 
     fn sq_db(&self, qid: u16) -> *mut u32 {
@@ -165,11 +165,11 @@ impl NvmeDriver {
     fn ring_sq_db(&self, qid: u16, tail: u16) {
         ktrace!(LogSubsys::Nvme, "SQ doorbell: qid={} tail={}", qid, tail);
         fence(Ordering::SeqCst);
-        unsafe { self.sq_db(qid).write_volatile(tail as u32) };
+        unsafe { crate::hal::mmio::write32(self.sq_db(qid) as usize, tail as u32) };
     }
     fn ring_cq_db(&self, qid: u16, head: u16) {
         fence(Ordering::SeqCst);
-        unsafe { self.cq_db(qid).write_volatile(head as u32) };
+        unsafe { crate::hal::mmio::write32(self.cq_db(qid) as usize, head as u32) };
     }
 
     fn wait_rdy(&self, target: u32) -> bool {
@@ -271,7 +271,7 @@ impl NvmeDriver {
             // Ring doorbell: new tail = asq_tail + 1
             fence(Ordering::SeqCst);
             *asq_tail = (*asq_tail + 1) % ASQ_ENTRIES;
-            sq_doorbell.write_volatile(*asq_tail as u32);
+            crate::hal::mmio::write32(sq_doorbell as usize, *asq_tail as u32);
 
             // Poll CQE
             let cqe = acq + (acq_head as u64) * CQE_SIZE as u64;
@@ -388,7 +388,7 @@ impl NvmeDriver {
         }
         let bar = NVME_MMIO_VIRT;
 
-        let cap = unsafe { (bar as *const u64).read_volatile() };
+        let cap = unsafe { crate::hal::mmio::read64(bar as usize) };
         let dstrd = ((cap >> 32) & 0xF) as u8;
         let to = ((cap >> 24) & 0xFF) as u32;
         let timeout_ms = core::cmp::max(to * 500, 2000);
@@ -401,7 +401,7 @@ impl NvmeDriver {
 
         // Reset
         kinfo!(LogSubsys::Nvme, "Resetting...");
-        unsafe { (bar as *mut u32).add(0x14 / 4).write_volatile(0u32) };
+        unsafe { crate::hal::mmio::write32((bar + 0x14) as usize, 0u32) };
         fence(Ordering::SeqCst);
         crate::hal::hlt_once();
         if !Self::wait_rdy_raw(bar, timeout_ms, 0) {
@@ -431,10 +431,10 @@ impl NvmeDriver {
 
         // Program registers
         unsafe {
-            (bar as *mut u32).add(0x24 / 4).write_volatile(
+            crate::hal::mmio::write32((bar + 0x24) as usize,
                 ((ACQ_ENTRIES as u32 - 1) << 16) | (ASQ_ENTRIES as u32 - 1));
-            (bar as *mut u64).add(0x28 / 8).write_volatile(asq_phys);
-            (bar as *mut u64).add(0x30 / 8).write_volatile(acq_phys);
+            crate::hal::mmio::write64((bar + 0x28) as usize, asq_phys);
+            crate::hal::mmio::write64((bar + 0x30) as usize, acq_phys);
         }
         fence(Ordering::SeqCst);
         crate::hal::hlt_once();
@@ -444,7 +444,7 @@ impl NvmeDriver {
         // Admin SQ entry=64B, Admin CQ entry=16B (spec-mandated fixed sizes)
         // IOSQES=6 (log2(64)), IOCQES=4 (log2(16))
         let cc_val = 1u32 | (6 << 16) | (4 << 20);
-        unsafe { (bar as *mut u32).add(0x14 / 4).write_volatile(cc_val) };
+        unsafe { crate::hal::mmio::write32((bar + 0x14) as usize, cc_val) };
         fence(Ordering::SeqCst);
         crate::hal::hlt_once();
         if !Self::wait_rdy_raw(bar, timeout_ms, CSTS_RDY) {
@@ -452,7 +452,7 @@ impl NvmeDriver {
             Self::free_contig(asq_phys, asq_sz); Self::free_contig(acq_phys, acq_sz); Self::free_contig(dma_phys, dma_sz);
             return [None,];
         }
-        let cc_after = unsafe { (bar as *const u32).add(0x14 / 4).read_volatile() };
+        let cc_after = unsafe { crate::hal::mmio::read32((bar + 0x14) as usize) };
         kinfo!(LogSubsys::Nvme, "CC after enable: 0x{:08x} (expected 0x{:08x})", cc_after, cc_val);
         kinfo!(LogSubsys::Nvme, "Enabled ASQ=0x{:x} ACQ=0x{:x} DMA=0x{:x}", asq_phys, acq_phys, dma_phys);
 
@@ -695,7 +695,7 @@ impl NvmeDriver {
 
     fn wait_rdy_raw(bar: u64, timeout_ms: u32, target: u32) -> bool {
         for _ in 0..timeout_ms * 10 {
-            if (unsafe { (bar as *mut u32).add(0x1C / 4).read_volatile() } & CSTS_RDY) == target {
+            if (unsafe { crate::hal::mmio::read32((bar + 0x1C) as usize) } & CSTS_RDY) == target {
                 return true;
             }
             crate::hal::hlt_once();
