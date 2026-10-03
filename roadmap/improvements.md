@@ -670,15 +670,15 @@ v0.56–v0.60 y se publica como v0.51.3. Formato compartido en `libnlt`.
   Dependencies: USR-P1c
   state: open
 
-- **NET-1.9**: ipconfig.nxe `priority/medium` `area/net` `type/feature` `v0.51 — NeoFS v2 + Shell Phase 2 + SAM`
+- **NET-1.9**: ipconfig.nxe `priority/medium` `area/net` `type/feature` `v0.54 — Power Phase 4 + User Commands + DNS`
   IPCONFIG /ALL: interfaces, MAC, IP, gateway, DNS, stats.
   state: open
 
-- **NET-1.10**: ping.nxe `priority/medium` `area/net` `type/feature` `v0.51 — NeoFS v2 + Shell Phase 2 + SAM`
+- **NET-1.10**: ping.nxe `priority/medium` `area/net` `type/feature` `v0.54 — Power Phase 4 + User Commands + DNS`
   PING host [/n count] [/w ms] via raw ICMP echo request.
   state: open
 
-- **B3.4**: NTP client `priority/low` `area/net` `type/feature` `v0.51 — NeoFS v2 + Shell Phase 2 + SAM`
+- **B3.4**: NTP client `priority/low` `area/net` `type/feature` `v0.54 — Power Phase 4 + User Commands + DNS`
   SNTP simplificado (RFC 5905), sincronización RTC.
   state: open
 
@@ -688,11 +688,11 @@ v0.56–v0.60 y se publica como v0.51.3. Formato compartido en `libnlt`.
   so neotop can render per-process memory. Parent/related: #27.
   state: closed
 
-- **KWAIT-TIMEOUT**: timed waits (timeouts for ob_wait/poll/sleep) `priority/medium` `area/kernel` `type/feature` `v0.51 — NeoFS v2 + Shell Phase 2 + SAM`
+- **KWAIT-TIMEOUT**: timed waits (timeouts for ob_wait/poll/sleep) `priority/medium` `area/kernel` `type/feature` `v0.55 — WAL + Secure Boot + VFS Advanced`
   KWait blocks indefinitely; sys_ob_wait (RAX 45), sys_poll (RAX 24) and sys_sleep_ex (RAX 41) ignore their timeout arguments and there is no kernel sleep for user threads. Add per-thread deadline/timeout support to KWait driven by the timer tick, wire the ob_wait/poll timeouts, and provide a sleep/delay path without adding a new syscall. Prerequisite for ADM-1.4. Related: #27.
   state: open
 
-- **ADM-1**: neotop v0.2 `priority/medium` `area/tools` `type/feature` `v0.51 — NeoFS v2 + Shell Phase 2 + SAM`
+- **ADM-1**: neotop v0.2 `priority/medium` `area/tools` `type/feature` `v0.58 — Official Tools`
   Epic: dynamic process/thread monitor (top-like).
   - [x] Kernel CPU execution accounting + ProcessSnapshot v2 (Phase 15-A.1, #269).
   - [x] neotop: dynamic %CPU from Δ(cpu_time)/Δ(wall), N/A first sample, q/r, ANSI, SMP-correct.
@@ -710,32 +710,32 @@ v0.56–v0.60 y se publica como v0.51.3. Formato compartido en `libnlt`.
   Dependencies: MEM-PROC
   state: closed
 
-- **ADM-1.2**: neotop sorting and filtering `priority/medium` `area/tools` `type/feature` `v0.51 — NeoFS v2 + Shell Phase 2 + SAM`
+- **ADM-1.2**: neotop sorting and filtering `priority/medium` `area/tools` `type/feature` `v0.58 — Official Tools`
   Sort by CPU%/memory/PID/name (asc/desc), filter by name substring and/or PID, deterministic tie-break by PID; locales + tests + docs. Parent: ADM-1 (#27).
   state: open
 
-- **ADM-1.3**: neotop color thresholds `priority/medium` `area/tools` `type/feature` `v0.51 — NeoFS v2 + Shell Phase 2 + SAM`
+- **ADM-1.3**: neotop color thresholds `priority/medium` `area/tools` `type/feature` `v0.58 — Official Tools`
   Define green/yellow/red thresholds for CPU% and memory; ANSI colors disabled when not a TTY or when NO_COLOR is set. Parent: ADM-1 (#27).
   state: open
 
-- **ADM-1.4**: neotop configurable refresh interval `priority/medium` `area/tools` `type/feature` `v0.51 — NeoFS v2 + Shell Phase 2 + SAM`
+- **ADM-1.4**: neotop configurable refresh interval `priority/medium` `area/tools` `type/feature` `v0.58 — Official Tools`
   Configurable refresh interval from the UI (0.5/1/2/5 s) using a real timed wait instead of busy-yield; optional Registry persistence; locales + tests + docs. Parent: ADM-1 (#27).
   Dependencies: KWAIT-TIMEOUT
   state: open
 
-- **ADM-2**: neostat `priority/medium` `area/tools` `type/feature` `v0.51 — NeoFS v2 + Shell Phase 2 + SAM`
+- **ADM-2**: neostat `priority/medium` `area/tools` `type/feature` `v0.58 — Official Tools`
   Terminal dashboard: CPU%, memoria, disco, red.
   state: open
 
-- **ADM-4**: neotask `priority/medium` `area/tools` `type/feature` `v0.51 — NeoFS v2 + Shell Phase 2 + SAM`
+- **ADM-4**: neotask `priority/medium` `area/tools` `type/feature` `v0.58 — Official Tools`
   Listar procesos, matar, cambiar prioridad, crear proceso.
   state: open
 
-- **ADM-5**: neocfg (Panel de Control) `priority/medium` `area/tools` `type/feature` `v0.51 — NeoFS v2 + Shell Phase 2 + SAM`
+- **ADM-5**: neocfg (Panel de Control) `priority/medium` `area/tools` `type/feature` `v0.58 — Official Tools`
   Panel de control modular con CfgModule trait. Módulos: System, Keyboard, About, Power (stub), Locale (stub).
   state: open
 
-- **ADM-6**: neofs `priority/medium` `area/tools` `type/feature` `v0.51 — NeoFS v2 + Shell Phase 2 + SAM`
+- **ADM-6**: neofs `priority/medium` `area/tools` `type/feature` `v0.58 — Official Tools`
   Estadísticas de volumen, fsck, cambiar label, listar montajes.
   state: open
 
