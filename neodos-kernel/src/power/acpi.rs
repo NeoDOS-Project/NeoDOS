@@ -409,6 +409,22 @@ pub fn init() {
         }
         INITIALIZED.store(true, Ordering::Relaxed);
     }
+
+    // Publish the ACPI reset/S5 handlers to the HAL (the HAL must not depend
+    // on `power`). The adapters no-op when ACPI is unavailable.
+    crate::hal::set_power_hooks(Some(acpi_reset_hook), Some(acpi_s5_hook));
+}
+
+fn acpi_reset_hook() {
+    if let Some(state) = get_state() {
+        acpi_reset(state);
+    }
+}
+
+fn acpi_s5_hook() {
+    if let Some(state) = get_state() {
+        acpi_s5_write(state);
+    }
 }
 
 pub fn get_state() -> Option<&'static AcpiPowerState> {
