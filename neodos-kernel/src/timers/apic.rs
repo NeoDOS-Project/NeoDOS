@@ -68,6 +68,13 @@ unsafe fn apic_write(offset: u64, val: u32) {
     crate::hal::mmio::write32((APIC_BASE + offset) as usize, val);
 }
 
+/// Set the LAPIC MMIO base and publish the EOI register address to the HAL.
+#[inline]
+unsafe fn set_apic_base(base: u64) {
+    APIC_BASE = base;
+    crate::hal::set_lapic_eoi_addr(base + APIC_EOI);
+}
+
 // ── Public API ─────────────────────────────────────────────────────
 
 /// Return the APIC MMIO base address (0 if not initialized).
@@ -109,6 +116,7 @@ pub fn init_apic_timer() -> bool {
         let base_msr = rdmsr(IA32_APIC_BASE);
         let base = base_msr & IA32_APIC_BASE_ADDR_MASK;
         APIC_BASE = base;
+        crate::hal::set_lapic_eoi_addr(base + APIC_EOI);
 
         kinfo!(LogSubsys::Apic, "Local APIC at MMIO 0x{:x}", base);
 
@@ -180,7 +188,7 @@ pub fn init_apic_enable() -> bool {
     }
     unsafe {
         if APIC_BASE == 0 {
-            APIC_BASE = rdmsr(IA32_APIC_BASE) & IA32_APIC_BASE_ADDR_MASK;
+            set_apic_base(rdmsr(IA32_APIC_BASE) & IA32_APIC_BASE_ADDR_MASK);
         }
         // Set APIC enable (bit 8) and spurious vector 0xFF.
         let svr = apic_read(APIC_SVR);
@@ -205,7 +213,7 @@ pub fn init_apic_timer_ap() -> bool {
     }
     unsafe {
         if APIC_BASE == 0 {
-            APIC_BASE = rdmsr(IA32_APIC_BASE) & IA32_APIC_BASE_ADDR_MASK;
+            set_apic_base(rdmsr(IA32_APIC_BASE) & IA32_APIC_BASE_ADDR_MASK);
         }
         let svr = apic_read(APIC_SVR);
         apic_write(APIC_SVR, svr | (1 << 8) | 0xFF);

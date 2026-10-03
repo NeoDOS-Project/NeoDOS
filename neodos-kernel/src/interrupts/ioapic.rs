@@ -197,6 +197,7 @@ pub fn init() -> bool {
     }
 
     IOAPIC_ACTIVE.store(true, Ordering::SeqCst);
+    crate::hal::set_ioapic_active(true);
     kinfo!(LogSubsys::Ioapic, "Initialised, PIC disabled");
     true
 }

@@ -1,6 +1,25 @@
+use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use crate::hal::raw;
 
 pub type IrqHandler = extern "C" fn();
+
+/// Address of the LAPIC EOI register (0 = not published).
+static LAPIC_EOI_ADDR: AtomicU64 = AtomicU64::new(0);
+
+/// Whether the I/O APIC has taken over from the legacy PIC.
+static IOAPIC_ACTIVE: AtomicBool = AtomicBool::new(false);
+
+/// Publish the LAPIC EOI register address. Called by the timer subsystem once
+/// the LAPIC MMIO base is known.
+pub fn set_lapic_eoi_addr(addr: u64) {
+    LAPIC_EOI_ADDR.store(addr, Ordering::Release);
+}
+
+/// Record whether the I/O APIC replaced the legacy PIC. Called by the
+/// interrupt-controller subsystem.
+pub fn set_ioapic_active(active: bool) {
+    IOAPIC_ACTIVE.store(active, Ordering::Release);
+}
 
 #[no_mangle]
 #[inline(never)]
@@ -12,13 +31,14 @@ pub extern "C" fn register_irq(_vector: u8, _handler: IrqHandler) -> i32 {
 #[inline(never)]
 pub extern "C" fn ack_irq(vector: u8) {
     unsafe {
-        // Always send APIC EOI for all vectors when Local APIC is present.
-        if let Some(base) = apic_eoi_base() {
-            crate::hal::mmio::write32((base + 0x0B0) as usize, 0);
+        // Always send APIC EOI for all vectors when the Local APIC is mapped.
+        let eoi = LAPIC_EOI_ADDR.load(Ordering::Acquire);
+        if eoi != 0 {
+            crate::hal::mmio::write32(eoi as usize, 0);
         }
 
         // If I/O APIC is active, the PIC is disabled — no PIO EOI needed.
-        if crate::interrupts::ioapic::is_active() {
+        if IOAPIC_ACTIVE.load(Ordering::Acquire) {
             return;
         }
 
@@ -34,12 +54,6 @@ pub extern "C" fn ack_irq(vector: u8) {
             raw::raw_outb(0x20u16, 0x20u8);
         }
     }
-}
-
-#[inline]
-fn apic_eoi_base() -> Option<u64> {
-    let base = crate::timers::apic::apic_base();
-    if base != 0 { Some(base) } else { None }
 }
 
 // ── Force ABI symbol retention ──
