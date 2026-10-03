@@ -205,6 +205,10 @@ pub enum ObSetInfoClass {
     SetHostname = 49,
     /// Set the system (RTC) clock from a `SysDateTime` payload. Admin-only.
     DateTime = 50,
+    /// Mark the target process object as the foreground process of the caller's
+    /// VT, i.e. the Ctrl+C target. Declared explicitly by the interactive shell
+    /// for the child it is about to wait on; ignored for other callers.
+    SetForegroundProcess = 51,
 }
 
 // ═══════════════════════════════════════════════════════════════════════

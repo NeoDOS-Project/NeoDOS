@@ -97,9 +97,11 @@ pub fn handler_ob_wait(regs: crate::syscall::Registers) -> u64 {
                             "[OB_WAIT] activated child pid={} before blocking parent pid={}",
                             pid, lock.current_pid());
                     }
-                    // The child becomes the foreground process of this terminal
-                    // while its parent waits on it. Ctrl+C then targets it.
-                    crate::input::manager::set_foreground_pid(pid);
+                    // NOTE: the foreground process is *not* inferred from the
+                    // wait. `neoinit` also waits on `neoshell`, so doing so made
+                    // Ctrl+C at a fresh prompt kill the shell. The interactive
+                    // shell declares its foreground command explicitly with
+                    // `ObSetInfoClass::SetForegroundProcess`.
                     // Atomically check-and-block: we hold the lock so the child
                     // cannot exit (modify thread_count) between check and block.
                     if let Some(k) = lock.current_kthread_mut() {

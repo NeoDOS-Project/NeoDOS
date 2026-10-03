@@ -16,7 +16,10 @@ pub fn handler_ob_set_info(regs: crate::syscall::Registers) -> u64 {
         kdebug!(LogSubsys::Object, "ObSetInfo SetNicIp: fd={} class={} buf_ptr=0x{:x} buf_size={}", fd, info_class, buf_ptr, buf_size);
     }
 
-    if info_class != (ObSetInfoClass::FileDelete as u32) {
+    // Classes that carry no payload accept a null/empty buffer.
+    if info_class != (ObSetInfoClass::FileDelete as u32)
+        && info_class != (ObSetInfoClass::SetForegroundProcess as u32)
+    {
         if buf_ptr == 0 || buf_size == 0 {
             if info_class == ObSetInfoClass::SetNicIp as u32 {
                 kdebug!(LogSubsys::Object, "ObSetInfo SetNicIp: REJECTED (null buf)");
@@ -207,6 +210,24 @@ pub fn handler_ob_set_info(regs: crate::syscall::Registers) -> u64 {
                     err_to_u64(SyscallError::NoEnt)
                 }
             })
+        }
+        _ if info_class == ObSetInfoClass::SetForegroundProcess as u32 => {
+            if entry.object_id == 0 {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let obj = match crate::object::ob_lookup(entry.object_id) {
+                Some(o) => o,
+                None => return err_to_u64(SyscallError::BadF),
+            };
+            if obj.obj_type != crate::object::ObType::Process {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let pid = obj.native_id as u32;
+            if pid == 0 {
+                return err_to_u64(SyscallError::Inval);
+            }
+            crate::input::manager::set_foreground_pid(pid);
+            0
         }
         _ if info_class == ObSetInfoClass::KeyboardLayout as u32 => {
             if entry.object_id == 0 {

@@ -399,6 +399,11 @@ impl Shell {
                             Ok(fd) => {
                                 fds.close_all();
                                 write_str(b"[OB "); write_u64(fd as u64); write_str(b"] "); write_str(cmd_slice); write_str(b"\r\n");
+                                // Explicitly declare this child as the foreground process
+                                // (Ctrl+C target) for this terminal. The kernel no longer
+                                // infers it from ObWait, because NeoInit also waits on
+                                // NeoShell and that would make Ctrl+C kill the shell.
+                                let _ = syscall::sys_ob_set_info(fd, syscall::ob_set_info_class::SET_FOREGROUND, &[]);
                                 if syscall::sys_ob_wait(fd).is_err() { write_err(tr_id!(IDS_OB_WAIT_ERROR).as_bytes()); write_err(b"\r\n"); }
                                 else if iscd {
                                     let mut rb = [0u8; 256];

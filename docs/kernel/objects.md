@@ -428,6 +428,7 @@ Supports 42 set classes:
 | 47 | KeyboardSetModifier | Set modifier byte (admin) — `\Device\Keyboard` |
 | 49 | SetHostname | Set system hostname (REG_SZ) — any Ob object, admin only |
 | 50 | DateTime | Set the system (RTC) clock from a `SysDateTime` (7 bytes) — `\Global\Info\DateTime` only, admin only |
+| 51 | SetForegroundProcess | Mark the target Process as the caller VT's foreground process (Ctrl+C target) — used by NeoShell |
 
 ### ob_enum (RAX=44)
 
