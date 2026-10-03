@@ -17,19 +17,23 @@ IDS_ERR_PERM = 1011
 IDS_USAGE_LINE6 = 1012
 IDS_USAGE_LINE7 = 1013
 IDS_ERR_SET_FAIL = 1014
+IDS_USAGE_LINE8 = 1015
+IDS_UTC_SUFFIX = 1016
 
 [strings]
-IDS_USAGE = "DATETIME [/D] [/T] [/S <date> <time>]"
-IDS_USAGE_LINE2 = "  Shows and sets the current date/time."
+IDS_USAGE = "DATETIME [/D] [/T] [/U] [/S <date> <time>]"
+IDS_USAGE_LINE2 = "  Shows and sets the current date/time (local by default)."
 IDS_USAGE_LINE3 = "  /D     Show date only"
 IDS_USAGE_LINE4 = "  /T     Show time only"
-IDS_USAGE_LINE5 = "  (no flags = show both date and time)"
+IDS_USAGE_LINE5 = "  /U     Show UTC instead of local time"
 IDS_CUR_DATE = "Current date: "
 IDS_CUR_TIME = "Current time: "
 IDS_RTC_UNAVAIL = "RTC not available"
-IDS_SET_OK = "Date/time set"
+IDS_SET_OK = "UTC date/time set"
 IDS_ERR_INVALID = "Invalid date/time"
 IDS_ERR_PERM = "Access denied: administrator privileges required"
-IDS_USAGE_LINE6 = "  /S     Set date and time (admin only)"
+IDS_USAGE_LINE6 = "  /S     Set UTC date and time (admin only)"
 IDS_USAGE_LINE7 = "         e.g. datetime /S 03/10/26 14:30:00"
 IDS_ERR_SET_FAIL = "Failed to set date/time"
+IDS_USAGE_LINE8 = "  (no flags = show both date and time)"
+IDS_UTC_SUFFIX = " (UTC)"

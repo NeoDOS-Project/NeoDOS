@@ -3,7 +3,7 @@ use alloc::string::{String, ToString};
 use crate::scheduler::{self, ThreadState};
 use crate::object::types::{ObInfoClass, ObSetInfoClass};
 use crate::log::LogSubsys;
-use crate::syscall::ob::types::{ObBasicInfo, ObFileInfo, ObProcessInfo, ObPipeInfo, ObThreadInfo, ObDeviceInfo, SysDateTime, DriveInfoRaw, DriverInfoRaw, ObPipeFds, StatsHeader, CpuStatsEntry, ThreadStatsEntry, STATS_VERSION, ProcSnapshotHeader, ProcessInfoRaw, ThreadInfoRaw, PROC_SNAPSHOT_VERSION, PROC_NAME_MAX, PROC_SNAPSHOT_FLAG_TRUNCATED};
+use crate::syscall::ob::types::{ObBasicInfo, ObFileInfo, ObProcessInfo, ObPipeInfo, ObThreadInfo, ObDeviceInfo, SysDateTime, SysTimeZone, DriveInfoRaw, DriverInfoRaw, ObPipeFds, StatsHeader, CpuStatsEntry, ThreadStatsEntry, STATS_VERSION, ProcSnapshotHeader, ProcessInfoRaw, ThreadInfoRaw, PROC_SNAPSHOT_VERSION, PROC_NAME_MAX, PROC_SNAPSHOT_FLAG_TRUNCATED};
 use crate::syscall::{current_handle_entry, copy_handle_entry_for_child, resolve_chdir_target, err_to_u64, ob_err_to_syscall, SyscallError};
 use crate::syscall::util::{is_user_ptr_valid, copy_user_string};
 
@@ -674,6 +674,72 @@ pub fn handler_ob_query_info(regs: crate::syscall::Registers) -> u64 {
                     year: d.year,
                     valid: 1,
                 },
+                None => SysDateTime {
+                    second: 0, minute: 0, hour: 0,
+                    day: 0, month: 0, year: 0, valid: 0,
+                },
+            };
+            unsafe {
+                core::ptr::copy_nonoverlapping(
+                    &sysdt as *const SysDateTime as *const u8,
+                    buf_ptr as *mut u8, sz,
+                );
+            }
+            sz as u64
+        }
+        _ if info_class == ObInfoClass::TimeZone as u32 => {
+            if entry.object_id == 0 {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let obj = match crate::object::ob_lookup(entry.object_id) {
+                Some(o) => o,
+                None => return err_to_u64(SyscallError::BadF),
+            };
+            if obj.obj_type != crate::object::ObType::Key || obj.native_id != 5 {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let sz = core::mem::size_of::<SysTimeZone>() as usize;
+            if buf_size < sz { return err_to_u64(SyscallError::Inval); }
+            let tz = crate::cm::timezone::load();
+            let sys = SysTimeZone {
+                utc_offset_minutes: tz.utc_offset_minutes,
+                dst_offset_minutes: tz.dst_offset_minutes,
+                dst_enabled: if tz.dst_enabled { 1 } else { 0 },
+                dst_start_month: tz.dst_start_month,
+                dst_start_day: tz.dst_start_day,
+                dst_end_month: tz.dst_end_month,
+                dst_end_day: tz.dst_end_day,
+            };
+            unsafe {
+                core::ptr::copy_nonoverlapping(
+                    &sys as *const SysTimeZone as *const u8,
+                    buf_ptr as *mut u8, sz,
+                );
+            }
+            sz as u64
+        }
+        _ if info_class == ObInfoClass::LocalDateTime as u32 => {
+            if entry.object_id == 0 {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let obj = match crate::object::ob_lookup(entry.object_id) {
+                Some(o) => o,
+                None => return err_to_u64(SyscallError::BadF),
+            };
+            if obj.obj_type != crate::object::ObType::Key || obj.native_id != 5 {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let sz = core::mem::size_of::<SysDateTime>() as usize;
+            if buf_size < sz { return err_to_u64(SyscallError::Inval); }
+            let tz = crate::cm::timezone::load();
+            let sysdt = match crate::drivers::rtc_bridge::request_datetime() {
+                Some(d) => {
+                    let l = tz.to_local(&d);
+                    SysDateTime {
+                        second: l.second, minute: l.minute, hour: l.hour,
+                        day: l.day, month: l.month, year: l.year, valid: 1,
+                    }
+                }
                 None => SysDateTime {
                     second: 0, minute: 0, hour: 0,
                     day: 0, month: 0, year: 0, valid: 0,

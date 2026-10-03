@@ -17,19 +17,23 @@ IDS_ERR_PERM = 1011
 IDS_USAGE_LINE6 = 1012
 IDS_USAGE_LINE7 = 1013
 IDS_ERR_SET_FAIL = 1014
+IDS_USAGE_LINE8 = 1015
+IDS_UTC_SUFFIX = 1016
 
 [strings]
-IDS_USAGE = "DATETIME [/D] [/T] [/S <fecha> <hora>]"
-IDS_USAGE_LINE2 = "  Muestra y ajusta la fecha/hora actual."
+IDS_USAGE = "DATETIME [/D] [/T] [/U] [/S <fecha> <hora>]"
+IDS_USAGE_LINE2 = "  Muestra y ajusta la fecha/hora actual (local por defecto)."
 IDS_USAGE_LINE3 = "  /D     Muestra solo la fecha"
 IDS_USAGE_LINE4 = "  /T     Muestra solo la hora"
-IDS_USAGE_LINE5 = "  (sin flags = muestra fecha y hora)"
+IDS_USAGE_LINE5 = "  /U     Muestra UTC en vez de la hora local"
 IDS_CUR_DATE = "Fecha actual: "
 IDS_CUR_TIME = "Hora actual: "
 IDS_RTC_UNAVAIL = "RTC no disponible"
-IDS_SET_OK = "Fecha/hora ajustada"
+IDS_SET_OK = "Fecha/hora UTC ajustada"
 IDS_ERR_INVALID = "Fecha/hora no valida"
 IDS_ERR_PERM = "Acceso denegado: se requieren privilegios de administrador"
-IDS_USAGE_LINE6 = "  /S     Ajusta fecha y hora (solo admin)"
+IDS_USAGE_LINE6 = "  /S     Ajusta fecha y hora UTC (solo admin)"
 IDS_USAGE_LINE7 = "         ej. datetime /S 03/10/26 14:30:00"
 IDS_ERR_SET_FAIL = "No se pudo ajustar la fecha/hora"
+IDS_USAGE_LINE8 = "  (sin flags = muestra fecha y hora local)"
+IDS_UTC_SUFFIX = " (UTC)"

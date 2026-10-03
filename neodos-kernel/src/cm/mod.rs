@@ -3,6 +3,7 @@ pub mod cache;
 pub mod manager;
 pub mod init;
 pub mod api;
+pub mod timezone;
 pub mod tests;
 
 pub use self::manager::{CM_MANAGER, decode_cell, encode_cell};

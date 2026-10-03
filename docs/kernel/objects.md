@@ -213,6 +213,8 @@ Supports the following info classes:
 | 37 | KeyboardLayouts | [KbdLayoutInfo] — list of loaded layouts on `\Device\Keyboard` |
 | 38 | Hostname | System hostname string (null-terminated) — any Ob object, reads from Registry |
 | 39 | ProcessArgs | Per-process command-line args (256 bytes, null-terminated) — any valid handle, returns current process args copied atomically at `sys_ob_create(PROCESS)` from `0x41F000` (fixes `0x41F000` data race in pipelines) |
+| 40 | TimeZone | `SysTimeZone` (16 bytes: standard/DST offsets + DST window) read from the Registry — `\Global\Info\DateTime` (#357) |
+| 41 | LocalDateTime | `SysDateTime` (7 bytes) with the RTC UTC time converted to local using the configured timezone — `\Global\Info\DateTime` (#357) |
 | 32 | PowerState | PowerSystemState u32 (Active/ShuttingDown/Rebooting/Suspending/Hibernating/Off) — `\System\PowerManager`. Class declared; handler not yet implemented. |
 
 ### SMP observability (CpuStats = 24, ThreadStats = 25)

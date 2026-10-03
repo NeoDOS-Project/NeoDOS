@@ -206,6 +206,18 @@ pub struct SysDateTime {
     pub valid: u8,
 }
 
+/// Timezone configuration returned by `ObInfoClass::TimeZone` (#357).
+#[repr(C)]
+pub struct SysTimeZone {
+    pub utc_offset_minutes: i32,
+    pub dst_offset_minutes: i32,
+    pub dst_enabled: u32,
+    pub dst_start_month: u8,
+    pub dst_start_day: u8,
+    pub dst_end_month: u8,
+    pub dst_end_day: u8,
+}
+
 
 #[repr(C)]
 pub struct DriveInfoRaw {
