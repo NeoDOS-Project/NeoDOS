@@ -14,7 +14,6 @@
 //! ║  Internal register constants MUST NOT be reassigned.            ║
 //! ╚═══════════════════════════════════════════════════════════════════╝
 
-use core::ptr::{read_volatile, write_volatile};
 use core::sync::atomic::{fence, AtomicBool, AtomicU64, Ordering};
 use crate::log::LogSubsys;
 
@@ -55,11 +54,10 @@ fn ioapic_read_reg(reg: u32) -> u32 {
     let base = IOAPIC_ADDR.load(Ordering::Relaxed);
     if base == 0 { return 0; }
     unsafe {
-        write_volatile((base + IOAPIC_IOREGSEL) as *mut u32, reg);
+        crate::hal::mmio::write32((base + IOAPIC_IOREGSEL) as usize, reg);
         // The register-select write must be visible before the window access.
-        // Match the ordering used by the LAPIC/HPET MMIO helpers.
         fence(Ordering::SeqCst);
-        read_volatile((base + IOAPIC_IOWIN) as *const u32)
+        crate::hal::mmio::read32((base + IOAPIC_IOWIN) as usize)
     }
 }
 
@@ -68,11 +66,10 @@ fn ioapic_write_reg(reg: u32, value: u32) {
     let base = IOAPIC_ADDR.load(Ordering::Relaxed);
     if base == 0 { return; }
     unsafe {
-        write_volatile((base + IOAPIC_IOREGSEL) as *mut u32, reg);
+        crate::hal::mmio::write32((base + IOAPIC_IOREGSEL) as usize, reg);
         // The register-select write must be visible before the window access.
-        // Match the ordering used by the LAPIC/HPET MMIO helpers.
         fence(Ordering::SeqCst);
-        write_volatile((base + IOAPIC_IOWIN) as *mut u32, value);
+        crate::hal::mmio::write32((base + IOAPIC_IOWIN) as usize, value);
     }
 }
 
