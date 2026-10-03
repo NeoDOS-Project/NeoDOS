@@ -320,6 +320,38 @@ pub extern "C" fn apc_dispatch_on_syscall_return() {
 
 // ── Alertable wait helper ──
 
+/// No-op user APC callback for graceful-shutdown wakeups (#358).
+///
+/// The semantic payload (shutdown requested) is authoritative state stored on
+/// the service entry and read from Ring 3 via `ObInfoClass::ProcessShutdownState`.
+/// This callback exists only so that `wait_alertable` is woken and can observe
+/// the pending shutdown; it therefore intentionally does nothing.
+fn service_shutdown_apc_callback(_ctx: *mut u8) {}
+
+/// Wake every thread of process `pid` so it can observe a pending graceful
+/// shutdown (#358). Queues a user APC to each thread; if a thread is blocked in
+/// `wait_alertable`, `queue_user_apc` makes it ready. Safe to call from syscall
+/// context (takes the scheduler lock only briefly, no allocation beyond the
+/// existing bounded APC queues).
+pub fn request_process_shutdown_notification(pid: u32) -> bool {
+    if pid == 0 {
+        return false;
+    }
+    let tids = {
+        let old_irql = unsafe { crate::hal::irql::raise_irql(crate::hal::irql::DISPATCH_LEVEL) };
+        let s = scheduler::current_scheduler();
+        let lock = s.lock();
+        lock.thread_tids_for_pid(pid)
+    };
+    let mut delivered = false;
+    for tid in tids {
+        if queue_user_apc(tid, service_shutdown_apc_callback, core::ptr::null_mut()) {
+            delivered = true;
+        }
+    }
+    delivered
+}
+
 /// Block the current thread in an alertable state.
 /// Returns true if woken by APC, false if woken by other means.
 pub fn block_current_alertable() -> bool {

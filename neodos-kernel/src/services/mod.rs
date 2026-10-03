@@ -111,6 +111,143 @@ pub fn process_pending_exits() {
     }
 }
 
+// ── Deferred graceful-shutdown requests (#358) ───────────────────────────
+//
+// `stop_service()` is called from the service syscall handler while holding the
+// SERVICE_MANAGER lock. It must not block, queue user APCs, or take the
+// scheduler lock there. It therefore only records the request here; the actual
+// notification and the bounded-timeout forced termination happen in
+// `process_pending_shutdowns()`, which runs from syscall context outside every
+// kernel lock — the same architecture #374 uses for process exits.
+
+const PENDING_SHUTDOWN_CAP: usize = 32;
+
+struct PendingShutdowns {
+    /// (pid, stop_deadline_ticks)
+    entries: [(u32, u64); PENDING_SHUTDOWN_CAP],
+    head: usize,
+    len: usize,
+}
+
+static PENDING_SHUTDOWNS: Mutex<PendingShutdowns> = Mutex::new(PendingShutdowns {
+    entries: [(0, 0); PENDING_SHUTDOWN_CAP],
+    head: 0,
+    len: 0,
+});
+static PENDING_SHUTDOWN_COUNT: core::sync::atomic::AtomicUsize =
+    core::sync::atomic::AtomicUsize::new(0);
+
+/// Record a graceful-shutdown request for `pid`.
+///
+/// Safe to call while holding `SERVICE_MANAGER`: it never blocks and never
+/// allocates. Drops the request if the bounded queue is full (the service then
+/// simply falls through to the forced-kill deadline on a later drain).
+pub fn request_service_shutdown(pid: u32) {
+    if pid < 2 {
+        return;
+    }
+    if let Some(mut q) = PENDING_SHUTDOWNS.try_lock() {
+        if q.len < PENDING_SHUTDOWN_CAP {
+            let idx = (q.head + q.len) % PENDING_SHUTDOWN_CAP;
+            // Deadline is resolved against the owning service at drain time; 0
+            // here means "look it up from the Service Manager".
+            q.entries[idx] = (pid, 0);
+            q.len += 1;
+            PENDING_SHUTDOWN_COUNT.fetch_add(1, core::sync::atomic::Ordering::Release);
+        }
+    }
+}
+
+/// True when at least one shutdown request is waiting to be dispatched.
+#[inline]
+pub fn has_pending_shutdowns() -> bool {
+    PENDING_SHUTDOWN_COUNT.load(core::sync::atomic::Ordering::Acquire) != 0
+}
+
+/// Deliver queued graceful-shutdown notifications and enforce their deadlines.
+///
+/// Runs in syscall context, outside `SERVICE_MANAGER` and the scheduler lock.
+/// For each service in `StopPending` it:
+///   1. queues a user APC to the service thread (wakes an alertable wait), and
+///   2. if the service's deadline has elapsed, forces termination.
+///
+/// Forced termination still converges through #374: `kill_process` →
+/// `terminate_current` → `notify_process_exit` → `process_pending_exits` →
+/// `on_process_exit_by_pid`.
+pub fn process_pending_shutdowns() {
+    // Snapshot the requests without holding SERVICE_MANAGER, then act.
+    let mut requests: [(u32, u64); PENDING_SHUTDOWN_CAP] = [(0, 0); PENDING_SHUTDOWN_CAP];
+    let mut n = 0usize;
+    if let Some(mut q) = PENDING_SHUTDOWNS.try_lock() {
+        while q.len > 0 && n < PENDING_SHUTDOWN_CAP {
+            requests[n] = q.entries[q.head];
+            q.head = (q.head + 1) % PENDING_SHUTDOWN_CAP;
+            q.len -= 1;
+            PENDING_SHUTDOWN_COUNT.fetch_sub(1, core::sync::atomic::Ordering::Release);
+            n += 1;
+        }
+    }
+    if n == 0 {
+        return;
+    }
+
+    for &(pid, _) in requests.iter().take(n) {
+        if pid == 0 {
+            continue;
+        }
+        // Resolve the owning service and decide whether to notify and/or force.
+        //
+        // We take the Service Manager lock only briefly to read authoritative
+        // state, then release it before touching the scheduler. If it is
+        // contended we re-queue and retry on the next drain — never block.
+        let decision = {
+            match SERVICE_MANAGER.try_lock() {
+                Some(sm) => match sm.find_by_pid(pid) {
+                    Some(idx) if sm.services[idx].shutdown_requested => {
+                        Some((true, sm.stop_deadline_elapsed(idx)))
+                    }
+                    _ => Some((false, false)), // exited/restarted already
+                },
+                None => None, // contended: retry later
+            }
+        };
+
+        match decision {
+            None => {
+                request_service_shutdown(pid);
+            }
+            Some((false, _)) => {
+                // Service already exited or was restarted. #374 will (or has)
+                // finalized it; nothing to notify or kill.
+            }
+            Some((true, deadline_elapsed)) => {
+                // 1. Notify: wake the service if it is in an alertable wait.
+                //    The authoritative flag lives on the service entry and is
+                //    read from Ring 3 via `ObInfoClass::ProcessShutdownState`.
+                crate::apc::request_process_shutdown_notification(pid);
+
+                // 2. Enforce the bounded timeout.
+                if deadline_elapsed {
+                    kwarn!(LogSubsys::Services,
+                        "Graceful shutdown timed out for pid {} — forcing termination", pid);
+                    // Forced termination converges through #374.
+                    let kill_ok = {
+                        let sm = SERVICE_MANAGER.lock();
+                        sm.kill_process(pid).is_ok()
+                    };
+                    // If the process still exists (kill accepted but exit not yet
+                    // reaped, e.g. running on another CPU), keep the request
+                    // alive so the deadline keeps being enforced. If the PID is
+                    // already gone, #374 owns finalization and we stop.
+                    if kill_ok {
+                        request_service_shutdown(pid);
+                    }
+                }
+            }
+        }
+    }
+}
+
 pub fn register_service_tests() {
     // ── State machine tests ──
 
@@ -655,5 +792,260 @@ pub fn register_service_tests() {
             test_eq!(sm.services[idx].pid, 0);
         }
         let _ = SERVICE_MANAGER.lock().remove("DeferredExitTest");
+    });
+
+    // ── #358: graceful service shutdown notification ──
+
+    test_case!("sm_shutdown_state_enum_value", {
+        // Appended variant must not disturb existing discriminants.
+        test_eq!(ServiceState::Stopped as u8, 0);
+        test_eq!(ServiceState::Running as u8, 2);
+        test_eq!(ServiceState::Stopping as u8, 3);
+        test_eq!(ServiceState::Failed as u8, 4);
+        test_eq!(ServiceState::StopPending as u8, 5);
+        // Cross-check the Ring 3 observation class number is stable.
+        test_eq!(crate::object::types::ObInfoClass::ProcessShutdownState as u32, 42);
+    });
+
+    test_case!("sm_stop_no_pid_goes_stopped", {
+        // A Running service with no live process can stop immediately.
+        let mut sm = ServiceManager::new();
+        let cfg = ServiceConfig {
+            start_type: ServiceStartType::Demand,
+            restart_policy: ServiceRestartPolicy::Never,
+            max_failures: 3,
+        };
+        let idx = sm.register("NoPidSvc", "", "C:\\nonexistent.nxe", cfg, &[]).unwrap();
+        sm.services[idx].state = ServiceState::Running;
+        sm.services[idx].pid = 0;
+        test_true!(sm.stop_service(idx, 0).is_ok());
+        test_eq!(sm.services[idx].state, ServiceState::Stopped);
+        test_true!(!sm.services[idx].shutdown_requested);
+    });
+
+    // Test 1 — graceful stop: request → notification pending → voluntary exit.
+    test_case!("sm_stop_requests_graceful_shutdown", {
+        let _ = SERVICE_MANAGER.lock().remove("GracefulSvc");
+        let idx = {
+            let mut sm = SERVICE_MANAGER.lock();
+            let cfg = ServiceConfig {
+                start_type: ServiceStartType::Demand,
+                restart_policy: ServiceRestartPolicy::Never,
+                max_failures: 3,
+            };
+            let idx = sm.register("GracefulSvc", "", "C:\\nonexistent.nxe", cfg, &[]).unwrap();
+            sm.services[idx].state = ServiceState::Running;
+            sm.services[idx].pid = 6161;
+            idx
+        };
+
+        // Request a graceful stop: must NOT kill, must NOT reach Stopped yet.
+        // Drop the lock exactly as the real syscall handler does between the
+        // request and the deferred drain.
+        {
+            let mut sm = SERVICE_MANAGER.lock();
+            test_true!(sm.stop_service(idx, 1000).is_ok());
+            test_eq!(sm.services[idx].state, ServiceState::StopPending);
+            test_true!(sm.services[idx].shutdown_requested);
+            // Still alive — graceful path never force-kills inline.
+            test_eq!(sm.services[idx].pid, 6161);
+        }
+        test_true!(has_pending_shutdowns());
+
+        // Simulate the service voluntarily exiting: converged through #374.
+        notify_process_exit(6161, 0);
+        process_pending_exits();
+
+        // Drain the shutdown queue too (notification + deadline enforcement).
+        process_pending_shutdowns();
+
+        {
+            let sm = SERVICE_MANAGER.lock();
+            test_eq!(sm.services[idx].state, ServiceState::Stopped);
+            test_eq!(sm.services[idx].pid, 0);
+            test_true!(!sm.services[idx].shutdown_requested);
+            test_eq!(sm.services[idx].exit_count, 1);
+        }
+        let _ = SERVICE_MANAGER.lock().remove("GracefulSvc");
+    });
+
+    // Test 2 — timeout fallback: the service ignores shutdown.
+    test_case!("sm_stop_timeout_elapsed_and_enforced", {
+        let _ = SERVICE_MANAGER.lock().remove("StubbornSvc");
+        let idx = {
+            let mut sm = SERVICE_MANAGER.lock();
+            let cfg = ServiceConfig {
+                start_type: ServiceStartType::Demand,
+                restart_policy: ServiceRestartPolicy::Never,
+                max_failures: 3,
+            };
+            let idx = sm.register("StubbornSvc", "", "C:\\nonexistent.nxe", cfg, &[]).unwrap();
+            sm.services[idx].state = ServiceState::Running;
+            sm.services[idx].pid = 6262;
+            idx
+        };
+
+        {
+            let mut sm = SERVICE_MANAGER.lock();
+            // 1 ms timeout → deadline is already elapsed on the next drain.
+            test_true!(sm.stop_service(idx, 1).is_ok());
+            test_eq!(sm.services[idx].state, ServiceState::StopPending);
+            // Force the deadline into the past deterministically (tick rate /
+            // scheduling can otherwise make a 1 ms window racy in tests).
+            sm.services[idx].stop_deadline = 0;
+            test_true!(sm.stop_deadline_elapsed(idx));
+        }
+        test_true!(has_pending_shutdowns());
+
+        // Drain: notification queued, deadline elapsed → forced termination.
+        // `kill_process(6262)` finds no such process in a unit-test scheduler,
+        // so no exit is produced; the state remains StopPending, which is the
+        // documented state until #374 observes the real exit.
+        process_pending_shutdowns();
+        {
+            let sm = SERVICE_MANAGER.lock();
+            // Still pending: forcing is a request to the scheduler; the service
+            // is finalized only when #374 reports the exit.
+            test_true!(sm.services[idx].shutdown_requested);
+            test_eq!(sm.services[idx].state, ServiceState::StopPending);
+        }
+
+        // When the forced kill lands, the exit converges through #374.
+        notify_process_exit(6262, -1);
+        process_pending_exits();
+        {
+            let sm = SERVICE_MANAGER.lock();
+            test_eq!(sm.services[idx].state, ServiceState::Stopped);
+            test_true!(!sm.services[idx].shutdown_requested);
+        }
+        let _ = SERVICE_MANAGER.lock().remove("StubbornSvc");
+    });
+
+    // Test 3 — no restart on intentional stop (restart policy = Always).
+    test_case!("sm_intentional_stop_no_restart", {
+        let mut sm = ServiceManager::new();
+        let cfg = ServiceConfig {
+            start_type: ServiceStartType::Auto,
+            restart_policy: ServiceRestartPolicy::Always, // would restart on crash
+            max_failures: 5,
+        };
+        let idx = sm.register("AlwaysSvc", "", "C:\\nonexistent.nxe", cfg, &[]).unwrap();
+        sm.services[idx].state = ServiceState::Running;
+        sm.services[idx].pid = 6363;
+
+        // Graceful stop request, then the process exits with a non-zero code
+        // (worst case for OnCrash) — it must still be treated as intentional.
+        test_true!(sm.stop_service(idx, 1000).is_ok());
+        test_eq!(sm.services[idx].state, ServiceState::StopPending);
+        sm.on_process_exit(idx, -1);
+
+        test_eq!(sm.services[idx].state, ServiceState::Stopped);
+        test_eq!(sm.services[idx].failure_count, 0); // not counted as a failure
+        test_eq!(sm.services[idx].exit_count, 1);
+        test_true!(!sm.services[idx].shutdown_requested);
+    });
+
+    // Test 4 — #374 integration: forced/voluntary exit travels the deferred path.
+    test_case!("sm_shutdown_exit_via_deferred_queue", {
+        let _ = SERVICE_MANAGER.lock().remove("DeferredShutdownSvc");
+        let idx = {
+            let mut sm = SERVICE_MANAGER.lock();
+            let cfg = ServiceConfig {
+                start_type: ServiceStartType::Demand,
+                restart_policy: ServiceRestartPolicy::OnCrash,
+                max_failures: 3,
+            };
+            let idx = sm.register("DeferredShutdownSvc", "", "C:\\nonexistent.nxe", cfg, &[]).unwrap();
+            sm.services[idx].state = ServiceState::Running;
+            sm.services[idx].pid = 6464;
+            idx
+        };
+        {
+            let mut sm = SERVICE_MANAGER.lock();
+            test_true!(sm.stop_service(idx, 5000).is_ok());
+        }
+        process_pending_shutdowns(); // deliver notification, deadline not reached
+
+        // The service exits voluntarily; only the #374 hook observes it.
+        notify_process_exit(6464, 0);
+        test_true!(has_pending_exits());
+        process_pending_exits();
+        {
+            let sm = SERVICE_MANAGER.lock();
+            test_eq!(sm.services[idx].state, ServiceState::Stopped);
+            test_eq!(sm.services[idx].exit_count, 1);
+            test_eq!(sm.services[idx].pid, 0);
+        }
+        let _ = SERVICE_MANAGER.lock().remove("DeferredShutdownSvc");
+    });
+
+    test_case!("sm_stop_busy_when_already_pending", {
+        let mut sm = ServiceManager::new();
+        let cfg = ServiceConfig {
+            start_type: ServiceStartType::Demand,
+            restart_policy: ServiceRestartPolicy::Never,
+            max_failures: 3,
+        };
+        let idx = sm.register("BusySvc", "", "C:\\nonexistent.nxe", cfg, &[]).unwrap();
+        sm.services[idx].state = ServiceState::Running;
+        sm.services[idx].pid = 6565;
+        test_true!(sm.stop_service(idx, 1000).is_ok());
+        // Second stop while pending is rejected, never force-killed twice.
+        test_eq!(sm.stop_service(idx, 1000).unwrap_err(), SmError::Busy);
+    });
+
+    test_case!("sm_stop_while_stopping_busy", {
+        let mut sm = ServiceManager::new();
+        let cfg = ServiceConfig {
+            start_type: ServiceStartType::Demand,
+            restart_policy: ServiceRestartPolicy::Never,
+            max_failures: 3,
+        };
+        let idx = sm.register("StoppingSvc", "", "C:\\nonexistent.nxe", cfg, &[]).unwrap();
+        sm.services[idx].state = ServiceState::Stopping;
+        sm.services[idx].pid = 6666;
+        test_eq!(sm.stop_service(idx, 1000).unwrap_err(), SmError::Busy);
+    });
+
+    test_case!("sm_restart_force_terminates_and_restarts", {
+        // Restart stays synchronous: force-kill then start (which fails here
+        // because the binary is missing, leaving the service Failed).
+        let mut sm = ServiceManager::new();
+        let cfg = ServiceConfig {
+            start_type: ServiceStartType::Demand,
+            restart_policy: ServiceRestartPolicy::Never,
+            max_failures: 3,
+        };
+        let idx = sm.register("RestartSvc", "", "C:\\nonexistent.nxe", cfg, &[]).unwrap();
+        sm.services[idx].state = ServiceState::Running;
+        sm.services[idx].pid = 6767;
+        let r = sm.restart_service(idx, 0);
+        test_true!(r.is_err());
+        test_eq!(sm.services[idx].state, ServiceState::Failed);
+        test_true!(!sm.services[idx].shutdown_requested);
+    });
+
+    test_case!("sm_shutdown_request_queue_bounded", {
+        // The pending-shutdown queue is bounded and never panics on overflow.
+        for pid in 7000u32..7100 {
+            request_service_shutdown(pid);
+        }
+        // Drain everything; must terminate and leave the counter at zero.
+        for _ in 0..4 {
+            process_pending_shutdowns();
+        }
+        test_true!(!has_pending_shutdowns());
+    });
+
+    test_case!("sm_shutdown_notify_unknown_pid_safe", {
+        // SMP/lifecycle safety: notifying a PID with no live processes is a
+        // well-defined no-op and must not panic or leave state behind.
+        test_true!(!crate::apc::request_process_shutdown_notification(0));
+        let _ = crate::apc::request_process_shutdown_notification(0xDEAD_BEEF);
+        // Idle (0) and NeoInit (1) are never services and are ignored by the
+        // request hook, just like #374's exit hook.
+        request_service_shutdown(0);
+        request_service_shutdown(1);
+        test_true!(!has_pending_shutdowns());
     });
 }

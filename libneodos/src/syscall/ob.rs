@@ -62,6 +62,9 @@ pub enum ObInfoClass {
     TimeZone = 40,
     /// RTC time converted to local time by the kernel — #357.
     LocalDateTime = 41,
+    /// #358: whether a graceful shutdown has been requested for the caller's
+    /// service (1 byte: 0 = normal, 1 = shutdown requested).
+    ProcessShutdownState = 42,
 }
 
 pub mod ob_type {

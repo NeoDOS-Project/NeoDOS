@@ -20,7 +20,7 @@ pub mod console;
 pub mod keyboard;
 pub mod i18n;
 pub mod res;
-
+pub mod service;
 // Re-export commonly used syscall helpers for convenience.
 pub use syscall::{sys_cm_open_key, sys_cm_query_value, sys_close, sys_ob_open, sys_get_hostname};
 

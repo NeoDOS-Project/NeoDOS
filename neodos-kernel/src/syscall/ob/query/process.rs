@@ -28,6 +28,7 @@ pub(super) fn handles(info_class: u32) -> bool {
         || info_class == ObInfoClass::Thread as u32
         || info_class == ObInfoClass::ProcessId as u32
         || info_class == ObInfoClass::ProcessArgs as u32
+        || info_class == ObInfoClass::ProcessShutdownState as u32
 }
 
 /// Dispatch the `process` info classes.
@@ -190,6 +191,31 @@ pub(super) fn dispatch(
                 }
             }
             return arg_len as u64;
+        }
+        _ if info_class == ObInfoClass::ProcessShutdownState as u32 => {
+            // #358: report whether a graceful shutdown has been requested for
+            // the calling process (which must be a registered service).
+            // Returns 1 byte: 0 = normal execution, 1 = shutdown requested.
+            if buf_size < 1 { return err_to_u64(SyscallError::Inval); }
+            let pid = crate::hal::without_interrupts(|| {
+                crate::scheduler::current_scheduler().lock().current_pid()
+            });
+            let requested = {
+                let sm = crate::services::SERVICE_MANAGER.try_lock();
+                match sm {
+                    Some(sm) => sm
+                        .find_by_pid(pid)
+                        .map(|idx| sm.services[idx].shutdown_requested)
+                        .unwrap_or(false),
+                    // Contended: report "not requested" rather than blocking the
+                    // service during a shutdown storm; it will re-query.
+                    None => false,
+                }
+            };
+            unsafe {
+                (buf_ptr as *mut u8).write(requested as u8);
+            }
+            1u64
         }
         _ => err_to_u64(SyscallError::Inval),
     }
