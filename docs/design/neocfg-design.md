@@ -19,7 +19,7 @@
 | **Keyboard layout** | ✅ Completo (ObInfoClass::KeyboardLayout=14, ObSetInfoClass::KeyboardLayout=5) | `ob_query_info(KeyboardLayout)`, `ob_set_info(KeyboardLayout)` | `docs/kernel/objects.md` |
 | **System info** (Version, Memory, CPU, DateTime, Drives) | ✅ Completo via `\Global\Info\*` objects | `ob_open` + `ob_query_info` con clases 7–11 | `docs/kernel/objects.md` |
 | **Power Manager** | ❌ No implementado (diseño en `docs/services/power-manager.md`) | Propuesto: ObType::PowerManager=21, info classes 32–34 y 37–42 | `docs/services/power-manager.md` |
-| **i18n/Locale** | ❌ No implementado (diseño en `docs/design/i18n-design.md`) | Propuesto: `i18n.rs` en libneodos, formato NLT, fallback chain | `docs/design/i18n-design.md` |
+| **i18n/Locale** | ✅ Implementado (`libneodos/src/i18n.rs`, `libnlt`) | Runtime NLTv2/v3, fallback chain, `nxlocale`, comando `LOCALE` | `docs/userland/nlt.md` |
 | **Users/Groups/Security** | ❌ Parcial (SAM database, Token/ACL, pero sin sesiones ni grupos completos) | USR-P1a+1b+1c+1d en roadmap v0.51 | `docs/security/security.md` |
 | **Storage/NeoFS** | ✅ Parcial (NeoFS v2, FSCK, volume label) | `ob_query_info(VolumeLabel=16)`, `ob_set_info(SetVolumeLabel=9)`, `sys_fsck` | `docs/filesystem/overview.md` |
 
@@ -253,7 +253,7 @@ tr!("power.not_available")
 
 ### 3.8 Módulo Locale
 
-Dependencia: **i18n runtime implementado** (Fase 1–2 de `docs/design/i18n-design.md`).
+Dependencia: **i18n runtime implementado** (`docs/userland/nlt.md`).
 
 ```text
 ===== tr!("module.locale.title") =====
@@ -429,7 +429,7 @@ pub mod i18n_keys {
 | Keyboard | Ninguna | ✅ Listo | Implementar completo |
 | About | Ninguna | ✅ Listo | Implementar completo |
 | Power | Power Manager (ObType=21, info classes 32–34, 37–42) | PM-PHASE1: **HIGH**, PM-PHASE2: MEDIUM (v0.51) | Mostrar `power.not_available` + stub |
-| Locale | i18n runtime (libneodos/src/i18n.rs, NLT format) | i18n-design.md: Fase 1 v0.54 | Mostrar `locale.not_available` + stub |
+| Locale | i18n runtime (libneodos/src/i18n.rs, NLT format) | NLTv3 implementado (`docs/userland/nlt.md`) | Mostrar `locale.not_available` + stub |
 
 Los stubs no son simples placeholders: contienen la lógica de navegación, el menú, y el texto informativo. Cuando los subsistemas se implementen, solo se reemplaza el cuerpo de la función `run()`.
 
@@ -623,7 +623,7 @@ pub fn power_reboot(fd: u8) -> !;
 
 ### 6.4 Wrappers de i18n (futuro, en libneodos)
 
-Tal como se especifica en `docs/design/i18n-design.md`:
+Tal como se especifica en `docs/userland/nlt.md`:
 
 ```rust
 pub fn i18n_init() -> Result<(), i64>;

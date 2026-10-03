@@ -308,9 +308,9 @@ NT, y el sistema de instalación.
 | NXE-ECO-13 | `\Resource\<app>\` virtual Ob namespace | MEDIA | NXE-ECO-5 |
 | NXE-ECO-14 | NXE file header validation in kernel | BAJA | — |
 | NXE-ECO-15 | Digital signature verification infrastructure | BAJA | — |
-| I18N-P2 | Migrar apps core a tr_id!() | MEDIA | I18N-P1 |
-| I18N-P4 | format_str() con placeholders {0} | MEDIA | I18N-P1 |
-| I18N-P5 | i18n_available_locales() | BAJA | I18N-P1 |
+| I18N-P2 | Migrar apps core a tr_id!() (✅) | MEDIA | I18N-P1 |
+| I18N-P4 | format_str() con placeholders {0} (✅) | MEDIA | I18N-P1 |
+| I18N-P5 | i18n_available_locales() (✅) | BAJA | I18N-P1 |
 | I18N-P6 | Per-user locale (Registry) | BAJA | I18N-P1, USR-P1 |
 
 **Objetivo:** Ecosistema NXE/NXP completo con herramientas, recursos, y traducciones.
@@ -366,15 +366,15 @@ documentado. NeoDev como herramienta única de desarrollo.
 
 | ID | Tarea | Prioridad | Dependencias |
 |----|-------|-----------|--------------|
-| I18N-P7 | Compresión NLT (LZSS/LZ4) | BAJA | I18N-P1 |
-| I18N-P8 | UTF-16 support | BAJA | I18N-P1 |
-| I18N-P9 | Pluralización | BAJA | I18N-P1 |
-| I18N-P10 | Formatos regionales (fechas, monedas) | BAJA | I18N-P1 |
-| I18N-P11 | Soporte RTL/bidi | BAJA | I18N-P1 |
-| I18N-P12 | Firmas digitales en NLT | BAJA | I18N-P1 |
+| I18N-P7 | Compresión NLT (LZSS) (✅) | BAJA | I18N-P1 |
+| I18N-P8 | UTF-16 support (✅) | BAJA | I18N-P1 |
+| I18N-P9 | Pluralización (✅) | BAJA | I18N-P1 |
+| I18N-P10 | Formatos regionales (fechas, monedas) (✅) | BAJA | I18N-P1 |
+| I18N-P11 | Soporte RTL/bidi (✅) | BAJA | I18N-P1 |
+| I18N-P12 | Firmas digitales en NLT (✅) | BAJA | I18N-P1 |
 
 **Objetivo:** Sistema de internacionalización completo con formatos regionales,
-pluralización y soporte de escritura RTL.
+pluralización y soporte de escritura RTL. **Estado: completado** (NLTv3, `libnlt`).
 
 ---
 

@@ -2,14 +2,14 @@
 name = "neolocale"
 version = "0.1.0"
 edition = "2021"
+description = "NLT file validator and inspector (host tool)"
 
 [[bin]]
 name = "neolocale"
 path = "src/main.rs"
-test = false
 
 [dependencies]
-libneodos = { path = "../../libneodos" }
+libnlt = { path = "../../libnlt", features = ["signatures"] }
 
 [profile.release]
 panic = "abort"

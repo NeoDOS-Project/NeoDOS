@@ -5,6 +5,13 @@ version = 4
 [[package]]
 name = "libneodos"
 version = "0.2.1"
+dependencies = [
+ "libnlt",
+]
+
+[[package]]
+name = "libnlt"
+version = "0.1.0"
 
 [[package]]
 name = "nxres"

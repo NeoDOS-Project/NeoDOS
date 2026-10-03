@@ -16,6 +16,10 @@ IDS_ERR_UNKNOWN = 1010
 IDS_ERR_SET = 1011
 IDS_ERR_UNKNOWN_LOCALE = 1012
 IDS_NO_LOCALES = 1013
+IDS_REGION = 1014
+IDS_REGION_NONE = 1015
+IDS_RTL_ON = 1016
+IDS_RTL_OFF = 1017
 
 [strings]
 IDS_USAGE = "NXLOCALE [subcomando]"
@@ -31,3 +35,7 @@ IDS_ERR_UNKNOWN = "Comando desconocido"
 IDS_ERR_SET = "No se puede cambiar el idioma"
 IDS_ERR_UNKNOWN_LOCALE = "Idioma desconocido"
 IDS_NO_LOCALES = "No hay idiomas disponibles"
+IDS_REGION = "Formatos regionales:"
+IDS_REGION_NONE = "No hay formatos regionales cargados"
+IDS_RTL_ON = "Dirección del texto: derecha a izquierda"
+IDS_RTL_OFF = "Dirección del texto: izquierda a derecha"

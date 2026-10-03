@@ -308,6 +308,8 @@ pub fn register_tests() {
     register_alloc_tests();
     // Slab allocator tests
     register_slab_tests();
+    // NLT i18n format tests (shared libnlt)
+    crate::i18n_tests::register_i18n_tests();
 }
 
 // ── UTF-8 tests ────────────────────────────────────────────────────

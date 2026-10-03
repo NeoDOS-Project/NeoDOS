@@ -15,6 +15,11 @@ IDS_CALL_USAGE = 1009
 IDS_CALL_NOT_FOUND = 1010
 IDS_CALL_READ_ERROR = 1011
 IDS_PROMPT_PAUSE = 1012
+IDS_LOCALE_CURRENT = 1013
+IDS_LOCALE_AVAILABLE = 1014
+IDS_LOCALE_SET_OK = 1015
+IDS_LOCALE_SET_ERR = 1016
+IDS_LOCALE_USAGE = 1017
 
 [strings]
 IDS_STARTUP_HINT = "Escriviu AJUDA per a una llista d'ordres."
@@ -29,3 +34,8 @@ IDS_CALL_USAGE = "Ús: CALL fitxer.bat"
 IDS_CALL_NOT_FOUND = "Fitxer batch no trobat"
 IDS_CALL_READ_ERROR = "Error en llegir el fitxer batch"
 IDS_PROMPT_PAUSE = "Premeu una tecla per a continuar . . ."
+IDS_LOCALE_CURRENT = "Idioma actual: "
+IDS_LOCALE_AVAILABLE = "Idiomes disponibles:"
+IDS_LOCALE_SET_OK = "Idioma canviat a "
+IDS_LOCALE_SET_ERR = "No s'ha pogut canviar l'idioma"
+IDS_LOCALE_USAGE = "Ús: LOCALE [LIST | SET <tag>]"

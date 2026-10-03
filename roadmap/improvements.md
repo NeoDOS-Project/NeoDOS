@@ -1041,12 +1041,12 @@
   state: open
 
 - **I18N-P4**: format_str() con placeholders {0} `priority/medium` `area/i18n` `type/feature` `v0.56 — NXE/NXP Ecosystem`
-  Dependencies: I18N-P1
-  state: open
+  {0}/{0:d}/{0:u}/{0:x}/{0:X} formatted via libnlt::format, tr_fmt!() macro.
+  state: closed
 
 - **I18N-P5**: i18n_available_locales() `priority/low` `area/i18n` `type/feature` `v0.56 — NXE/NXP Ecosystem`
-  Dependencies: I18N-P1
-  state: open
+  i18n_available_locales() + shell built-in LOCALE (list/set) + nxlocale list.
+  state: closed
 
 - **I18N-P6**: Per-user locale (Registry) `priority/low` `area/i18n` `type/feature` `v0.56 — NXE/NXP Ecosystem`
   Dependencies: USR-P1, I18N-P1
@@ -1118,29 +1118,29 @@
 
 ### v0.60 — NLT i18n + Regional Formats
 
-- **I18N-P7**: NLT compression (LZSS/LZ4) `priority/low` `area/i18n` `type/feature` `v0.60 — NLT i18n + Regional Formats`
-  Dependencies: I18N-P1
-  state: open
+- **I18N-P7**: NLT compression (LZSS) `priority/low` `area/i18n` `type/feature` `v0.60 — NLT i18n + Regional Formats`
+  LZSS byte-oriented compression of the NLTv3 payload (libnlt::lzss).
+  state: closed
 
 - **I18N-P8**: UTF-16 support `priority/low` `area/i18n` `type/feature` `v0.60 — NLT i18n + Regional Formats`
-  Dependencies: I18N-P1
-  state: open
+  UTF-16LE string storage with UTF-8 transcoding on load and BOM source detection.
+  state: closed
 
 - **I18N-P9**: Pluralization `priority/low` `area/i18n` `type/feature` `v0.60 — NLT i18n + Regional Formats`
-  Dependencies: I18N-P1
-  state: open
+  CLDR plural categories (zero/one/two/few/many/other) and plural_id!() macro.
+  state: closed
 
 - **I18N-P10**: Regional formats (dates, currencies) `priority/low` `area/i18n` `type/feature` `v0.60 — NLT i18n + Regional Formats`
-  Dependencies: I18N-P1
-  state: open
+  Number/currency/date/time formatting with a per-locale [region] NLT block.
+  state: closed
 
 - **I18N-P11**: RTL/bidi support `priority/low` `area/i18n` `type/feature` `v0.60 — NLT i18n + Regional Formats`
-  Dependencies: I18N-P1
-  state: open
+  RTL locale detection and visual run reordering (libnlt::bidi).
+  state: closed
 
 - **I18N-P12**: Digital signatures in NLT `priority/low` `area/i18n` `type/feature` `v0.60 — NLT i18n + Regional Formats`
-  Dependencies: I18N-P1
-  state: open
+  Ed25519 signatures (libnlt/signatures), nltc --verify, optional runtime check.
+  state: closed
 
 ### v0.61 – v0.69 — Security & Stability
 

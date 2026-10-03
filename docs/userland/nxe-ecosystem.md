@@ -260,7 +260,7 @@ pub fn res_enum(app: &str, dir: &str) -> Result<Vec<String>, i64>;
 
 ### 5.1 NLT files as resources
 
-NLTv2 files are stored as resources within the package:
+NLTv3 files are stored as resources within the package:
 
 ```text
 resources/locale/{lang}/{app}.nlt
@@ -363,6 +363,7 @@ nxlocale <command> [options]
 Commands:
   list                    List installed locales
   current                 Show current locale
+  region                  Show regional formats + text direction
   set     <locale>        Change system locale
   check   [app]           Check translation coverage
   stats   [app]           Translation statistics
@@ -370,7 +371,8 @@ Commands:
 ```
 
 **Location:** `userbin/nxlocale/` — Ring 3 .NXE binary.
-*(Note: This replaces the existing `userbin/neolocale` which remains for NLT file operations.)*
+*(Note: `userbin/neolocale` is the host-side NLT file tool — validate, stats,
+diff, check, create; it is not a Ring 3 binary.)*
 
 ### 6.6 nxverify — Integrity verification (Ring 3 .NXE)
 

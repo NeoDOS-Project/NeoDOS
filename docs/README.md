@@ -134,7 +134,6 @@
 | Document | Description |
 |----------|-------------|
 | [Font Manager](design/font-manager-design.md) | Font manager design proposal |
-| [i18n](design/i18n-design.md) | Internationalization design |
 | [NeoCfg](design/neocfg-design.md) | Configuration system design |
 | [NeoKBD](design/neokbd-design.md) | Keyboard system design |
 | [Registry Improvements](design/registry-improvements.md) | Registry improvements proposal |
