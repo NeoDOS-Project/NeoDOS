@@ -36,7 +36,16 @@ The dependency graph MUST be a DAG. The following couplings are hard-forbidden:
 | Console | Scheduler, filesystems, drivers |
 | Frame allocator | Scheduler, filesystems, drivers, VFS |
 | Memory/paging | Scheduler, filesystems, drivers, VFS |
-| HAL | Any kernel subsystem (HAL is the bottom layer) |
+| HAL | Any kernel subsystem except the architecture backend and the frame allocator |
+
+**HAL boundary exceptions (explicit).** The HAL MAY depend on:
+
+- `arch` — the architecture backend is the layer below the HAL.
+- `memory` — `alloc_page`/`free_page` delegate to the physical frame allocator.
+
+The remaining HAL → * outward dependencies are temporary debt tracked for
+removal: HAL → `timers` (#436), HAL → `interrupts` (#437), HAL → `power`
+(#438), and HAL → `drivers` in PCI tests (#426).
 
 **INV-2. NO DYNAMIC ALLOCATION IN IRQ CONTEXT.**
 IRQ handlers MUST NOT call `alloc`, `Box::new`, `Vec::push`, or any heap-allocating function.
