@@ -198,11 +198,14 @@ pub fn configure_msix_entry(
     let virt_table = table_phys;
     let entry_addr = virt_table + (entry_index as u64) * 16;
     unsafe {
+        // The MSI-X table lives in device MMIO (mapped UC-). A store through a
+        // plain `*mut` is not a volatile access and may be elided or reordered
+        // by the compiler; use `write_volatile` on the raw field addresses.
         let entry = entry_addr as *mut MsixTableEntry;
-        (*entry).msg_addr_low = 0xFEE0_0000;
-        (*entry).msg_addr_high = 0;
-        (*entry).msg_data = vector as u32;
-        (*entry).vector_ctrl = 0;
+        core::ptr::write_volatile(core::ptr::addr_of_mut!((*entry).msg_addr_low), 0xFEE0_0000);
+        core::ptr::write_volatile(core::ptr::addr_of_mut!((*entry).msg_addr_high), 0);
+        core::ptr::write_volatile(core::ptr::addr_of_mut!((*entry).msg_data), vector as u32);
+        core::ptr::write_volatile(core::ptr::addr_of_mut!((*entry).vector_ctrl), 0);
     }
 
     let new_ctrl = msg_ctrl | (1 << 15);
