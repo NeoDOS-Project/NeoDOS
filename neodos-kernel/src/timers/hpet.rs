@@ -693,7 +693,7 @@ pub fn ticks_to_us(ticks: u64) -> u64 {
 pub fn sleep_us(us: u64) {
     unsafe {
         if HPET_MMIO_BASE == 0 {
-            crate::hal::sleep_hint(us as u32);
+            crate::hal::io_delay(us as u32);
             return;
         }
         // Calculate target tick count for the requested delay
