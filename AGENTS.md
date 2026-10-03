@@ -14,6 +14,7 @@
 8. **Before architecture decisions:** read `docs/architecture/source-of-truth.md` — invariants are enforceable rules.
 9. **Keep AGENTS.md minimal.** Move specialized instructions to `docs/` and procedural checklists to `skills/`.
 10. **Naming:** kebab-case for files/dirs, PascalCase for types/enums/traits, snake_case for fns/vars.
+11. **Branch first.** Every feature, bug fix, investigation, refactor, audit, or architectural change MUST be developed on its own dedicated branch. Never work directly on `develop`. See [Branching Rule](#branching-rule).
 
 ## Quick Reference
 
@@ -75,6 +76,46 @@ está terminada. El changelog se genera con `sync-roadmap.sh changelog`.
 2. `feat/*`, `fix/*`, `refactor/*` — ramas de trabajo referenciando Issues.
 3. `release/vX.Y.Z` — rama de release desde `develop` → PR → `master`.
 4. `master` — releases estables.
+
+### Branching Rule
+
+**Every new feature, bug fix, investigation, refactor, audit, or architectural
+change MUST be developed on its own dedicated Git branch.** Do not work directly
+on `develop` for new work. Do not reuse an unrelated existing branch for a new
+task. The branch is the task-isolation mechanism and must stay focused on a
+single piece of work.
+
+Required workflow:
+
+1. Ensure the working tree is in a known (clean) state.
+2. Update/sync from the appropriate base branch when necessary.
+3. Create a dedicated branch for the work.
+4. Perform all changes and commits exclusively on that branch.
+5. Validate the work.
+6. Merge the branch back through the normal Git workflow only after validation.
+
+Branch naming follows project conventions:
+
+```text
+feat/<short-description>
+fix/<short-description>
+investigation/<short-description>
+refactor/<short-description>
+audit/<short-description>
+docs/<short-description>
+```
+
+When the work corresponds to a GitHub Issue, the branch should reference that
+Issue when practical, e.g. `fix/service-graceful-shutdown-358`.
+
+**Exception:** purely administrative/read-only operations that do not modify
+project files or Git history (inspecting the repository, searching code, reading
+issues, running tests, checking `git status`, reviewing logs, analysing
+architecture without modifying files) may be performed without a branch. When in
+doubt, **branch first**.
+
+If the current branch already contains unrelated work, stop and report it before
+making changes.
 
 ### Git Workflow (commits)
 
