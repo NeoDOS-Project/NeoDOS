@@ -147,6 +147,19 @@ impl ServiceManager {
         self.services.iter().position(|s| s.obj_id == obj_id)
     }
 
+    /// Find service index by the PID of its running process.
+    ///
+    /// Only services that currently have a live process (`pid != 0`) are
+    /// considered, so a stale PID from a previous run never matches.
+    pub fn find_by_pid(&self, pid: u32) -> Option<usize> {
+        if pid == 0 {
+            return None;
+        }
+        self.services
+            .iter()
+            .position(|s| s.pid != 0 && s.pid == pid)
+    }
+
     /// Register a service from config. Creates Ob object in \Service\<Name>.
     pub fn register(&mut self, name: &str, display_name: &str, binary_path: &str,
                     config: ServiceConfig, deps: &[String]) -> Result<usize, SmError> {
@@ -488,6 +501,22 @@ impl ServiceManager {
                 }
             }
             _ => {}
+        }
+    }
+
+    /// Handle the exit of the process identified by `pid` (0 if unknown).
+    ///
+    /// This is the production entry point: it is invoked when the scheduler
+    /// observes that a service process has fully exited, routes it to the
+    /// owning service and applies the restart policy. Returns `true` if a
+    /// service was found for `pid`.
+    pub fn on_process_exit_by_pid(&mut self, pid: u32, exit_code: i64) -> bool {
+        match self.find_by_pid(pid) {
+            Some(idx) => {
+                self.on_process_exit(idx, exit_code);
+                true
+            }
+            None => false,
         }
     }
 

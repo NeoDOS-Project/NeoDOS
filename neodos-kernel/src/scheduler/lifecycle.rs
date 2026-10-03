@@ -754,6 +754,10 @@ impl Scheduler {
                         Self::make_thread_ready(k);
                     }
                 }
+                // #374: notify the Service Manager that this process exited.
+                // Deferred and lock-free here (we hold the scheduler lock); the
+                // restart policy is applied later from syscall context.
+                crate::services::notify_process_exit(pid, exit_code);
                 do_reap = Some(pid);
             }
         }

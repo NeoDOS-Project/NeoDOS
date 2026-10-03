@@ -27,6 +27,90 @@ pub mod registry;
 pub use manager::{ServiceState, ServiceStartType, ServiceRestartPolicy, SmError, ServiceConfig, Service, ServiceManager, SERVICE_MANAGER};
 pub use registry::{sm_init, sm_start_auto_services, sm_mark_neoinit_running};
 
+// ── Deferred process-exit notifications ──────────────────────────────────
+//
+// The scheduler terminates a process while holding its own lock. The Service
+// Manager must not be invoked there: applying a restart policy spawns a new
+// process, which needs the scheduler lock. The termination path therefore only
+// enqueues a bounded, allocation-free notification; `process_pending_exits()`
+// drains it later from syscall context, outside the scheduler lock.
+
+const PENDING_EXIT_CAP: usize = 32;
+
+struct PendingExits {
+    entries: [(u32, i64); PENDING_EXIT_CAP],
+    head: usize,
+    len: usize,
+}
+
+static PENDING_EXITS: Mutex<PendingExits> = Mutex::new(PendingExits {
+    entries: [(0, 0); PENDING_EXIT_CAP],
+    head: 0,
+    len: 0,
+});
+static PENDING_EXIT_COUNT: core::sync::atomic::AtomicUsize =
+    core::sync::atomic::AtomicUsize::new(0);
+
+/// Queue a process-exit notification. Safe to call while the scheduler lock is
+/// held: it never blocks, never allocates and never takes the Service Manager
+/// lock. Drops the notification if the bounded queue is full.
+pub fn notify_process_exit(pid: u32, exit_code: i64) {
+    if pid < 2 {
+        return; // idle/kernel (0) and NeoInit (1) are never services
+    }
+    if let Some(mut q) = PENDING_EXITS.try_lock() {
+        if q.len < PENDING_EXIT_CAP {
+            let idx = (q.head + q.len) % PENDING_EXIT_CAP;
+            q.entries[idx] = (pid, exit_code);
+            q.len += 1;
+            PENDING_EXIT_COUNT.fetch_add(1, core::sync::atomic::Ordering::Release);
+        }
+    }
+}
+
+/// True when at least one exit is waiting to be dispatched.
+#[inline]
+pub fn has_pending_exits() -> bool {
+    PENDING_EXIT_COUNT.load(core::sync::atomic::Ordering::Acquire) != 0
+}
+
+/// Drain queued process exits and apply service restart policy.
+///
+/// Must be called outside the scheduler lock (it may spawn processes). Uses
+/// `try_lock` on the Service Manager: if it is contended the notifications are
+/// left queued for a later call, avoiding a lock-order deadlock.
+pub fn process_pending_exits() {
+    if !has_pending_exits() {
+        return;
+    }
+    let mut sm = match SERVICE_MANAGER.try_lock() {
+        Some(g) => g,
+        None => return,
+    };
+    loop {
+        let item = match PENDING_EXITS.try_lock() {
+            Some(mut q) => {
+                if q.len == 0 {
+                    None
+                } else {
+                    let e = q.entries[q.head];
+                    q.head = (q.head + 1) % PENDING_EXIT_CAP;
+                    q.len -= 1;
+                    PENDING_EXIT_COUNT.fetch_sub(1, core::sync::atomic::Ordering::Release);
+                    Some(e)
+                }
+            }
+            None => None,
+        };
+        match item {
+            Some((pid, code)) => {
+                sm.on_process_exit_by_pid(pid, code);
+            }
+            None => break,
+        }
+    }
+}
+
 pub fn register_service_tests() {
     // ── State machine tests ──
 
@@ -502,5 +586,74 @@ pub fn register_service_tests() {
         let r = sm.start_service(idx);
         test_true!(r.is_err());
         test_eq!(sm.services[idx].state, ServiceState::Failed);
+    });
+
+    // ── #374: Service Manager observes service process exit ──
+
+    test_case!("sm_find_by_pid", {
+        let mut sm = ServiceManager::new();
+        let cfg = ServiceConfig {
+            start_type: ServiceStartType::Demand,
+            restart_policy: ServiceRestartPolicy::Never,
+            max_failures: 3,
+        };
+        let idx = sm.register("PidSvc", "", "C:\\nonexistent.nxe", cfg, &[]).unwrap();
+        // A service with pid 0 (stopped) never matches.
+        test_eq!(sm.find_by_pid(0), None);
+        test_eq!(sm.find_by_pid(77), None);
+        sm.services[idx].pid = 77;
+        test_eq!(sm.find_by_pid(77), Some(idx));
+        test_eq!(sm.find_by_pid(78), None);
+    });
+
+    test_case!("sm_exit_by_pid_routes_and_accounts", {
+        let mut sm = ServiceManager::new();
+        let cfg = ServiceConfig {
+            start_type: ServiceStartType::Demand,
+            restart_policy: ServiceRestartPolicy::Never,
+            max_failures: 3,
+        };
+        let idx = sm.register("ExitSvc", "", "C:\\nonexistent.nxe", cfg, &[]).unwrap();
+        sm.services[idx].state = ServiceState::Running;
+        sm.services[idx].pid = 4242;
+        // Unknown pid is a no-op.
+        test_true!(!sm.on_process_exit_by_pid(9999, 0));
+        test_eq!(sm.services[idx].pid, 4242);
+        // Known pid advances accounting and clears the pid.
+        test_true!(sm.on_process_exit_by_pid(4242, -1));
+        test_eq!(sm.services[idx].exit_count, 1);
+        test_eq!(sm.services[idx].last_exit_code, -1);
+        test_eq!(sm.services[idx].pid, 0);
+        test_eq!(sm.services[idx].state, ServiceState::Failed); // Never => Failed
+    });
+
+    test_case!("sm_deferred_exit_queue", {
+        // End-to-end: the scheduler hook enqueues, process_pending_exits
+        // dispatches to the owning service.
+        let idx = {
+            let mut sm = SERVICE_MANAGER.lock();
+            let cfg = ServiceConfig {
+                start_type: ServiceStartType::Demand,
+                restart_policy: ServiceRestartPolicy::Never,
+                max_failures: 3,
+            };
+            let idx = sm.register("DeferredExitTest", "", "C:\\nonexistent.nxe", cfg, &[]).unwrap();
+            sm.services[idx].state = ServiceState::Running;
+            sm.services[idx].pid = 5150;
+            idx
+        };
+        // Idle/kernel (0) and NeoInit (1) are ignored by the hook.
+        notify_process_exit(0, 0);
+        notify_process_exit(1, 0);
+        notify_process_exit(5150, -1);
+        test_true!(has_pending_exits());
+        process_pending_exits();
+        {
+            let sm = SERVICE_MANAGER.lock();
+            test_eq!(sm.services[idx].exit_count, 1);
+            test_eq!(sm.services[idx].last_exit_code, -1);
+            test_eq!(sm.services[idx].pid, 0);
+        }
+        let _ = SERVICE_MANAGER.lock().remove("DeferredExitTest");
     });
 }

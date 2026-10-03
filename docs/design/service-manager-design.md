@@ -114,7 +114,10 @@ The Service Manager is a kernel subsystem (like Cm) that manages the lifecycle o
 2. Sm creates `ObType::Service` objects in `\Service\<Name>`
 3. Sm starts auto-start services (dependency-sorted)
 4. User/Admin sends control via `ob_set_info` on service handle
-5. Sm monitors service processes via KWait (ChildExit)
+5. Sm observes service-process exit: the scheduler termination path enqueues a
+   deferred notification (`services::notify_process_exit`) that
+   `services::process_pending_exits` drains in syscall context, outside the
+   scheduler lock
 6. On crash: Sm applies restart policy (respawn or mark Failed)
 
 ### 3.2 New Types/Structs/Enums
@@ -244,7 +247,7 @@ pub fn sys_ob_service(
 | `src/services/mod.rs` | Module root, `ServiceManager` struct, `init_service_manager()` |
 | `src/services/manager.rs` | `ServiceManager` implementation: CRUD, dependency resolution, start/stop orchestration |
 | `src/services/state.rs` | `ServiceState`, `ServiceStartType`, `ServiceRestartPolicy` enums, state machine transitions |
-| `src/services/tracker.rs` | Process monitoring: KWait integration for ChildExit, restart policy enforcement |
+| `src/services/tracker.rs` | *(implemented in `mod.rs`)* Deferred process-exit queue (`notify_process_exit` / `process_pending_exits`) fed from the scheduler termination path; restart policy enforcement |
 | `src/services/registry_backend.rs` | Read/write service configuration from `\Registry\Machine\System\CurrentControlSet\Services\<Name>` |
 | `src/services/dependency.rs` | `DependencyGraph` struct, topological sort, cycle detection |
 

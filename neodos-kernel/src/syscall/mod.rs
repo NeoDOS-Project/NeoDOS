@@ -481,7 +481,7 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, rdx: u64, r8: u
         return e;
     }
 
-    match SYSCALL_TABLE[rax as usize] {
+    let result = match SYSCALL_TABLE[rax as usize] {
         Some(handler) => {
             let regs = Registers::new(rax, rbx, rcx, rdx, r8, r9);
             let result = handler(regs);
@@ -491,7 +491,16 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, rdx: u64, r8: u
             kerror!(LogSubsys::Syscall, "No handler for syscall {}", rax);
             err_to_u64(SyscallError::NoSys)
         }
+    };
+
+    // #374: apply deferred service-exit notifications. This runs outside the
+    // scheduler lock (the termination path only enqueued them) so a restart
+    // policy can safely spawn a process. Covers sys_exit and exception paths.
+    if crate::services::has_pending_exits() {
+        crate::services::process_pending_exits();
     }
+
+    result
 }
 
 // ── Handle table helpers ──
