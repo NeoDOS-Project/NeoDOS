@@ -1059,8 +1059,25 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
         // Kernel threads are NOT preempted on every tick even if their
         // timeslice expired, because they may hold kernel locks.
         // However, if the thread yielded (state=Ready or yield_requested),
-        // we DO preempt if another thread can run.
-        let should_preempt = current_state == Some(ThreadState::Ready) || current_yield;
+        // we DO preempt if another thread can run — but only for genuine
+        // kernel/idle threads.
+        //
+        // #474: this branch is documented as kernel-thread-only, but a *user*
+        // thread interrupted in Ring 0 (inside a syscall) also lands here
+        // (is_user_mode is false because cs == 0x08). Its live `rsp` is a deep
+        // kernel call frame, not a dispatch frame; publishing it Ready would
+        // let a later `mov rsp,next_rsp; pop 15; iretq` consume arbitrary stack
+        // data as RIP/CS (wild RIP -> INVALID_OPCODE). Such a thread must be
+        // deferred to its syscall-return path, which saves the real Ring-3
+        // frame; the fall-through below sets NEED_RESCHED so it is rescheduled.
+        let current_is_kernel_thread = scheduler
+            .find_kthread(tid)
+            .map(|k| scheduler.is_kernel_thread(k))
+            .unwrap_or(true);
+        let should_preempt = crate::scheduler::schedule::ring0_publish_is_dispatchable(
+            interrupted_cs,
+            current_is_kernel_thread,
+        ) && (current_state == Some(ThreadState::Ready) || current_yield);
 
         crate::trace_timer_irq!(if should_preempt { 2u8 } else { 0u8 },
             tid, interrupted_cs, has_non_idle as u8);

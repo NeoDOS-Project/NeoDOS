@@ -70,6 +70,25 @@ pub(crate) fn thread_dispatch_frame_is_ring3(k: &Kthread, is_kernel_thread: bool
     is_kernel_thread || frame_is_ring3(k)
 }
 
+/// #474: gate for the timer's Ring-0 preemption branch.
+///
+/// A context observed in Ring 0 (`cs & 3 != 3`) may only be published Ready
+/// with its live `rsp` when that `rsp` is a valid dispatch frame for it:
+///
+/// - genuine kernel/idle threads run in Ring 0 by design and are dispatched
+///   through `schedule(require_ring3=false)`, so their Ring-0 frame is valid;
+/// - a *user* thread running in Ring 0 is inside a syscall. Its live `rsp` is
+///   a transient kernel call frame, not a dispatch frame. Publishing it Ready
+///   would make a later `mov rsp,next_rsp; pop 15; iretq` read RIP/CS from
+///   arbitrary stack contents (wild RIP → INVALID_OPCODE). It must be deferred
+///   to its syscall-return path, which saves the real Ring-3 frame.
+///
+/// `interrupted_cs` is the CS of the frame the timer interrupted.
+#[inline]
+pub(crate) fn ring0_publish_is_dispatchable(interrupted_cs: u64, is_kernel_thread: bool) -> bool {
+    (interrupted_cs & 3) == 3 || is_kernel_thread
+}
+
 // ── Phase 13-A.3: Ready publication ownership guard ──────────────────────
 // I-RUNREADY: a `Ready` KTHREAD must not be the live `KPRCB.current_thread` of
 // any *other* CPU. A wake landing in the `Blocked → switch-out` window publishes
