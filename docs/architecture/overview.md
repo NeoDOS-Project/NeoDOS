@@ -676,7 +676,7 @@ See `docs/development/debugging.md` for a walkthrough.
 | --------- | -------- | --------------- | ----------- |
 | **Arrays fijos** | 8 subsistemas con límites duros (16 EPROCESS, 32 KTHREAD, 16 pipes, etc.) | Slab\`T\` dinámico + Vec overflow | **ALTA — v0.41** |
 | **Buddy bitmap** | 16384 words → 4GB máximo | Bitmap dinámico por rango o radix tree | **ALTA — v0.40** |
-| **User window** | 4 MB (0x400000..0x800000) | 32+ MB mínimo | **ALTA — v0.40** |
+| **User window** | 36 MB (0x400000..0x2400000, 128 slots × 256 KB) | Completado | **COMPLETADO — v0.40** |
 | **Static buffers** | BIN_BUF[64KB], CMD_BUF[64KB] globales | Allocación dinámica por llamada | **ALTA — v0.40** |
 | **ASLR** | v1 (PIE + load_offset, slot aleatorio) | ASLR v2 pila+heap, v3 full | MEDIA — v0.44 |
 | **Scheduler lookup** | O(n) linear scan | Hash map o radix tree por TID | MEDIA — v0.41 |
