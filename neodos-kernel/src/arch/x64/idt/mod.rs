@@ -192,6 +192,18 @@ extern "C" {
     fn syscall_handler_asm();
 }
 
+/// #476: validate the dispatch frame the timer/exception ASM is about to `iretq`.
+#[inline]
+fn audit_iretq_frame(
+    sched: &crate::scheduler::Scheduler,
+    rsp: u64,
+    k: *const crate::scheduler::Kthread,
+    site: &'static str,
+) {
+    let expect_ring3 = if k.is_null() { false } else { !sched.is_kernel_thread(unsafe { &*k }) };
+    crate::scheduler::diag::iretq::audit(sched, rsp, k, expect_ring3, site);
+}
+
 lazy_static! {
     static ref IDT: InterruptDescriptorTable = {
         let mut idt = InterruptDescriptorTable::new();
@@ -324,6 +336,9 @@ fn exception_do_resched() -> ! {
             crate::arch::x64::cpu_local::this_cpu_inc_context_switch_count();
             crate::arch::x64::gdt::prepare_ring3_return(ks_top, tid, pid);
         }
+        // #476: validate the frame this exception-resched is about to iretq.
+        let expect_ring3 = !sched.is_kernel_thread(unsafe { &*next });
+        crate::scheduler::diag::iretq::audit(&sched, rsp, next, expect_ring3, "exception_resched");
         rsp
     });
     unsafe {
@@ -888,6 +903,7 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
                     crate::hal::ack_irq(32);
                     crate::invariants::timer_irq_exit();
                     crate::invariants::irq_exit_clear();
+                    audit_iretq_frame(&scheduler, next_rsp, next, "timer_k355_idle");
                     return next_rsp;
                 }
                 if (tid == 5 || next_tid == 5) && crate::scheduler::sched_forensic_verbose() {
@@ -986,6 +1002,7 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
                 );
             }
 
+            audit_iretq_frame(&scheduler, next_rsp, next, "timer_preempt");
             crate::trace_cswitch!(tid as u64, unsafe { (*next).tid } as u64);
             return next_rsp;
         }
@@ -1075,6 +1092,7 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
                 );
             }
 
+            audit_iretq_frame(&scheduler, next_rsp, next, "timer_preempt");
             crate::trace_cswitch!(tid as u64, unsafe { (*next).tid } as u64);
             return next_rsp;
         }
@@ -1206,6 +1224,7 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
                     0,
                 );
             }
+            audit_iretq_frame(&scheduler, next_rsp, next, "timer_preempt");
             crate::trace_cswitch!(tid as u64, unsafe { (*next).tid } as u64);
             return next_rsp;
         }

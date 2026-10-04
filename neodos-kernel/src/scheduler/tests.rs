@@ -212,6 +212,35 @@ pub fn register_tests() {
         let _ = &sb;
     });
 
+    test_case!("n476_iretq_frame_validator", {
+        // #476: pure validation logic for the frame consumed by `iretq`.
+        use crate::scheduler::diag::iretq::{validate, Frame, IretqBad};
+        let ks_base = 0x24b0000u64;
+        let ks_top = 0x24b4000u64;
+        let frame_addr = ks_base + 0x200; // 8-aligned, inside the stack
+        let ring3_ok = Frame { rip: 0x40_1000, cs: 0x1B, rflags: 0x202, rsp: 0x10_0000, ss: 0x23 };
+        let ring0_ok = Frame { rip: 0x40_1000, cs: 0x08, rflags: 0x202, rsp: 0, ss: 0 };
+        test_eq!(validate(frame_addr, ks_base, ks_top, &ring3_ok, true), None);
+        test_eq!(validate(frame_addr, ks_base, ks_top, &ring0_ok, false), None);
+        // Frame not on the selected thread's kernel stack.
+        test_eq!(validate(ks_top - 4, ks_base, ks_top, &ring3_ok, true), Some(IretqBad::FrameOutsideKstack));
+        // Misaligned frame address.
+        test_eq!(validate(frame_addr + 1, ks_base, ks_top, &ring3_ok, true), Some(IretqBad::FrameAlignment));
+        // Bad CS selector.
+        test_eq!(validate(frame_addr, ks_base, ks_top, &Frame { cs: 0x10, ..ring3_ok }, true), Some(IretqBad::InvalidCs));
+        // Ring mismatch (kernel frame expected, user frame given and vice versa).
+        test_eq!(validate(frame_addr, ks_base, ks_top, &ring0_ok, true), Some(IretqBad::RingMismatch));
+        test_eq!(validate(frame_addr, ks_base, ks_top, &ring3_ok, false), Some(IretqBad::RingMismatch));
+        // RFLAGS bit1 clear / reserved bits set.
+        test_eq!(validate(frame_addr, ks_base, ks_top, &Frame { rflags: 0x0, ..ring3_ok }, true), Some(IretqBad::InvalidRflags));
+        test_eq!(validate(frame_addr, ks_base, ks_top, &Frame { rflags: 0x202 | (1 << 22), ..ring3_ok }, true), Some(IretqBad::InvalidRflags));
+        // Non-canonical / high-half RIP for a Ring-3 frame.
+        test_eq!(validate(frame_addr, ks_base, ks_top, &Frame { rip: 0x0000_8000_0000_0000, ..ring3_ok }, true), Some(IretqBad::InvalidRip));
+        // Bad SS / non-canonical user RSP.
+        test_eq!(validate(frame_addr, ks_base, ks_top, &Frame { ss: 0x10, ..ring3_ok }, true), Some(IretqBad::InvalidSs));
+        test_eq!(validate(frame_addr, ks_base, ks_top, &Frame { rsp: 0xFFFF_8000_0000_0000, ..ring3_ok }, true), Some(IretqBad::InvalidRsp));
+    });
+
     test_case!("stack_canary_bounds_model", {
         // #348: the canary lives at `stack_bottom = ks_top - actual_size`.
         // The checker must use the stack's owned size, not the global
