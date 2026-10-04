@@ -55,9 +55,12 @@ unknown.
 |-------------|----:|-----:|-------|-----------------------:|------------:|----:|----:|----:|------:|
 | `neodev test` (QEMU) | 2 | 1 | 824/824 | 0 | 0 | 0 | 0 | 0 | 0 |
 | VBox SMP2 churn 2×32 | 2 | 12 | ok | **0** (was 3/12 runs × dozens) | 20 | 0 | 0 | 0 | 0 |
-| QEMU SMP1 | 1 | 2 | see log | see log | — | — | — | — | — |
-| QEMU SMP2 | 2 | 2 | see log | see log | — | — | — | — | — |
-| QEMU SMP4 | 4 | 2 | see log | see log | — | — | — | — | — |
+| QEMU SMP1 | 1 | 2 | ok | 0 | 0 | 0 | 0 | 0 | 0 |
+| QEMU SMP2 | 2 | 2 | ok | 0 | 0 | 0 | 0 | 0 | 0 |
+| QEMU SMP4 | 4 | 2 | ok | 0 | 0 | 0 | 0 | 0 | 0 |
+
+Merged to `develop`: PR #478 (merge commit `118de54`). #473 was an unrelated,
+conflicting docs PR, rebased and merged (`ddf1981`); no PRs left open.
 
 Baseline (before the fix): VBox SMP2 churn produced `IRETQ_BAD_FRAME` in 3/12 runs
 (24–53 hits/run) with a corrupt frame (`cs=0x1e471820`) and a `#GP`.
