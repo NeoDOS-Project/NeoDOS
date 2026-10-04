@@ -120,6 +120,11 @@ extern "C" fn stress_entry() -> ! {
         }
     }
     crate::serial_println!("[SPAWN_STRESS] done pid={} ok={} err={} mode={:?}", me, ok, err, MODE);
+    crate::serial_println!(
+        "[KSTACK_STATS] after-churn noted={} cleared={} conflicts={}",
+        crate::scheduler::diag::kstack::NOTED.load(Ordering::Relaxed),
+        crate::scheduler::diag::kstack::CLEARED.load(Ordering::Relaxed),
+        crate::scheduler::diag::kstack::CONFLICTS.load(Ordering::Relaxed));
     crate::scheduler::diag::st_dump_raw();
     crate::raw_serial_println!(
         "[VFS_STATE] after-stress owner_cpu={} owner_tid={} owner_pid={} owner_rip=0x{:x} owner_acq={} waiter_cpu={} waiter=0x{:x} waits={}",

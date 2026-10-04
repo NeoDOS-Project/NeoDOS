@@ -922,6 +922,9 @@ fn panic(info: &PanicInfo) -> ! {
     crate::scheduler::diag::dr_dump_raw();
     crate::scheduler::diag::kcpu_dump_raw();
     crate::scheduler::diag::st_dump_raw(); // #345 Phase 2A stress trace
+    crate::scheduler::diag::kstack::dump_raw(); // #476 H1 switch-out kstack tracking
+    crate::slab::free_bad_dump(); // #476 FREE_BAD allocator ownership audit
+    crate::scheduler::diag::iretq::dump_raw(); // #476 iretq frame audit
     crate::raw_serial_println!(
         "[VFS_STATE] owner_cpu={} owner_tid={} owner_pid={} owner_rip=0x{:x} owner_acq={} waiter_cpu={} waiter=0x{:x} waits={}",
         crate::scheduler::diag::vfs_owner_cpu(),

@@ -499,6 +499,10 @@ pub fn dump_per_cpu_current() {
     crate::serial_println!(
         "[READY_GUARD_STATS] rejected={} ready_while_running={} stale_rsp_dispatch={} stack_ownership_conflict={}",
         rejected, ready_while_running, stale_rsp_dispatch, stack_conflict);
+    crate::serial_println!(
+        "[IRETQ_AUDIT] checked={} bad={}",
+        crate::scheduler::diag::iretq::IRETQ_CHECKED.load(core::sync::atomic::Ordering::Relaxed),
+        crate::scheduler::diag::iretq::IRETQ_BAD_COUNT.load(core::sync::atomic::Ordering::Relaxed));
     // Phase 14-B: explicit process/thread snapshot for this SMP evidence dump.
     snapshot::kernel_snapshot_dump();
 }

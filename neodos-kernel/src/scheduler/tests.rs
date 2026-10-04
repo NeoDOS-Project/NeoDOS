@@ -171,6 +171,90 @@ pub fn register_tests() {
         let _ = &stack; // keep the allocation alive for the duration of the test
     });
 
+    test_case!("n476_kstack_switch_out_conflict_detector", {
+        // #476 H1 experiment: validate the switch-out kernel-stack detector
+        // data path. `note` marks the stack of the thread a CPU is leaving;
+        // `reclaim_conflict` must report it until `switch_out_clear` runs
+        // (which the ASM does only after `mov rsp`).
+        use crate::scheduler::diag::kstack;
+        use crate::scheduler::types::KERNEL_STACK_SIZE;
+        use core::sync::atomic::Ordering;
+
+        let sa = crate::scheduler::stack::AlignedKStack::new_boxed();
+        let sb = crate::scheduler::stack::AlignedKStack::new_boxed();
+        let a_top = sa.0.as_ptr() as u64 + KERNEL_STACK_SIZE as u64;
+        let b_top = sb.0.as_ptr() as u64 + KERNEL_STACK_SIZE as u64;
+        let a = Kthread::new_idle(200, 0, 0, a_top);
+        let b = Kthread::new_idle(201, 0, 0, b_top);
+
+        kstack::switch_out_clear(); // start from a clean window
+        let conflicts_before = kstack::CONFLICTS.load(Ordering::Relaxed);
+        test_eq!(kstack::reclaim_conflict(a_top), None);
+        test_eq!(kstack::reclaim_conflict(b_top), None);
+
+        // CPU repoints KPRCB: it is about to abandon `a`'s stack.
+        kstack::note(&a as *const _, &b as *const _, 0xBAD_F00D);
+        let hit = kstack::reclaim_conflict(a_top);
+        test_true!(hit.is_some());
+        if let Some((_cpu, tid, pid, rsp, _nks)) = hit {
+            test_eq!(tid, 200);
+            test_eq!(pid, 0);
+            test_eq!(rsp, 0xBAD_F00D);
+        }
+        // A different stack is not reported.
+        test_eq!(kstack::reclaim_conflict(b_top), None);
+
+        // The ASM clear (after `mov rsp`) closes the window.
+        kstack::switch_out_clear();
+        test_eq!(kstack::reclaim_conflict(a_top), None);
+        test_eq!(kstack::CONFLICTS.load(Ordering::Relaxed), conflicts_before);
+        let _ = &sa;
+        let _ = &sb;
+    });
+
+    test_case!("n476_iretq_frame_validator", {
+        // #476: pure validation logic for the frame consumed by `iretq`.
+        use crate::scheduler::diag::iretq::{validate, Frame, IretqBad};
+        let ks_base = 0x24b0000u64;
+        let ks_top = 0x24b4000u64;
+        let frame_addr = ks_base + 0x200; // 8-aligned, inside the stack
+        let ring3_ok = Frame { rip: 0x40_1000, cs: 0x1B, rflags: 0x202, rsp: 0x10_0000, ss: 0x23 };
+        let ring0_ok = Frame { rip: 0x40_1000, cs: 0x08, rflags: 0x202, rsp: 0, ss: 0 };
+        test_eq!(validate(frame_addr, ks_base, ks_top, &ring3_ok, true), None);
+        test_eq!(validate(frame_addr, ks_base, ks_top, &ring0_ok, false), None);
+        // Frame not on the selected thread's kernel stack.
+        test_eq!(validate(ks_top - 4, ks_base, ks_top, &ring3_ok, true), Some(IretqBad::FrameOutsideKstack));
+        // Misaligned frame address.
+        test_eq!(validate(frame_addr + 1, ks_base, ks_top, &ring3_ok, true), Some(IretqBad::FrameAlignment));
+        // Bad CS selector.
+        test_eq!(validate(frame_addr, ks_base, ks_top, &Frame { cs: 0x10, ..ring3_ok }, true), Some(IretqBad::InvalidCs));
+        // Ring mismatch (kernel frame expected, user frame given and vice versa).
+        test_eq!(validate(frame_addr, ks_base, ks_top, &ring0_ok, true), Some(IretqBad::RingMismatch));
+        test_eq!(validate(frame_addr, ks_base, ks_top, &ring3_ok, false), Some(IretqBad::RingMismatch));
+        // RFLAGS bit1 clear / reserved bits set.
+        test_eq!(validate(frame_addr, ks_base, ks_top, &Frame { rflags: 0x0, ..ring3_ok }, true), Some(IretqBad::InvalidRflags));
+        test_eq!(validate(frame_addr, ks_base, ks_top, &Frame { rflags: 0x202 | (1 << 22), ..ring3_ok }, true), Some(IretqBad::InvalidRflags));
+        // Non-canonical / high-half RIP for a Ring-3 frame.
+        test_eq!(validate(frame_addr, ks_base, ks_top, &Frame { rip: 0x0000_8000_0000_0000, ..ring3_ok }, true), Some(IretqBad::InvalidRip));
+        // Bad SS / non-canonical user RSP.
+        test_eq!(validate(frame_addr, ks_base, ks_top, &Frame { ss: 0x10, ..ring3_ok }, true), Some(IretqBad::InvalidSs));
+        test_eq!(validate(frame_addr, ks_base, ks_top, &Frame { rsp: 0xFFFF_8000_0000_0000, ..ring3_ok }, true), Some(IretqBad::InvalidRsp));
+    });
+
+    test_case!("n476_on_timer_tick_rsp_ownership", {
+        // #476: `on_timer_tick` may only save a live rsp that lies on the
+        // current thread's own kernel stack; a foreign stack is rejected.
+        use crate::scheduler::stack::rsp_in_kernel_stack;
+        let top = 0x24b4000u64;
+        let size = 0x4000usize;
+        test_true!(rsp_in_kernel_stack(top, size, top - 8));         // just below top
+        test_true!(rsp_in_kernel_stack(top, size, top - size as u64)); // bottom inclusive
+        test_true!(!rsp_in_kernel_stack(top, size, top));            // at the top
+        test_true!(!rsp_in_kernel_stack(top, size, top - size as u64 - 8)); // below the bottom
+        test_true!(!rsp_in_kernel_stack(top, size, top + 0x8000));   // another kstack
+        test_true!(rsp_in_kernel_stack(0, size, 0x1234));            // unknown: allow
+    });
+
     test_case!("stack_canary_bounds_model", {
         // #348: the canary lives at `stack_bottom = ks_top - actual_size`.
         // The checker must use the stack's owned size, not the global

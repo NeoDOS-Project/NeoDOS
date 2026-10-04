@@ -5,6 +5,18 @@ use core::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
 use crate::log::LogSubsys;
 use crate::scheduler::{self, ThreadState};
 
+/// #476: validate the dispatch frame a resched returns to the ASM `iretq`.
+#[inline]
+fn audit_iretq(
+    sched: &crate::scheduler::Scheduler,
+    rsp: u64,
+    k: *const crate::scheduler::Kthread,
+    site: &'static str,
+) {
+    let expect_ring3 = if k.is_null() { false } else { !sched.is_kernel_thread(unsafe { &*k }) };
+    crate::scheduler::diag::iretq::audit(sched, rsp, k, expect_ring3, site);
+}
+
 // Task C: per-CPU saved user frame. Previously a single global pair, which
 // produced false `[SYSCALL_CORRUPT]` reports when two CPUs (BSP + AP) entered
 // the syscall path concurrently: CPU1 phase-1 compared its frame against the
@@ -55,6 +67,12 @@ pub extern "C" fn syscall_trace_frame(frame_rsp: u64, phase: u64) {
     };
 
     let cpu = syscall_frame_cpu();
+
+    // #476: validate the exact frame the ASM is about to `pop 15; iretq`.
+    if phase == 1 {
+        let k = unsafe { crate::arch::x64::cpu_local::this_cpu_current_thread() };
+        crate::scheduler::diag::iretq::audit_self(frame_rsp, k, "syscall_iretq");
+    }
 
     // Phase 1 (#293 forensics): record the syscall identity for the filtered
     // TID. Lock-free, no allocation, uses the already-saved GPR/return frame.
@@ -151,7 +169,7 @@ pub extern "C" fn syscall_try_resched(current_rsp: u64) -> u64 {
         if tid > 0 {
             if let Some(k) = scheduler.current_kthread_mut() {
                 crate::scheduler::diag::rsp_ev(crate::scheduler::diag::SITE_RSP_RESCHED, k, current_rsp);
-                k.rsp = current_rsp;
+                crate::scheduler::stack::save_live_rsp_checked(k, current_rsp, "resched");
                 // Phase 13-A: consume a pending cooperative yield now that the
                 // live `rsp` has been saved; only now is it safe to publish the
                 // thread as Ready/enqueued for another CPU.
@@ -233,6 +251,7 @@ pub extern "C" fn syscall_try_resched(current_rsp: u64) -> u64 {
                     crate::arch::x64::cpu_local::this_cpu_set_current_pid(next_pid);
                     crate::arch::x64::cpu_local::this_cpu_inc_context_switch_count();
                 }
+                audit_iretq(&scheduler, next_rsp, next, "resched_k355_idle");
                 return next_rsp;
             }
             let current_is_blocked = scheduler.find_kthread(tid)
@@ -316,6 +335,10 @@ pub extern "C" fn syscall_try_resched(current_rsp: u64) -> u64 {
                             "[SYSCALL_RESCHED] after (blocked/terminated) old_pid={} old_tid={} next_pid={} next_tid={} next_rsp=0x{:x} next_rip=0x{:x} next_cs=0x{:x}",
                             pid, tid, chosen_pid, chosen_tid, chosen_rsp, rip, cs);
                     }
+                    {
+                        let kptr = &**scheduler.kthreads[chosen_idx].as_ref().unwrap() as *const scheduler::Kthread;
+                        audit_iretq(&scheduler, chosen_rsp, kptr, "resched_chosen");
+                    }
                     crate::trace_cswitch!(tid as u64, chosen_tid as u64);
                     return chosen_rsp;
                 } else {
@@ -350,6 +373,7 @@ pub extern "C" fn syscall_try_resched(current_rsp: u64) -> u64 {
                                     idle_ptr, crate::scheduler::diag::SITE_SET_RESCHED_IDLE_FALLBACK);
                                 crate::arch::x64::cpu_local::this_cpu_set_current_pid((*idle_ptr).pid);
                                 crate::arch::x64::cpu_local::this_cpu_inc_context_switch_count();
+                                audit_iretq(&scheduler, idle.rsp, idle_ptr, "resched_idle_fallback");
                                 return idle.rsp;
                             }
                         }
@@ -422,6 +446,7 @@ pub extern "C" fn syscall_try_resched(current_rsp: u64) -> u64 {
                 "[SYSCALL_RESCHED] after old_pid={} old_tid={} next_pid={} next_tid={} next_rsp=0x{:x} next_rip=0x{:x} next_cs=0x{:x}",
                 pid, tid, next_pid, next_tid, next_rsp, next_rip, next_cs);
         }
+        audit_iretq(&scheduler, next_rsp, next, "resched_next");
         crate::trace_cswitch!(tid as u64, unsafe { (*next).tid } as u64);
         next_rsp
     })

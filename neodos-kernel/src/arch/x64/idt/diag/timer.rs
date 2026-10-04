@@ -48,6 +48,10 @@ pub(crate) fn td_push(entry: TimerDiagEntry) {
 /// allocation-free: it runs while handling the timer IRQ.
 #[no_mangle]
 pub extern "C" fn timer_trace_iretq_frame(frame_rsp: u64) {
+    // #476: no frame audit here — this runs on every tick, including on the
+    // 4 KiB idle stack, and the extra call/frame risks overflowing it. The
+    // timer dispatch frames are already audited by `timer_preempt` /
+    // `timer_k355_idle` at the scheduler return sites.
     let (rip, cs, rflags) = unsafe {
         let frame = frame_rsp as *const u64;
         (frame.read(), frame.add(1).read(), frame.add(2).read())

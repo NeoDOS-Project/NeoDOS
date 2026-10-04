@@ -31,6 +31,7 @@ use diag::kbd::{KBD_IRQ_RING_SIZE, KbdIrqEntry, KBD_IRQ_SEQ, KBD_IRQ_HEAD, KBD_I
 core::arch::global_asm!(
     ".extern timer_handler_inner",
     ".extern timer_trace_iretq_frame",
+    ".extern switch_out_clear",
     ".global timer_handler_asm",
     "timer_handler_asm:",
     "push rbp",
@@ -57,6 +58,8 @@ core::arch::global_asm!(
     "call timer_trace_iretq_frame",
     "pop rax",
     "mov rsp, rax",
+    // #476: the old stack is physically abandoned here.
+    "call switch_out_clear",
     "pop rax",
     "pop rbx",
     "pop rcx",
@@ -81,6 +84,7 @@ core::arch::global_asm!(
     ".extern syscall_resched_enabled",
     ".extern apc_dispatch_on_syscall_return",
     ".extern is_thread_terminated",
+    ".extern switch_out_clear",
     ".global syscall_handler_asm",
     "syscall_handler_asm:",
     "push rbp",
@@ -136,6 +140,7 @@ core::arch::global_asm!(
     "mov rdi, rsp",
     "call syscall_try_resched",
     "mov rsp, rax",
+    "call switch_out_clear",
     "jmp 3f",
     "1:",
     // Check per-CPU NEED_RESCHED via GS segment (offset 0x015 in KPRCB)
@@ -155,6 +160,7 @@ core::arch::global_asm!(
     "mov rdi, rsp",
     "call syscall_try_resched",
     "mov rsp, rax",
+    "call switch_out_clear",
     "2:",
     // A4.5: Dispatch pending APCs before returning to Ring 3
     "call apc_dispatch_on_syscall_return",
@@ -184,6 +190,18 @@ core::arch::global_asm!(
 extern "C" {
     fn timer_handler_asm();
     fn syscall_handler_asm();
+}
+
+/// #476: validate the dispatch frame the timer/exception ASM is about to `iretq`.
+#[inline]
+fn audit_iretq_frame(
+    sched: &crate::scheduler::Scheduler,
+    rsp: u64,
+    k: *const crate::scheduler::Kthread,
+    site: &'static str,
+) {
+    let expect_ring3 = if k.is_null() { false } else { !sched.is_kernel_thread(unsafe { &*k }) };
+    crate::scheduler::diag::iretq::audit(sched, rsp, k, expect_ring3, site);
 }
 
 lazy_static! {
@@ -318,11 +336,16 @@ fn exception_do_resched() -> ! {
             crate::arch::x64::cpu_local::this_cpu_inc_context_switch_count();
             crate::arch::x64::gdt::prepare_ring3_return(ks_top, tid, pid);
         }
+        // #476: validate the frame this exception-resched is about to iretq.
+        let expect_ring3 = !sched.is_kernel_thread(unsafe { &*next });
+        crate::scheduler::diag::iretq::audit(&sched, rsp, next, expect_ring3, "exception_resched");
         rsp
     });
     unsafe {
         core::arch::asm!(
             "mov rsp, {0}",
+            // #476: old stack abandoned; clear its switch-out marker.
+            "call {clr}",
             "pop rax",
             "pop rbx",
             "pop rcx",
@@ -340,6 +363,7 @@ fn exception_do_resched() -> ! {
             "pop rbp",
             "iretq",
             in(reg) next_rsp,
+            clr = sym crate::scheduler::diag::kstack::switch_out_clear,
             options(noreturn)
         );
     }
@@ -429,6 +453,21 @@ extern "x86-interrupt" fn invalid_opcode_handler(stack_frame: InterruptStackFram
             DispatchResult::Handled => return,
             DispatchResult::Terminated => { terminate_user_process(); }
             DispatchResult::Panic => {}
+        }
+    }
+    // #476: raw dump of the Ring-0 handler stack (includes the CPU-pushed
+    // exception frame) so a wild control transfer is reconstructable even if
+    // the regular logger/diagnostics are unavailable.
+    {
+        let base = unsafe { crate::hal::raw::raw_read_rsp() };
+        crate::raw_serial_println!("[#UD_STACK] handler_rsp=0x{:x} frame_rip=0x{:x} frame_cs=0x{:x}",
+            base, rip, stack_frame.code_segment);
+        let mut off: u64 = 0;
+        while off < 0x180 {
+            let addr = base + off;
+            let v = unsafe { core::ptr::read_volatile(addr as *const u64) };
+            crate::raw_serial_println!("[#UD_STACK] [0x{:x}] = 0x{:x}", addr, v);
+            off += 8;
         }
     }
     panic_classified!(PanicClass::UnknownCpuException, "Invalid opcode: rip={:#x}", rip);
@@ -788,7 +827,7 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
             // is a no-op when the timeslice path already enqueued it.
             if let Some(k) = scheduler.current_kthread_mut() {
                 crate::scheduler::diag::rsp_ev(crate::scheduler::diag::SITE_RSP_IDT_USER, k, current_rsp);
-                k.rsp = current_rsp;
+                crate::scheduler::stack::save_live_rsp_checked(k, current_rsp, "idt_user");
                 k.yield_requested = false;
                 // The CPU actually executing the thread owns its re-enqueue.
                 k.cpu = unsafe { crate::arch::x64::cpu_local::this_cpu_id() };
@@ -864,6 +903,7 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
                     crate::hal::ack_irq(32);
                     crate::invariants::timer_irq_exit();
                     crate::invariants::irq_exit_clear();
+                    audit_iretq_frame(&scheduler, next_rsp, next, "timer_k355_idle");
                     return next_rsp;
                 }
                 if (tid == 5 || next_tid == 5) && crate::scheduler::sched_forensic_verbose() {
@@ -878,6 +918,21 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
                     crate::scheduler::Scheduler::remove_from_run_queue(current);
                     crate::scheduler::diag::run_ev(crate::scheduler::diag::RUN_SITE_IDT_REVERT, current);
                     current.state = ThreadState::Running;
+                    // #476: `schedule_with` repointed `KPRCB.current_thread`
+                    // at the rejected `next` before this branch decided to
+                    // keep running `current` on its own stack. Restore the
+                    // per-CPU identity to match the context the CPU actually
+                    // resumes. Omitting it desynchronises `KPRCB` from the live
+                    // stack: the next timer tick reads `current_thread = next`
+                    // with `current_rsp` still on `current`'s stack and saves
+                    // that foreign stack into `next.rsp`, so a later dispatch
+                    // of `next` iretq's a frame from the wrong kernel stack.
+                    let cur_ptr = current as *const crate::scheduler::Kthread
+                        as *mut crate::scheduler::Kthread;
+                    let cur_pid = current.pid;
+                    unsafe {
+                        crate::arch::x64::cpu_local::sync_per_cpu_current(cur_ptr, cur_pid);
+                    }
                 }
                 scheduler.current_tid = tid;
                 crate::hal::ack_irq(32);
@@ -962,6 +1017,7 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
                 );
             }
 
+            audit_iretq_frame(&scheduler, next_rsp, next, "timer_preempt");
             crate::trace_cswitch!(tid as u64, unsafe { (*next).tid } as u64);
             return next_rsp;
         }
@@ -999,7 +1055,7 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
                 tid, has_non_idle);
             if let Some(k) = scheduler.current_kthread_mut() {
                 crate::scheduler::diag::rsp_ev(crate::scheduler::diag::SITE_RSP_IDT_IDLE, k, current_rsp);
-                k.rsp = current_rsp;
+                crate::scheduler::stack::save_live_rsp_checked(k, current_rsp, "idt_idle");
             }
             let next = scheduler.schedule();
             let next_ks = unsafe { (*next).kernel_stack_top };
@@ -1051,6 +1107,7 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
                 );
             }
 
+            audit_iretq_frame(&scheduler, next_rsp, next, "timer_preempt");
             crate::trace_cswitch!(tid as u64, unsafe { (*next).tid } as u64);
             return next_rsp;
         }
@@ -1087,7 +1144,7 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
                 tid, has_non_idle);
             if let Some(k) = scheduler.current_kthread_mut() {
                 crate::scheduler::diag::rsp_ev(crate::scheduler::diag::SITE_RSP_IDT_KERNEL, k, current_rsp);
-                k.rsp = current_rsp;
+                crate::scheduler::stack::save_live_rsp_checked(k, current_rsp, "idt_kernel");
                 k.yield_requested = false;
                 // The CPU actually executing the thread owns its re-enqueue.
                 k.cpu = unsafe { crate::arch::x64::cpu_local::this_cpu_id() };
@@ -1182,6 +1239,7 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
                     0,
                 );
             }
+            audit_iretq_frame(&scheduler, next_rsp, next, "timer_preempt");
             crate::trace_cswitch!(tid as u64, unsafe { (*next).tid } as u64);
             return next_rsp;
         }

@@ -274,8 +274,12 @@ pub fn exception_dispatch(
                 DispatchResult::Handled
             }
             ExceptionAction::Terminate => {
-                kerror!(LogSubsys::Exception, "User exception unhandled (Terminate): type={} rip={:#x}",
-                    exception_type, rip);
+                kerror!(LogSubsys::Exception,
+                    "User exception unhandled (Terminate): type={} rip={:#x} fault=0x{:x} fcode={} pid={} tid={} cpu={}",
+                    exception_type, rip, fault_addr, fault_code,
+                    crate::scheduler::current_pid(),
+                    crate::scheduler::current_tid(),
+                    unsafe { crate::arch::x64::cpu_local::this_cpu_id() });
                 DispatchResult::Terminated
             }
             ExceptionAction::ReevaluateFilters => {

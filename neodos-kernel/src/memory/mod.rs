@@ -440,4 +440,45 @@ pub fn register_stress_tests() {
     });
 }
 
+// ── #476 FREE_BAD allocator ownership audit tests ──────────────────────
+
+pub fn register_free_bad_tests() {
+    extern crate alloc;
+    use crate::test_case;
+    use crate::test_eq;
+    use crate::test_true;
+    use core::alloc::Layout;
+
+    test_case!("n476_free_bad_ownership_detector", {
+        use crate::slab::{audit_free_probe, FreeBadKind};
+
+        let l8 = Layout::from_size_align(8, 8).unwrap();
+        let l16 = Layout::from_size_align(16, 8).unwrap();
+
+        // Valid slab allocation: ownership must be accepted.
+        let p = unsafe { alloc::alloc::alloc(l8) };
+        test_true!(!p.is_null());
+        test_eq!(unsafe { audit_free_probe(p, l8) }, None);
+
+        // Misaligned pointer into the same slab page.
+        test_eq!(unsafe { audit_free_probe(p.add(1), l8) }, Some(FreeBadKind::Misaligned));
+
+        // Wrong size class => owner mismatch.
+        test_eq!(unsafe { audit_free_probe(p, l16) }, Some(FreeBadKind::OwnerMismatch));
+
+        // Out of range (page base 0).
+        test_eq!(unsafe { audit_free_probe(0x8 as *mut u8, l8) }, Some(FreeBadKind::OutOfRange));
+
+        // Not owned: a kernel image address, outside the fallback heap and with
+        // no slab page magic.
+        static SENTINEL: u64 = 0;
+        let s = (&SENTINEL) as *const u64 as *mut u8;
+        test_eq!(unsafe { audit_free_probe(s, l8) }, Some(FreeBadKind::NotOwned));
+
+        // Free it, then re-probe: a second free must be detected.
+        unsafe { alloc::alloc::dealloc(p, l8) };
+        test_eq!(unsafe { audit_free_probe(p, l8) }, Some(FreeBadKind::AlreadyFree));
+    });
+}
+
 
