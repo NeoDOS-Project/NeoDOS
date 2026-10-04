@@ -411,12 +411,11 @@ DEMAND MUST NOT escalate.
 **Rule 8.5.3**: `validate_driver_ptr` accepts only:
 
 - Driver's own isolated slot
-- Kernel heap (`0x01000000..0x02000000`)
-- Kernel .rodata/.text (`0x00100000..0x01000000`)
 - User heap (`0x10000000..0x12000000`)
 - mmap region (`0x20000000..0x22000000`)
-- User code (`0x400000..0x800000`)
-- Kernel image (`0x4000000..PHYS_MEM_END`)
+- Kernel `.rodata`/`.text` (`0x00100000..0x00400000`)
+- Kernel heap (`0x02400000..0x03400000`, relocated after the expanded 36 MB user window)
+- Kernel identity-mapped memory (`0x03400000..0x10000000` and `0x12000000..0x20000000`)
 
 All other addresses are rejected.
 **Rule 8.5.4**: Isolation mode `Sandbox` (DEMAND drivers) marks the driver `FAULTED` on any

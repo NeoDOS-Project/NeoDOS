@@ -161,9 +161,9 @@ All 42 user-mode binaries, each a standalone `.NXE` ELF file in `userbin/<name>/
 
 ## User Window Layout
 
-Address range `0x400000..0x2400000` (32 MB total). Divided into 32 slots of 128 KB each.
+Address range `0x400000..0x2400000` (32 MB total). Divided into 128 slots of 256 KB each (192 KB binary + 64 KB stack).
 
-ASLR v1: Random slot selection via `RDRAND` instruction with `RDTSC` fallback if RDRAND unavailable. The slot index determines code base address: `0x400000 + slot * 0x20000`.
+ASLR v1: Random slot selection via `RDRAND` instruction with `RDTSC` fallback if RDRAND unavailable. The slot index determines code base address: `0x400000 + slot * 0x40000`.
 
 Each slot layout:
 
