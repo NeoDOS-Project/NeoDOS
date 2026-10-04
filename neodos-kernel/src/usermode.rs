@@ -119,7 +119,7 @@ pub fn execute_usermode(entry_point: u64, stack_pointer: u64) {
 }
 
 /// Maximum size of a Ring 3 image read from the VFS for process creation.
-pub const MAX_PROCESS_BIN: usize = 65536;
+pub const MAX_PROCESS_BIN: usize = crate::arch::x64::paging::MAX_BIN_SIZE as usize;
 
 /// Result of the shared Ring 3 process-creation path.
 pub struct CreatedProcess {
@@ -341,12 +341,7 @@ pub fn wait_for_process(pid: u32) {
                 let ks_top = k.kernel_stack_top;
                 let sp = if let Some(ep) = s.find_eprocess(pid) {
                     if let Some(slot) = ep.user_slot {
-                        let slot_size = 0x20000u64;
-                        let max_bin = 0x10000u64;
-                        let user_stack = 0x10000u64;
-                        crate::arch::x64::paging::USER_BASE
-                            + slot as u64 * slot_size
-                            + max_bin + user_stack
+                        crate::arch::x64::paging::user_slot_stack_top(slot)
                     } else {
                         k.rsp
                     }

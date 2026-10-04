@@ -102,11 +102,16 @@ static mut PD_HIGH: [AlignedPageTable; 4] = [
 pub const USER_BASE:  u64 = 0x0040_0000; // 4 MB
 pub const USER_LIMIT: u64 = 0x0240_0000; // 36 MB (32 MB window, v0.40)
 
-/// Per-process slot constants
-const MAX_BIN_SIZE: u64 = 64 * 1024;      // 64 KB  (mirrors run.rs)
-const USER_STACK_SIZE: u64 = 64 * 1024;   // 64 KB
-const USER_SLOT_SIZE: u64 = MAX_BIN_SIZE + USER_STACK_SIZE; // 128 KB
-pub const USER_SLOT_COUNT: u64 = (USER_LIMIT - USER_BASE) / USER_SLOT_SIZE; // 32
+/// Per-process slot constants.
+///
+/// `MAX_BIN_SIZE` is the per-binary read cap (see `usermode::MAX_PROCESS_BIN`).
+/// The user window (`USER_BASE..USER_LIMIT`) tiles into `USER_SLOT_COUNT` slots
+/// of `USER_SLOT_SIZE` each. Raised from 64 KB once `neoshell.nxe` grew past it
+/// (#458).
+pub const MAX_BIN_SIZE: u64 = 192 * 1024;   // 192 KB per user binary
+pub const USER_STACK_SIZE: u64 = 64 * 1024; // 64 KB
+pub const USER_SLOT_SIZE: u64 = MAX_BIN_SIZE + USER_STACK_SIZE; // 256 KB
+pub const USER_SLOT_COUNT: u64 = (USER_LIMIT - USER_BASE) / USER_SLOT_SIZE; // 128
 
 pub struct UserSlot {
     pub code_base: u64,
@@ -195,6 +200,21 @@ pub fn used_heap_slots() -> usize {
     }
 }
 
+/// Code base (load address) of user slot `slot_idx`.
+///
+/// Single source of truth for the per-process slot layout: callers must not
+/// recompute `USER_BASE + slot * USER_SLOT_SIZE` by hand.
+#[inline]
+pub fn user_slot_code_base(slot_idx: u8) -> u64 {
+    USER_BASE + (slot_idx as u64) * USER_SLOT_SIZE
+}
+
+/// Top of the user stack for user slot `slot_idx` (end of the slot).
+#[inline]
+pub fn user_slot_stack_top(slot_idx: u8) -> u64 {
+    user_slot_code_base(slot_idx) + MAX_BIN_SIZE + USER_STACK_SIZE
+}
+
 /// Allocate a free user slot, returning its base addresses.
 /// Uses ASLR v0.44: picks a random free slot instead of sequential first-free.
 /// Returns `None` if all slots are in use.
@@ -256,10 +276,9 @@ pub fn alloc_user_slot() -> Option<UserSlot> {
 
     unsafe {
         SLOT_USED[target_idx] = true;
-        let base = USER_BASE + target_idx as u64 * USER_SLOT_SIZE;
         Some(UserSlot {
-            code_base: base,
-            stack_top: base + MAX_BIN_SIZE + USER_STACK_SIZE,
+            code_base: user_slot_code_base(target_idx as u8),
+            stack_top: user_slot_stack_top(target_idx as u8),
             slot_idx: target_idx as u8,
         })
     }
