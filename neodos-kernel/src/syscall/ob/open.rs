@@ -24,6 +24,7 @@ pub fn handler_ob_open(regs: crate::syscall::Registers) -> u64 {
     }
 
     let path = path_str;
+    ktrace!(LogSubsys::Object, "ObOpen '{}': copied; reading token", path);
 
     let token = crate::hal::without_interrupts(|| {
         let s = crate::scheduler::current_scheduler();
@@ -32,6 +33,7 @@ pub fn handler_ob_open(regs: crate::syscall::Registers) -> u64 {
             .map(|ep| ep.token.clone())
             .unwrap_or(crate::security::DEFAULT_ADMIN_TOKEN.clone())
     });
+    ktrace!(LogSubsys::Object, "ObOpen '{}': token read; calling ob_open_path", path);
 
     let ob_id = match crate::object::ob_open_path(&path, &token, desired_access) {
         Ok(id) => {
@@ -47,8 +49,10 @@ pub fn handler_ob_open(regs: crate::syscall::Registers) -> u64 {
             return err_to_u64(ob_err_to_syscall(e));
         }
     };
+    ktrace!(LogSubsys::Object, "ObOpen '{}': ob_open_path ok ob_id={}", path, ob_id);
 
     let entry = crate::handle::HandleEntry::ob_object(ob_id, desired_access);
+    ktrace!(LogSubsys::Object, "ObOpen '{}': allocating handle", path);
 
     let fd = crate::hal::without_interrupts(|| {
         let s = crate::scheduler::current_scheduler();
@@ -62,6 +66,7 @@ pub fn handler_ob_open(regs: crate::syscall::Registers) -> u64 {
 
     match fd {
         Some(fd) => {
+            ktrace!(LogSubsys::Object, "ObOpen '{}': fd={}", path, fd);
             fd as u64
         }
         None => {

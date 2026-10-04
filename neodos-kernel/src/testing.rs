@@ -310,6 +310,8 @@ pub fn register_tests() {
     register_alloc_tests();
     // Slab allocator tests
     register_slab_tests();
+    // #476 allocator FREE_BAD ownership detector tests
+    crate::memory::register_free_bad_tests();
     // NLT i18n format tests (shared libnlt)
     crate::i18n_tests::register_i18n_tests();
 }

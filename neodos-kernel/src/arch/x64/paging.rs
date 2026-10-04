@@ -119,7 +119,16 @@ pub struct UserSlot {
     pub slot_idx: u8,
 }
 
-static mut SLOT_USED: [bool; USER_SLOT_COUNT as usize] = [false; USER_SLOT_COUNT as usize];
+static SLOT_USED: [core::sync::atomic::AtomicBool; USER_SLOT_COUNT as usize] =
+    [const { core::sync::atomic::AtomicBool::new(false) }; USER_SLOT_COUNT as usize];
+/// #476: pid that last allocated the slot (diagnostic owner tag).
+static SLOT_OWNER: [core::sync::atomic::AtomicU32; USER_SLOT_COUNT as usize] =
+    [const { core::sync::atomic::AtomicU32::new(0) }; USER_SLOT_COUNT as usize];
+/// #476: has this slot ever been handed out by `alloc_user_slot`? Synthetic
+/// test Eprocesses have a `user_slot` without a real allocation; only real
+/// allocations may raise a FREE_BAD on the free path.
+static SLOT_ALLOCATED: [core::sync::atomic::AtomicBool; USER_SLOT_COUNT as usize] =
+    [const { core::sync::atomic::AtomicBool::new(false) }; USER_SLOT_COUNT as usize];
 
 /// Per-process heap region: each Ring 3 process gets a 2 MB heap.
 /// Region starts at 256 MB to stay clear of kernel heap and image.
@@ -127,7 +136,14 @@ pub const PROCESS_HEAP_BASE: u64 = 0x1000_0000;   // 256 MB
 pub const PROCESS_HEAP_SIZE: u64 = 0x20_0000;     // 2 MB per process
 pub const MAX_HEAP_SLOTS: usize = 16;
 
-static mut HEAP_SLOT_USED: [bool; MAX_HEAP_SLOTS] = [false; MAX_HEAP_SLOTS];
+static HEAP_SLOT_USED: [core::sync::atomic::AtomicBool; MAX_HEAP_SLOTS] =
+    [const { core::sync::atomic::AtomicBool::new(false) }; MAX_HEAP_SLOTS];
+/// #476: pid that last allocated the heap slot (diagnostic owner tag).
+static HEAP_SLOT_OWNER: [core::sync::atomic::AtomicU32; MAX_HEAP_SLOTS] =
+    [const { core::sync::atomic::AtomicU32::new(0) }; MAX_HEAP_SLOTS];
+/// #476: has this heap slot ever been handed out by `alloc_heap_slot`?
+static HEAP_SLOT_ALLOCATED: [core::sync::atomic::AtomicBool; MAX_HEAP_SLOTS] =
+    [const { core::sync::atomic::AtomicBool::new(false) }; MAX_HEAP_SLOTS];
 
 /// MEM-PROC (#274): resident 4 KB heap pages per heap slot (working-set proxy).
 /// Updated only in `heap_alloc_page` / `heap_free_page` / `heap_free_range`, the
@@ -175,29 +191,51 @@ pub struct HeapSlot {
 }
 
 pub fn alloc_heap_slot() -> Option<HeapSlot> {
-    unsafe {
-        for (i, slot) in HEAP_SLOT_USED.iter_mut().enumerate().take(MAX_HEAP_SLOTS) {
-            if !*slot {
-                *slot = true;
-                let base = PROCESS_HEAP_BASE + i as u64 * PROCESS_HEAP_SIZE;
-                return Some(HeapSlot { base });
+    use core::sync::atomic::Ordering;
+    // #476: the non-atomic load/store test-and-set is kept on purpose so the
+    // detector can observe the resulting double allocation via the free path.
+    for i in 0..MAX_HEAP_SLOTS {
+        if !HEAP_SLOT_USED[i].load(Ordering::Relaxed) {
+            // #476 direct double-allocation detector: if another CPU claims the
+            // slot between our load and CAS, both CPUs would have used it. Log
+            // it and keep the buggy sharing so the corruption stays observable.
+            if HEAP_SLOT_USED[i]
+                .compare_exchange(false, true, Ordering::AcqRel, Ordering::Relaxed)
+                .is_err()
+            {
+                crate::slab::record_free_bad_at(
+                    crate::slab::FreeBadKind::OwnerMismatch, "paging_heap_slot_race",
+                    i as u64, HEAP_SLOT_OWNER[i].load(Ordering::Relaxed) as u64);
             }
+            HEAP_SLOT_ALLOCATED[i].store(true, Ordering::Relaxed);
+            HEAP_SLOT_OWNER[i].store(crate::scheduler::current_pid(), Ordering::Relaxed);
+            let base = PROCESS_HEAP_BASE + i as u64 * PROCESS_HEAP_SIZE;
+            return Some(HeapSlot { base });
         }
     }
     None
 }
 
 pub fn free_heap_slot(index: u8) {
+    use core::sync::atomic::Ordering;
     let idx = index as usize;
     if idx < MAX_HEAP_SLOTS {
-        unsafe { HEAP_SLOT_USED[idx] = false; }
+        let allocated = HEAP_SLOT_ALLOCATED[idx].load(Ordering::Relaxed);
+        let was_used = HEAP_SLOT_USED[idx].swap(false, Ordering::AcqRel);
+        if allocated && !was_used {
+            // #476 FREE_BAD: freeing an already-free slot. If two processes
+            // raced on `alloc_heap_slot` they shared the slot, so this is the
+            // second (invalid) free.
+            crate::slab::record_free_bad_at(
+                crate::slab::FreeBadKind::AlreadyFree, "paging_heap_slot",
+                idx as u64, HEAP_SLOT_OWNER[idx].load(Ordering::Relaxed) as u64);
+        }
     }
 }
 
 pub fn used_heap_slots() -> usize {
-    unsafe {
-        HEAP_SLOT_USED[..MAX_HEAP_SLOTS].iter().filter(|&&used| used).count()
-    }
+    use core::sync::atomic::Ordering;
+    HEAP_SLOT_USED[..MAX_HEAP_SLOTS].iter().filter(|s| s.load(Ordering::Relaxed)).count()
 }
 
 /// Code base (load address) of user slot `slot_idx`.
@@ -222,9 +260,10 @@ pub fn alloc_user_slot() -> Option<UserSlot> {
     let count = USER_SLOT_COUNT as usize;
 
     // Count free slots first
-    let free_count = unsafe {
-        SLOT_USED[..count].iter().filter(|&&used| !used).count()
-    };
+    let free_count = SLOT_USED[..count]
+        .iter()
+        .filter(|s| !s.load(core::sync::atomic::Ordering::Relaxed))
+        .count();
     if free_count == 0 {
         return None;
     }
@@ -234,8 +273,8 @@ pub fn alloc_user_slot() -> Option<UserSlot> {
     if free_count == 1 {
         // Only one free slot — find it directly
         unsafe {
-            for (i, &used) in SLOT_USED.iter().enumerate().take(count) {
-                if !used {
+            for (i, s) in SLOT_USED.iter().enumerate().take(count) {
+                if !s.load(core::sync::atomic::Ordering::Relaxed) {
                     target_idx = i;
                     break;
                 }
@@ -246,8 +285,8 @@ pub fn alloc_user_slot() -> Option<UserSlot> {
         let pick = (r as usize) % free_count;
         let mut seen = 0;
         unsafe {
-            for (i, &used) in SLOT_USED.iter().enumerate().take(count) {
-                if !used {
+            for (i, s) in SLOT_USED.iter().enumerate().take(count) {
+                if !s.load(core::sync::atomic::Ordering::Relaxed) {
                     if seen == pick {
                         target_idx = i;
                         break;
@@ -262,8 +301,8 @@ pub fn alloc_user_slot() -> Option<UserSlot> {
         let pick = (tsc as usize) % free_count;
         let mut seen = 0;
         unsafe {
-            for (i, &used) in SLOT_USED.iter().enumerate().take(count) {
-                if !used {
+            for (i, s) in SLOT_USED.iter().enumerate().take(count) {
+                if !s.load(core::sync::atomic::Ordering::Relaxed) {
                     if seen == pick {
                         target_idx = i;
                         break;
@@ -275,7 +314,17 @@ pub fn alloc_user_slot() -> Option<UserSlot> {
     }
 
     unsafe {
-        SLOT_USED[target_idx] = true;
+        // #476 direct double-allocation detector (see alloc_heap_slot).
+        if SLOT_USED[target_idx]
+            .compare_exchange(false, true, core::sync::atomic::Ordering::AcqRel, core::sync::atomic::Ordering::Relaxed)
+            .is_err()
+        {
+            crate::slab::record_free_bad_at(
+                crate::slab::FreeBadKind::OwnerMismatch, "paging_user_slot_race",
+                target_idx as u64, SLOT_OWNER[target_idx].load(core::sync::atomic::Ordering::Relaxed) as u64);
+        }
+        SLOT_ALLOCATED[target_idx].store(true, core::sync::atomic::Ordering::Relaxed);
+        SLOT_OWNER[target_idx].store(crate::scheduler::current_pid(), core::sync::atomic::Ordering::Relaxed);
         Some(UserSlot {
             code_base: user_slot_code_base(target_idx as u8),
             stack_top: user_slot_stack_top(target_idx as u8),
@@ -286,9 +335,18 @@ pub fn alloc_user_slot() -> Option<UserSlot> {
 
 /// Free a previously allocated user slot by index.
 pub fn free_user_slot(slot_idx: u8) {
+    use core::sync::atomic::Ordering;
     let idx = slot_idx as usize;
     if idx < USER_SLOT_COUNT as usize {
-        unsafe { SLOT_USED[idx] = false; }
+        let allocated = SLOT_ALLOCATED[idx].load(Ordering::Relaxed);
+        let was_used = SLOT_USED[idx].swap(false, Ordering::AcqRel);
+        if allocated && !was_used {
+            // #476 FREE_BAD: freeing an already-free user slot (a shared slot
+            // freed twice after a concurrent `alloc_user_slot`).
+            crate::slab::record_free_bad_at(
+                crate::slab::FreeBadKind::AlreadyFree, "paging_user_slot",
+                idx as u64, SLOT_OWNER[idx].load(Ordering::Relaxed) as u64);
+        }
     }
 }
 

@@ -501,6 +501,7 @@ unsafe fn ap_enter_idle(idle: *mut crate::scheduler::Kthread) -> ! {
     crate::arch::x64::gdt::prepare_ring3_return(ks_top, tid, pid);
     core::arch::asm!(
         "mov rsp, {0}",
+        "call {clr}",
         "pop rax",
         "pop rbx",
         "pop rcx",
@@ -518,6 +519,7 @@ unsafe fn ap_enter_idle(idle: *mut crate::scheduler::Kthread) -> ! {
         "pop rbp",
         "iretq",
         in(reg) rsp,
+        clr = sym crate::scheduler::diag::kstack::switch_out_clear,
         options(noreturn)
     );
 }

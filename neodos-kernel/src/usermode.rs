@@ -407,6 +407,9 @@ pub fn wait_for_process(pid: u32) {
         if !target_ptr.is_null() {
             unsafe { crate::arch::x64::cpu_local::sync_per_cpu_current(target_ptr, target_pid); }
         }
+        // #476 H1 experiment: this bookkeeping switch does not abandon the boot
+        // stack (execute_usermode iretqs from it), so no switch-out window.
+        crate::scheduler::diag::kstack::switch_out_clear();
         crate::serial_println!("[USERMODE] activated TID={}", target_tid);
         if let Some(k) = s.current_kthread_mut() {
             crate::scheduler::diag::run_ev(crate::scheduler::diag::RUN_SITE_USERMODE, k);
@@ -439,6 +442,8 @@ pub fn wait_for_process(pid: u32) {
         // F-01: sync KPRCB back to boot thread
         let boot_ptr = s.find_kthread(scheduler::BOOT_TID).map(|k| k as *const _ as *mut scheduler::Kthread).unwrap_or(core::ptr::null_mut());
         unsafe { crate::arch::x64::cpu_local::sync_per_cpu_current(boot_ptr, 0); }
+        // #476 H1 experiment: the CPU is already back on the boot stack.
+        crate::scheduler::diag::kstack::switch_out_clear();
         if let Some(k) = s.find_kthread_mut(scheduler::BOOT_TID) {
             k.state = scheduler::ThreadState::Running;
         }

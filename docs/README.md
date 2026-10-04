@@ -134,6 +134,7 @@
 | Document | Description |
 |----------|-------------|
 | [Audio API](design/audio-api-design.md) | Audio device + Ring 3 PCM API (#469) |
+| [Display / Framebuffer API](design/display-api-design.md) | Ring 3 display/framebuffer API design (#465) |
 | [File Seek](design/file-seek-design.md) | File handle seek / read-at-offset (#468) |
 | [FPU / SSE Context](design/fpu-context-design.md) | Save/restore FP/SIMD on context switch (#471) |
 | [Large NXE Binaries](design/nxe-large-binary-design.md) | Binary size cap and user stack (#470) |

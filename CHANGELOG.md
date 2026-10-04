@@ -2,6 +2,21 @@
 
 <!-- markdownlint-disable MD013 MD024 MD056 -->
 
+## Unreleased
+
+### Fixed
+
+- **#474: SMP2 Ring-0 `INVALID_OPCODE` (`rip=0x148`) — wild `iretq` from a
+  non-dispatchable frame.** A user thread interrupted inside a syscall
+  (`cs == 0x08`) with `yield_requested` set was published `Ready` by the timer's
+  Ring-0 preemption branch with a transient kernel call frame as its saved
+  `rsp`. A later `mov rsp,next_rsp; pop 15; iretq` consumed stack data as
+  RIP/CS and jumped to a wild address. The branch now defers such threads to
+  their syscall-return path via
+  `schedule::ring0_publish_is_dispatchable`. Regression test
+  `n474_ring0_preempt_only_publishes_dispatchable_frame`. See
+  `docs/investigation/issue-474-smp2-ring0-invalid-opcode.md`.
+
 ## v0.51.3 — 2026-10-03
 
 ### Added
