@@ -129,11 +129,9 @@ A single kernel-created singleton object:
 | User-creatable | No (`ob_create` rejects it) |
 | Open access | READ (info) / WRITE (map + present) |
 
-> **Type-number coordination.** `docs/design/font-manager-design.md` is an
-> unimplemented draft that also proposes `ObType::Font = 23`. Only one may take
-> 23. This document proposes **Display = 23, Font = 24**, and flags that the
-> Font draft must be renumbered when either lands. The authoritative registry
-> remains `object/types.rs`.
+> **Type-number allocation (resolved).** `ObType::Display = 23`. The Font
+> Manager draft (`docs/design/font-manager-design.md`) has been renumbered to
+> `ObType::Font = 24`. The authoritative registry remains `object/types.rs`.
 
 ### 2.3 Back Buffer (Surface)
 
@@ -673,13 +671,11 @@ cleanup as `DisplayFreeBuffer`: unmap, free frames, release the VT
 
 ## 11. Open Questions
 
-1. **ObType numbering vs the Font draft** — confirm Display=23 / Font=24, or
-   invert. Must be resolved before either is implemented.
-2. **Surface format** — is `XRGB8888` sufficient for the GOP modes OVMF
+1. **Surface format** — is `XRGB8888` sufficient for the GOP modes OVMF
    exposes, or should we read the format from the bootloader now?
-3. **Tearing** — accept single-buffer tearing for v1, or require double
+2. **Tearing** — accept single-buffer tearing for v1, or require double
    buffering before shipping Doom?
-4. **Ownership model** — one graphics client per VT (proposed) or one global
+3. **Ownership model** — one graphics client per VT (proposed) or one global
    client with the others queueing?
-5. **Present targets** — should `present` be restricted to the caller's VT, or
+4. **Present targets** — should `present` be restricted to the caller's VT, or
    allow an explicit VT/CRTC index for future multi-head?
