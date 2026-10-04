@@ -241,6 +241,20 @@ pub fn register_tests() {
         test_eq!(validate(frame_addr, ks_base, ks_top, &Frame { rsp: 0xFFFF_8000_0000_0000, ..ring3_ok }, true), Some(IretqBad::InvalidRsp));
     });
 
+    test_case!("n476_on_timer_tick_rsp_ownership", {
+        // #476: `on_timer_tick` may only save a live rsp that lies on the
+        // current thread's own kernel stack; a foreign stack is rejected.
+        use crate::scheduler::stack::rsp_in_kernel_stack;
+        let top = 0x24b4000u64;
+        let size = 0x4000usize;
+        test_true!(rsp_in_kernel_stack(top, size, top - 8));         // just below top
+        test_true!(rsp_in_kernel_stack(top, size, top - size as u64)); // bottom inclusive
+        test_true!(!rsp_in_kernel_stack(top, size, top));            // at the top
+        test_true!(!rsp_in_kernel_stack(top, size, top - size as u64 - 8)); // below the bottom
+        test_true!(!rsp_in_kernel_stack(top, size, top + 0x8000));   // another kstack
+        test_true!(rsp_in_kernel_stack(0, size, 0x1234));            // unknown: allow
+    });
+
     test_case!("stack_canary_bounds_model", {
         // #348: the canary lives at `stack_bottom = ks_top - actual_size`.
         // The checker must use the stack's owned size, not the global

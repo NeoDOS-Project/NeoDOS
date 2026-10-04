@@ -827,7 +827,7 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
             // is a no-op when the timeslice path already enqueued it.
             if let Some(k) = scheduler.current_kthread_mut() {
                 crate::scheduler::diag::rsp_ev(crate::scheduler::diag::SITE_RSP_IDT_USER, k, current_rsp);
-                k.rsp = current_rsp;
+                crate::scheduler::stack::save_live_rsp_checked(k, current_rsp, "idt_user");
                 k.yield_requested = false;
                 // The CPU actually executing the thread owns its re-enqueue.
                 k.cpu = unsafe { crate::arch::x64::cpu_local::this_cpu_id() };
@@ -918,6 +918,21 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
                     crate::scheduler::Scheduler::remove_from_run_queue(current);
                     crate::scheduler::diag::run_ev(crate::scheduler::diag::RUN_SITE_IDT_REVERT, current);
                     current.state = ThreadState::Running;
+                    // #476: `schedule_with` repointed `KPRCB.current_thread`
+                    // at the rejected `next` before this branch decided to
+                    // keep running `current` on its own stack. Restore the
+                    // per-CPU identity to match the context the CPU actually
+                    // resumes. Omitting it desynchronises `KPRCB` from the live
+                    // stack: the next timer tick reads `current_thread = next`
+                    // with `current_rsp` still on `current`'s stack and saves
+                    // that foreign stack into `next.rsp`, so a later dispatch
+                    // of `next` iretq's a frame from the wrong kernel stack.
+                    let cur_ptr = current as *const crate::scheduler::Kthread
+                        as *mut crate::scheduler::Kthread;
+                    let cur_pid = current.pid;
+                    unsafe {
+                        crate::arch::x64::cpu_local::sync_per_cpu_current(cur_ptr, cur_pid);
+                    }
                 }
                 scheduler.current_tid = tid;
                 crate::hal::ack_irq(32);
@@ -1040,7 +1055,7 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
                 tid, has_non_idle);
             if let Some(k) = scheduler.current_kthread_mut() {
                 crate::scheduler::diag::rsp_ev(crate::scheduler::diag::SITE_RSP_IDT_IDLE, k, current_rsp);
-                k.rsp = current_rsp;
+                crate::scheduler::stack::save_live_rsp_checked(k, current_rsp, "idt_idle");
             }
             let next = scheduler.schedule();
             let next_ks = unsafe { (*next).kernel_stack_top };
@@ -1129,7 +1144,7 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
                 tid, has_non_idle);
             if let Some(k) = scheduler.current_kthread_mut() {
                 crate::scheduler::diag::rsp_ev(crate::scheduler::diag::SITE_RSP_IDT_KERNEL, k, current_rsp);
-                k.rsp = current_rsp;
+                crate::scheduler::stack::save_live_rsp_checked(k, current_rsp, "idt_kernel");
                 k.yield_requested = false;
                 // The CPU actually executing the thread owns its re-enqueue.
                 k.cpu = unsafe { crate::arch::x64::cpu_local::this_cpu_id() };

@@ -60,6 +60,41 @@ pub fn check_kernel_stack_canary_sized(
     }
 }
 
+/// #476: is `rsp` inside the kernel stack described by `ks_top`/`stack_size`?
+///
+/// Used to reject storing a foreign stack pointer into a thread during the
+/// window where `KPRCB.current_thread` has been repointed but the CPU is still
+/// on the previous stack. Unknown stacks (`ks_top == 0`) are treated as valid
+/// so legitimate saves are never blocked.
+#[inline]
+pub fn rsp_in_kernel_stack(ks_top: u64, stack_size: usize, rsp: u64) -> bool {
+    if ks_top == 0 || stack_size == 0 {
+        return true;
+    }
+    let base = ks_top.saturating_sub(stack_size as u64);
+    rsp >= base && rsp < ks_top
+}
+
+/// #476: store the live `rsp` only when it lies on `k`'s own kernel stack.
+///
+/// During the `KPRCB.current_thread` → `mov rsp` transition the per-CPU
+/// identity can be committed before the CPU has switched stacks; a save from
+/// that window would store a foreign stack into `k.rsp` and corrupt the
+/// thread's dispatch frame. The boot thread is exempt (it runs on the bootstrap
+/// stack, not `boot_ks_top`).
+#[inline]
+pub fn save_live_rsp_checked(k: &mut crate::scheduler::Kthread, rsp: u64, site: &'static str) {
+    if k.tid == crate::scheduler::BOOT_TID
+        || rsp_in_kernel_stack(k.kernel_stack_top, k.kernel_stack_size, rsp)
+    {
+        k.rsp = rsp;
+    } else {
+        crate::raw_serial_println!(
+            "[RSP_FOREIGN] site={} tid={} pid={} ks_top=0x{:x} ks_size={} rsp=0x{:x} k.cpu={} state={:?}",
+            site, k.tid, k.pid, k.kernel_stack_top, k.kernel_stack_size, rsp, k.cpu, k.state);
+    }
+}
+
 /// Backwards-compatible wrapper for callers that own a full `KERNEL_STACK_SIZE`
 /// stack (heap-allocated kernel threads). Idle-aware callers use
 /// [`check_kernel_stack_canary_sized`].
