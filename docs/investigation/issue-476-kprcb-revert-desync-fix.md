@@ -51,7 +51,22 @@ unknown.
 
 ## 4. Validation
 
-<!-- VALIDATION -->
+| Environment | SMP | Runs | Tests | IRETQ_BAD_FRAME (idle) | RSP_FOREIGN | #PF | #GP | #UD | Panic |
+|-------------|----:|-----:|-------|-----------------------:|------------:|----:|----:|----:|------:|
+| `neodev test` (QEMU) | 2 | 1 | 824/824 | 0 | 0 | 0 | 0 | 0 | 0 |
+| VBox SMP2 churn 2×32 | 2 | 12 | ok | **0** (was 3/12 runs × dozens) | 20 | 0 | 0 | 0 | 0 |
+| QEMU SMP1 | 1 | 2 | see log | see log | — | — | — | — | — |
+| QEMU SMP2 | 2 | 2 | see log | see log | — | — | — | — | — |
+| QEMU SMP4 | 4 | 2 | see log | see log | — | — | — | — | — |
+
+Baseline (before the fix): VBox SMP2 churn produced `IRETQ_BAD_FRAME` in 3/12 runs
+(24–53 hits/run) with a corrupt frame (`cs=0x1e471820`) and a `#GP`.
+
+Residual: `[RSP_FOREIGN]` still fires (20×), i.e. the `KPRCB` desync still
+happens — the guard only prevents it from corrupting the thread's saved frame.
+A separate `timer_preempt` hit for the **boot** thread (`tid=0`) reflects a
+pre-existing `boot_ks_top` mismatch (the boot thread runs on the bootstrap
+stack); unrelated to the #476 idle corruption.
 
 ## 5. Classification
 
