@@ -73,12 +73,57 @@ pub fn dump_forensic_info() {
         for (i, t) in sched.kthreads.iter().enumerate() {
             if let Some(k) = t {
                 let state = format!("{:?}", k.state);
-                let _ = writeln!(w, "  [{}] TID={} PID={} state={} ticks={}",
-                    i, k.tid, k.pid, state, k.cpu_ticks);
+                let _ = writeln!(w, "  [{}] TID={} PID={} state={} cpu={} rsp=0x{:x} ks_top=0x{:x} ks_size={} idle={} ticks={} name={}",
+                    i, k.tid, k.pid, state, k.cpu, k.rsp, k.kernel_stack_top, k.kernel_stack_size, k.is_idle, k.cpu_ticks, k.name());
+            }
+        }
+        // #476: two live (non-Terminated) threads must never share a kernel
+        // stack. A match means a stack was freed/reused while still owned
+        // (kernel-stack UAF), which produces wild RIPs on a later dispatch.
+        for (i, a_opt) in sched.kthreads.iter().enumerate() {
+            let Some(a) = a_opt else { continue };
+            if a.state == crate::scheduler::ThreadState::Terminated { continue; }
+            for (j, b_opt) in sched.kthreads.iter().enumerate().skip(i + 1) {
+                let Some(b) = b_opt else { continue };
+                if b.state == crate::scheduler::ThreadState::Terminated { continue; }
+                if a.kernel_stack_top != 0 && a.kernel_stack_top == b.kernel_stack_top {
+                    let _ = writeln!(w, "  [DUP_KSTOP] tid={} pid={} <-> tid={} pid={} ks_top=0x{:x}",
+                        a.tid, a.pid, b.tid, b.pid, a.kernel_stack_top);
+                }
             }
         }
     } else {
         let _ = writeln!(w, "  (scheduler lock contended)");
+    }
+
+    // #476: per-CPU KPRCB identity + live rsp/ks_top of the current thread.
+    // The global scheduler dump above can disagree with the per-CPU view
+    // (a CPU may still execute on a thread whose pid is no longer current);
+    // both are needed to reason about kernel-stack ownership.
+    let _ = writeln!(w, "--- KPRCB per CPU ---");
+    for cpu in 0..crate::arch::x64::cpu_local::MAX_CPUS {
+        let kprcb = unsafe { crate::arch::x64::cpu_local::KPRCB_PAGES[cpu] };
+        if kprcb == 0 { continue; }
+        let cur = unsafe {
+            core::ptr::read_volatile(
+                (kprcb + crate::arch::x64::cpu_local::OFFSET_CURRENT_THREAD as u64) as *const u64)
+        };
+        let pid = unsafe {
+            core::ptr::read_volatile(
+                (kprcb + crate::arch::x64::cpu_local::OFFSET_CURRENT_PID as u64) as *const u32)
+        };
+        let idle = unsafe {
+            core::ptr::read_volatile(
+                (kprcb + crate::arch::x64::cpu_local::OFFSET_IDLE as u64) as *const u8)
+        };
+        let (tid, rsp, ks_top) = if cur == 0 {
+            (0u32, 0u64, 0u64)
+        } else {
+            let k = cur as *const crate::scheduler::Kthread;
+            unsafe { ((*k).tid, (*k).rsp, (*k).kernel_stack_top) }
+        };
+        let _ = writeln!(w, "  cpu={} kprcb=0x{:x} cur=0x{:x} tid={} pid={} rsp=0x{:x} ks_top=0x{:x} idle={}",
+            cpu, kprcb, cur, tid, pid, rsp, ks_top, idle);
     }
 
     let _ = writeln!(w, "--- End forensic dump ---");

@@ -431,6 +431,21 @@ extern "x86-interrupt" fn invalid_opcode_handler(stack_frame: InterruptStackFram
             DispatchResult::Panic => {}
         }
     }
+    // #476: raw dump of the Ring-0 handler stack (includes the CPU-pushed
+    // exception frame) so a wild control transfer is reconstructable even if
+    // the regular logger/diagnostics are unavailable.
+    {
+        let base = unsafe { crate::hal::raw::raw_read_rsp() };
+        crate::raw_serial_println!("[#UD_STACK] handler_rsp=0x{:x} frame_rip=0x{:x} frame_cs=0x{:x}",
+            base, rip, stack_frame.code_segment);
+        let mut off: u64 = 0;
+        while off < 0x180 {
+            let addr = base + off;
+            let v = unsafe { core::ptr::read_volatile(addr as *const u64) };
+            crate::raw_serial_println!("[#UD_STACK] [0x{:x}] = 0x{:x}", addr, v);
+            off += 8;
+        }
+    }
     panic_classified!(PanicClass::UnknownCpuException, "Invalid opcode: rip={:#x}", rip);
 }
 
