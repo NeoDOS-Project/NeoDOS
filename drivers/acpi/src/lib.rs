@@ -106,9 +106,7 @@ fn acpi_poweroff() {
 
     // 2. Fallback: QEMU/Bochs poweroff port (0x604 with 0x2000)
     unsafe { hst_outw(0x604, 0x2000) };
-
-    // 3. Last resort: PS/2 keyboard reset (0x64, 0xFE)
-    unsafe { hst_outb(0x64, 0xFE) };
+    // No PS/2 reset fallback: `0x64/0xFE` is a reset, not a power-off.
 }
 
 #[no_mangle]
