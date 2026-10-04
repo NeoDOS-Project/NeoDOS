@@ -231,6 +231,18 @@ Every run also reached `netpump running` (the Ring-0 data-plane thread), and the
 SMP2/SMP4 runs exercised the shell, NeoInit and the service syscall paths where
 the fault originally landed.
 
+### VirtualBox SMP2
+
+Post-fix VirtualBox 7.2.20, EFI, SMP2, bridged: **3/3** subsequent boots reached
+`ALL_TESTS_COMPLETE` with 0 faults. One earlier boot panicked with a **different**
+Ring-0 `INVALID_OPCODE` (`rip=0x24b922a` — a kernel-stack address of another
+thread — on cpu1) immediately after an unhandled user `#PF`
+(`[EXC] … Terminate`). Healthy VBox boots show no such terminate, the signature
+does not match this mechanism, and it occurred despite the new gate. It is
+tracked separately as **#476**, consistent with the existing VBox SMP2
+memory-corruption family (#383/#384). One VBox boot on the unfixed base was OK
+(n=1). This is **not** part of the #474 root cause.
+
 The pre-fix build reproduced the panic in SMP2 (run 1 of the forensic campaign;
 see `PANIC_smp2_1.qtrace`) and the confirmation instrumentation showed the exact
 illegal publication
