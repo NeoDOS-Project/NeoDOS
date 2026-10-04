@@ -77,10 +77,8 @@ pub extern "C" fn poweroff() -> ! {
             raw::raw_outw(port, val);
         }
     }
-    // 3. PS/2 keyboard controller (legacy)
-    unsafe {
-        raw::raw_outb(0x64u16, 0xFEu8);
-    }
+    // No PS/2 reset fallback: `0x64/0xFE` is a reset (reboot), not a power-off.
+    // If ACPI S5 and the VM ports above did not power off the machine, halt.
     halt()
 }
 

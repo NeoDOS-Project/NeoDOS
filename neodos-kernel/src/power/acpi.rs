@@ -404,10 +404,16 @@ pub fn init() {
         return;
     }
     if let Some(state) = acpi_parse_fadt() {
+        crate::serial_println!(
+            "[ACPI] power: PM1a_CNT=0x{:x} SLP_TYPa={} PM1b_CNT=0x{:x} SLP_TYPb={}",
+            state.pm1a_cnt_blk, state.slp_typa, state.pm1b_cnt_blk, state.slp_typb
+        );
         unsafe {
             ACPI_POWER = state;
         }
         INITIALIZED.store(true, Ordering::Relaxed);
+    } else {
+        crate::serial_println!("[ACPI] power: FADT not found; shutdown falls back to legacy paths");
     }
 
     // Publish the ACPI reset/S5 handlers to the HAL (the HAL must not depend
