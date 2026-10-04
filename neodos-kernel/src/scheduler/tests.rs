@@ -137,6 +137,40 @@ pub fn register_tests() {
         test_eq!(cross, Some(false));
     });
 
+    test_case!("n474_ring0_preempt_only_publishes_dispatchable_frame", {
+        // #474: the timer's Ring-0 preemption branch must not publish a user
+        // thread interrupted inside a syscall (cs == 0x08). Its live `rsp` is a
+        // transient kernel call frame, not a dispatch frame; publishing it let
+        // a later iretq consume stack data as RIP/CS (wild RIP=0x148 on SMP2).
+        use crate::scheduler::schedule::ring0_publish_is_dispatchable;
+
+        // User thread interrupted in Ring 0 (inside a syscall) -> must defer.
+        test_true!(!ring0_publish_is_dispatchable(0x08, false));
+        // A user thread with a transient ring0 CS variant is likewise deferred.
+        test_true!(!ring0_publish_is_dispatchable(0x10, false));
+        // Genuine kernel/idle threads run Ring 0 by design -> publishable.
+        test_true!(ring0_publish_is_dispatchable(0x08, true));
+        // A Ring-3 interruption is dispatchable (handled by the user branch).
+        test_true!(ring0_publish_is_dispatchable(0x1B, false));
+        test_true!(ring0_publish_is_dispatchable(0x1B, true));
+
+        // `frame_is_ring3` alone is insufficient here: a user thread's *stored*
+        // dispatch frame may still be Ring 3 while its *live* rsp (the value
+        // this branch would save) is a deep Ring-0 call frame. The gate must be
+        // driven by the interrupted CS, which is what the helper encodes.
+        use crate::scheduler::schedule::frame_is_ring3;
+        use crate::scheduler::types::KERNEL_STACK_SIZE;
+        let stack = crate::scheduler::stack::AlignedKStack::new_boxed();
+        let top = stack.0.as_ptr() as u64 + KERNEL_STACK_SIZE as u64;
+        let deep_rsp = top - 0x140;
+        unsafe { *((deep_rsp + 128) as *mut u64) = 0x08; } // deep slot is Ring 0
+        let mut k = Kthread::new_idle(2, 0, 0, top);
+        k.rsp = deep_rsp;
+        k.kernel_stack_top = top;
+        test_true!(!frame_is_ring3(&k));
+        let _ = &stack; // keep the allocation alive for the duration of the test
+    });
+
     test_case!("stack_canary_bounds_model", {
         // #348: the canary lives at `stack_bottom = ks_top - actual_size`.
         // The checker must use the stack's owned size, not the global

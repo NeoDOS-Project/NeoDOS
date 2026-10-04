@@ -178,6 +178,22 @@ Ring 0 by design and are dispatched through their Ring-0 frame by
 wrong: `spawn_kthread_named` gives kernel threads a real pid (e.g. `netpump`), so
 keying on the pid starves them.
 
+#### #474: the kernel-preempt branch is not kernel-only
+
+#338 left the *kernel-preempt* branch of `timer_handler_inner` ungated, on the
+assumption that only kernel threads reach it. A **user** thread interrupted while
+in Ring 0 (`cs == 0x08`, inside a syscall) reaches it too. When it has
+`yield_requested` set (`sys_yield` records the intent; a timer can land before
+`syscall_try_resched` consumes it), the branch published the thread `Ready` with
+a transient Ring-0 call frame. A later `mov rsp,next_rsp; pop 15; iretq` then read
+arbitrary stack contents as RIP/CS and jumped to a wild address
+(`INVALID_OPCODE rip=0x148` on SMP2). The gate is now applied there as well via
+`schedule::ring0_publish_is_dispatchable(interrupted_cs, is_kernel_thread)`: a
+user thread in Ring 0 is deferred to its syscall-return path (NEED_RESCHED),
+while genuine kernel/idle threads keep the historical Ring-0 preemption.
+
+See `docs/investigation/issue-474-smp2-ring0-invalid-opcode.md`.
+
 ---
 
 ## CPU Execution Accounting (Phase 15-A.1)

@@ -270,6 +270,10 @@ The idle thread is preempted whenever any non-idle thread is Ready.
 thread — preempt if state==Ready; (b) Idle thread (IDLE_TID=1) — preempt if state==Ready
 and non-idle threads exist; (c) Ring 0 kernel thread — preempt if state==Ready and non-idle
 threads exist. Each branch saves RSP, calls `schedule()`, and updates TSS.RSP0 on switch.
+Branch (c) is restricted to genuine kernel/idle threads: a **user** thread observed in Ring 0
+is inside a syscall, its live RSP is not a dispatch frame, and it MUST be deferred to its
+syscall-return path (`schedule::ring0_publish_is_dispatchable`, #474). Publishing it Ready
+was the wild-`iretq` `INVALID_OPCODE` on SMP2.
 
 ### 6.3 Process Slot Management
 
