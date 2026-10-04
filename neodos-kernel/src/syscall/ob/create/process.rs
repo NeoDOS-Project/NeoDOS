@@ -165,12 +165,7 @@ pub(super) fn dispatch(
                 }
                 let stack = if let Some(ep) = lock.find_eprocess(pid) {
                     if let Some(slot_idx) = ep.user_slot {
-                        let slot_size = 0x20000u64;
-                        let max_bin = 0x10000u64;
-                        let user_stack_size = 0x10000u64;
-                        let stack_top = crate::arch::x64::paging::USER_BASE
-                            + slot_idx as u64 * slot_size
-                            + max_bin + user_stack_size;
+                        let stack_top = crate::arch::x64::paging::user_slot_stack_top(slot_idx);
                         stack_top - 0x1000
                     } else {
                         0
