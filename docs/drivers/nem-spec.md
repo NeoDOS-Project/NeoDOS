@@ -41,19 +41,20 @@ or by the kernel driver loader when a `Driver` object is created.
 | 20 | 2 | `abi_max` | Maximum compatible ABI version |
 | 22 | 2 | `driver_type` | `0`=Null, `1`=Echo, `2`=Lifecycle, `3`=Mutation, `4`=Fault, `5`=Burst |
 | 24 | 2 | `category` | `0`=BOOT, `1`=SYSTEM, `2`=DEMAND |
-| 26 | 4 | `text_size` | Size of text section (bytes) |
-| 30 | 4 | `rodata_size` | Size of rodata section (bytes) |
-| 34 | 4 | `data_size` | Size of data section (bytes) |
-| 38 | 4 | `bss_size` | Size of BSS section (bytes) |
-| 42 | 4 | `total_mem_size` | Total memory = text + rodata + data + bss |
-| 46 | 4 | `entry_init` | Initialization entry point offset |
-| 50 | 4 | `entry_event` | Event handler entry point offset |
-| 54 | 4 | `entry_fini` | Finalization entry point offset |
-| 58 | 4 | `num_relocs` | Number of relocation entries |
-| 62 | 4 | `relocs_offset` | Offset to relocation table (from header start) |
-| 66 | 4 | `syms_offset` | Offset to symbol table (from header start) |
-| 70 | 4 | `strtab_offset` | Offset to string table (from header start) |
-| 74 | 4 | `name_offset` | Offset to driver name string (from header start) |
+| 26 | 2 | `_pad` | Alignment padding (`#[repr(C)]`) |
+| 28 | 4 | `text_size` | Size of text section (bytes) |
+| 32 | 4 | `rodata_size` | Size of rodata section (bytes) |
+| 36 | 4 | `data_size` | Size of data section (bytes) |
+| 40 | 4 | `bss_size` | Size of BSS section (bytes) |
+| 44 | 4 | `total_mem_size` | Total memory = text + rodata + data + bss |
+| 48 | 4 | `entry_init` | Initialization entry point offset |
+| 52 | 4 | `entry_event` | Event handler entry point offset |
+| 56 | 4 | `entry_fini` | Finalization entry point offset |
+| 60 | 4 | `num_relocs` | Number of relocation entries |
+| 64 | 4 | `relocs_offset` | Offset to relocation table (from header start) |
+| 68 | 4 | `syms_offset` | Offset to symbol table (from header start) |
+| 72 | 4 | `strtab_offset` | Offset to string table (from header start) |
+| 76 | 4 | `name_offset` | Offset to driver name string (from header start) |
 
 ## Relocation Entry (12 bytes)
 
