@@ -918,6 +918,21 @@ pub unsafe fn this_cpu_slab_free_local(cache_idx: usize, ptr: *mut u8) -> Result
     Ok(())
 }
 
+/// #476 FREE_BAD: is `ptr` currently sitting in this CPU's hot cache for
+/// `cache_idx`? Used to detect a double free on the per-CPU fast path, which
+/// does not otherwise validate ownership.
+#[inline]
+pub unsafe fn this_cpu_slab_cache_contains(cache_idx: usize, ptr: *mut u8) -> bool {
+    let count = gs_read_u16(slab_free_count_offset(cache_idx)) as usize;
+    let n = count.min(SLAB_BATCH_SIZE_USIZE);
+    for i in 0..n {
+        if gs_read_u64(slab_free_list_elem_offset(cache_idx, i)) == ptr as u64 {
+            return true;
+        }
+    }
+    false
+}
+
 /// Get the per-CPU slab cache `head` pointer for a given cache index.
 #[inline(always)]
 pub unsafe fn this_cpu_slab_head(cache_idx: usize) -> *mut u8 {

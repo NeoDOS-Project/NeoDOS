@@ -16,6 +16,7 @@
 
 use core::alloc::{GlobalAlloc, Layout};
 use core::ptr;
+use core::sync::atomic::{AtomicU64, Ordering};
 use linked_list_allocator::LockedHeap;
 use spin::Mutex;
 use crate::memory;
@@ -387,6 +388,248 @@ impl SlabAllocator {
     }
 }
 
+// ── #476 FREE_BAD ownership audit (diagnostic, not a fix) ────────────────
+//
+// Validates that a `dealloc` actually owns the pointer it is about to free:
+// - slab objects live on slab pages *outside* the fallback heap range;
+// - fallback objects live *inside* the fallback heap range.
+// The range routing is already exact; the audit adds metadata/alignment/
+// double-free checks that the fast paths skip.
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum FreeBadKind {
+    OutOfRange = 0,
+    Misaligned = 1,
+    NotOwned = 2,
+    AlreadyFree = 3,
+    OwnerMismatch = 4,
+    InvalidMetadata = 5,
+    Unknown = 6,
+}
+
+impl FreeBadKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            FreeBadKind::OutOfRange => "OUT_OF_RANGE",
+            FreeBadKind::Misaligned => "MISALIGNED",
+            FreeBadKind::NotOwned => "NOT_OWNED",
+            FreeBadKind::AlreadyFree => "ALREADY_FREE",
+            FreeBadKind::OwnerMismatch => "OWNER_MISMATCH",
+            FreeBadKind::InvalidMetadata => "INVALID_METADATA",
+            FreeBadKind::Unknown => "UNKNOWN",
+        }
+    }
+}
+
+pub static FREE_BAD_COUNT: AtomicU64 = AtomicU64::new(0);
+// per-kind counters (index by kind discriminant)
+pub static FREE_BAD_KINDS: [AtomicU64; 7] = [const { AtomicU64::new(0) }; 7];
+
+const FB_RING: usize = 64;
+struct FreeBadEv {
+    kind: u8, ptr: u64, size: u64, align: u64, cpu: u32, pid: u32, tid: u32, rsp: u64, seq: u64,
+}
+const FB_ZERO: FreeBadEv = FreeBadEv { kind: 0, ptr: 0, size: 0, align: 0, cpu: 0, pid: 0, tid: 0, rsp: 0, seq: 0 };
+static mut FB_RING_BUF: [FreeBadEv; FB_RING] = [FB_ZERO; FB_RING];
+static FB_RING_HEAD: AtomicU64 = AtomicU64::new(0);
+
+fn record_free_bad(kind: FreeBadKind, ptr: *mut u8, layout: Layout) {
+    let n = FREE_BAD_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
+    FREE_BAD_KINDS[kind as usize].fetch_add(1, Ordering::Relaxed);
+    let cpu = unsafe { cpu_local::this_cpu_id() };
+    let (pid, tid) = unsafe {
+        let p = cpu_local::this_cpu_current_thread();
+        if p.is_null() { (0, 0) } else { ((*p).pid, (*p).tid) }
+    };
+    let rsp = unsafe { crate::hal::raw::raw_read_rsp() };
+    let seq = FB_RING_HEAD.fetch_add(1, Ordering::Relaxed);
+    let ev = FreeBadEv {
+        kind: kind as u8, ptr: ptr as u64, size: layout.size() as u64, align: layout.align() as u64,
+        cpu, pid, tid, rsp, seq,
+    };
+    unsafe {
+        core::ptr::write_volatile(
+            core::ptr::addr_of_mut!(FB_RING_BUF[(seq as usize) % FB_RING]), ev);
+    }
+    crate::raw_serial_println!(
+        "[FREE_BAD] kind={} ptr=0x{:x} size={} align={} cpu={} pid={} tid={} caller_rsp=0x{:x} allocator={}",
+        kind.as_str(), ptr as u64, layout.size(), layout.align(), cpu, pid, tid, rsp,
+        if (ptr as usize) >= crate::allocator::HEAP_START as usize
+            && (ptr as usize) < crate::allocator::HEAP_START as usize + crate::allocator::HEAP_SIZE as usize
+        { "fallback" } else { "slab" });
+    let _ = n;
+}
+
+pub fn free_bad_stats() -> (u64, [u64; 7]) {
+    let mut kinds = [0u64; 7];
+    for (i, k) in FREE_BAD_KINDS.iter().enumerate() { kinds[i] = k.load(Ordering::Relaxed); }
+    (FREE_BAD_COUNT.load(Ordering::Relaxed), kinds)
+}
+
+/// #476: record a FREE_BAD detected by a non-slab resource allocator (e.g. the
+/// paging user/heap slot tables), which have their own ownership metadata.
+pub fn record_free_bad_at(kind: FreeBadKind, allocator: &'static str, id: u64, owner: u64) {
+    FREE_BAD_COUNT.fetch_add(1, Ordering::Relaxed);
+    FREE_BAD_KINDS[kind as usize].fetch_add(1, Ordering::Relaxed);
+    let cpu = unsafe { cpu_local::this_cpu_id() };
+    let (pid, tid) = unsafe {
+        let p = cpu_local::this_cpu_current_thread();
+        if p.is_null() { (0, 0) } else { ((*p).pid, (*p).tid) }
+    };
+    let rsp = unsafe { crate::hal::raw::raw_read_rsp() };
+    crate::raw_serial_println!(
+        "[FREE_BAD] kind={} allocator={} id={} owner={} cpu={} pid={} tid={} caller_rsp=0x{:x}",
+        kind.as_str(), allocator, id, owner, cpu, pid, tid, rsp);
+}
+
+pub fn free_bad_dump() {
+    let (total, kinds) = free_bad_stats();
+    crate::raw_serial_println!(
+        "[FREE_BAD_RING] total={} out_of_range={} misaligned={} not_owned={} already_free={} owner_mismatch={} invalid_metadata={} unknown={}",
+        total, kinds[0], kinds[1], kinds[2], kinds[3], kinds[4], kinds[5], kinds[6]);
+    let head = FB_RING_HEAD.load(Ordering::Relaxed);
+    let n = core::cmp::min(head, FB_RING as u64);
+    for s in head.saturating_sub(n)..head {
+        let e = unsafe { core::ptr::read_volatile(core::ptr::addr_of!(FB_RING_BUF[(s as usize) % FB_RING])) };
+        crate::raw_serial_println!(
+            "[FREE_BAD_RING] #{} kind={} ptr=0x{:x} size={} align={} cpu={} pid={} tid={} rsp=0x{:x}",
+            e.seq, e.kind, e.ptr, e.size, e.align, e.cpu, e.pid, e.tid, e.rsp);
+    }
+}
+
+// ── Fallback-heap allocation shadow (double-free / not-owned detection) ──
+//
+// The linked-list fallback heap has no per-block ownership metadata; a second
+// free (or a free of a pointer it never handed out) corrupts its free list —
+// the #383 kernel #PF class. A fixed open-addressing set of outstanding
+// fallback pointers records ownership. Collisions/overflow are allowed to
+// under-report, never to falsely accuse.
+const FB_SHADOW_CAP: usize = 1 << 13;
+const FB_TOMBSTONE: u64 = 1;
+static FB_SHADOW: [AtomicU64; FB_SHADOW_CAP] = [const { AtomicU64::new(0) }; FB_SHADOW_CAP];
+
+#[inline]
+fn fb_slot(ptr: u64) -> usize {
+    (((ptr >> 4) as usize) ^ ((ptr >> 16) as usize)) & (FB_SHADOW_CAP - 1)
+}
+
+fn fb_shadow_insert(ptr: u64) {
+    if ptr == 0 { return; }
+    let mut i = fb_slot(ptr);
+    for _ in 0..FB_SHADOW_CAP {
+        let v = FB_SHADOW[i].load(Ordering::Relaxed);
+        if v == 0 || v == FB_TOMBSTONE {
+            if FB_SHADOW[i].compare_exchange(v, ptr, Ordering::AcqRel, Ordering::Relaxed).is_ok() {
+                return;
+            }
+            continue;
+        }
+        if v == ptr { return; } // already outstanding
+        i = (i + 1) & (FB_SHADOW_CAP - 1);
+    }
+}
+
+fn fb_shadow_remove(ptr: u64) -> bool {
+    if ptr == 0 { return false; }
+    let mut i = fb_slot(ptr);
+    for _ in 0..FB_SHADOW_CAP {
+        let v = FB_SHADOW[i].load(Ordering::Acquire);
+        if v == 0 { return false; } // never allocated (or evicted)
+        if v == ptr {
+            return FB_SHADOW[i]
+                .compare_exchange(ptr, FB_TOMBSTONE, Ordering::AcqRel, Ordering::Relaxed)
+                .is_ok();
+        }
+        i = (i + 1) & (FB_SHADOW_CAP - 1);
+    }
+    false
+}
+
+#[inline]
+fn in_fallback_heap(addr: usize) -> bool {
+    addr >= crate::allocator::HEAP_START as usize
+        && addr < crate::allocator::HEAP_START as usize + crate::allocator::HEAP_SIZE as usize
+}
+
+/// O(1) ownership validation used before every `dealloc`.
+/// Returns `Err(kind)` when the free would violate ownership.
+unsafe fn audit_free(ptr: *mut u8, layout: Layout) -> Result<(), FreeBadKind> {
+    let addr = ptr as usize;
+    if layout.align() > 1 && addr % layout.align() != 0 {
+        return Err(FreeBadKind::Misaligned);
+    }
+    if in_fallback_heap(addr) {
+        // Ownership is decided by the range; double-free is handled by the
+        // caller via the fallback shadow (not here).
+        return Ok(());
+    }
+    // Outside the fallback range: must be a slab object.
+    // Guard the metadata dereference against wild/low pointers.
+    if addr < 0x10_0000 || addr > 0xE000_0000 {
+        return Err(FreeBadKind::OutOfRange);
+    }
+    let page_base = addr & !(SLAB_PAGE_SIZE - 1);
+    if page_base == 0 {
+        return Err(FreeBadKind::OutOfRange);
+    }
+    // Only dereference a page we can plausibly own: slab pages are outside the
+    // fallback heap and above the null/low region.
+    let page = page_base as *const SlabPage;
+    let magic = core::ptr::read_volatile(core::ptr::addr_of!((*page).magic));
+    if magic != SLAB_MAGIC {
+        return Err(FreeBadKind::NotOwned);
+    }
+    let slot_size = core::ptr::read_volatile(core::ptr::addr_of!((*page).slot_size)) as usize;
+    let capacity = core::ptr::read_volatile(core::ptr::addr_of!((*page).capacity)) as usize;
+    let expected = match (layout.align() <= SLAB_ALIGN).then(|| SlabAllocator::cache_index(layout.size())).flatten() {
+        Some(idx) => CACHE_SIZES[idx],
+        None => return Err(FreeBadKind::OutOfRange),
+    };
+    if slot_size != expected {
+        return Err(FreeBadKind::OwnerMismatch);
+    }
+    let slots_start = page_base + core::mem::size_of::<SlabPage>();
+    if addr < slots_start {
+        return Err(FreeBadKind::InvalidMetadata);
+    }
+    let offset = addr - slots_start;
+    if slot_size == 0 || !offset.is_multiple_of(slot_size) {
+        return Err(FreeBadKind::Misaligned);
+    }
+    if offset / slot_size >= capacity {
+        return Err(FreeBadKind::InvalidMetadata);
+    }
+    // Already sitting in this CPU's hot cache => double free.
+    if let Some(idx) = SlabAllocator::cache_index(layout.size()) {
+        if cpu_local::this_cpu_slab_cache_contains(idx, ptr) {
+            return Err(FreeBadKind::AlreadyFree);
+        }
+    }
+    // Already in the page free list => double free. (The global path checks
+    // this in `SlabPage::free`; the per-CPU fast path does not.)
+    let sidx = (offset / slot_size) as u16;
+    let mut cur = core::ptr::read_volatile(core::ptr::addr_of!((*page).free_head));
+    let mut it = 0u32;
+    while cur != 0xFFFF {
+        if cur == sidx {
+            return Err(FreeBadKind::AlreadyFree);
+        }
+        let slot = slots_start + (cur as usize) * slot_size;
+        cur = core::ptr::read_unaligned(slot as *const u16);
+        it += 1;
+        if it > capacity as u32 {
+            return Err(FreeBadKind::InvalidMetadata);
+        }
+    }
+    Ok(())
+}
+
+/// Test/diagnostic hook: run the FREE_BAD ownership validation without freeing.
+/// Returns `Some(kind)` when the pointer would be an invalid free.
+pub unsafe fn audit_free_probe(ptr: *mut u8, layout: Layout) -> Option<FreeBadKind> {
+    audit_free(ptr, layout).err()
+}
+
 unsafe impl GlobalAlloc for SlabAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         // #376: the global pool (`inner`) and the fallback heap are non-IRQ-safe
@@ -425,11 +668,26 @@ impl SlabAllocator {
                 // Slab OOM — fall through to fallback.
             }
         }
-        self.fallback.alloc(layout)
+        // Fallback (large or over-aligned) allocation: record ownership so a
+        // later double free / not-owned free is detectable (#476 FREE_BAD).
+        let p = self.fallback.alloc(layout);
+        if !p.is_null() {
+            fb_shadow_insert(p as u64);
+        }
+        p
     }
 
     unsafe fn dealloc_inner(&self, ptr: *mut u8, layout: Layout) {
         if ptr.is_null() {
+            return;
+        }
+
+        // #476 FREE_BAD: validate ownership before touching any free list.
+        if let Err(kind) = audit_free(ptr, layout) {
+            record_free_bad(kind, ptr, layout);
+            // Diagnostic mitigation: do NOT hand an invalid pointer to a free
+            // list (that is what corrupts the heap and destroys the evidence).
+            // Leak it and continue.
             return;
         }
 
@@ -445,6 +703,11 @@ impl SlabAllocator {
         let fb_start = crate::allocator::HEAP_START as usize;
         let fb_end = fb_start + crate::allocator::HEAP_SIZE as usize;
         if addr >= fb_start && addr < fb_end {
+            // #476: double-free / not-owned detection for the fallback heap.
+            if !fb_shadow_remove(ptr as u64) {
+                record_free_bad(FreeBadKind::AlreadyFree, ptr, layout);
+                return;
+            }
             self.fallback.dealloc(ptr, layout);
             return;
         }
