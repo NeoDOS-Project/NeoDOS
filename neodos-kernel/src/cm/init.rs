@@ -67,9 +67,10 @@ pub fn flush_hive_to_vfs(hive: &Hive) -> Result<(), ()> {
     if !hive.is_dirty() {
         return Ok(());
     }
+    ktrace!(crate::log::LogSubsys::Power, "flush_hive_to_vfs: '{}' begin", hive.name);
     let data = hive.serialize();
     let file_path = alloc::format!("C:\\System\\Registry\\{}.hiv", hive.name);
-    crate::globals::with_vfs(|vfs| {
+    let res = crate::globals::with_vfs(|vfs| {
         // Write in place. Never delete the existing hive first: if create/write
         // failed, the system would be left with no hive and the next boot would
         // lose all registry configuration (observed with an early flush path).
@@ -83,7 +84,9 @@ pub fn flush_hive_to_vfs(hive: &Hive) -> Result<(), ()> {
         };
         vfs.write(drive_idx, node.inode, 0, &data).map_err(|_| ())?;
         Ok(())
-    })
+    });
+    ktrace!(crate::log::LogSubsys::Power, "flush_hive_to_vfs: '{}' done ok={}", hive.name, res.is_ok());
+    res
 }
 
 /// Ensure `Language = "en-US"` exists in the SYSTEM hive under
