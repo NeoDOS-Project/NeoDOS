@@ -10,6 +10,7 @@ mod ctx;
 mod dr;
 mod stress;
 mod vfs_owner;
+pub mod kstack;
 
 pub use events::*;
 pub use syscall::*;

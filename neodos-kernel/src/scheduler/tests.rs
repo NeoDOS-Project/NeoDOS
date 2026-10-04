@@ -171,6 +171,47 @@ pub fn register_tests() {
         let _ = &stack; // keep the allocation alive for the duration of the test
     });
 
+    test_case!("n476_kstack_switch_out_conflict_detector", {
+        // #476 H1 experiment: validate the switch-out kernel-stack detector
+        // data path. `note` marks the stack of the thread a CPU is leaving;
+        // `reclaim_conflict` must report it until `switch_out_clear` runs
+        // (which the ASM does only after `mov rsp`).
+        use crate::scheduler::diag::kstack;
+        use crate::scheduler::types::KERNEL_STACK_SIZE;
+        use core::sync::atomic::Ordering;
+
+        let sa = crate::scheduler::stack::AlignedKStack::new_boxed();
+        let sb = crate::scheduler::stack::AlignedKStack::new_boxed();
+        let a_top = sa.0.as_ptr() as u64 + KERNEL_STACK_SIZE as u64;
+        let b_top = sb.0.as_ptr() as u64 + KERNEL_STACK_SIZE as u64;
+        let a = Kthread::new_idle(200, 0, 0, a_top);
+        let b = Kthread::new_idle(201, 0, 0, b_top);
+
+        kstack::switch_out_clear(); // start from a clean window
+        let conflicts_before = kstack::CONFLICTS.load(Ordering::Relaxed);
+        test_eq!(kstack::reclaim_conflict(a_top), None);
+        test_eq!(kstack::reclaim_conflict(b_top), None);
+
+        // CPU repoints KPRCB: it is about to abandon `a`'s stack.
+        kstack::note(&a as *const _, &b as *const _, 0xBAD_F00D);
+        let hit = kstack::reclaim_conflict(a_top);
+        test_true!(hit.is_some());
+        if let Some((_cpu, tid, pid, rsp, _nks)) = hit {
+            test_eq!(tid, 200);
+            test_eq!(pid, 0);
+            test_eq!(rsp, 0xBAD_F00D);
+        }
+        // A different stack is not reported.
+        test_eq!(kstack::reclaim_conflict(b_top), None);
+
+        // The ASM clear (after `mov rsp`) closes the window.
+        kstack::switch_out_clear();
+        test_eq!(kstack::reclaim_conflict(a_top), None);
+        test_eq!(kstack::CONFLICTS.load(Ordering::Relaxed), conflicts_before);
+        let _ = &sa;
+        let _ = &sb;
+    });
+
     test_case!("stack_canary_bounds_model", {
         // #348: the canary lives at `stack_bottom = ks_top - actual_size`.
         // The checker must use the stack's owned size, not the global

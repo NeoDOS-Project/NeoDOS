@@ -520,9 +520,20 @@ pub unsafe fn this_cpu_set_current_thread(ptr: *mut Kthread) {
 /// Set the current CPU's Kthread pointer, tagging the writing site (293-B).
 #[inline(always)]
 pub unsafe fn this_cpu_set_current_thread_site(ptr: *mut Kthread, site: u8) {
+    let old = gs_read_u64(OFFSET_CURRENT_THREAD);
     if crate::scheduler::diag::ctx_trace_enabled() {
-        let old = gs_read_u64(OFFSET_CURRENT_THREAD);
         crate::scheduler::diag::ctx_ev(site, old, ptr as *const Kthread);
+    }
+    if old != ptr as u64 {
+        // #476 H1 experiment: mark the kernel stack being abandoned until the
+        // context-switch ASM runs `mov rsp` (switch_out_clear). The KPRCB is
+        // repointed here, so `is_pid_running_on_any_cpu(old_pid)` is already
+        // false while this CPU still executes on the old stack.
+        crate::scheduler::diag::kstack::note(
+            old as *const Kthread,
+            ptr as *const Kthread,
+            crate::hal::raw::raw_read_rsp(),
+        );
     }
     gs_write_u64(OFFSET_CURRENT_THREAD, ptr as u64);
 }

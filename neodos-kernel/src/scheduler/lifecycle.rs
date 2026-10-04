@@ -617,6 +617,10 @@ impl Scheduler {
                 t.as_ref().is_some_and(|k| k.tid == *tid)
             });
             if let Some(th_idx) = th_idx {
+                // #476 H1 experiment: guard the stack before dropping.
+                if let Some(th) = self.kthreads[th_idx].as_mut() {
+                    Self::guard_kstack_reclaim(th);
+                }
                 self.kthreads[th_idx] = None;
             }
         }
@@ -637,6 +641,28 @@ impl Scheduler {
 
         crate::trace_sched!(2, pid, 0); // KILL_PROCESS
         true
+    }
+
+    /// #476 H1 experiment — never free a kernel stack that another CPU is
+    /// still abandoning (KPRCB repointed, `mov rsp` not yet executed). The
+    /// conflicting stack is *leaked* so the experiment can continue without
+    /// corrupting memory; the event is recorded as `[KSTACK_RECLAIM_CONFLICT]`.
+    /// Returns true when a conflict was detected.
+    fn guard_kstack_reclaim(th: &mut Kthread) -> bool {
+        if let Some((owner, _otid, _opid, orsp, nks)) =
+            crate::scheduler::diag::kstack::reclaim_conflict(th.kernel_stack_top)
+        {
+            let reclaimer = unsafe { crate::arch::x64::cpu_local::this_cpu_id() } as usize;
+            crate::scheduler::diag::kstack::record_conflict(
+                reclaimer, owner, th.tid as u64, th.pid as u64,
+                th.kernel_stack_top, th.kernel_stack_size as u64, orsp, nks);
+            if let Some(b) = th.take_kernel_stack() {
+                core::mem::forget(b);
+            }
+            true
+        } else {
+            false
+        }
     }
 
     /// Recycle a terminated EPROCESS (only when last thread exits).
@@ -678,10 +704,13 @@ impl Scheduler {
                 });
                 if let Some(th_idx) = th_idx {
                     // Unregister thread Ob
-                    if let Some(th) = &self.kthreads[th_idx] {
+                    if let Some(th) = self.kthreads[th_idx].as_mut() {
                         if let Some(kid) = th.obj_id {
                             let _ = object::ob_destroy_object(kid);
                         }
+                        // #476 H1 experiment: do not free a stack another CPU
+                        // is still abandoning (leaked instead).
+                        Self::guard_kstack_reclaim(th);
                     }
                     self.kthreads[th_idx] = None;
                 }
@@ -804,6 +833,10 @@ impl Scheduler {
             t.as_ref().is_some_and(|k| k.tid == tid)
         });
         if let Some(th_idx) = th_idx {
+            // #476 H1 experiment: guard the stack before dropping.
+            if let Some(th) = self.kthreads[th_idx].as_mut() {
+                Self::guard_kstack_reclaim(th);
+            }
             self.kthreads[th_idx] = None;
             crate::trace_sched!(3, tid as u64, 1);
             true

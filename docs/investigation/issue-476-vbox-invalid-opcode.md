@@ -214,3 +214,112 @@ Do **not** cut `v0.51.4` claiming SMP stability while #476 (and #384/#383's
 family) is unexplained. #474's fix is independently valid and release-ready; the
 release decision depends on whether the project accepts shipping a known,
 low-rate VBox SMP2 panic.
+
+---
+
+## 9. KStack ownership (Fase 2 audit)
+
+```text
+Quién crea la KStack
+   spawn_usermode / add_ring3_process_with_stack:
+     AlignedKStack::try_new_boxed() -> Box<AlignedKStack> (16 KiB)
+     kernel_stack_top = box.ptr + KERNEL_STACK_SIZE
+   spawn_kthread_named: same, init_ring0_frame.
+   AP idle (register_ap_idle): pre-allocated AP stack, kernel_stack = None.
+   BSP idle: static IDLE_STACK, kernel_stack = None.
+
+Quién posee la KStack
+   Kthread.kernel_stack: Option<Box<AlignedKStack>>, owned by
+   Scheduler.kthreads[slot] (Box<Kthread>). Dropping the Kthread drops the stack.
+   While the thread runs / is ready, its CPU(s) use it as the Ring-0 stack and
+   TSS.RSP0 = kernel_stack_top for Ring-3 entry.
+
+Cuándo deja de ser utilizable
+   Only after every CPU that could still execute on it has left it. The
+   intended proxy is `is_pid_running_on_any_cpu(pid)` (KPRCB.current_pid), but
+   KPRCB is repointed *before* the `mov rsp`, so the proxy can already be false
+   while a CPU is still physically on the stack -> the H1 window.
+
+Quién decide liberarla
+   recycle_terminated (via reap_pending_zombies / defer_reap_with_scheduler /
+   cleanup_terminated_process), kill_pid (non-running branch), recycle_thread.
+
+Qué CPUs pueden seguir teniendo una referencia
+   Any CPU whose KPRCB.current_thread was the thread before the repoint and that
+   has not yet executed `mov rsp, next_rsp`. The switching CPU itself is excluded
+   by F-02-A's `prev_pid`; *other* CPUs are not.
+
+Qué evento demuestra que una CPU ya dejó de utilizarla
+   Executing `mov rsp, next_rsp` in the context-switch ASM. The H1 experiment
+   marks this explicitly (`SWITCH_OUT_KS` before the KPRCB write,
+   `switch_out_clear` right after `mov rsp`).
+```
+
+## 10. H1 experiment (`SWITCH_OUT_KS`)
+
+Falsifiable experiment implemented on this branch (diagnostic only):
+
+- `scheduler/diag/kstack.rs`: per-CPU `ACTIVE/KS/TID/PID/RSP/SIZE/NEXT_KS`, a
+  256-entry event ring (`OUT`/`CLR`/`CONFLICT`), and `reclaim_conflict(ks_top)`.
+- `cpu_local::this_cpu_set_current_thread_site`: calls `kstack::note(old, new,
+  raw_read_rsp())` immediately *before* the `KPRCB.current_thread` write.
+- `switch_out_clear` inserted in ASM **after** `mov rsp, …` in
+  `timer_handler_asm`, `syscall_handler_asm` (both resched paths),
+  `exception_do_resched` and `ap_enter_idle`.
+- All stack-free sites (`recycle_terminated`, `kill_pid` non-running,
+  `recycle_thread`) call `guard_kstack_reclaim`: if another CPU is mid-switch for
+  that stack, they log `[KSTACK_RECLAIM_CONFLICT]` and **leak** the Box (bounded)
+  instead of freeing it, so the experiment continues without corruption.
+- `[KSTACK_RING]` / `[KSTACK_STATE]` are dumped on panic and all counters
+  (`noted/cleared/conflicts`) are exported.
+
+Hypothesis decision rule:
+
+- **H1 CONFIRMED** if `[KSTACK_RECLAIM_CONFLICT]` is observed (CPU _x_ still owns
+  stack _S_ while another CPU tries to reclaim _S_).
+- **H1 REFUTED** if a sufficient termination-pressure campaign never produces a
+  conflict.
+
+### 10.1 Detector validation (essential)
+
+Before trusting a negative result, the detector data path was unit-tested
+(`scheduler/tests.rs::n476_kstack_switch_out_conflict_detector`): after `note`,
+`reclaim_conflict(stack)` returns `Some` (with the recorded tid/pid/rsp); a
+different stack returns `None`; after `switch_out_clear` it returns `None`.
+Suite: **821/821 PASS** (QEMU).
+
+### 10.2 Evidence — H1 NOT observed
+
+| Campaign | Terminations | `noted` | `cleared` | **conflicts** | panics |
+|----------|-------------:|--------:|----------:|--------------:|-------:|
+| VBox SMP2, normal boots ×12 | 0 | — | — | **0** | 0 |
+| VBox SMP2, churn 48 | 48 | 3865 | 71392 | **0** | 0 |
+| VBox SMP2, churn 200 (123 ok / 77 NoMem backpressure) | 123 | 4006 | 74137 | **0** | 0 |
+
+Raw evidence (`churn_3.log`, `churn_200.log`):
+
+```text
+[SPAWN_STRESS] done pid=6 ok=48  err=0   mode=CreateActivate
+[KSTACK_STATS] after-churn noted=3865 cleared=71392 conflicts=0
+[SPAWN_STRESS] done pid=6 ok=123 err=77  mode=CreateActivate
+[KSTACK_STATS] after-churn noted=4006 cleared=74137 conflicts=0
+```
+
+The runtime `note`/`clear` counters prove the detector was executing on every
+context switch; `reclaim_conflict` was consulted for every reap
+(`guard_kstack_reclaim`) and never matched.
+
+### 10.3 Verdict — **H1 NOT DEMONSTRATED (unsupported)**
+
+- **0 conflicts in 171 terminations** with a validated detector.
+- The observed #476 rate (≈1 panic in ~29 VBox boots, ≈0.2 terminations/boot)
+  would require the switch-out window to be hit a large fraction of the time per
+  termination; the churn is inconsistent with that.
+- Caveat: the churn terminations are `sys_exit` (Ring-3 syscall path); a formal
+  refutation of a vanishingly rare window is not possible. H1 is therefore
+  classified as **not demonstrated / unlikely**, not as proven impossible.
+
+No H1 fix is applied. The detector and all diagnostics are retained on the
+branch for future campaigns; `stress_spawn` is left disabled.
+
+

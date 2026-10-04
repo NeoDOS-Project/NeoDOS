@@ -31,6 +31,7 @@ use diag::kbd::{KBD_IRQ_RING_SIZE, KbdIrqEntry, KBD_IRQ_SEQ, KBD_IRQ_HEAD, KBD_I
 core::arch::global_asm!(
     ".extern timer_handler_inner",
     ".extern timer_trace_iretq_frame",
+    ".extern switch_out_clear",
     ".global timer_handler_asm",
     "timer_handler_asm:",
     "push rbp",
@@ -57,6 +58,8 @@ core::arch::global_asm!(
     "call timer_trace_iretq_frame",
     "pop rax",
     "mov rsp, rax",
+    // #476: the old stack is physically abandoned here.
+    "call switch_out_clear",
     "pop rax",
     "pop rbx",
     "pop rcx",
@@ -81,6 +84,7 @@ core::arch::global_asm!(
     ".extern syscall_resched_enabled",
     ".extern apc_dispatch_on_syscall_return",
     ".extern is_thread_terminated",
+    ".extern switch_out_clear",
     ".global syscall_handler_asm",
     "syscall_handler_asm:",
     "push rbp",
@@ -136,6 +140,7 @@ core::arch::global_asm!(
     "mov rdi, rsp",
     "call syscall_try_resched",
     "mov rsp, rax",
+    "call switch_out_clear",
     "jmp 3f",
     "1:",
     // Check per-CPU NEED_RESCHED via GS segment (offset 0x015 in KPRCB)
@@ -155,6 +160,7 @@ core::arch::global_asm!(
     "mov rdi, rsp",
     "call syscall_try_resched",
     "mov rsp, rax",
+    "call switch_out_clear",
     "2:",
     // A4.5: Dispatch pending APCs before returning to Ring 3
     "call apc_dispatch_on_syscall_return",
@@ -323,6 +329,8 @@ fn exception_do_resched() -> ! {
     unsafe {
         core::arch::asm!(
             "mov rsp, {0}",
+            // #476: old stack abandoned; clear its switch-out marker.
+            "call {clr}",
             "pop rax",
             "pop rbx",
             "pop rcx",
@@ -340,6 +348,7 @@ fn exception_do_resched() -> ! {
             "pop rbp",
             "iretq",
             in(reg) next_rsp,
+            clr = sym crate::scheduler::diag::kstack::switch_out_clear,
             options(noreturn)
         );
     }
