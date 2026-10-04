@@ -133,6 +133,7 @@
 
 | Document | Description |
 |----------|-------------|
+| [Display / Framebuffer API](design/display-api-design.md) | Ring 3 display/framebuffer API design (#465) |
 | [Font Manager](design/font-manager-design.md) | Font manager design proposal |
 | [NeoCfg](design/neocfg-design.md) | Configuration system design |
 | [NeoKBD](design/neokbd-design.md) | Keyboard system design |
