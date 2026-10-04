@@ -100,26 +100,52 @@ pub fn file_write(
     let start_block = freelist.alloc_blocks(total_blocks).ok_or(())?;
     let start_sector = partition_base_sector + start_block * 8;
 
+    // Preserve bytes outside the written range (write semantics: the file
+    // keeps its previous content where this write does not reach). COW
+    // allocates fresh blocks, so the old content must be merged explicitly.
+    // Without this, a write whose buffer is shorter than the resulting file
+    // size made the destination slice longer than the source and panicked in
+    // `copy_from_slice` (#461).
+    let need_preserve = new_entry.size > 0
+        && (offset > 0 || (offset as usize + data.len()) < new_size);
+    let old = if need_preserve {
+        let mut buf = alloc::vec![0u8; new_entry.size as usize];
+        let _ = file_read(entry, 0, &mut buf, cache, dev);
+        Some(buf)
+    } else {
+        None
+    };
+
     // Escribir datos bloque por bloque
     for block_idx in 0..total_blocks {
         let sector_lba = start_sector + block_idx as u64 * 8;
         let page = cache.get_page_mut(0, 0, block_idx, sector_lba, dev)?;
         let block_start = block_idx as usize * BLOCK_SIZE;
         let to_write = core::cmp::min(BLOCK_SIZE, new_size - block_start);
-        if to_write > 0 {
-            if block_start >= offset as usize {
-                let src_start = block_start - offset as usize;
-                let src_end = core::cmp::min(src_start + to_write, data.len());
-                page[..to_write].copy_from_slice(&data[src_start..src_end]);
-            } else {
-                // Partial overlap at start
-                let overlap = (offset as usize - block_start).min(to_write);
-                if overlap > 0 {
-                    // Copy old data for non-overlapping part
-                }
-                let data_start = 0usize;
-                let data_end = core::cmp::min(to_write - overlap, data.len());
-                page[overlap..overlap + data_end].copy_from_slice(&data[data_start..data_end]);
+        if to_write == 0 {
+            continue;
+        }
+
+        // 1. Seed the block with the previous content (bytes not overwritten).
+        if let Some(ref old) = old {
+            let n = to_write.min(old.len().saturating_sub(block_start));
+            if n > 0 {
+                page[..n].copy_from_slice(&old[block_start..block_start + n]);
+            }
+        }
+
+        // 2. Apply the new data over the overlapping byte range.
+        if block_start >= offset as usize {
+            let src_start = block_start - offset as usize;
+            let n = to_write.min(data.len().saturating_sub(src_start));
+            if n > 0 {
+                page[..n].copy_from_slice(&data[src_start..src_start + n]);
+            }
+        } else {
+            let overlap = (offset as usize - block_start).min(to_write);
+            let n = (to_write - overlap).min(data.len());
+            if n > 0 {
+                page[overlap..overlap + n].copy_from_slice(&data[..n]);
             }
         }
     }
