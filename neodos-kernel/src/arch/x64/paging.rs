@@ -190,30 +190,41 @@ pub struct HeapSlot {
     pub base: u64,
 }
 
-pub fn alloc_heap_slot() -> Option<HeapSlot> {
+/// #477: atomically claim the first free slot in `used`, skipping any slot a
+/// concurrent CPU wins. Pure w.r.t. caller-owned state, so it is unit-testable.
+#[inline]
+fn claim_first_free(used: &[core::sync::atomic::AtomicBool]) -> Option<usize> {
     use core::sync::atomic::Ordering;
-    // #476: the non-atomic load/store test-and-set is kept on purpose so the
-    // detector can observe the resulting double allocation via the free path.
-    for i in 0..MAX_HEAP_SLOTS {
-        if !HEAP_SLOT_USED[i].load(Ordering::Relaxed) {
-            // #476 direct double-allocation detector: if another CPU claims the
-            // slot between our load and CAS, both CPUs would have used it. Log
-            // it and keep the buggy sharing so the corruption stays observable.
-            if HEAP_SLOT_USED[i]
-                .compare_exchange(false, true, Ordering::AcqRel, Ordering::Relaxed)
-                .is_err()
-            {
-                crate::slab::record_free_bad_at(
-                    crate::slab::FreeBadKind::OwnerMismatch, "paging_heap_slot_race",
-                    i as u64, HEAP_SLOT_OWNER[i].load(Ordering::Relaxed) as u64);
-            }
-            HEAP_SLOT_ALLOCATED[i].store(true, Ordering::Relaxed);
-            HEAP_SLOT_OWNER[i].store(crate::scheduler::current_pid(), Ordering::Relaxed);
-            let base = PROCESS_HEAP_BASE + i as u64 * PROCESS_HEAP_SIZE;
-            return Some(HeapSlot { base });
+    for i in 0..used.len() {
+        if used[i]
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Relaxed)
+            .is_ok()
+        {
+            return Some(i);
         }
     }
     None
+}
+
+/// #477: atomically claim a specific slot. Returns `false` if another CPU
+/// already holds it (the caller must not hand out a slot it did not claim).
+#[inline]
+fn claim_at(used: &[core::sync::atomic::AtomicBool], idx: usize) -> bool {
+    use core::sync::atomic::Ordering;
+    used[idx]
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Relaxed)
+        .is_ok()
+}
+
+pub fn alloc_heap_slot() -> Option<HeapSlot> {
+    use core::sync::atomic::Ordering;
+    // #477: claim the slot atomically. A failed `compare_exchange` means another
+    // CPU won the race; keep looking instead of handing out the same slot.
+    let i = claim_first_free(&HEAP_SLOT_USED)?;
+    HEAP_SLOT_ALLOCATED[i].store(true, Ordering::Relaxed);
+    HEAP_SLOT_OWNER[i].store(crate::scheduler::current_pid(), Ordering::Relaxed);
+    let base = PROCESS_HEAP_BASE + i as u64 * PROCESS_HEAP_SIZE;
+    Some(HeapSlot { base })
 }
 
 pub fn free_heap_slot(index: u8) {
@@ -251,6 +262,31 @@ pub fn user_slot_code_base(slot_idx: u8) -> u64 {
 #[inline]
 pub fn user_slot_stack_top(slot_idx: u8) -> u64 {
     user_slot_code_base(slot_idx) + MAX_BIN_SIZE + USER_STACK_SIZE
+}
+
+/// #477 regression: the atomic slot-claim helpers must never hand out a slot
+/// that is already claimed, and must skip contended slots. This is the
+/// primitive both `alloc_user_slot` and `alloc_heap_slot` now use.
+pub fn register_slot_tests() {
+    use core::sync::atomic::AtomicBool;
+    crate::testing::register("paging_slot_claim_atomic", || {
+        let used: [AtomicBool; 4] = core::array::from_fn(|_| AtomicBool::new(false));
+        // Distinct indices until the table is exhausted.
+        crate::test_eq!(claim_first_free(&used), Some(0));
+        crate::test_eq!(claim_first_free(&used), Some(1));
+        // An already-claimed slot is never re-issued (atomic claim).
+        crate::test_true!(!claim_at(&used, 0));
+        crate::test_true!(!claim_at(&used, 1));
+        crate::test_true!(claim_at(&used, 2));
+        crate::test_eq!(claim_first_free(&used), Some(3));
+        crate::test_eq!(claim_first_free(&used), None);
+        // Pre-claimed slots are skipped.
+        let used2: [AtomicBool; 4] = core::array::from_fn(|i| AtomicBool::new(i == 0 || i == 2));
+        crate::test_eq!(claim_first_free(&used2), Some(1));
+        crate::test_eq!(claim_first_free(&used2), Some(3));
+        crate::test_eq!(claim_first_free(&used2), None);
+        Ok(())
+    });
 }
 
 /// Allocate a free user slot, returning its base addresses.
@@ -313,24 +349,23 @@ pub fn alloc_user_slot() -> Option<UserSlot> {
         }
     }
 
-    unsafe {
-        // #476 direct double-allocation detector (see alloc_heap_slot).
-        if SLOT_USED[target_idx]
-            .compare_exchange(false, true, core::sync::atomic::Ordering::AcqRel, core::sync::atomic::Ordering::Relaxed)
-            .is_err()
-        {
-            crate::slab::record_free_bad_at(
-                crate::slab::FreeBadKind::OwnerMismatch, "paging_user_slot_race",
-                target_idx as u64, SLOT_OWNER[target_idx].load(core::sync::atomic::Ordering::Relaxed) as u64);
+    // #477: claim the picked slot atomically; on contention fall back to the
+    // first free slot (never hand out a slot another CPU already claimed).
+    let claimed = if claim_at(&SLOT_USED[..count], target_idx) {
+        target_idx
+    } else {
+        match claim_first_free(&SLOT_USED[..count]) {
+            Some(i) => i,
+            None => return None,
         }
-        SLOT_ALLOCATED[target_idx].store(true, core::sync::atomic::Ordering::Relaxed);
-        SLOT_OWNER[target_idx].store(crate::scheduler::current_pid(), core::sync::atomic::Ordering::Relaxed);
-        Some(UserSlot {
-            code_base: user_slot_code_base(target_idx as u8),
-            stack_top: user_slot_stack_top(target_idx as u8),
-            slot_idx: target_idx as u8,
-        })
-    }
+    };
+    SLOT_ALLOCATED[claimed].store(true, core::sync::atomic::Ordering::Relaxed);
+    SLOT_OWNER[claimed].store(crate::scheduler::current_pid(), core::sync::atomic::Ordering::Relaxed);
+    Some(UserSlot {
+        code_base: user_slot_code_base(claimed as u8),
+        stack_top: user_slot_stack_top(claimed as u8),
+        slot_idx: claimed as u8,
+    })
 }
 
 /// Free a previously allocated user slot by index.

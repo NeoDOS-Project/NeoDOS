@@ -217,6 +217,7 @@ pub fn register_irql_tests() {
 
 pub fn register_tests() {
     crate::crash::register_crash_tests();
+    crate::arch::x64::paging::register_slot_tests();
     crate::input::register_tests();
     crate::input::vt::register_tests();
     crate::scheduler::register_tests();
