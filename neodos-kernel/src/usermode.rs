@@ -372,6 +372,13 @@ pub fn wait_for_process(pid: u32) {
     // real saved execution context lives in EXIT_RSP/EXIT_RIP (set by
     // execute_usermode_asm) — it will be restored when the Ring 3
     // process exits via exit_to_kernel.
+    // #482: capture the target for the *deferred* KPRCB publication performed
+    // after interrupts are disabled, immediately before the Ring-3 iretq.
+    // Publishing it here would leave `KPRCB.current_thread = target` while the
+    // CPU still executes on the bootstrap stack (boot's), violating the
+    // ownership invariant for an async observer (timer/IPI).
+    let mut target_ptr_out: *mut scheduler::Kthread = core::ptr::null_mut();
+    let mut target_pid_out: u32 = 0;
     crate::hal::without_interrupts(|| {
         let mut s = scheduler::current_scheduler().lock();
         // Phase 13-A: use THIS CPU's current thread, not the global
@@ -403,10 +410,12 @@ pub fn wait_for_process(pid: u32) {
                 break;
             }
         }
-        // F-01: sync per-CPU KPRCB (BSP)
-        if !target_ptr.is_null() {
-            unsafe { crate::arch::x64::cpu_local::sync_per_cpu_current(target_ptr, target_pid); }
-        }
+        // #482: capture the target; do NOT publish KPRCB here. The block's
+        // `without_interrupts` restores IF on exit, so publishing now would
+        // expose `KPRCB=target` while the CPU is still on the bootstrap stack.
+        // The identity is published after `disable_interrupts()` below.
+        target_ptr_out = target_ptr;
+        target_pid_out = target_pid;
         // #476 H1 experiment: this bookkeeping switch does not abandon the boot
         // stack (execute_usermode iretqs from it), so no switch-out window.
         crate::scheduler::diag::kstack::switch_out_clear();
@@ -423,6 +432,21 @@ pub fn wait_for_process(pid: u32) {
     // back to TID 0 sets RSP0 to 0 (boot's kernel_stack_top).  The cli
     // here prevents that window, and the subsequent iretq restores IF.
     crate::hal::disable_interrupts();
+    // #482: publish the target identity now (IF=0), immediately before the
+    // Ring-3 iretq — atomically with the physical transition away from the
+    // bootstrap stack. Until here `KPRCB.current_thread` stays = boot, matching
+    // the stack the CPU is physically executing on.
+    if !target_ptr_out.is_null() {
+        // #482 regression: the deferred-publish contract. `KPRCB.current_thread`
+        // must still be the physical stack owner (boot) here; publishing it
+        // earlier (while the CPU runs on the bootstrap stack) is the defect.
+        let pre = unsafe { crate::arch::x64::cpu_local::try_per_cpu_tid() };
+        if pre != Some(scheduler::BOOT_TID) {
+            crate::raw_serial_println!(
+                "[WF_ORDER_VIOLATION] kprcb={:?} != boot before launch publish", pre);
+        }
+        unsafe { crate::arch::x64::cpu_local::sync_per_cpu_current(target_ptr_out, target_pid_out); }
+    }
     unsafe {
         let current_tid = scheduler::current_tid();
         unsafe { gdt::prepare_ring3_return(kernel_stack_top, current_tid, pid); }
