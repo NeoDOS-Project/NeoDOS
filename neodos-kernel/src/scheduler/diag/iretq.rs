@@ -172,6 +172,15 @@ fn audit_core(
     if ks_top == 0 {
         return;
     }
+    // #488: the boot thread (TID 0) runs on the bootstrap stack, not a
+    // scheduler-managed `AlignedKStack`. Its `kernel_stack_top` is
+    // `bootstrap_stack_top()` — a snapshot of the initial RSP, not the true
+    // stack top — so its dispatch frame is legitimately outside the recorded
+    // range. Exempt it here exactly as `save_live_rsp_checked` and
+    // `on_timer_tick` already do; the general Ring-3 check is unchanged.
+    if tid == crate::scheduler::BOOT_TID {
+        return;
+    }
     let ks_base = ks_top.saturating_sub(ks_size as u64);
     let frame_addr = rsp + 120;
     let f = unsafe {
