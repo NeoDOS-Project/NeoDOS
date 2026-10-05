@@ -36,6 +36,10 @@ pub static NEXT_KS: [AtomicU64; MAX_CPUS] = [const { AtomicU64::new(0) }; MAX_CP
 pub static NOTED: AtomicU64 = AtomicU64::new(0);
 pub static CLEARED: AtomicU64 = AtomicU64::new(0);
 pub static CONFLICTS: AtomicU64 = AtomicU64::new(0);
+/// #476 permanent regression: count of switch-out boundary violations
+/// (`owner(live rsp) != KPRCB.current_thread`). Must stay 0.
+pub static RSP_OWNER_MISMATCH: AtomicU64 = AtomicU64::new(0);
+static RSP_OWNER_MISMATCH_LOGGED: AtomicU64 = AtomicU64::new(0);
 
 const RING: usize = 256;
 
@@ -92,6 +96,16 @@ pub fn note(old: *const crate::scheduler::Kthread, new: *const crate::scheduler:
 /// *after* `mov rsp, next_rsp`, never from Rust before the stack switch.
 #[no_mangle]
 pub extern "C" fn switch_out_clear() {
+    switch_out_clear_at(0);
+}
+
+/// Site-tagged variant (site passed by the ASM in `edi`): 1/2 = syscall
+/// resched paths, 3 = timer, 0 = exception/other. At this instant the CPU has
+/// executed `mov rsp`, so `owner(live rsp) == KPRCB.current_thread` MUST hold.
+/// This is the permanent regression assertion for #476: it detects the
+/// "KPRCB published before the physical stack switch" window.
+#[no_mangle]
+pub extern "C" fn switch_out_clear_at(site: u64) {
     let cpu = unsafe { crate::arch::x64::cpu_local::this_cpu_id() } as usize;
     if cpu >= MAX_CPUS { return; }
     let ks = KS[cpu].load(Ordering::Relaxed);
@@ -100,6 +114,24 @@ pub extern "C" fn switch_out_clear() {
     NEXT_KS[cpu].store(0, Ordering::Relaxed);
     CLEARED.fetch_add(1, Ordering::Relaxed);
     push(2, cpu as u8, 0, 0, ks, 0, nks);
+
+    let cur = unsafe { crate::arch::x64::cpu_local::this_cpu_current_thread() };
+    if !cur.is_null() {
+        let tid = unsafe { (*cur).tid };
+        let cks = unsafe { (*cur).kernel_stack_top };
+        let csz = unsafe { (*cur).kernel_stack_size };
+        if tid != crate::scheduler::BOOT_TID && cks != 0 && csz != 0 {
+            let live = unsafe { crate::hal::raw::raw_read_rsp() };
+            if !crate::scheduler::stack::rsp_in_kernel_stack(cks, csz, live) {
+                let n = RSP_OWNER_MISMATCH.fetch_add(1, Ordering::Relaxed) + 1;
+                if RSP_OWNER_MISMATCH_LOGGED.fetch_add(1, Ordering::Relaxed) < 16 {
+                    crate::raw_serial_println!(
+                        "[RSP_OWNER_MISMATCH] site={} cpu={} kprcb_tid={} kprcb_ks_top=0x{:x} ks_size={} live_rsp=0x{:x} n={}",
+                        site, cpu, tid, cks, csz, live, n);
+                }
+            }
+        }
+    }
 }
 
 /// If some CPU is currently abandoning the stack `ks_top`, return
