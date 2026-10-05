@@ -59,7 +59,8 @@ core::arch::global_asm!(
     "pop rax",
     "mov rsp, rax",
     // #476: the old stack is physically abandoned here.
-    "call switch_out_clear",
+    "mov edi, 3",
+    "call switch_out_clear_at",
     "pop rax",
     "pop rbx",
     "pop rcx",
@@ -137,10 +138,13 @@ core::arch::global_asm!(
     "test rax, rax",
     "jz 1f",
     // Thread terminated but not last → reschedule (switch to next thread)
+    // #476: keep IF=0 across the KPRCB publish until the physical `mov rsp`.
+    "cli",
     "mov rdi, rsp",
     "call syscall_try_resched",
     "mov rsp, rax",
-    "call switch_out_clear",
+    "mov edi, 1",
+    "call switch_out_clear_at",
     "jmp 3f",
     "1:",
     // Check per-CPU NEED_RESCHED via GS segment (offset 0x015 in KPRCB)
@@ -157,10 +161,13 @@ core::arch::global_asm!(
     "call syscall_resched_enabled",
     "test rax, rax",
     "jz 2f",
+    // #476: keep IF=0 across the KPRCB publish until the physical `mov rsp`.
+    "cli",
     "mov rdi, rsp",
     "call syscall_try_resched",
     "mov rsp, rax",
-    "call switch_out_clear",
+    "mov edi, 2",
+    "call switch_out_clear_at",
     "2:",
     // A4.5: Dispatch pending APCs before returning to Ring 3
     "call apc_dispatch_on_syscall_return",
