@@ -15,7 +15,7 @@ impl Scheduler {
             if rq.contains(k.tid) {
                 true
             } else {
-                rq.push(k.tid);
+                rq.push_priority(k.tid, k.priority);
                 false
             }
         });

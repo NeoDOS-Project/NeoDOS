@@ -178,9 +178,9 @@ Ring 0 by design and are dispatched through their Ring-0 frame by
 wrong: `spawn_kthread_named` gives kernel threads a real pid (e.g. `netpump`), so
 keying on the pid starves them.
 
-#### #474: the kernel-preempt branch is not kernel-only
+#### Issue #474: the kernel-preempt branch is not kernel-only
 
-#338 left the *kernel-preempt* branch of `timer_handler_inner` ungated, on the
+Issue #338 left the *kernel-preempt* branch of `timer_handler_inner` ungated, on the
 assumption that only kernel threads reach it. A **user** thread interrupted while
 in Ring 0 (`cs == 0x08`, inside a syscall) reaches it too. When it has
 `yield_requested` set (`sys_yield` records the intent; a timer can land before

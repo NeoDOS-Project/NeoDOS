@@ -101,9 +101,16 @@
   object/enum.rs: imports 'fs::vfs::MODE_DIR' which contains forbidden dep(s): fs, vfs
   object/power.rs: imports 'cm::cm_flush_all_hives' which contains forbidden dep(s): cm
   object/security.rs: imports 'fs::vfs::MODE_DIR' which contains forbidden dep(s): fs, vfs
+  panic_classification.rs: imports 'arch::x64::cpu_local::KPRCB_PAGES' which contains forbidden dep(s): arch
+  panic_classification.rs: imports 'arch::x64::cpu_local::MAX_CPUS' which contains forbidden dep(s): arch
+  panic_classification.rs: imports 'arch::x64::cpu_local::OFFSET_CURRENT_PID' which contains forbidden dep(s): arch
+  panic_classification.rs: imports 'arch::x64::cpu_local::OFFSET_CURRENT_THREAD' which contains forbidden dep(s): arch
+  panic_classification.rs: imports 'arch::x64::cpu_local::OFFSET_IDLE' which contains forbidden dep(s): arch
   panic_classification.rs: imports 'arch::x64::serial::SERIAL1' which contains forbidden dep(s): arch
   panic_classification.rs: imports 'arch::x64::serial::SerialPort' which contains forbidden dep(s): arch
   panic_classification.rs: imports 'hal::get_ticks' which contains forbidden dep(s): hal
+  panic_classification.rs: imports 'scheduler::Kthread' which contains forbidden dep(s): scheduler
+  panic_classification.rs: imports 'scheduler::ThreadState::Terminated' which contains forbidden dep(s): scheduler
   panic_classification.rs: imports 'scheduler::current_scheduler' which contains forbidden dep(s): scheduler
   scheduler/wake.rs: imports 'input::manager::clear_foreground_pid' which contains forbidden dep(s): input
   security/mod.rs: imports 'syscall::check_syscall_permission' which contains forbidden dep(s): syscall

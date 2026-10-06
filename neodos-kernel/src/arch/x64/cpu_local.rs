@@ -49,33 +49,35 @@ pub const SLAB_BATCH_SIZE: usize = 32;
 use spin::Mutex;
 pub(crate) static RUNQUEUE_LOCKS: [Mutex<()>; MAX_CPUS] = [const { Mutex::new(()) }; MAX_CPUS];
 
-/// Simple per-CPU run queue: ring buffer of TIDs.
-/// No locks needed for single-CPU, but SMP cross-CPU access now uses RUNQUEUE_LOCKS.
+pub const RUNQUEUE_PRIO_CAP: usize = 15;
+
+/// Priority sub-queue within a CpuRunQueue.
 #[repr(C)]
-pub struct CpuRunQueue {
-    /// Ring buffer of TIDs.
-    pub entries: [u32; 64],
-    pub head_idx: u16,
-    pub tail_idx: u16,
-    pub count: u16,
+pub struct PrioritySubQueue {
+    pub entries: [u32; RUNQUEUE_PRIO_CAP],
+    pub head_idx: u8,
+    pub tail_idx: u8,
+    pub count: u8,
+    pub _pad: u8,
 }
 
-impl CpuRunQueue {
+impl PrioritySubQueue {
     pub const fn new() -> Self {
-        CpuRunQueue {
-            entries: [0u32; 64],
+        Self {
+            entries: [0u32; RUNQUEUE_PRIO_CAP],
             head_idx: 0,
             tail_idx: 0,
             count: 0,
+            _pad: 0,
         }
     }
 
     #[inline]
     pub fn push(&mut self, tid: u32) -> bool {
-        if self.count as usize >= self.entries.len() {
+        if (self.count as usize) >= RUNQUEUE_PRIO_CAP {
             return false;
         }
-        self.entries[(self.tail_idx as usize) % self.entries.len()] = tid;
+        self.entries[(self.tail_idx as usize) % RUNQUEUE_PRIO_CAP] = tid;
         self.tail_idx = self.tail_idx.wrapping_add(1);
         self.count += 1;
         true
@@ -86,21 +88,19 @@ impl CpuRunQueue {
         if self.count == 0 {
             return None;
         }
-        let tid = self.entries[(self.head_idx as usize) % self.entries.len()];
+        let tid = self.entries[(self.head_idx as usize) % RUNQUEUE_PRIO_CAP];
         self.head_idx = self.head_idx.wrapping_add(1);
         self.count -= 1;
         Some(tid)
     }
 
     #[inline]
-    pub fn is_empty(&self) -> bool {
-        self.count == 0
-    }
-
-    pub fn clear(&mut self) {
-        self.head_idx = 0;
-        self.tail_idx = 0;
-        self.count = 0;
+    pub fn peek(&self) -> Option<u32> {
+        if self.count == 0 {
+            None
+        } else {
+            Some(self.entries[(self.head_idx as usize) % RUNQUEUE_PRIO_CAP])
+        }
     }
 
     #[inline]
@@ -108,7 +108,7 @@ impl CpuRunQueue {
         if self.count == 0 {
             return false;
         }
-        let cap = self.entries.len();
+        let cap = RUNQUEUE_PRIO_CAP;
         let mut idx = (self.head_idx as usize) % cap;
         for _ in 0..self.count {
             if self.entries[idx] == tid {
@@ -119,26 +119,20 @@ impl CpuRunQueue {
         false
     }
 
-    /// Remove the first occurrence of `tid` from the ring buffer.
-    /// Returns true if found and removed, false if not present.
-    /// O(n) scan — acceptable for the 64-entry ring buffer.
     #[inline]
     pub fn remove(&mut self, tid: u32) -> bool {
         if self.count == 0 {
             return false;
         }
-        // Collect all elements in order (head → tail).
-        let cap = self.entries.len();
-        let mut buf = [0u32; 64];
+        let cap = RUNQUEUE_PRIO_CAP;
+        let mut buf = [0u32; RUNQUEUE_PRIO_CAP];
         let mut idx = (self.head_idx as usize) % cap;
         for i in 0..self.count as usize {
             buf[i] = self.entries[idx];
             idx = (idx + 1) % cap;
         }
-        // Find and remove the target.
         let pos = buf[..self.count as usize].iter().position(|&t| t == tid);
         if let Some(p) = pos {
-            // Compact: shift [p+1 .. count) left by one.
             for i in p..self.count as usize - 1 {
                 buf[i] = buf[i + 1];
             }
@@ -153,20 +147,148 @@ impl CpuRunQueue {
             false
         }
     }
+}
+
+/// Per-CPU O(1) Priority RunQueue: 4 priority levels with bitmap indexing.
+#[repr(C)]
+pub struct CpuRunQueue {
+    pub active_bitmap: u8,
+    pub _pad0: u8,
+    pub count: u16,
+    pub _pad1: u32,
+    pub queues: [PrioritySubQueue; 4],
+}
+
+impl CpuRunQueue {
+    pub const fn new() -> Self {
+        CpuRunQueue {
+            active_bitmap: 0,
+            _pad0: 0,
+            count: 0,
+            _pad1: 0,
+            queues: [
+                PrioritySubQueue::new(),
+                PrioritySubQueue::new(),
+                PrioritySubQueue::new(),
+                PrioritySubQueue::new(),
+            ],
+        }
+    }
+
+    #[inline]
+    pub fn push_priority(&mut self, tid: u32, prio: u8) -> bool {
+        let p = (prio as usize).min(3);
+        if self.queues[p].push(tid) {
+            self.active_bitmap |= 1 << p;
+            self.count += 1;
+            true
+        } else {
+            false
+        }
+    }
+
+    #[inline]
+    pub fn push(&mut self, tid: u32) -> bool {
+        self.push_priority(tid, 2)
+    }
+
+    #[inline]
+    pub fn pop(&mut self) -> Option<u32> {
+        if self.count == 0 || self.active_bitmap == 0 {
+            return None;
+        }
+        let p = self.active_bitmap.trailing_zeros() as usize;
+        if p >= 4 {
+            return None;
+        }
+        let tid = self.queues[p].pop()?;
+        if self.queues[p].count == 0 {
+            self.active_bitmap &= !(1 << p);
+        }
+        self.count = self.count.saturating_sub(1);
+        Some(tid)
+    }
+
+    #[inline]
+    pub fn peek_highest(&self) -> Option<u32> {
+        if self.count == 0 || self.active_bitmap == 0 {
+            None
+        } else {
+            let p = self.active_bitmap.trailing_zeros() as usize;
+            if p < 4 {
+                self.queues[p].peek()
+            } else {
+                None
+            }
+        }
+    }
+
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.count == 0
+    }
+
+    pub fn clear(&mut self) {
+        self.active_bitmap = 0;
+        self.count = 0;
+        for q in self.queues.iter_mut() {
+            q.head_idx = 0;
+            q.tail_idx = 0;
+            q.count = 0;
+        }
+    }
+
+    #[inline]
+    pub fn contains(&self, tid: u32) -> bool {
+        if self.count == 0 {
+            return false;
+        }
+        for q in self.queues.iter() {
+            if q.contains(tid) {
+                return true;
+            }
+        }
+        false
+    }
+
+    #[inline]
+    pub fn remove(&mut self, tid: u32) -> bool {
+        if self.count == 0 {
+            return false;
+        }
+        for (p, q) in self.queues.iter_mut().enumerate() {
+            if q.remove(tid) {
+                if q.count == 0 {
+                    self.active_bitmap &= !(1 << p);
+                }
+                self.count = self.count.saturating_sub(1);
+                return true;
+            }
+        }
+        false
+    }
 
     #[inline]
     pub fn len(&self) -> u16 {
         self.count
     }
 
-    /// Peek at the front without removing.
     #[inline]
     pub fn peek(&self) -> Option<u32> {
-        if self.count == 0 {
-            None
-        } else {
-            Some(self.entries[(self.head_idx as usize) % self.entries.len()])
+        self.peek_highest()
+    }
+
+    pub fn entries_vec(&self) -> alloc::vec::Vec<u32> {
+        let mut v = alloc::vec::Vec::new();
+        for q in self.queues.iter() {
+            let cap = RUNQUEUE_PRIO_CAP;
+            let mut idx = (q.head_idx as usize) % cap;
+            for _ in 0..q.count {
+                v.push(q.entries[idx]);
+                idx = (idx + 1) % cap;
+            }
         }
+        v
     }
 }
 

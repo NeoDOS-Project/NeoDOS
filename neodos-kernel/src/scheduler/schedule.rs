@@ -377,14 +377,7 @@ impl Scheduler {
         for cpu in 0..crate::arch::x64::cpu_local::MAX_CPUS {
             // SMP-safe: lock each queue while reading
             let queue_entries = crate::arch::x64::cpu_local::with_runqueue(cpu, |rq| {
-                let mut entries = Vec::new();
-                let cap = rq.entries.len();
-                let mut idx = rq.head_idx as usize;
-                for _ in 0..rq.count {
-                    entries.push(rq.entries[idx]);
-                    idx = (idx + 1) % cap;
-                }
-                entries
+                rq.entries_vec()
             });
 
             for tid in queue_entries {

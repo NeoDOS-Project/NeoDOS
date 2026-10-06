@@ -56,11 +56,14 @@ impl Scheduler {
         let thief_rq = crate::arch::x64::cpu_local::cpu_run_queue_mut(thief);
         let mut stolen: u32 = 0;
         while victim_rq.count > 0 {
-            if (thief_rq.count as usize) >= thief_rq.entries.len() {
+            if (thief_rq.count as usize) >= (crate::arch::x64::cpu_local::RUNQUEUE_PRIO_CAP * 4) {
                 break;
             }
             // Peek tid at victim head
-            let tid = victim_rq.entries[(victim_rq.head_idx as usize) % victim_rq.entries.len()];
+            let tid = match victim_rq.peek_highest() {
+                Some(t) => t,
+                None => break,
+            };
             // Only Ready threads are stealable. A non-Ready tid in a runqueue is
             // invalid (e.g. a stray entry left behind by a race); drop it instead
             // of migrating it, otherwise a Running thread could be dispatched on
@@ -91,6 +94,7 @@ impl Scheduler {
             // Pop victim
             let tid_popped = victim_rq.pop().unwrap();
             debug_assert_eq!(tid, tid_popped);
+            let prio = self.find_kthread(tid_popped).map(|k| k.priority).unwrap_or(2);
             // Update ownership optimistically
             let old_cpu: Option<u32> = if let Some(k) = self.find_kthread_mut(tid_popped) {
                 let old = k.cpu;
@@ -102,7 +106,7 @@ impl Scheduler {
                 None
             };
             // Try push to thief
-            if thief_rq.push(tid_popped) {
+            if thief_rq.push_priority(tid_popped, prio) {
                 stolen += 1;
                 STEAL_SUCCESS.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
                 if thief != 0 && crate::scheduler::sched_forensic_verbose() {
@@ -120,7 +124,7 @@ impl Scheduler {
                         k.cpu = old;
                     }
                 }
-                let _ = victim_rq.push(tid_popped);
+                let _ = victim_rq.push_priority(tid_popped, prio);
                 break;
             }
         }
