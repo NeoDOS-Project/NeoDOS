@@ -181,9 +181,13 @@ impl Scheduler {
     /// bypasses the priority scan and starves that thread (#382).
     pub(crate) fn highest_ready_priority(&self) -> u8 {
         let mut p = PRIORITY_COUNT;
-        for k in self.kthreads.iter().flatten() {
-            if !k.is_idle && k.state == ThreadState::Ready && k.priority < p {
-                p = k.priority;
+        for cpu in 0..MAX_CPUS {
+            let bitmap = crate::arch::x64::cpu_local::with_runqueue(cpu, |rq| rq.active_bitmap);
+            if bitmap != 0 {
+                let lowest_bit = bitmap.trailing_zeros() as u8;
+                if lowest_bit < p {
+                    p = lowest_bit;
+                }
             }
         }
         p

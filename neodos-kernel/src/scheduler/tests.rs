@@ -2275,7 +2275,8 @@ pub fn register_tests() {
             // Ensure empty then fill with distinct dummy tids 1000..1059
             rq0.clear();
             for i in 0..60u32 {
-                rq0.push(1000 + i);
+                let prio = (i / 15) as u8;
+                rq0.push_priority(1000 + i, prio);
             }
             test_eq!(rq0.len(), 60);
             test_eq!(crate::arch::x64::cpu_local::cpu_run_queue_mut(1).len(), 1);
