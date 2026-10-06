@@ -6,6 +6,18 @@
 
 ### Fixed
 
+- **#501: NeoInit was left `SUSP` at the bootstrap hand-off; NeoShell never
+  started.** `wait_for_process` marked the hand-off target's state via
+  `current_kthread_mut()`, which resolves through the per-CPU
+  `KPRCB.current_thread`. Since #482 deferred the KPRCB publication to just
+  before the Ring-3 `iretq`, that resolver still identified the bootstrap
+  thread, so the target stayed `Suspended` and was never scheduled again. The
+  target is now marked `Running` by TID via
+  `Scheduler::mark_handoff_target_running`; the deferred publication, RSP0
+  handling and `iretq` ordering are unchanged. Regression test
+  `handoff_target_marked_running_by_tid`. See
+  `docs/investigation/issue-501-neoinit-suspend.md`.
+
 - **#491: `ntpd` could not apply the clock (`clock set denied`).** The root
   cause was not a kernel/security/RTC source bug: the disk image packaged a
   stale `rtc.nem` (from the gitignored `data/nem_bin/**` fallback) that

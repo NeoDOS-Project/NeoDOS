@@ -420,10 +420,14 @@ pub fn wait_for_process(pid: u32) {
         // stack (execute_usermode iretqs from it), so no switch-out window.
         crate::scheduler::diag::kstack::switch_out_clear();
         crate::serial_println!("[USERMODE] activated TID={}", target_tid);
-        if let Some(k) = s.current_kthread_mut() {
-            crate::scheduler::diag::run_ev(crate::scheduler::diag::RUN_SITE_USERMODE, k);
-            k.state = scheduler::ThreadState::Running;
-        }
+        // #501: mark the handoff *target* Running by TID. Do NOT resolve via
+        // `current_kthread_mut()`: since #482 the per-CPU
+        // `KPRCB.current_thread` still points at the bootstrap thread until the
+        // deferred publication below, so `current_kthread_mut()` resolved to
+        // boot and left the target `Suspended` — never schedulable again
+        // (`schedule()` only picks `Ready`), so NeoInit never reached its first
+        // syscall and the shell never started.
+        s.mark_handoff_target_running(target_tid);
     });
 
     // RSP0 must be set atomically with the Ring-3 entry.  Between the

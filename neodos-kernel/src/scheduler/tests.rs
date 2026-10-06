@@ -500,6 +500,23 @@ pub fn register_tests() {
         test_eq!(picked_tid, 2);
     });
 
+    // #501: the Ring-3 bootstrap hand-off must mark the *target* thread
+    // Running by TID. Resolving via `current_kthread_mut()` is wrong: after
+    // #482 the per-CPU KPRCB still points at the bootstrap thread until the
+    // deferred publication, so NeoInit was left `Suspended` and never
+    // scheduled again (the shell never started).
+    test_case!("handoff_target_marked_running_by_tid", {
+        let mut sched = Scheduler::new();
+        // Target: a suspended Ring-3 thread, as NeoInit is at spawn.
+        add_test_thread(&mut sched, 5, 3, 0x400000, PRIORITY_NORMAL, ThreadState::Suspended);
+        // The per-CPU KPRCB still identifies the bootstrap thread (TID 0)
+        // during the deferred-publication window.
+        sched.current_tid = BOOT_TID;
+        test_true!(sched.mark_handoff_target_running(5));
+        test_eq!(sched.find_kthread(5).unwrap().state, ThreadState::Running);
+        test_ne!(sched.find_kthread(5).unwrap().state, ThreadState::Suspended);
+    });
+
     // INV-10 (source-of-truth.md §INV-10): NeoInit (PID 1) must never be killed.
     test_case!("inv10_kill_pid_1_refused", {
         let mut sched = Scheduler::new();
