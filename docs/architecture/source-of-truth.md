@@ -36,7 +36,16 @@ The dependency graph MUST be a DAG. The following couplings are hard-forbidden:
 | Console | Scheduler, filesystems, drivers |
 | Frame allocator | Scheduler, filesystems, drivers, VFS |
 | Memory/paging | Scheduler, filesystems, drivers, VFS |
-| HAL | Any kernel subsystem (HAL is the bottom layer) |
+| HAL | Any kernel subsystem except the architecture backend and the frame allocator |
+
+**HAL boundary exceptions (explicit).** The HAL MAY depend on:
+
+- `arch` — the architecture backend is the layer below the HAL.
+- `memory` — `alloc_page`/`free_page` delegate to the physical frame allocator.
+
+The remaining HAL → * outward dependencies are temporary debt tracked for
+removal: HAL → `timers` (#436), HAL → `interrupts` (#437), HAL → `power`
+(#438), and HAL → `drivers` in PCI tests (#426).
 
 **INV-2. NO DYNAMIC ALLOCATION IN IRQ CONTEXT.**
 IRQ handlers MUST NOT call `alloc`, `Box::new`, `Vec::push`, or any heap-allocating function.
@@ -76,7 +85,7 @@ No other interrupt or exception vector may transfer control from Ring 3 to Ring 
 register state. The INT 0x80 handler is the sole entry point.
 
 **INV-10. NeoInit (PID 1) MUST NEVER BE KILLED.**
-`sched::kill_pid(1)` panics. `sys_exit` from PID 1 is equivalent to kernel panic.
+`sched::kill_pid(1)` is refused (returns `false`); `pid == 0` is likewise refused. `sys_exit` from PID 1 is equivalent to kernel panic.
 
 **INV-11. NO USER-FACING COMMANDS IN RING 0.**
 The legacy Ring 0 shell exists only as bootstrap glue. It MUST NOT expose or execute user-facing commands.
@@ -113,7 +122,7 @@ PHASE 3.875 Keyboard Manager (NeoKBD) init: `kbd::kbd_init()` — loads layouts,
 PHASE 3.882 Service Manager init: load service definitions from Registry,
            create `\Service\` namespace, resolve dependencies
 PHASE 3.883 Power Manager object init: creates `\System\PowerManager` Ob object
-PHASE 4     NeoInit loader: `cmd_run` starts PID 1 from `C:\Programs\NeoInit.nxe`
+PHASE 4     NeoInit loader: `cmd_run` starts PID 1 from `C:\Programs\neoinit.nxe`
 ```
 
 **Rule 3.1.1**: Phases MUST execute in order. No phase may run before its predecessor completes.
@@ -129,7 +138,7 @@ and boot continues.
 | Kernel image | 0x4000000 | ~1.2 MB | Kernel (read-only exec) |
 | Kernel .rodata | 0x00100000 | ~1 MB | Kernel (read-only) |
 | Kernel heap | 0x01000000 | 16 MB | Slab allocator (global) |
-| User window | 0x400000 | 4 MB | User processes (code+stack) |
+| User window | 0x400000 | 36 MB | User processes (code+stack) |
 | User heap | 0x10000000 | 32 MB | Per-process (demand paged) |
 | NXL region | 0x1E000000 | 2 MB | Shared libraries |
 | mmap region | 0x20000000 | 32 MB | Per-process mmap |
@@ -184,7 +193,7 @@ decrement refcount, files closed, devices detached).
 ### 4.3 User Process Memory
 
 **Rule 4.3.1**: Code/stack is loaded at `0x400000` (flat binary) or at ELF-specified `p_vaddr`
-(ELF binary). Max size: 4 MB (entire user window).
+(ELF binary). Max size: 36 MB (entire user window, `USER_BASE..USER_LIMIT` = `0x400000..0x2400000`).
 **Rule 4.3.2**: Heap grows from `PROCESS_HEAP_BASE` via demand paging. `sys_brk` adjusts the
 break but pages are allocated on first access (page fault).
 **Rule 4.3.3**: `heap_free_range` MUST be called on `sys_exit` to free all heap frames.
@@ -261,6 +270,10 @@ The idle thread is preempted whenever any non-idle thread is Ready.
 thread — preempt if state==Ready; (b) Idle thread (IDLE_TID=1) — preempt if state==Ready
 and non-idle threads exist; (c) Ring 0 kernel thread — preempt if state==Ready and non-idle
 threads exist. Each branch saves RSP, calls `schedule()`, and updates TSS.RSP0 on switch.
+Branch (c) is restricted to genuine kernel/idle threads: a **user** thread observed in Ring 0
+is inside a syscall, its live RSP is not a dispatch frame, and it MUST be deferred to its
+syscall-return path (`schedule::ring0_publish_is_dispatchable`, #474). Publishing it Ready
+was the wild-`iretq` `INVALID_OPCODE` on SMP2.
 
 ### 6.3 Process Slot Management
 
@@ -320,21 +333,33 @@ that collide with live IRPs. (Pool size 64 vs 32-bit ID space makes this safe.)
 
 ### 8.1 Header Format (v3)
 
-| Offset | Size | Field | Valid Range |
-| -------- | ------ | ------- | ------------- |
-| 0 | 4 | magic | `b"NEM\0"` |
+Matches `NemHeaderV3` in `neodos-kernel/src/nem/mod.rs` (80-byte header, magic `b"NEM3"`).
+
+| Offset | Size | Field | Notes |
+| -------- | ------ | ------- | ------- |
+| 0 | 4 | magic | `b"NEM3"` (legacy `b"NEM\0"` is rejected) |
 | 4 | 4 | version | 3 |
-| 8 | 2 | header_size | 48 |
-| 10 | 2 | driver_type | [0, 3] |
-| 12 | 4 | entry_offset | < code_size |
-| 16 | 4 | code_size | ≥ 1, ≤ MAX_DRIVER_SIZE |
-| 20 | 2 | compat_flags | any |
-| 22 | 2 | abi_min | 1..=ABI_MAX_VALID |
-| 24 | 2 | abi_target | ABI_MIN_VALID..=ABI_MAX_VALID |
-| 26 | 2 | abi_max | ABI_MIN_VALID..=ABI_MAX_VALID |
-| 28 | 1 | category | 0 (Boot), 1 (System), 2 (Demand) |
-| 29 | 3 | reserved | zero |
-| 32 | 16 | name | ASCII, null-terminated |
+| 8 | 4 | header_size | 80 |
+| 12 | 4 | flags | |
+| 16 | 2 | abi_min | 1..=ABI_MAX_VALID |
+| 18 | 2 | abi_target | ABI_MIN_VALID..=ABI_MAX_VALID |
+| 20 | 2 | abi_max | ABI_MIN_VALID..=ABI_MAX_VALID |
+| 22 | 2 | driver_type | [0, 3] |
+| 24 | 2 | category | 0 (Boot), 1 (System), 2 (Demand) |
+| 26 | 2 | reserved | zero (struct alignment) |
+| 28 | 4 | text_size | |
+| 32 | 4 | rodata_size | |
+| 36 | 4 | data_size | |
+| 40 | 4 | bss_size | |
+| 44 | 4 | total_mem_size | ≥ 1, ≤ MAX_DRIVER_SIZE |
+| 48 | 4 | entry_init | offset from text base |
+| 52 | 4 | entry_event | offset from text base |
+| 56 | 4 | entry_fini | offset from text base |
+| 60 | 4 | num_relocs | |
+| 64 | 4 | relocs_offset | |
+| 68 | 4 | syms_offset | |
+| 72 | 4 | strtab_offset | |
+| 76 | 4 | name_offset | ASCII, null-terminated |
 
 ### 8.2 Lifecycle States (W2 Hot Reload compatible)
 
@@ -390,12 +415,11 @@ DEMAND MUST NOT escalate.
 **Rule 8.5.3**: `validate_driver_ptr` accepts only:
 
 - Driver's own isolated slot
-- Kernel heap (`0x01000000..0x02000000`)
-- Kernel .rodata/.text (`0x00100000..0x01000000`)
 - User heap (`0x10000000..0x12000000`)
 - mmap region (`0x20000000..0x22000000`)
-- User code (`0x400000..0x800000`)
-- Kernel image (`0x4000000..PHYS_MEM_END`)
+- Kernel `.rodata`/`.text` (`0x00100000..0x00400000`)
+- Kernel heap (`0x02400000..0x03400000`, relocated after the expanded 36 MB user window)
+- Kernel identity-mapped memory (`0x03400000..0x10000000` and `0x12000000..0x20000000`)
 
 All other addresses are rejected.
 **Rule 8.5.4**: Isolation mode `Sandbox` (DEMAND drivers) marks the driver `FAULTED` on any
@@ -461,17 +485,17 @@ and `device_id`.
 
 ### 10.1 Startup Contract
 
-**Rule 10.1.1**: NeoInit is loaded from `C:\Programs\NeoInit.nxe` at Phase 4.
+**Rule 10.1.1**: NeoInit is loaded from `C:\Programs\neoinit.nxe` at Phase 4.
 **Rule 10.1.2**: NeoInit is the only process that starts at boot. All other user processes
 are descendants of NeoInit.
-**Rule 10.1.3**: NeoInit receives argv `["/Programs/NeoInit.nxe"]` and inherits fds 0/1/2
+**Rule 10.1.3**: NeoInit receives argv `["/Programs/neoinit.nxe"]` and inherits fds 0/1/2
 pointing to the kernel console.
 
 ### 10.2 Privileges
 
 **Rule 10.2.1**: NeoInit MAY:
 
-- Create pipes (`sys_pipe`)
+- Create pipes (`ob_create(Pipe)`)
 - Spawn child processes via `cmd_run` or equivalent
 - Redirect child fds via `sys_dup2` before spawn
 - Wait for any process (`sys_waitpid`)
@@ -689,36 +713,42 @@ pub static SYSCALL_PERMISSIONS: [SyscallPermission; 256]  // parallel permission
 
 ### 12.2 Syscall Table
 
+Authoritative table: `docs/kernel/syscalls.md`. Current ABI: **v8**, 37 assigned
+syscalls, highest assigned RAX = 99.
+
 | RAX | Name | Signature | Stability |
 | ----- | ------ | ----------- | ----------- |
 | 0 | `exit` | `(code)` | STABLE |
-| 1 | `write` | `(fd, buf, len)` | STABLE |
-| 2 | `yield` | `()` | STABLE |
-| 3 | `getpid` | `()` | MIGRATED — use `ob_open(\Global\Info\Process)` + `ob_query_info(ProcessId=34)` |
-| 4 | `read` | `(fd, buf, count)` | STABLE |
-| 5 | `pipe` | `(fds)` | STABLE |
-| 6 | `dup2` | `(old, new)` | STABLE |
-| 7 | | (reserved) | |
-| 8 | | (reserved) | |
-| 9 | `waitpid` | `(pid)` | STABLE |
-| 10 | `open` | `(path, flags)` | STABLE |
-| 11 | `readfile` | `(fd, buf, count)` | STABLE |
-| 12 | `writefile` | `(fd, buf, count)` | STABLE |
-| 13 | `close` | `(fd)` | STABLE |
-| 14 | | (reserved) | |
-| 15 | | (reserved) | |
-| 16 | `chdir` | `(path)` | STABLE |
-| 17 | `getcwd` | `(buf, len)` | STABLE |
-| 18 | `brk` | `(new_break)` | STABLE |
-| 19 | `mmap` | `(hint, len, prot, flags, fd)` | STABLE |
-| 20 | `munmap` | `(addr, len)` | STABLE |
-| 21 | `loadlib` | `(path)` | STABLE |
-| 22 | `thread_create` | `(entry, stack)` | STABLE |
-| 23 | `thread_join` | `(tid)` | STABLE |
-| 50 | `ndreg` | `()` | ADMIN-ONLY |
+| 1 | `yield` | `()` | STABLE |
+| 2 | `wait_alertable` | `()` | STABLE |
+| 3 | `sleep_ex` | `()` | STABLE |
+| 4 | `set_exception_handler` | `(handler_fn)` | STABLE |
+| 10 | `brk` | `(new_break)` | STABLE |
+| 11 | `mmap` | `(hint, len, prot, flags, fd)` | STABLE |
+| 12 | `munmap` | `(addr, len)` | STABLE |
+| 20 | `write` | `(fd, buf, len)` | STABLE |
+| 21 | `read` | `(fd, buf, count)` | STABLE |
+| 22 | `dup2` | `(old, new)` | STABLE |
+| 23 | `close` | `(fd)` | STABLE |
+| 24 | `poll` | `(pfds, nfds, timeout)` | STABLE |
+| 25 | `loadlib` | `(path)` | STABLE |
+| 30 | `cursor_blink` | `(enable)` | STABLE |
+| 35 | `driver_unload` | `(name, force)` | ADMIN-ONLY |
+| 36 | `icmp_ping` | `(ip_be)` | STABLE |
+| 40 | `ob_open` | `(path, access)` | STABLE |
+| 41 | `ob_create` | `(path, type, fds, attrs)` | STABLE |
+| 42 | `ob_query_info` | `(fd, class, buf, size)` | STABLE |
+| 43 | `ob_set_info` | `(fd, class, buf, size)` | STABLE |
+| 44 | `ob_enum` | `(dir_fd, buf, max)` | STABLE |
+| 45 | `ob_wait` | `(count, handles, type, timeout)` | STABLE |
+| 46 | `ob_destroy` | `(fd)` | STABLE |
+| 47 | `ob_service` | `(fd, control, buf, size)` | ADMIN-ONLY |
+| 48 | `ob_snapshot` | `(fd, op, buf, size)` | ADMIN-ONLY |
+| 50-59 | `cm_*` | registry keys/values | STABLE |
+| 99 | `debug_dump` | `()` | STABLE |
 
-**Rule 13.2.1**: Reserved slots (7, 8) MUST NOT be assigned without a breaking
-change version bump.
+**Rule 13.2.1**: Unassigned slots MUST NOT be reassigned to an incompatible
+purpose without a breaking-change version bump.
 **Rule 13.2.2**: Adding a new syscall at the next available RAX is NOT a breaking change.
 **Rule 13.2.3**: Changing the signature, return convention, or semantics of a STABLE syscall
 IS a breaking change.
@@ -749,8 +779,8 @@ with `Sandbox` mode — the driver is marked `Faulted` but the kernel continues.
 - `Basic` or `None` mode: kernel panics.
 
 **Rule 14.2.2**: A `Faulted` driver can only transition to `Unloaded`.
-**Rule 14.2.3**: `NDREG UNLOAD` on a Faulted driver cleans up isolation slot, unregisters
-from event bus, and marks `Unloaded`.
+**Rule 14.2.3**: Unloading a Faulted driver cleans up its isolation slot, unregisters
+it from the event bus, and marks it `Unloaded`.
 
 ### 14.3 OOM Policy
 
@@ -804,7 +834,7 @@ happens only on syscall return or timer tick while in Ring 3.)
 syscall; use `KILL` command or `kill_pid` internal.)
 
 **AP-10**: Registering a new `BlockDevice` implementor that depends on filesystem types.
-(`BlockDevice` trait must not pull in `NeoDosFs`, `Fat32`, or any filesystem.)
+(`BlockDevice` trait must not pull in `NeoDosFsV2`, `Fat32`, or any filesystem.)
 
 ---
 
@@ -852,13 +882,13 @@ The test suite MUST be run before every release.
 
 | # | Invariant | Test type | What to assert |
 | --- | ----------- | ----------- | ---------------- |
-| T1 | INV-1: No circular dep | Static analysis | `scripts/check_deps.py` exits 0 |
+| T1 | INV-1: No circular dep | Static analysis | `neodev check-deps` exits 0 |
 | T2 | INV-2: No alloc in IRQ | Code review + test | IRQ handlers never call heap alloc. Test IRQ handler list. |
 | T3 | INV-4: Scheduler not invoked from Ring 0 shell | Functional | Shell process priority stays unchanged across timer ticks |
 | T4 | INV-5: Frame has one owner | Unit | Allocate frame, read bitmap, free, confirm bitmap cleared |
 | T5 | INV-6: Process slots valid | Unit | Create process, read slot state, terminate, confirm recycled |
 | T6 | INV-8: Kernel heap not user-accessible | Functional | Try reading kernel heap from user mode → page fault |
-| T7 | INV-10: Kill PID 1 panics | Unit | Call `kill_pid(1)` → expect panic |
+| T7 | INV-10: Kill PID 1 refused | Unit | Call `kill_pid(1)` → expect `false` (never killed) |
 | T8 | Scheduler aging | Unit | Ready process with 1000+ ticks unscheduled → priority boosted |
 | T9 | Scheduler priority | Unit | Higher-priority process always scheduled before lower |
 | T10 | IRP lifecycle | Unit | Alloc → complete → callback → freed. Double-complete fails. |
@@ -889,8 +919,8 @@ The test suite MUST be run before every release.
 
 Before any commit, verify:
 
-- [ ] `scripts/check_deps.py` passes (T1)
-- [ ] `python3 scripts/auto_test.py` passes (all 320+ kernel tests + user-mode tests)
+- [ ] `neodev check-deps` passes (T1)
+- [ ] `neodev test` passes (all 320+ kernel tests + user-mode tests)
 - [ ] `cargo build` in `neodos-kernel/` compiles without warnings
 - [ ] No new `use` statements that create forbidden dependencies (INV-1)
 - [ ] No new heap allocation in IRQ handlers (INV-2)

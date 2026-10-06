@@ -26,16 +26,20 @@ Correctly implement network changes with proper protocol handling, socket lifecy
 - `src/net/socket.rs` — SocketManager, bind/connect/listen/send/recv/close, KWait wake
 - `src/net/nic.rs` — NetworkInterface trait, NicRegistry (4 slots)
 - `src/net/e1000.rs` — Intel e1000 NIC driver, ring buffers, MMIO
-- `src/net/dns.rs` — DNS resolver, cache (64 entries), UDP transport
+- `src/net/dns.rs` — Kernel-internal DNS resolver, cache (64 entries), UDP transport (not exposed to userland)
+- `libdns/src/lib.rs` — Shared DNS wire format + resolver core (`DnsError`, parse/build, host-testable)
+- `libnet/src/dns.rs` — Userland DNS resolver: `NetTransport`, Registry servers, cache, `resolve()`
 - `src/net/mod.rs` — init_networking(), net_tick(), packet dispatch
 - `src/object/types.rs` — ObInfoClass (17-20, 23), ObSetInfoClass (18-22, 27), ObType::Socket (18)
 - `userbin/dhcpd/src/main.rs` — Userspace DHCP client (DORA sequence)
+- `userbin/nslookup/src/main.rs` — `nslookup` tool (shared resolver consumer)
+- `userbin/ping/src/main.rs` — `ping` (IPv4 literal or hostname via resolver)
 
 ## Architecture
 
 ### Module Map
 
-```
+```text
 src/net/
 ├── types.rs      — MacAddr, Ipv4Addr, SocketAddrV4, TcpState, SocketType, SocketDirection
 ├── ethernet.rs   — EthernetHeader, ETH_TYPE_ARP (0x0806), ETH_TYPE_IPV4 (0x0800)
@@ -54,7 +58,7 @@ src/net/
 
 ### Packet Flow
 
-```
+```text
 e1000 poll_packet() → 2048 byte buffer
   → ethernet parse (dst MAC, src MAC, ethertype)
     → ARP (0x0806):     arp_resolve() → cache lookup / reply
@@ -84,6 +88,7 @@ e1000 poll_packet() → 2048 byte buffer
 | SocketSend | 21 | Send data on connected socket |
 | SocketClose | 22 | Close socket (FIN or RST) |
 | SetNicIp | 27 | Set NIC IP address from userspace |
+| SetNicGateway | 28 | Set NIC default gateway (`0.0.0.0` = unset) |
 
 ### TCP State Machine
 
@@ -100,6 +105,7 @@ e1000 poll_packet() → 2048 byte buffer
 ### DHCP (Userspace)
 
 DHCP runs as `dhcpd.nxe` (Ring 3). Uses UDP socket (port 68/67), performs DORA:
+
 1. DISCOVER (broadcast) → OFFER
 2. REQUEST → ACK
 3. On ACK: `ob_set_info(SetNicIp)` to configure NIC IP
@@ -125,6 +131,7 @@ pub fn handle_my_proto(payload: &[u8], src_ip: Ipv4Addr, dst_ip: Ipv4Addr) {
 ```
 
 Dispatch in `net_handle_incoming_packet()`:
+
 ```rust
 } else if ip_hdr.protocol() == MY_PROTO {
     handle_my_proto(payload, ip_hdr.src_ip(), ip_hdr.dst_ip());

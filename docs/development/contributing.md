@@ -2,7 +2,7 @@
 
 ## Development Setup
 
-```bash
+```markdown
 # Prerequisites: Rust nightly, QEMU, OVMF
 rustup toolchain install nightly
 cargo install --git https://github.com/NeoDOS-Project/NeoDev.git
@@ -29,12 +29,14 @@ neodev run
 
 1. Branch from `develop`: `feat/`, `fix/`, `refactor/`
 2. Run validation before commit:
+
    ```bash
    cargo build
    neodev test
-   scripts/check_deps.py
+   neodev check-deps
    npx markdownlint '**/*.md' --config .markdownlint.json
    ```
+
 3. Reference issues: `feat: description (#123)`
 4. Open PR against `develop`
 

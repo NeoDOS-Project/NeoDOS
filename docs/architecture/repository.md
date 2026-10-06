@@ -3,6 +3,11 @@
 > **Version:** v1.0
 > **Date:** 2026-07-16
 > **Status:** Proposal — no automatic changes yet.
+>
+> **Nota (post-migración):** la migración descrita ya se ejecutó. Las rutas `scripts/*`
+> que aparecen abajo son históricas: `scripts/mcp_server/` vive ahora en
+> `neodos-dev-server` (`neodos-mcp`), `scripts/check_deps.py` es `neodev check-deps`,
+> `scripts/gen_nlt*.py` es `tools/nltc` y `scripts/gen_system_hiv.py` es `tools/gen-hiv`.
 
 This document contains the complete audit of the NeoDOS monorepo and a proposal for
 future multi-repository organization under the [NeoDOS-Project](https://github.com/NeoDOS-Project) organization.
@@ -11,7 +16,7 @@ future multi-repository organization under the [NeoDOS-Project](https://github.c
 
 ## 1. Current Structure
 
-```
+```text
 neodos/
 ├── neodos-kernel/          # Kernel (52,945 lines, 49 modules)
 ├── neodos-bootloader/      # UEFI bootloader
@@ -60,7 +65,7 @@ neodos/
 
 ### 2.1 Dependency graph
 
-```
+```text
 neodos-bootloader ───→ kernel (BootInfo ABI)
 kernel              ─── (no external deps beyond Rust std)
 kernel (NEM ABI)    ←─── drivers/* (10 standalone)
@@ -160,7 +165,7 @@ kbdcompile (host)   ───→ data/keyboard (layout sources)
 
 ### 4.1 Target structure
 
-```
+```text
 NeoDOS-Project/
 ├── NeoDOS                    # Kernel, bootloader, libneodos, NXLs, userbin, drivers, scripts, docs
 │                              # (core OS — tightly coupled components)
@@ -247,7 +252,7 @@ NeoDOS-Project/
 
 ### 4.3 Dependency graph (target)
 
-```
+```text
 NeoDOS (core)
 ├── NeoDev              [dev dependency: reads artifacts]
 ├── neodos-dev-server   [dev dependency: reads source / artifacts]
@@ -272,6 +277,7 @@ No circular dependencies.
 | NeoTranslations | push, PR | nltc compile, completeness check | .nlt files |
 
 NeoDOS CI would:
+
 1. Build kernel + bootloader
 2. Run kernel tests in QEMU
 3. Build user binaries
@@ -288,7 +294,7 @@ Sub-repo CI would trigger independently.
 
 While NeoDOS lives in a monorepo, a clear branch strategy keeps development organized:
 
-```
+```text
 master         ← Stable. Only merges from develop via release PRs.
 develop        ← Daily integration. Default branch for PRs.
 ├── feat/*     ← Features (feat/ob-namespace-v2, feat/ahci-msi)
@@ -320,6 +326,7 @@ develop        ← Daily integration. Default branch for PRs.
 ### Hotfix flow (rare)
 
 For critical bugs in `master`:
+
 1. Branch `fix/critical-name` from `master`
 2. Fix, PR → `master` (urgent, skip `develop`)
 3. Cherry-pick to `develop` to keep sync
@@ -331,22 +338,26 @@ For critical bugs in `master`:
 No immediate migration. All proposals are for **post-v1.0** unless otherwise noted.
 
 ### Phase 1 (now — no action needed)
+
 - Document the proposed architecture
 - Add items to `roadmap/improvements.md`
 - Ensure new components are written with separation in mind
 
 ### Phase 2 (v0.60+ — completed)
+
 - Extract `neodev` to standalone repo ✅
 - Merge `neodos-lsp` + `NeoMCP` into single `neodos-dev-server` Rust workspace ✅
 - Rewrite MCP server from Python to Rust ✅
 
 ### Phase 3 (v1.0+ — major separation)
+
 - Extract `NeoTranslations` for community translation contributions
 - Extract `NeoTools` for independent release cadence
 - Extract `NeoDOS-LSP` for editor integration distribution
 - Move `docs/` to `NeoDocs` if documentation becomes stable
 
 ### What to never separate
+
 - `neodos-kernel` — core OS, must stay
 - `neodos-bootloader` — tied to kernel ABI
 - `libneodos` — syscall API lockstep

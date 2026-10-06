@@ -121,7 +121,7 @@ implementations for read-only or simple filesystems.
 ```rust
 pub struct Vfs {
     pub drives: [Option<Box<dyn FileSystem>>; 26],  // O(1) A:-Z:
-    pub mounts: [Option<MountEntry>; 8],
+    pub mounts: [Option<Mount>; MAX_SUBDIR_MOUNTS],   // MAX_SUBDIR_MOUNTS = 8
 }
 ```
 

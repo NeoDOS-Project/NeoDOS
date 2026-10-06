@@ -132,11 +132,18 @@ pub fn res_size(fd: u8) -> Result<u64, i64> {
 }
 
 /// Read entire resource into a caller-provided buffer.
+///
+/// Reads exactly the resource size (from `ObQueryInfo(File)`) rather than the
+/// whole buffer, so callers may pass an oversized scratch buffer safely.
 pub fn res_read_all(fd: u8, buf: &mut [u8]) -> Result<usize, i64> {
-    let to_read = buf.len();
+    let size = match res_size(fd) {
+        Ok(s) => s as usize,
+        Err(_) => buf.len(),
+    };
+    let to_read = size.min(buf.len());
     let mut total = 0;
     while total < to_read {
-        match res_read(fd, &mut buf[total..]) {
+        match res_read(fd, &mut buf[total..to_read]) {
             Ok(0) => break,
             Ok(n) => total += n,
             Err(e) => return Err(e),

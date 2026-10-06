@@ -5,6 +5,7 @@ extern crate alloc;
 
 use core::alloc::{GlobalAlloc, Layout};
 use libneodos::{i18n, mem, syscall, tr_id};
+use libnet::config;
 
 struct SbrkAlloc;
 
@@ -53,8 +54,8 @@ const MAX_RETRIES: u8 = 3;
 const TIMEOUT_ITERATIONS: u32 = 200;
 const LEASE_RENEW_DIVISOR: u64 = 2;
 const YIELD_BATCH: u32 = 100;
-
-const REG_NET_PATH: &str = "\\Registry\\Machine\\System\\CurrentControlSet\\Services\\Network\\Interfaces\\0";
+/// Maximum DNS servers taken from DHCP option 6 (it is a list of IPv4 addrs).
+const MAX_DHCP_DNS: usize = 3;
 
 #[repr(C, packed)]
 struct DhcpHeader {
@@ -96,7 +97,8 @@ struct DhcpClient {
     offered_ip: u32,
     subnet_mask: u32,
     gateway: u32,
-    dns: u32,
+    dns: [u32; MAX_DHCP_DNS],
+    dns_count: usize,
     lease_time: u32,
     renew_interval: u64,
     ticks_in_state: u64,
@@ -163,26 +165,6 @@ fn yield_for(batches: u32) {
             let _ = syscall::sys_yield();
         }
     }
-}
-
-// ── Registry helpers ──
-
-fn read_reg_dword(key_fd: u8, name: &str) -> Option<u32> {
-    let mut reg_buf = [0u8; 12];
-    let total = syscall::sys_cm_query_value(key_fd, name, &mut reg_buf).ok()?;
-    if total < 12 { return None; }
-    let value_type = u32::from_le_bytes([reg_buf[0], reg_buf[1], reg_buf[2], reg_buf[3]]);
-    if value_type != syscall::REG_DWORD { return None; }
-    Some(u32::from_le_bytes([reg_buf[8], reg_buf[9], reg_buf[10], reg_buf[11]]))
-}
-
-fn write_reg_dword(key_fd: u8, name: &str, val: u32) {
-    let _ = syscall::sys_cm_set_value(key_fd, name, syscall::REG_DWORD, &val.to_le_bytes());
-}
-
-#[allow(dead_code)]
-fn write_reg_string(key_fd: u8, name: &str, val: &[u8]) {
-    let _ = syscall::sys_cm_set_value(key_fd, name, syscall::REG_SZ, val);
 }
 
 // ── DHCP packet construction ──
@@ -277,7 +259,8 @@ struct DhcpOptions {
     server_id: u32,
     subnet_mask: u32,
     gateway: u32,
-    dns: u32,
+    dns: [u32; MAX_DHCP_DNS],
+    dns_count: usize,
     lease_time: u32,
 }
 
@@ -291,9 +274,10 @@ fn parse_dhcp_options(data: &[u8]) -> Option<DhcpOptions> {
     let options = &data[DHCP_HDR_LEN..];
     let mut msg_type = 0;
     let mut server_id = 0u32;
-    let mut subnet_mask = 0x00FFFFFFu32;
+    let mut subnet_mask = 0xFFFFFF00u32; // 255.255.255.0 (big-endian, #367)
     let mut gateway = 0u32;
-    let mut dns = 0u32;
+    let mut dns = [0u32; MAX_DHCP_DNS];
+    let mut dns_count = 0usize;
     let mut lease_time = 86400u32;
 
     let mut i = 0;
@@ -333,15 +317,19 @@ fn parse_dhcp_options(data: &[u8]) -> Option<DhcpOptions> {
                 i += opt_len + 2;
             }
             DHCP_OPTION_DNS => {
-                if i + 5 < options.len() {
-                    dns = u32::from_be_bytes([
-                        options[i + 2], options[i + 3], options[i + 4], options[i + 5],
-                    ]);
-                }
+                // Option 6 is a list of 4-byte IPv4 addresses; take up to
+                // MAX_DHCP_DNS of them.
                 let opt_len = options.get(i + 1).copied().unwrap_or(0) as usize;
-                if opt_len == 0 && options.get(i + 1).is_none() {
-                    break;
+                let mut n = 0usize;
+                let mut j = i + 2;
+                while n < MAX_DHCP_DNS && j + 4 <= i + 2 + opt_len && j + 4 <= options.len() {
+                    dns[n] = u32::from_be_bytes([
+                        options[j], options[j + 1], options[j + 2], options[j + 3],
+                    ]);
+                    n += 1;
+                    j += 4;
                 }
+                dns_count = n;
                 i += opt_len + 2;
             }
             DHCP_OPTION_LEASE_TIME => {
@@ -367,6 +355,7 @@ fn parse_dhcp_options(data: &[u8]) -> Option<DhcpOptions> {
         subnet_mask,
         gateway,
         dns,
+        dns_count,
         lease_time,
     })
 }
@@ -382,9 +371,10 @@ impl DhcpClient {
             state: DhcpState::Init,
             server_ip: 0,
             offered_ip: 0,
-            subnet_mask: 0x00FFFFFF,
+            subnet_mask: 0xFFFFFF00, // 255.255.255.0 (big-endian, #367)
             gateway: 0,
-            dns: 0,
+            dns: [0; MAX_DHCP_DNS],
+            dns_count: 0,
             lease_time: 86400,
             renew_interval: 43200,
             ticks_in_state: 0,
@@ -521,7 +511,7 @@ impl DhcpClient {
                         self.offered_ip = u32::from_be_bytes(hdr.yiaddr);
                         self.subnet_mask = opts.subnet_mask;
                         if opts.gateway != 0 { self.gateway = opts.gateway; }
-                        if opts.dns != 0 { self.dns = opts.dns; }
+                        if opts.dns_count > 0 { self.dns = opts.dns; self.dns_count = opts.dns_count; }
                         self.lease_time = opts.lease_time;
                         self.renew_interval = (opts.lease_time as u64 / LEASE_RENEW_DIVISOR).max(60);
                         return Some(self.offered_ip);
@@ -534,7 +524,7 @@ impl DhcpClient {
                     self.server_ip = opts.server_id;
                     if opts.subnet_mask != 0 { self.subnet_mask = opts.subnet_mask; }
                     if opts.gateway != 0 { self.gateway = opts.gateway; }
-                    if opts.dns != 0 { self.dns = opts.dns; }
+                    if opts.dns_count > 0 { self.dns = opts.dns; self.dns_count = opts.dns_count; }
                     self.lease_time = opts.lease_time;
                     self.renew_interval = (opts.lease_time as u64 / LEASE_RENEW_DIVISOR).max(60);
                     return Some(ip);
@@ -577,6 +567,18 @@ impl DhcpClient {
 
 // ── Main entry ──
 
+/// Publish the APIPA fallback lease (169.254.1.1) through the shared config
+/// backend. APIPA is 169.254.0.0/16 -> mask 255.255.0.0 (big-endian, #367).
+fn publish_apipa() {
+    let mut cfg = config::load(0).unwrap_or_default();
+    cfg.ip = 0xA9FE0101; // 169.254.1.1
+    cfg.mask = 0xFFFF0000; // 255.255.0.0
+    cfg.gateway = 0;
+    cfg.dhcp_server = 0;
+    cfg.dhcp_bound = true;
+    let _ = config::publish_lease(0, &cfg);
+}
+
 #[no_mangle]
 pub extern "C" fn _start() -> ! {
     i18n::i18n_init();
@@ -585,39 +587,22 @@ pub extern "C" fn _start() -> ! {
     write_str(tr_id!(IDS_PREFIX).as_bytes());
     write_str(b"NeoDOS DHCP Service v0.1\r\n");
 
-    let reg_key = syscall::sys_cm_open_key(REG_NET_PATH);
-    let key_fd;
-    match reg_key {
-        Ok(fd) => { key_fd = fd; }
-        Err(_) => {
+    let dhcp_enabled = match config::load(0) {
+        Some(cfg) => cfg.dhcp_enabled,
+        None => {
             write_str(b"");
                     write_str(tr_id!(IDS_PREFIX).as_bytes());
                     write_str(b"ERROR: registry key not found\r\n");
             loop { syscall::sys_yield(); }
         }
-    }
+    };
 
-    let dhcp_enabled = read_reg_dword(key_fd, "DHCPEnabled").unwrap_or(1);
-
-    if dhcp_enabled == 0 {
-        // Static IP mode
+    if !dhcp_enabled {
+        // Static mode: the `netapplier` service applies the Registry values.
+        // dhcpd only publishes DHCP leases, so there is nothing to do.
         write_str(b"");
                     write_str(tr_id!(IDS_PREFIX).as_bytes());
-                    write_str(b"Static IP config\r\n");
-        let ip = read_reg_dword(key_fd, "IPAddress").unwrap_or(0);
-        if ip != 0 {
-            let mask = read_reg_dword(key_fd, "SubnetMask").unwrap_or(0x00FFFFFF);
-            let _ = libnet::set_ip(0, ip, mask);
-            write_str(b"");
-                    write_str(tr_id!(IDS_PREFIX).as_bytes());
-                    write_str(b"Static IP=");
-            write_ip(ip);
-            write_str(b"\r\n");
-            write_reg_dword(key_fd, "IPAddress", ip);
-        }
-        write_str(b"");
-                    write_str(tr_id!(IDS_PREFIX).as_bytes());
-                    write_str(b"OK\r\n");
+                    write_str(b"DHCP disabled; static config handled by netapplier\r\n");
         loop { syscall::sys_yield(); }
     }
 
@@ -635,13 +620,10 @@ pub extern "C" fn _start() -> ! {
                     write_str(b"ERROR: socket create err=");
             write_hex(e as u32);
             write_str(b"\r\n");
-            let apipa = 0xA9FE0101;
-            let _ = libnet::set_ip(0, apipa, 0x0000FFFF);
             write_str(b"");
                     write_str(tr_id!(IDS_PREFIX).as_bytes());
                     write_str(b"APIPA 169.254.1.1 (socket create failed)\r\n");
-            write_reg_dword(key_fd, "IPAddress", apipa);
-            write_reg_dword(key_fd, "DHCPBound", 1);
+            publish_apipa();
             loop { syscall::sys_yield(); }
         }
     };
@@ -653,13 +635,10 @@ pub extern "C" fn _start() -> ! {
                     write_str(b"ERROR: socket bind err=");
         write_hex(e as u32);
         write_str(b"\r\n");
-        let apipa = 0xA9FE0101;
-        let _ = libnet::set_ip(0, apipa, 0x0000FFFF);
         write_str(b"");
                     write_str(tr_id!(IDS_PREFIX).as_bytes());
                     write_str(b"APIPA 169.254.1.1 (bind failed)\r\n");
-        write_reg_dword(key_fd, "IPAddress", apipa);
-        write_reg_dword(key_fd, "DHCPBound", 1);
+        publish_apipa();
         loop { syscall::sys_yield(); }
     }
 
@@ -670,13 +649,10 @@ pub extern "C" fn _start() -> ! {
                     write_str(b"ERROR: socket connect err=");
         write_hex(e as u32);
         write_str(b"\r\n");
-        let apipa = 0xA9FE0101;
-        let _ = libnet::set_ip(0, apipa, 0x0000FFFF);
         write_str(b"");
                     write_str(tr_id!(IDS_PREFIX).as_bytes());
                     write_str(b"APIPA 169.254.1.1 (connect failed)\r\n");
-        write_reg_dword(key_fd, "IPAddress", apipa);
-        write_reg_dword(key_fd, "DHCPBound", 1);
+        publish_apipa();
         loop { syscall::sys_yield(); }
     }
 
@@ -723,15 +699,23 @@ pub extern "C" fn _start() -> ! {
         write_dec_u32(client.lease_time);
         write_str(b"s\r\n");
 
-        // Configure NIC via libnet
-        let _ = libnet::set_ip(0, ip, client.subnet_mask);
-
-        write_reg_dword(key_fd, "IPAddress", ip);
-        write_reg_dword(key_fd, "SubnetMask", client.subnet_mask);
-        write_reg_dword(key_fd, "Gateway", client.gateway);
-        if client.dns != 0 { write_reg_dword(key_fd, "DnsServer", client.dns); }
-        write_reg_dword(key_fd, "LeaseTime", client.lease_time);
-        write_reg_dword(key_fd, "DHCPBound", 1);
+        // Publish the lease through the shared config backend. The `netapplier`
+        // service is the one that applies it to the NIC (single applier; see
+        // #320/#314/#365).
+        let mut cfg = config::load(0).unwrap_or_default();
+        cfg.ip = ip;
+        cfg.mask = client.subnet_mask;
+        cfg.gateway = client.gateway;
+        // DHCP-provided DNS (option 6) is authoritative; zero any slot beyond
+        // the number of servers actually offered.
+        let mut dns = [0u32; MAX_DHCP_DNS];
+        let n = client.dns_count.min(MAX_DHCP_DNS);
+        for i in 0..n { dns[i] = client.dns[i]; }
+        cfg.dns = dns;
+        cfg.lease_time = client.lease_time;
+        cfg.dhcp_server = client.server_ip;
+        cfg.dhcp_bound = true;
+        let _ = config::publish_lease(0, &cfg);
 
         write_str(b"");
                     write_str(tr_id!(IDS_PREFIX).as_bytes());
@@ -740,13 +724,10 @@ pub extern "C" fn _start() -> ! {
         write_str(b"");
                     write_str(tr_id!(IDS_PREFIX).as_bytes());
                     write_str(b"DORA failed, using APIPA fallback\r\n");
-        let apipa = 0xA9FE0101;
-        let _ = libnet::set_ip(0, apipa, 0x0000FFFF);
         write_str(b"");
                     write_str(tr_id!(IDS_PREFIX).as_bytes());
                     write_str(b"APIPA 169.254.1.1\r\n");
-        write_reg_dword(key_fd, "IPAddress", apipa);
-        write_reg_dword(key_fd, "DHCPBound", 1);
+        publish_apipa();
     }
 
     // Main loop: yield forever (DHCP renew handled by OS)

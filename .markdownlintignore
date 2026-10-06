@@ -1,0 +1,9 @@
+# Generated / build artifacts — excluded from markdownlint
+target/
+*/target/
+graphify-out/
+.graphify_cache/
+node_modules/
+__pycache__/
+tmp/
+/tmp/

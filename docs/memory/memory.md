@@ -91,7 +91,7 @@ critical regions (kernel_image, kernel_heap) are non-overlapping.
 
 ## Kernel Slab Allocator
 
-Source: `src/slab.rs`, `src/slab_container.rs`. 9 power-of-2 size classes:
+Source: `src/slab.rs`. 9 power-of-2 size classes (`CACHE_SIZES = [8, 16, 32, 64, 128, 256, 512, 1024, 2048]`):
 
 | Class | Size   |
 |-------|--------|
@@ -208,8 +208,8 @@ pub struct MmapRegion {
 }
 ```
 
-- `sys_mmap(RAX=19)` -- registers the VMA only; no physical pages allocated
-- `sys_munmap(RAX=20)` -- frees pages, removes VMA
+- `sys_mmap(RAX=11)` -- registers the VMA only; no physical pages allocated
+- `sys_munmap(RAX=12)` -- frees pages, removes VMA
 - Anonymous faults: `allocate_frame()` + zero-fill + map USER_ACCESSIBLE
 - File-backed faults: read from VFS (checking PageCache first) into a freshly
   allocated physical frame, then map USER_ACCESSIBLE
@@ -218,4 +218,11 @@ pub struct MmapRegion {
 and all registered mmap regions. Process exit frees every mmap region.
 
 Cross-CPU TLB shootdown: `shootdown_single_page()` / `shootdown_range()` builds a
-CPU bitmask of all active CPUs and sends IPI vector 0xF1.
+CPU bitmask of **all online CPUs except the caller** and sends IPI vector 0xF1.
+The mask builder (`build_tlb_target_mask()`) is deliberately **lock-free**: it
+is reached from `terminate_current()` / `recycle_terminated()` with the global
+`SCHEDULER` mutex already held, so querying the scheduler there would
+self-deadlock the CPU (see
+`docs/investigation/smp331-exit-tlb-shootdown-self-deadlock.md`). Because the
+kernel uses one shared address space (one CR3), every online CPU can cache a
+freed user page; spurious remote invalidations are harmless.

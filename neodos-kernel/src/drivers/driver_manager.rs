@@ -8,7 +8,7 @@ use crate::nem::{self, NEM_API_VERSION};
 use crate::drivers::nem::v3loader;
 use crate::drivers::driver_runtime::{self, DriverState};
 use crate::eventbus::{EVENT_KEYBOARD_INPUT, EVENT_KEYB_LAYOUT, EVENT_MOUSE_INPUT};
-use crate::eventbus::{EVENT_SERIAL_DATA, EVENT_RTC_READ, EVENT_SHUTDOWN};
+use crate::eventbus::{EVENT_SERIAL_DATA, EVENT_RTC_READ, EVENT_RTC_WRITE, EVENT_SHUTDOWN};
 use crate::log::LogSubsys;
 
 #[derive(Debug, Clone)]
@@ -274,9 +274,13 @@ impl DriverManager {
                                 ).is_ok()
                             }
                             "RTC" => {
-                                v3loader::register_v3_event_bus_handler(
+                                let read_ok = v3loader::register_v3_event_bus_handler(
                                     load_result.entry_event, EVENT_RTC_READ, id
-                                ).is_ok()
+                                ).is_ok();
+                                let write_ok = v3loader::register_v3_event_bus_handler(
+                                    load_result.entry_event, EVENT_RTC_WRITE, id
+                                ).is_ok();
+                                read_ok && write_ok
                             }
                             "ACPI" => {
                                 v3loader::register_v3_event_bus_handler(

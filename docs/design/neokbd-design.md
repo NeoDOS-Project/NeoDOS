@@ -886,7 +886,7 @@ object::namespace::ob_insert_object("\\Device\\Keyboard", kbd_id);
 1. Implementar tests de las secciones 7.1 a 7.11
 2. Tests de carga de archivos `.kbd` de ejemplo (US, Spanish)
 3. Tests de traducción scancode→Unicode para ambos layouts
-4. Verificar: `cargo build` + `python3 scripts/auto_test.py`
+4. Verificar: `cargo build` + `neodev test`
 
 ### Step 12: Documentación (0.5 day)
 

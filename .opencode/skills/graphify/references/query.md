@@ -53,7 +53,7 @@ print(f'vocab: {len(vocab)} tokens')
    - Morphology: "handlers" maps to `handler` IFF present; "todos" maps to `todo` IFF present.
 
 3. Print the selection explicitly to the user before running the query, so the expansion is auditable:
-```
+```text
 Query expanded to (from graph vocab, N tokens): [token1, token2, ...]
 ```
 If the list is empty, say so plainly and stop — do not proceed to traversal.

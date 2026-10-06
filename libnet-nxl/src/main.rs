@@ -12,12 +12,14 @@ const INFO_CLASS_NIC_INFO: u32 = 20;
 const INFO_CLASS_HOSTNAME: u32 = 38;
 
 // ── ObSetInfoClass constants ──
+// ── ObSetInfoClass constants ──
 const SET_SOCKET_CONNECT: u32 = 18;
 const SET_SOCKET_BIND: u32 = 19;
 const SET_SOCKET_LISTEN: u32 = 20;
 const SET_SOCKET_SEND: u32 = 21;
 const SET_SOCKET_CLOSE: u32 = 22;
 const SET_NIC_IP: u32 = 27;
+const SET_NIC_GATEWAY: u32 = 28;
 
 // ── ObAccess ──
 const OB_READ: u32 = 1;
@@ -88,6 +90,14 @@ unsafe fn ob_open(path: &str, access: u32) -> i64 {
     let mut buf = [0u8; 256];
     buf[..bytes.len()].copy_from_slice(bytes);
     syscall_2(40, buf.as_ptr() as u64, access as u64)
+}
+
+unsafe fn cm_open_key(path: &str) -> i64 {
+    let bytes = path.as_bytes();
+    if bytes.len() >= 255 { return -1; }
+    let mut buf = [0u8; 256];
+    buf[..bytes.len()].copy_from_slice(bytes);
+    syscall_2(50, buf.as_ptr() as u64, 0)
 }
 
 unsafe fn ob_create(path: &str, obj_type: u32, attrs: u64) -> i64 {
@@ -189,26 +199,49 @@ pub extern "C" fn net_iface_stats(_idx: u32, _stats: *mut NetIfaceStats) -> i32 
 
 #[no_mangle]
 pub extern "C" fn net_socket_create(sock_type: u32) -> i32 {
-    let mut id_buf = [0u8; 16];
-    // TODO(net): Use Ob API for getpid (RAX=3 removed, use ob_open + ob_query_info(ProcessId))
-    let id = 0u64;
-    let path_len = {
-        let s = b"\\NetSock-";
-        id_buf[..s.len()].copy_from_slice(s);
-        let mut tmp = id;
-        let mut i = 15;
-        while tmp > 0 {
-            let d = (tmp % 16) as u8;
-            id_buf[i] = if d < 10 { b'0' + d } else { b'a' + d - 10 };
-            tmp /= 16;
-            i -= 1;
-        }
-        s.len() + (15 - i)
-    };
-    let path = unsafe { core::str::from_utf8_unchecked(&id_buf[..path_len]) };
+    // Socket objects live in the global Ob namespace, so the path must be
+    // unique across all processes. Previously this was always `\NetSock-0`,
+    // which collided with sockets already created by other processes (e.g. the
+    // long-lived DHCP client socket). Try successive names until one is free.
     let attrs = (sock_type & 0xFF) as u64;
-    let r = unsafe { ob_create(path, OB_TYPE_SOCKET, attrs) };
-    if r < 0 { r as i32 } else { r as i32 }
+    for n in 0..MAX_SOCKET_PATH_ATTEMPTS {
+        let mut buf = [0u8; 16];
+        let len = write_socket_path(&mut buf, n);
+        let path = unsafe { core::str::from_utf8_unchecked(&buf[..len]) };
+        let r = unsafe { ob_create(path, OB_TYPE_SOCKET, attrs) };
+        if r >= 0 {
+            return r as i32;
+        }
+    }
+    -1
+}
+
+/// Maximum distinct `\NetSock-<n>` names tried before giving up.
+const MAX_SOCKET_PATH_ATTEMPTS: u32 = 64;
+
+/// Write `\NetSock-<n>` into `buf` and return its length.
+fn write_socket_path(buf: &mut [u8; 16], n: u32) -> usize {
+    const PREFIX: &[u8] = b"\\NetSock-";
+    buf[..PREFIX.len()].copy_from_slice(PREFIX);
+    let mut pos = PREFIX.len();
+
+    let mut digits = [0u8; 10];
+    let mut d = 0usize;
+    let mut v = n;
+    if v == 0 {
+        digits[0] = b'0';
+        d = 1;
+    }
+    while v > 0 {
+        digits[d] = b'0' + (v % 10) as u8;
+        d += 1;
+        v /= 10;
+    }
+    for i in (0..d).rev() {
+        buf[pos] = digits[i];
+        pos += 1;
+    }
+    pos
 }
 
 #[no_mangle]
@@ -273,27 +306,35 @@ pub extern "C" fn net_set_ip(iface: u32, ip: u32, mask: u32) -> i32 {
 }
 
 #[no_mangle]
-pub extern "C" fn net_set_gateway(_iface: u32, gw: u32) -> i32 {
-    let key_path = "\\Registry\\Machine\\System\\CurrentControlSet\\Services\\Network\\Interfaces\\0\0";
+pub extern "C" fn net_set_gateway(iface: u32, gw: u32) -> i32 {
+    // Apply the gateway to the running NIC so off-subnet routing uses it
+    // immediately (0.0.0.0 = unset). Persistence to the Registry is the caller's
+    // responsibility (dhcpd/netcfg write the `Gateway` value), consistent with
+    // `net_set_ip`, which only applies the IP/mask at runtime.
+    let mut buf = [0u8; 8];
+    buf[..4].copy_from_slice(&iface.to_le_bytes());
+    buf[4..8].copy_from_slice(&gw.to_be_bytes());
     let fd = unsafe {
-        match ob_open(key_path, 3) {
+        match ob_open("\\Global\\Info\\Network\0", 3) { // OB_READ|OB_WRITE
             r if r >= 0 => r as u8,
             _ => return -1,
         }
     };
-    let gw_bytes = gw.to_be_bytes();
-    let r = unsafe { syscall_4(53, fd as u64, 1u64, gw_bytes.as_ptr() as u64, 4u64) };
-    let _ = unsafe { ob_close(fd) };
-    if r < 0 { r as i32 } else { 0 }
+    let r = unsafe { ob_set_info(fd, SET_NIC_GATEWAY, buf.as_ptr(), 8) };
+    unsafe { ob_close(fd) };
+    if r < 0 { -1 } else { 0 }
 }
 
 #[no_mangle]
 pub extern "C" fn net_get_ip(iface: u32) -> u32 {
-    let mut buf = [0u8; 32];
+    // The kernel NicInfo entry is `size_of::<NetIfaceInfo>()` (84) bytes; a
+    // smaller buffer makes the query return 0 entries. See #321.
+    let mut buf = [0u8; 256];
     let r = query_nic_info(&mut buf);
     if r < 0 { return 0; }
-    let offset = (iface as usize) * 15;
-    if offset + 15 > r as usize { return 0; }
+    let entry = core::mem::size_of::<NetIfaceInfo>();
+    let offset = (iface as usize) * entry;
+    if offset + entry > r as usize { return 0; }
     u32::from_be_bytes([buf[offset + 10], buf[offset + 11], buf[offset + 12], buf[offset + 13]])
 }
 
@@ -301,7 +342,7 @@ pub extern "C" fn net_get_ip(iface: u32) -> u32 {
 pub extern "C" fn net_get_gateway(_iface: u32) -> u32 {
     let key_path = "\\Registry\\Machine\\System\\CurrentControlSet\\Services\\Network\\Interfaces\\0\0";
     let fd = unsafe {
-        match ob_open(key_path, 3) { // OB_READ|OB_WRITE
+        match cm_open_key(key_path) {
             r if r >= 0 => r as u8,
             _ => return 0,
         }
@@ -326,7 +367,7 @@ pub extern "C" fn net_get_dhcp_bound() -> i32 {
 pub extern "C" fn net_get_dns(_iface: u32) -> u32 {
     let key_path = "\\Registry\\Machine\\System\\CurrentControlSet\\Services\\Network\\Interfaces\\0\0";
     let fd = unsafe {
-        match ob_open(key_path, 1) {
+        match cm_open_key(key_path) {
             r if r >= 0 => r as u8,
             _ => return 0,
         }
@@ -345,7 +386,7 @@ pub extern "C" fn net_get_dns(_iface: u32) -> u32 {
 pub extern "C" fn net_get_dhcp_enabled(_iface: u32) -> i32 {
     let key_path = "\\Registry\\Machine\\System\\CurrentControlSet\\Services\\Network\\Interfaces\\0\0";
     let fd = unsafe {
-        match ob_open(key_path, 1) {
+        match cm_open_key(key_path) {
             r if r >= 0 => r as u8,
             _ => return 0,
         }
@@ -364,7 +405,7 @@ pub extern "C" fn net_get_dhcp_enabled(_iface: u32) -> i32 {
 pub extern "C" fn net_get_lease_seconds(_iface: u32) -> u32 {
     let key_path = "\\Registry\\Machine\\System\\CurrentControlSet\\Services\\Network\\Interfaces\\0\0";
     let fd = unsafe {
-        match ob_open(key_path, 1) {
+        match cm_open_key(key_path) {
             r if r >= 0 => r as u8,
             _ => return 0,
         }
@@ -395,9 +436,9 @@ pub unsafe extern "C" fn net_get_hostname(buf: *mut u8, buf_len: u32) -> u32 {
 pub extern "C" fn net_get_mask(_iface: u32) -> u32 {
     let key_path = "\\Registry\\Machine\\System\\CurrentControlSet\\Services\\Network\\Interfaces\\0\0";
     let fd = unsafe {
-        match ob_open(key_path, 3) {
+        match cm_open_key(key_path) {
             r if r >= 0 => r as u8,
-            _ => return 0x00FFFFFF,
+            _ => return 0,
         }
     };
     let mut buf = [0u8; 16];
@@ -406,7 +447,7 @@ pub extern "C" fn net_get_mask(_iface: u32) -> u32 {
         syscall_4(52, fd as u64, val_name.as_ptr() as u64, buf.as_mut_ptr() as u64, buf.len() as u64)
     };
     unsafe { ob_close(fd) };
-    if r < 12 { return 0x00FFFFFF; }
+    if r < 12 { return 0; }
     u32::from_le_bytes([buf[8], buf[9], buf[10], buf[11]])
 }
 

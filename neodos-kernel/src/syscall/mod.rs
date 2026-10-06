@@ -37,8 +37,9 @@ pub use permission::{SyscallPermission, CAP_ADMIN};
 use self::handlers::*;
 use self::ob::*;
 use self::cm::*;
-pub use self::tests::{register_syscall_table_tests, register_sync_tests};
+pub use self::tests::{register_syscall_table_tests, register_sync_tests, register_path_tests};
 pub use self::ob::register_ob_stats_tests;
+pub use self::ob::register_ob_set_tests;
 
 
 // ── Syscall Number Constants (frozen ABI) ──
@@ -480,7 +481,7 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, rdx: u64, r8: u
         return e;
     }
 
-    match SYSCALL_TABLE[rax as usize] {
+    let result = match SYSCALL_TABLE[rax as usize] {
         Some(handler) => {
             let regs = Registers::new(rax, rbx, rcx, rdx, r8, r9);
             let result = handler(regs);
@@ -490,7 +491,22 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, rdx: u64, r8: u
             kerror!(LogSubsys::Syscall, "No handler for syscall {}", rax);
             err_to_u64(SyscallError::NoSys)
         }
+    };
+
+    // #374: apply deferred service-exit notifications. This runs outside the
+    // scheduler lock (the termination path only enqueued them) so a restart
+    // policy can safely spawn a process. Covers sys_exit and exception paths.
+    if crate::services::has_pending_exits() {
+        crate::services::process_pending_exits();
     }
+
+    // #358: deliver deferred graceful-shutdown notifications and enforce their
+    // bounded timeouts. Also runs outside every kernel lock.
+    if crate::services::has_pending_shutdowns() {
+        crate::services::process_pending_shutdowns();
+    }
+
+    result
 }
 
 // ── Handle table helpers ──
@@ -521,6 +537,29 @@ pub fn wake_blocked_readers() {
         let s = crate::scheduler::current_scheduler();
         let mut scheduler = s.lock();
         scheduler.wake_blocked_on_magic(0xFFFFFFFF);
+        set_need_resched();
+    });
+}
+
+/// Deferred Ctrl+C action: terminate the foreground process and wake whoever
+/// is waiting on it (the shell, blocked in `ObWait`).
+///
+/// This is queued as high-priority work by the keyboard IRQ
+/// (`crate::input::manager::request_foreground_interrupt`) and runs from the
+/// syscall-return path, never directly in IRQ context, because `kill_pid`
+/// touches the Object Manager and namespace.
+pub fn interrupt_foreground_work(data: *mut u8) {
+    let pid = data as usize as u32;
+    if pid == 0 {
+        return;
+    }
+    crate::serial_println!("[CTRLC] foreground interrupt -> pid={}", pid);
+    crate::hal::without_interrupts(|| {
+        let s = crate::scheduler::current_scheduler();
+        let mut scheduler = s.lock();
+        if scheduler.kill_pid(pid) {
+            scheduler.wake_waiters(pid);
+        }
         set_need_resched();
     });
 }

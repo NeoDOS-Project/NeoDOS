@@ -44,6 +44,7 @@ mod work_queue;
 mod dpc;
 mod memory;
 mod globals;
+pub mod lock_order;
 pub mod usermode;
 pub mod syscall;
 mod nxl;
@@ -69,7 +70,9 @@ mod cm;
 mod services;
 mod virtio;
 mod kbd;
+mod stress_spawn; // #345 Phase 2 diagnostic spawn-storm harness
 mod abi_freeze;
+mod i18n_tests;
 
 use drivers::fat32::Fat32Driver;
 use drivers::gpt;
@@ -312,6 +315,9 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     // GS is programmed per-CPU now: pin CPU0's KPRCB to the boot thread so the
     // per-CPU identity (Rule 6.1.5) is valid before APs start scheduling.
     crate::scheduler::sync_bsp_identity();
+    // Per-CPU `%gs` is valid now: enable preempt-disable tracking so spinlock
+    // critical sections (FS/network/allocator) cannot be descheduled mid-hold.
+    crate::scheduler::preempt_tracking_enable();
     println!("[+] {} CPU(s) online", cpu_count);
     crate::serial_println!("[SMP] SCHED_TEST_MODE after bring-up = {}", crate::scheduler::SCHED_TEST_MODE.load(core::sync::atomic::Ordering::Relaxed));
 
@@ -671,6 +677,13 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
         crate::serial_println!("[VT_DIAG] counters reset post-boot (baseline for SMP bursts)");
         // Phase 8: enable scheduler consistency forensics for the interactive phase.
         crate::scheduler::sched_forensic_enable(true);
+        // #293 Phase 1: trace syscall identity (all TIDs) for the interactive phase
+        // so the pre-fault syscall sequence is available in the raw dump.
+        crate::scheduler::diag::sys_trace_set_tid(u32::MAX);
+        // #293 Phase 293-B: trace current_thread writes and rsp writes.
+        crate::scheduler::diag::ctx_trace_enable(true);
+        crate::scheduler::diag::rsp_trace_enable(true);
+        crate::scheduler::diag::kcpu_trace_enable(true);
         // Phase 13: hand APs over to the scheduler now that the boot test suite
         // is complete. Each AP picks this up on its next timer tick.
         // Phase 13: hand APs over to the scheduler after the boot test suite.
@@ -691,14 +704,15 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     // Fase 3.1: dump PRE-netd (mantener para comparar)
     crate::arch::x64::idt::timer_diag_dump();
 
-    // Spawn network kernel thread — drives net_tick() independently
-    // of Ring 3 process activity.
+    // Spawn the network RX pump kernel thread ("netpump") — drives net_tick()
+    // independently of Ring 3 process activity. This is the Ring-0 data-plane
+    // worker, not the Ring 3 `netd` network service (see #362/#372).
     // Read the real function address from the static.
     // Direct fn→pointer→integer casts produce thunk addresses.
     if let Some(tid) = net::spawn_net_kthread(unsafe {
-        core::ptr::read(&raw const net::NETD_PTR) as u64
+        core::ptr::read(&raw const net::NETPUMP_PTR) as u64
     }) {
-        println!("[+] netd kernel thread spawned (TID {})", tid);
+        println!("[+] netpump kernel thread spawned (TID {})", tid);
     }
 
     // Fase 3.1: POST-netd dump inmediato + dump tras 500 ticks (captura primera selección real de netd)
@@ -874,6 +888,10 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
 
     crate::object::namespace::ob_namespace_debug();
 
+    // #345 Phase 2: controlled spawn-storm harness (diagnostic; no-op when
+    // `stress_spawn::ENABLED` is false). Runs concurrently with NeoInit.
+    crate::stress_spawn::start();
+
     // Enter NeoInit (blocks until NeoInit exits, which it shouldn't)
     usermode::wait_for_process(pid);
 
@@ -888,6 +906,36 @@ fn panic(info: &PanicInfo) -> ! {
     hal::disable_interrupts();
 
     let class = crate::panic_classification::current_panic_class();
+    // Lock-free first report: capture the panic even if the regular logger
+    // deadlocks on the SERIAL1 spinlock.
+    crate::raw_serial_println!(
+        "[PANIC] class={} rsp={:#x} msg={}",
+        class.to_str(),
+        unsafe { crate::hal::raw::raw_read_rsp() },
+        info.message(),
+    );
+    crate::scheduler::diag::dump_raw();
+    crate::scheduler::diag::sys_dump_raw();
+    crate::scheduler::diag::frame_dump_raw();
+    crate::scheduler::diag::ctx_dump_raw();
+    crate::scheduler::diag::rsp_dump_raw();
+    crate::scheduler::diag::dr_dump_raw();
+    crate::scheduler::diag::kcpu_dump_raw();
+    crate::scheduler::diag::st_dump_raw(); // #345 Phase 2A stress trace
+    crate::scheduler::diag::kstack::dump_raw(); // #476 H1 switch-out kstack tracking
+    crate::slab::free_bad_dump(); // #476 FREE_BAD allocator ownership audit
+    crate::scheduler::diag::iretq::dump_raw(); // #476 iretq frame audit
+    crate::raw_serial_println!(
+        "[VFS_STATE] owner_cpu={} owner_tid={} owner_pid={} owner_rip=0x{:x} owner_acq={} waiter_cpu={} waiter=0x{:x} waits={}",
+        crate::scheduler::diag::vfs_owner_cpu(),
+        crate::scheduler::diag::vfs_owner_tid(),
+        crate::scheduler::diag::vfs_owner_pid(),
+        crate::scheduler::diag::vfs_owner_rip(),
+        crate::scheduler::diag::vfs_owner_acq(),
+        crate::scheduler::diag::vfs_waiter_cpu(),
+        crate::scheduler::diag::vfs_waiter_word(),
+        crate::scheduler::diag::vfs_wait_count());
+    crate::raw_serial_println!("[CORRELATION] last_DOUBLE_RUNNING_seq={}", crate::scheduler::diag::dr_last_seq());
     println!("\r\n!!! KERNEL PANIC (CLASS: {}) !!!", class.to_str());
 
     // Capture approximate RIP from return address on stack, and RSP

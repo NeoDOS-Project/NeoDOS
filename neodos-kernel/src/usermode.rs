@@ -118,6 +118,119 @@ pub fn execute_usermode(entry_point: u64, stack_pointer: u64) {
     }
 }
 
+/// Maximum size of a Ring 3 image read from the VFS for process creation.
+pub const MAX_PROCESS_BIN: usize = crate::arch::x64::paging::MAX_BIN_SIZE as usize;
+
+/// Result of the shared Ring 3 process-creation path.
+pub struct CreatedProcess {
+    pub pid: u32,
+    pub entry: u64,
+    pub slot_idx: u8,
+    pub code_base: u64,
+    pub stack_top: u64,
+}
+
+/// Errors from the shared process-creation path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CreateProcessError {
+    /// The image path could not be resolved/read, or the image was too short.
+    NotFound,
+    /// A user slot, kernel stack or scheduler slot could not be allocated.
+    NoMemory,
+    /// The image could not be loaded as an ELF.
+    InvalidElf,
+}
+
+/// Shared kernel process-creation path, used by both `ObCreate(Process)` and
+/// the kernel Service Manager. It reads the image at `ob_path`
+/// (`\Global\FileSystem\...`), allocates a user slot, loads the ELF and creates
+/// the process + initial thread via [`spawn_usermode`].
+///
+/// The initial thread is left `Suspended`. Callers that need it schedulable
+/// call [`activate_process`] (the `ObWait` hand-off does the same while holding
+/// the scheduler lock). On any failure the reserved user slot is released, so
+/// no slot leaks.
+pub fn create_process_from_ob_path(
+    ob_path: &str,
+    cwd_drive: u8,
+    cwd_path: &str,
+    parent_pid: u32,
+    name: &str,
+) -> Result<CreatedProcess, CreateProcessError> {
+    let vfs_path = ob_path
+        .strip_prefix("\\Global\\FileSystem\\")
+        .unwrap_or(ob_path);
+
+    let bin_data = {
+        let mut buf = alloc::vec![0u8; MAX_PROCESS_BIN];
+        let bin_size = crate::globals::with_vfs_site(crate::scheduler::diag::VFS_SITE_CREATE_PROC, |vfs| match vfs.resolve_path(vfs_path) {
+            Ok((drive_idx, node)) => {
+                if (node.mode & crate::fs::vfs::MODE_FILE) == 0 {
+                    return 0;
+                }
+                match vfs.read(drive_idx, node.inode, 0, &mut buf) {
+                    Ok(n) => {
+                        if n > MAX_PROCESS_BIN { 0 } else { n }
+                    }
+                    Err(_) => 0,
+                }
+            }
+            Err(_) => 0,
+        });
+        if bin_size < 4 {
+            return Err(CreateProcessError::NotFound);
+        }
+        buf.truncate(bin_size);
+        buf
+    };
+
+    let slot = match crate::arch::x64::paging::alloc_user_slot() {
+        Some(s) => s,
+        None => return Err(CreateProcessError::NoMemory),
+    };
+
+    let result = match crate::elf::load_elf(&bin_data, None, slot.code_base) {
+        Ok(r) => r,
+        Err(_) => {
+            crate::arch::x64::paging::free_user_slot(slot.slot_idx);
+            return Err(CreateProcessError::InvalidElf);
+        }
+    };
+
+    match spawn_usermode(
+        result.entry,
+        slot.stack_top,
+        slot.slot_idx,
+        cwd_drive,
+        cwd_path,
+        parent_pid,
+        name,
+    ) {
+        Ok(pid) => Ok(CreatedProcess {
+            pid,
+            entry: result.entry,
+            slot_idx: slot.slot_idx,
+            code_base: slot.code_base,
+            stack_top: slot.stack_top,
+        }),
+        Err(_) => {
+            crate::arch::x64::paging::free_user_slot(slot.slot_idx);
+            Err(CreateProcessError::NoMemory)
+        }
+    }
+}
+
+/// Activate a process's initial thread (`Suspended -> Ready`). Idempotent.
+/// Returns `true` when a `Suspended` thread was published. This is the single
+/// activation entry point for callers that do not hold the scheduler lock.
+pub fn activate_process(pid: u32) -> bool {
+    crate::hal::without_interrupts(|| {
+        let s = crate::scheduler::current_scheduler();
+        let mut lock = s.lock();
+        lock.activate_suspended_process(pid)
+    })
+}
+
 pub fn spawn_usermode(entry: u64, stack_top: u64, slot_idx: u8, cwd_drive: u8, cwd_path: &str, parent_pid: u32, name: &str) -> Result<u32, &'static str> {
     // F-DEV-02: zombie queue backpressure — bounded queue without loss. If storm
     // fills queue, try synchronous reclaim before allocating resources; if still
@@ -228,12 +341,7 @@ pub fn wait_for_process(pid: u32) {
                 let ks_top = k.kernel_stack_top;
                 let sp = if let Some(ep) = s.find_eprocess(pid) {
                     if let Some(slot) = ep.user_slot {
-                        let slot_size = 0x20000u64;
-                        let max_bin = 0x10000u64;
-                        let user_stack = 0x10000u64;
-                        crate::arch::x64::paging::USER_BASE
-                            + slot as u64 * slot_size
-                            + max_bin + user_stack
+                        crate::arch::x64::paging::user_slot_stack_top(slot)
                     } else {
                         k.rsp
                     }
@@ -264,6 +372,13 @@ pub fn wait_for_process(pid: u32) {
     // real saved execution context lives in EXIT_RSP/EXIT_RIP (set by
     // execute_usermode_asm) — it will be restored when the Ring 3
     // process exits via exit_to_kernel.
+    // #482: capture the target for the *deferred* KPRCB publication performed
+    // after interrupts are disabled, immediately before the Ring-3 iretq.
+    // Publishing it here would leave `KPRCB.current_thread = target` while the
+    // CPU still executes on the bootstrap stack (boot's), violating the
+    // ownership invariant for an async observer (timer/IPI).
+    let mut target_ptr_out: *mut scheduler::Kthread = core::ptr::null_mut();
+    let mut target_pid_out: u32 = 0;
     crate::hal::without_interrupts(|| {
         let mut s = scheduler::current_scheduler().lock();
         // Phase 13-A: use THIS CPU's current thread, not the global
@@ -295,12 +410,18 @@ pub fn wait_for_process(pid: u32) {
                 break;
             }
         }
-        // F-01: sync per-CPU KPRCB (BSP)
-        if !target_ptr.is_null() {
-            unsafe { crate::arch::x64::cpu_local::sync_per_cpu_current(target_ptr, target_pid); }
-        }
+        // #482: capture the target; do NOT publish KPRCB here. The block's
+        // `without_interrupts` restores IF on exit, so publishing now would
+        // expose `KPRCB=target` while the CPU is still on the bootstrap stack.
+        // The identity is published after `disable_interrupts()` below.
+        target_ptr_out = target_ptr;
+        target_pid_out = target_pid;
+        // #476 H1 experiment: this bookkeeping switch does not abandon the boot
+        // stack (execute_usermode iretqs from it), so no switch-out window.
+        crate::scheduler::diag::kstack::switch_out_clear();
         crate::serial_println!("[USERMODE] activated TID={}", target_tid);
         if let Some(k) = s.current_kthread_mut() {
+            crate::scheduler::diag::run_ev(crate::scheduler::diag::RUN_SITE_USERMODE, k);
             k.state = scheduler::ThreadState::Running;
         }
     });
@@ -311,6 +432,21 @@ pub fn wait_for_process(pid: u32) {
     // back to TID 0 sets RSP0 to 0 (boot's kernel_stack_top).  The cli
     // here prevents that window, and the subsequent iretq restores IF.
     crate::hal::disable_interrupts();
+    // #482: publish the target identity now (IF=0), immediately before the
+    // Ring-3 iretq — atomically with the physical transition away from the
+    // bootstrap stack. Until here `KPRCB.current_thread` stays = boot, matching
+    // the stack the CPU is physically executing on.
+    if !target_ptr_out.is_null() {
+        // #482 regression: the deferred-publish contract. `KPRCB.current_thread`
+        // must still be the physical stack owner (boot) here; publishing it
+        // earlier (while the CPU runs on the bootstrap stack) is the defect.
+        let pre = unsafe { crate::arch::x64::cpu_local::try_per_cpu_tid() };
+        if pre != Some(scheduler::BOOT_TID) {
+            crate::raw_serial_println!(
+                "[WF_ORDER_VIOLATION] kprcb={:?} != boot before launch publish", pre);
+        }
+        unsafe { crate::arch::x64::cpu_local::sync_per_cpu_current(target_ptr_out, target_pid_out); }
+    }
     unsafe {
         let current_tid = scheduler::current_tid();
         unsafe { gdt::prepare_ring3_return(kernel_stack_top, current_tid, pid); }
@@ -330,6 +466,8 @@ pub fn wait_for_process(pid: u32) {
         // F-01: sync KPRCB back to boot thread
         let boot_ptr = s.find_kthread(scheduler::BOOT_TID).map(|k| k as *const _ as *mut scheduler::Kthread).unwrap_or(core::ptr::null_mut());
         unsafe { crate::arch::x64::cpu_local::sync_per_cpu_current(boot_ptr, 0); }
+        // #476 H1 experiment: the CPU is already back on the boot stack.
+        crate::scheduler::diag::kstack::switch_out_clear();
         if let Some(k) = s.find_kthread_mut(scheduler::BOOT_TID) {
             k.state = scheduler::ThreadState::Running;
         }

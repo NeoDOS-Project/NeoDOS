@@ -28,7 +28,7 @@ Correctly implement NT6-style security with proper SID construction, token inher
 
 ### SID (`src/security/sid.rs`)
 
-```
+```text
 S-R-I-S*  format: revision=1, identifier_authority=5 (NT Authority), sub-authorities=RID
 ```
 
@@ -83,6 +83,7 @@ Access constants: `ACCESS_READ(1)`, `ACCESS_WRITE(2)`, `ACCESS_EXECUTE(4)`, `ACC
 ### SeAccessCheck (`src/security/access.rs`)
 
 Algorithm:
+
 1. **Admin bypass**: if `token.is_admin` and requested access has admin-only rights → grant.
 2. **Deny-by-default**: empty DACL → deny.
 3. **Deny ACEs first**: any matching Deny ACE covering requested access → deny.

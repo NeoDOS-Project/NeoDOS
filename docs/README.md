@@ -1,6 +1,6 @@
 # NeoDOS Documentation
 
-> **Version:** v0.51.1 | **Tests:** 737 (kernel) | **ABI:** v8
+> **Version:** v0.51.3 | **Tests:** 805 (kernel) | **ABI:** v8
 
 ## Architecture
 
@@ -11,6 +11,7 @@
 | [Vision](architecture/vision.md) | Long-term strategy v0.40 → v1.0 |
 | [Repository Architecture](architecture/repository.md) | Multi-repo proposal, dependency analysis |
 | [AHCI Stability](architecture/ahci-stability.md) | AHCI stability improvements, multi-sector read batching |
+| [Disk Layout](architecture/disk-layout.md) | NT-style disk layout proposal (WIP, not implemented) |
 
 ## Boot
 
@@ -83,6 +84,7 @@
 | Document | Description |
 |----------|-------------|
 | [Power Manager](services/power-manager.md) | Power plans, ACPI, shutdown coordination |
+| [NTP Daemon](services/ntpd.md) | ntpd architecture, config, lifecycle, limitations |
 
 ## Userland
 
@@ -125,13 +127,20 @@
 | [KBD Investigation Report](investigation/kbd-investigation-report.md) | Keyboard subsystem investigation report |
 | [KBD Pipeline — Fase 0](investigation/kbd-pipeline-fase0.md) | Black-box + white-box keyboard pipeline |
 | [KBD SMP Queue Validation](investigation/kbd-smp-queue-validation.md) | Keyboard SMP queue validation report |
+| [#331 SMP>1 exit TLB-shootdown self-deadlock](investigation/smp331-exit-tlb-shootdown-self-deadlock.md) | Recursive `SCHEDULER` lock in process-exit page free |
 
 ## Design Proposals
 
 | Document | Description |
 |----------|-------------|
+| [Audio API](design/audio-api-design.md) | Audio device + Ring 3 PCM API (#469) |
+| [Display / Framebuffer API](design/display-api-design.md) | Ring 3 display/framebuffer API design (#465) |
+| [File Seek](design/file-seek-design.md) | File handle seek / read-at-offset (#468) |
+| [FPU / SSE Context](design/fpu-context-design.md) | Save/restore FP/SIMD on context switch (#471) |
+| [Large NXE Binaries](design/nxe-large-binary-design.md) | Binary size cap and user stack (#470) |
+| [Monotonic Clock](design/monotonic-clock-design.md) | Monotonic uptime + sleep (#467) |
+| [Raw Keyboard API](design/raw-keyboard-api-design.md) | Raw keyboard event API (#466) |
 | [Font Manager](design/font-manager-design.md) | Font manager design proposal |
-| [i18n](design/i18n-design.md) | Internationalization design |
 | [NeoCfg](design/neocfg-design.md) | Configuration system design |
 | [NeoKBD](design/neokbd-design.md) | Keyboard system design |
 | [Registry Improvements](design/registry-improvements.md) | Registry improvements proposal |

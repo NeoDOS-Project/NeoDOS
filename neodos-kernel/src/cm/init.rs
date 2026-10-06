@@ -67,15 +67,26 @@ pub fn flush_hive_to_vfs(hive: &Hive) -> Result<(), ()> {
     if !hive.is_dirty() {
         return Ok(());
     }
+    ktrace!(crate::log::LogSubsys::Power, "flush_hive_to_vfs: '{}' begin", hive.name);
     let data = hive.serialize();
     let file_path = alloc::format!("C:\\System\\Registry\\{}.hiv", hive.name);
-    crate::globals::with_vfs(|vfs| {
-        let _ = vfs.remove_file(&file_path);
-        let node = vfs.create(&file_path).map_err(|_| ())?;
-        let (drive_idx, _) = vfs.resolve_path(&file_path).map_err(|_| ())?;
+    let res = crate::globals::with_vfs(|vfs| {
+        // Write in place. Never delete the existing hive first: if create/write
+        // failed, the system would be left with no hive and the next boot would
+        // lose all registry configuration (observed with an early flush path).
+        let (drive_idx, node) = match vfs.resolve_path(&file_path) {
+            Ok((d, n)) => (d, n),
+            Err(_) => {
+                let created = vfs.create(&file_path).map_err(|_| ())?;
+                let (d, _) = vfs.resolve_path(&file_path).map_err(|_| ())?;
+                (d, created)
+            }
+        };
         vfs.write(drive_idx, node.inode, 0, &data).map_err(|_| ())?;
         Ok(())
-    })
+    });
+    ktrace!(crate::log::LogSubsys::Power, "flush_hive_to_vfs: '{}' done ok={}", hive.name, res.is_ok());
+    res
 }
 
 /// Ensure `Language = "en-US"` exists in the SYSTEM hive under
@@ -119,6 +130,28 @@ pub fn ensure_boot_defaults() {
         }
     }
 
+    // ── CurrentControlSet\Control\TimeZoneInformation — timezone/DST (#357) ──
+    // Defaults: UTC, DST disabled. Configurable via the Registry; the
+    // kernel derives local time from the authoritative UTC RTC.
+    let tz = crate::cm::cm_open_key(ctrl, "TimeZoneInformation")
+        .or_else(|_| crate::cm::cm_create_key(ctrl, "TimeZoneInformation"));
+    if let Ok(tz) = tz {
+        let defaults: [(&str, i32); 7] = [
+            ("UtcOffsetMinutes", 0),
+            ("DaylightOffsetMinutes", 0),
+            ("DaylightEnabled", 0),
+            ("DaylightStartMonth", 3),
+            ("DaylightStartDay", 1),
+            ("DaylightEndMonth", 10),
+            ("DaylightEndDay", 1),
+        ];
+        for (name, value) in defaults {
+            if crate::cm::cm_query_value(tz, name).is_err() {
+                let _ = crate::cm::cm_set_value(tz, name, hive::REG_DWORD, &value.to_le_bytes());
+            }
+        }
+    }
+
     // ── CurrentControlSet\Services\NeoInit — init process config ──
     let svc = crate::cm::cm_open_key(0, "CurrentControlSet\\Services\\NeoInit")
         .or_else(|_| crate::cm::cm_create_key(0, "CurrentControlSet\\Services\\NeoInit"));
@@ -137,6 +170,32 @@ pub fn ensure_boot_defaults() {
     if crate::cm::cm_query_value(svc, "WaitForNetwork").is_err() {
         let _ = crate::cm::cm_set_value(svc, "WaitForNetwork", hive::REG_DWORD,
             &0u32.to_le_bytes());
+    }
+
+    // ── CurrentControlSet\Services\Network\Interfaces\0 — network defaults ──
+    let if0 = crate::cm::cm_open_key(0, "CurrentControlSet\\Services\\Network\\Interfaces\\0")
+        .or_else(|_| crate::cm::cm_create_key(0, "CurrentControlSet\\Services\\Network\\Interfaces\\0"));
+    if let Ok(if0) = if0 {
+        if crate::cm::cm_query_value(if0, "DHCPEnabled").is_err() {
+            let _ = crate::cm::cm_set_value(if0, "DHCPEnabled", hive::REG_DWORD,
+                &1u32.to_le_bytes());
+        }
+        // 0.0.0.0 = unset/automatic. The DHCP client overwrites DnsServer with
+        // the leased value; a static setup uses `netcfg /setdns`.
+        for name in ["DnsServer", "DnsServer2", "DnsServer3"] {
+            if crate::cm::cm_query_value(if0, name).is_err() {
+                let _ = crate::cm::cm_set_value(if0, name, hive::REG_DWORD,
+                    &0u32.to_le_bytes());
+            }
+        }
+        // Canonical static-config values (0 = unset). Only consulted when
+        // DHCPEnabled = 0. Shared by dhcpd, ipconfig and netcfg. See #314.
+        for name in ["IPAddress", "SubnetMask", "Gateway"] {
+            if crate::cm::cm_query_value(if0, name).is_err() {
+                let _ = crate::cm::cm_set_value(if0, name, hive::REG_DWORD,
+                    &0u32.to_le_bytes());
+            }
+        }
     }
 }
 

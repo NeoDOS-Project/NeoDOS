@@ -47,7 +47,7 @@ When invoked:
 
 ## Review Output Format
 
-```
+```text
 [CRITICAL] Missing safety comment on unsafe block
 File: neodos-kernel/src/foo.rs:42
 Issue: Unsafe block without safety justification

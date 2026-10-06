@@ -16,6 +16,10 @@ IDS_ERR_UNKNOWN = 1010
 IDS_ERR_SET = 1011
 IDS_ERR_UNKNOWN_LOCALE = 1012
 IDS_NO_LOCALES = 1013
+IDS_REGION = 1014
+IDS_REGION_NONE = 1015
+IDS_RTL_ON = 1016
+IDS_RTL_OFF = 1017
 
 [strings]
 IDS_USAGE = "NXLOCALE [subordre]"
@@ -31,3 +35,7 @@ IDS_ERR_UNKNOWN = "Ordre desconeguda"
 IDS_ERR_SET = "No es pot canviar l'idioma"
 IDS_ERR_UNKNOWN_LOCALE = "Idioma desconegut"
 IDS_NO_LOCALES = "No hi ha idiomes disponibles"
+IDS_REGION = "Formats regionals:"
+IDS_REGION_NONE = "No hi ha formats regionals carregats"
+IDS_RTL_ON = "Direcció del text: de dreta a esquerra"
+IDS_RTL_OFF = "Direcció del text: d'esquerra a dreta"

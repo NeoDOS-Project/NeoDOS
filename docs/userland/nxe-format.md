@@ -20,9 +20,9 @@ NXE binaries are standard ELF64 `ET_DYN` (Position-Independent Executable) for x
 | Entry point | `_start` (no arguments, no return) |
 | Link address | `0` (PIE, resolved at load time) |
 | Relocation model | `pie` |
-| Max binary size | 64 KB (65536 bytes) |
+| Max binary size | 192 KB (196608 bytes) |
 | Load address | Random slot in `[0x400000, 0x2400000)` (ASLR) |
-| Slot size | 128 KB per process (64 KB code + 64 KB stack) |
+| Slot size | 256 KB per process (192 KB code + 64 KB stack) |
 | Stack size | 64 KB, grows downward from slot top |
 | Heap | 2 MB per process, at `0x10000000` |
 | Linker script | `libneodos/user.ld` |
@@ -86,7 +86,7 @@ The `.note.neodos` ELF note section (type `PT_NOTE` / `SHT_NOTE`) carries metada
 
 ## 3. Tool Inspection
 
-```bash
+```markdown
 # Display brief info
 nxinfo ver.nxe
 
@@ -124,6 +124,7 @@ static NXE_META: [u8; 64] = *b"\x08\x00\x00\x00...NeoDOS\0\0...";
 ```
 
 For host-side injection (without modifying source), `neodev` can use:
+
 ```bash
 objcopy --add-section .note.neodos=metadata.bin input.nxe output.nxe
 ```

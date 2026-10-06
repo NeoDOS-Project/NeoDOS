@@ -4,7 +4,7 @@ use spin::Mutex;
 use lazy_static::lazy_static;
 use crate::net::ethernet::{ETH_TYPE_IPV4, build_ethernet_frame};
 use crate::net::ipv4::{IPV4_HDR_MIN_LEN, IPV4_PROTO_UDP, build_ipv4_header, Ipv4Header};
-use crate::net::nic::{nic_default_id, nic_send_packet, NIC_REGISTRY};
+use crate::net::nic::{nic_default_id, nic_get_ip, nic_next_hop, nic_send_packet, NIC_REGISTRY};
 use crate::net::arp::arp_resolve;
 
 pub struct Socket {
@@ -315,13 +315,38 @@ pub fn socket_set_local(id: u32, local: SocketAddrV4) {
 /// Caller must NOT hold SOCKET_MANAGER lock (lock order: SOCKET_MANAGER → NIC_REGISTRY
 /// conflicts with incoming path NIC_REGISTRY → SOCKET_MANAGER).
 pub fn socket_send_udp_raw(local: SocketAddrV4, remote: SocketAddrV4, data: &[u8]) -> Result<usize, ()> {
-    let src_ip = local.ip;
+    let nic_id = nic_default_id().ok_or(())?;
+
+    let src_mac = {
+        let mut registry = NIC_REGISTRY.lock();
+        registry.get_mut(nic_id).ok_or(())?.mac_address()
+    };
+
     let dst_ip = remote.ip;
+
+    // A UDP socket bound to 0.0.0.0 (e.g. the DNS resolver) still needs a valid
+    // source address on the wire. Fill it from the NIC, except for broadcast
+    // datagrams (DHCP DISCOVER legitimately uses 0.0.0.0).
+    let mut src_ip = local.ip;
+    if src_ip.is_unspecified() && !dst_ip.is_broadcast() {
+        if let Some(ip) = nic_get_ip(nic_id) {
+            if !ip.is_unspecified() {
+                src_ip = ip;
+            }
+        }
+    }
+
+    // Next hop (single source of truth, see `nic_next_hop`): on-link -> the
+    // destination; off-link -> the configured gateway; off-link without a
+    // gateway -> clean failure (never ARP the remote destination).
+    let arp_target = nic_next_hop(dst_ip).ok_or(())?;
+
     let dst_mac = if dst_ip.is_broadcast() {
         MacAddr::broadcast()
     } else {
-        arp_resolve(dst_ip).ok_or(())?
+        arp_resolve(arp_target).ok_or(())?
     };
+
     let udp_data = crate::net::udp::build_udp_datagram(
         src_ip.0, dst_ip.0,
         local.port, remote.port,
@@ -338,11 +363,6 @@ pub fn socket_send_udp_raw(local: SocketAddrV4, remote: SocketAddrV4, data: &[u8
     ip_pkt.extend_from_slice(ip_bytes);
     ip_pkt.extend_from_slice(&udp_data);
 
-    let nic_id = nic_default_id().ok_or(())?;
-    let mut registry = NIC_REGISTRY.lock();
-    let nic = registry.get_mut(nic_id).ok_or(())?;
-    let src_mac = nic.mac_address();
-    drop(registry);
     let frame = build_ethernet_frame(dst_mac, src_mac, ETH_TYPE_IPV4, &ip_pkt);
     nic_send_packet(nic_id, &frame)?;
     Ok(data.len())
@@ -355,9 +375,14 @@ pub fn udp_dispatch(_src_ip: Ipv4Addr, src_port: u16, dst_port: u16, data: &[u8]
         if i >= mgr.sockets.len() { break; }
         let Some(ref mut socket) = mgr.sockets[i] else { continue };
         if socket.socket_type != SocketType::Udp { continue; }
-        // Connected UDP socket: match by remote port (src_port is sender's port)
+        // Connected UDP socket: match the destination port (the socket's local
+        // port) and, when set, the remote port. Matching only on `remote.port`
+        // would let a stale/previous socket capture replies addressed to a
+        // different local port.
         if socket.direction == SocketDirection::Connected
-            && (socket.remote.port == src_port || socket.remote.port == 0)
+            && socket.local.port != 0
+            && socket.local.port == dst_port
+            && (socket.remote.port == 0 || socket.remote.port == src_port)
         {
             socket.recv_buf.extend_from_slice(data);
             break;

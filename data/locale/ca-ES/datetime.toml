@@ -11,13 +11,29 @@ IDS_USAGE_LINE5 = 1005
 IDS_CUR_DATE = 1006
 IDS_CUR_TIME = 1007
 IDS_RTC_UNAVAIL = 1008
+IDS_SET_OK = 1009
+IDS_ERR_INVALID = 1010
+IDS_ERR_PERM = 1011
+IDS_USAGE_LINE6 = 1012
+IDS_USAGE_LINE7 = 1013
+IDS_ERR_SET_FAIL = 1014
+IDS_USAGE_LINE8 = 1015
+IDS_UTC_SUFFIX = 1016
 
 [strings]
-IDS_USAGE = "DATETIME [/D] [/T]"
-IDS_USAGE_LINE2 = "  Mostra la data i/o hora actual."
+IDS_USAGE = "DATETIME [/D] [/T] [/U] [/S <data> <hora>]"
+IDS_USAGE_LINE2 = "  Mostra i ajusta la data/hora actual (local per defecte)."
 IDS_USAGE_LINE3 = "  /D     Mostra només la data"
 IDS_USAGE_LINE4 = "  /T     Mostra només l'hora"
-IDS_USAGE_LINE5 = "  (sense flags = mostra data i hora)"
+IDS_USAGE_LINE5 = "  /U     Mostra UTC en lloc de l'hora local"
 IDS_CUR_DATE = "Data actual: "
 IDS_CUR_TIME = "Hora actual: "
 IDS_RTC_UNAVAIL = "RTC no disponible"
+IDS_SET_OK = "Data/hora UTC ajustada"
+IDS_ERR_INVALID = "Data/hora no valida"
+IDS_ERR_PERM = "Acces denegat: calen privilegis d'administrador"
+IDS_USAGE_LINE6 = "  /S     Ajusta data i hora UTC (nomes admin)"
+IDS_USAGE_LINE7 = "         ex. datetime /S 03/10/26 14:30:00"
+IDS_ERR_SET_FAIL = "No s'ha pogut ajustar la data/hora"
+IDS_USAGE_LINE8 = "  (sense flags = mostra data i hora local)"
+IDS_UTC_SUFFIX = " (UTC)"

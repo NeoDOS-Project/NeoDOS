@@ -3,7 +3,7 @@
 > **Version:** v0.1-draft
 > **Status:** Design
 > **Target Release:** v0.51+
-> **ABI Impact:** New ObType(23), new ObInfoClass(38-39), new ObSetInfoClass(48-49)
+> **ABI Impact:** New ObType(24), new ObInfoClass(51-52), new ObSetInfoClass(62-63)
 
 ---
 
@@ -45,13 +45,13 @@ NeoDOS embeds a single 8x16 monochrome bitmap font directly in the kernel binary
 
 ### 2.1 Architecture Overview
 
-```
+```text
 +--------------------------------------------------------------+
 |                    Font Manager (Ring 0)                      |
 |  +-------------+  +--------------+  +--------------------+    |
 |  | Format       |  | Font Cache    |  | Ob Integration    |   |
 |  | Detection    |  | (LRU glyphs)  |  | \Font\ namespace  |   |
-|  | + Dispatch   |  |              |  | ObType::Font 23   |   |
+|  | + Dispatch   |  |              |  | ObType::Font 24   |   |
 |  +------+-------+  +--------------+  +--------------------+    |
 |         |                                                      |
 |  +------+--------------------------------------------------+  |
@@ -194,13 +194,22 @@ Added to `ObType` in `object/types.rs`:
 
 | Value | Name | Description |
 |-------|------|-------------|
-| 23 | Font | Typeface resource object (kernel-created only) |
+| 24 | Font | Typeface resource object (kernel-created only) |
 
-`ObType::Font = 23` represents a loaded font. Font objects are **kernel-created only** via `ObSetInfoClass::FontLoad`. User-mode cannot create font objects via `ob_create`.
+`ObType::Font = 24` represents a loaded font. Font objects are **kernel-created only** via `ObSetInfoClass::FontLoad`. User-mode cannot create font objects via `ob_create`.
+
+> **ABI numbering (2026-10-04).** `ObType::Display = 23` is reserved by the
+> display design (`docs/design/display-api-design.md`, issue #465), so Font
+> takes **24**. The font info/set classes were renumbered off values already
+> used by the implemented ABI (`ObInfoClass::Hostname=38`,
+> `ProcessArgs=39`; `ObSetInfoClass::SetHostname=49`) and by the pending
+> Doom-prerequisite proposals: `FontMetrics=51`, `FontGlyph=52`,
+> `FontLoad=62`, `FontSetDefault=63`. `object/types.rs` remains the
+> authoritative registry.
 
 ### 2.5 Namespace Layout
 
-```
+```text
 \Font\
 |-- Default          -- symlink to default console font
 |-- Cascade\         -- directory of fallback fonts (future)
@@ -215,10 +224,10 @@ Added to `ObInfoClass` in `object/types.rs`:
 
 | Class | Name | Value | Description |
 |-------|------|-------|-------------|
-| 38 | FontMetrics | 38 | Query font metrics (returns FontMetricsInfo) |
-| 39 | FontGlyph | 39 | Query a single glyph by Unicode codepoint |
+| 51 | FontMetrics | 51 | Query font metrics (returns FontMetricsInfo) |
+| 52 | FontGlyph | 52 | Query a single glyph by Unicode codepoint |
 
-#### FontMetrics (38) -- Output struct
+#### FontMetrics (51) -- Output struct
 
 ```rust
 #[repr(C)]
@@ -235,9 +244,10 @@ pub struct FontMetricsInfo {
 
 Total: 24 bytes.
 
-#### FontGlyph (39) -- Query + Result
+#### FontGlyph (52) -- Query + Result
 
 User provides:
+
 ```rust
 #[repr(C)]
 pub struct FontGlyphQuery {
@@ -248,6 +258,7 @@ pub struct FontGlyphQuery {
 ```
 
 Kernel writes at same buffer pointer:
+
 ```rust
 #[repr(C)]
 pub struct FontGlyphResult {
@@ -267,12 +278,13 @@ Added to `ObSetInfoClass` in `object/types.rs`:
 
 | Class | Name | Value | Admin? | Description |
 |-------|------|-------|--------|-------------|
-| 48 | FontLoad | 48 | Yes | Load a font file from VFS into `\Font\<name>` |
-| 49 | FontSetDefault | 49 | Yes | Set the `\Font\Default` symlink target |
+| 62 | FontLoad | 62 | Yes | Load a font file from VFS into `\Font\<name>` |
+| 63 | FontSetDefault | 63 | Yes | Set the `\Font\Default` symlink target |
 
-#### FontLoad (48)
+#### FontLoad (62)
 
 Input buffer:
+
 ```rust
 #[repr(C)]
 pub struct FontLoadInfo {
@@ -283,6 +295,7 @@ pub struct FontLoadInfo {
 ```
 
 Flow:
+
 1. Validate caller is admin.
 2. Resolve VFS path, read file into heap buffer.
 3. Run format detection (iterate registered providers).
@@ -292,9 +305,10 @@ Flow:
 7. Insert into namespace at `\Font\<name>`.
 8. If `flags & 1`, update `\Font\Default` symlink.
 
-#### FontSetDefault (49)
+#### FontSetDefault (63)
 
 Input buffer:
+
 ```rust
 #[repr(C)]
 pub struct FontSetDefaultInfo {
@@ -303,6 +317,7 @@ pub struct FontSetDefaultInfo {
 ```
 
 Flow:
+
 1. Validate caller is admin.
 2. Verify `\Font\<name>` exists and is `ObType::Font`.
 3. Update or create symlink at `\Font\Default -> \Font\<name>`.
@@ -368,14 +383,15 @@ After VFS is ready (Phase 5-6), `\Font\Default` is resolved to the on-disk font,
 
 The following keys are added to the SYSTEM hive:
 
-```
+```text
 \Registry\Machine\System\CurrentControlSet\Services\FontManager
     DefaultFont  REG_SZ   "Terminus"     -- name of default font
     FontPath     REG_SZ   "\System\Fonts" -- directory for font files
 ```
 
 Future:
-```
+
+```text
 \Registry\Machine\Software\Microsoft\Windows NT\CurrentVersion\Fonts
     <name>  REG_SZ  path\to\font.psf
 ```
@@ -415,6 +431,7 @@ The console passes `RENDERER.put_pixel()` as the callback. A future GUI subsyste
 **Description:** Keep the current `font.rs` as the only kernel font. Add a `sys_load_font` syscall that lets user-mode programs load PSF files and query glyphs via syscall.
 
 **Rejected because:**
+
 - The console runs in Ring 0 and needs a kernel font; we would need two parallel font systems (kernel embedded + user-mode loaded).
 - The hardcoded font would still be in the kernel binary, violating the goal of removing embedded fonts.
 - User-mode programs would need to duplicate text rendering logic.
@@ -425,6 +442,7 @@ The console passes `RENDERER.put_pixel()` as the callback. A future GUI subsyste
 **Description:** Use FreeType or a minimalist TrueType rasterizer to load TTF/OTF fonts directly.
 
 **Rejected because:**
+
 - TTF rasterization is extremely complex (hinting, curve rendering, bytecode interpreter). Minimal TTF renderers still require >2000 lines of code.
 - Memory and CPU overhead is unacceptable for a console: TTF rasterization of a single glyph requires memory allocation, Bezier decomposition, and scanline filling.
 - The PSF format is designed for precisely this use case -- bitmap console fonts. Adding TTF support is deferred to the future GUI subsystem.
@@ -434,6 +452,7 @@ The console passes `RENDERER.put_pixel()` as the callback. A future GUI subsyste
 **Description:** Use BDF (X11 bitmap font format) instead of PSF.
 
 **Rejected because:**
+
 - BDF is a text-based format (ASCII). Parsing text in `no_std` is more complex and memory-intensive than parsing a binary format.
 - BDF files are significantly larger than equivalent PSF files (text encoding vs raw bitmaps).
 - PSF is the standard for Linux console fonts, with better tooling and availability.
@@ -445,13 +464,13 @@ The console passes `RENDERER.put_pixel()` as the callback. A future GUI subsyste
 
 | Subsystem | Change Description | Impact |
 |-----------|-------------------|--------|
-| **Object Manager** (`object/`) | New `ObType::Font=23`, new `ObInfoClass` variants (38-39), new `ObSetInfoClass` variants (48-49), new `ObOperations` for Font | Moderate |
+| **Object Manager** (`object/`) | New `ObType::Font=24`, new `ObInfoClass` variants (51-52), new `ObSetInfoClass` variants (62-63), new `ObOperations` for Font | Moderate |
 | **Font** (`font/` -- NEW) | Complete new module: `mod.rs`, `provider.rs`, `psf.rs`, `cache.rs` | New subsystem |
 | **Console** (`console.rs`) | Remove direct `font::` imports; use Font Manager API | High |
 | **Framebuffer/Graphics** (`graphics.rs`) | No direct change; `font_render_glyph` uses callback | None |
 | **VT** (`input/vt.rs`) | No change to shadow buffer format | None |
 | **Syscall dispatch** (`syscall/`) | No new syscalls; existing `ob_query_info`/`ob_set_info` handle new classes | Low |
-| **Registry** (`cm/`, `scripts/gen_system_hiv.py`) | Add `Services\FontManager` and `Software\Fonts` keys | Low |
+| **Registry** (`cm/`, `tools/gen-hiv`) | Add `Services\FontManager` and `Software\Fonts` keys | Low |
 | **NeoDev** ([`NeoDev`](https://github.com/NeoDOS-Project/NeoDev)) | Add font validation, font copy to image, `fonts.list` generation | Moderate |
 | **Boot sequence** (`main.rs`) | Add `font::init()` call in appropriate phase | Low |
 | **Locking/Concurrency** | Font Manager uses `Mutex<FontRegistry>` for provider/object registry | Low |
@@ -464,21 +483,21 @@ The console passes `RENDERER.put_pixel()` as the callback. A future GUI subsyste
 
 No new syscall. New classes dispatched via existing handler.
 
-#### FontMetrics (class=38)
+#### FontMetrics (class=51)
 
 | Aspect | Detail |
 |--------|--------|
-| Args | `fd` (font fd), `class=38`, `buf`, `size` |
+| Args | `fd` (font fd), `class=51`, `buf`, `size` |
 | Returns | Bytes written (≥24) |
 | Errors | `-InvalidType` if fd is not `ObType::Font`, `-Fault` if buf invalid, `-InvalidParam` if size < 24 |
 | Preconditions | fd obtained from `ob_open` on a `ObType::Font` object |
 | Postconditions | `buf` contains `FontMetricsInfo` |
 
-#### FontGlyph (class=39)
+#### FontGlyph (class=52)
 
 | Aspect | Detail |
 |--------|--------|
-| Args | `fd` (font fd), `class=39`, `buf` (contains `FontGlyphQuery` on input), `size` |
+| Args | `fd` (font fd), `class=52`, `buf` (contains `FontGlyphQuery` on input), `size` |
 | Returns | Bytes written (≥16 + bitmap data) |
 | Errors | `-InvalidType` if fd not Font, `-Fault` if buf invalid, `-InvalidParam` if codepoint not found or buf too small |
 | Preconditions | fd obtained from `ob_open` on `ObType::Font` |
@@ -486,21 +505,21 @@ No new syscall. New classes dispatched via existing handler.
 
 ### 5.2 Syscall: ob_set_info (RAX=43) -- existing
 
-#### FontLoad (class=48)
+#### FontLoad (class=62)
 
 | Aspect | Detail |
 |--------|--------|
-| Args | `fd` (handle to `\Font\` directory), `class=48`, `buf` (FontLoadInfo), `size` |
+| Args | `fd` (handle to `\Font\` directory), `class=62`, `buf` (FontLoadInfo), `size` |
 | Returns | `0` on success |
 | Errors | `-Perm` if not admin, `-NotFound` if VFS path invalid, `-NotSupported` if format unknown, `-NoMem` if allocation fails, `-AlreadyExists` if font name exists, `-Io` if VFS read fails |
 | Preconditions | Caller must have admin token. VFS must be available. |
 | Postconditions | Font loaded at `\Font\<name>`, data cached in kernel heap |
 
-#### FontSetDefault (class=49)
+#### FontSetDefault (class=63)
 
 | Aspect | Detail |
 |--------|--------|
-| Args | `fd` (handle to `\Font\` directory), `class=49`, `buf` (FontSetDefaultInfo), `size` |
+| Args | `fd` (handle to `\Font\` directory), `class=63`, `buf` (FontSetDefaultInfo), `size` |
 | Returns | `0` on success |
 | Errors | `-Perm` if not admin, `-NotFound` if font name doesn't exist, `-InvalidParam` if name empty |
 | Preconditions | Caller must have admin token. The named font must exist. |
@@ -569,7 +588,7 @@ No new syscall. New classes dispatched via existing handler.
 | Test | Description | Expected |
 |------|-------------|----------|
 | `font_metrics_matches_header` | Metrics match PSF header fields | All fields match |
-| `font_metrics_ob_query` | Query via `ob_query_info(class=38)` | Returns `FontMetricsInfo` matching FontHandle |
+| `font_metrics_ob_query` | Query via `ob_query_info(class=51)` | Returns `FontMetricsInfo` matching FontHandle |
 | `font_metrics_on_invalid_type` | Query FontMetrics on a Pipe fd | Returns `-InvalidType` |
 
 ### 6.5 Font Loading Tests
@@ -643,7 +662,7 @@ No new syscall. New classes dispatched via existing handler.
 | `neodos-kernel/src/console.rs` | Replace `use crate::font;` -> `use crate::font_manager;`, use Font Manager API for all glyph operations |
 | `neodos-kernel/src/font.rs` | **Deleted** -- replaced by `font/mod.rs` + `font/embedded.rs` |
 | `neodos-kernel/src/graphics.rs` | No change (Font Manager takes put_pixel callback) |
-| `neodos-kernel/src/object/types.rs` | Add `ObType::Font = 23`; `ObInfoClass::FontMetrics = 38`, `FontGlyph = 39`; `ObSetInfoClass::FontLoad = 48`, `FontSetDefault = 49` |
+| `neodos-kernel/src/object/types.rs` | Add `ObType::Font = 24`; `ObInfoClass::FontMetrics = 51`, `FontGlyph = 52`; `ObSetInfoClass::FontLoad = 62`, `FontSetDefault = 63` |
 | `neodos-kernel/src/object/mod.rs` | Register `ObOperations` for Font type |
 | `neodos-kernel/src/syscall/handlers.rs` | Add dispatch for ObSetInfoClass::FontLoad and FontSetDefault |
 | `neodos-kernel/src/input/vt.rs` | No change (shadow buffer format unchanged) |
@@ -652,7 +671,7 @@ No new syscall. New classes dispatched via existing handler.
 | `neodev/src/config.rs` | Add `fonts: Vec<String>` field |
 | `neodev/src/build.rs` | Add font validation stage |
 | `neodev/src/image.rs` | Add font collection to `collect_files()` |
-| `scripts/gen_system_hiv.py` | Add `Services\FontManager` and `Software\Fonts` keys |
+| `tools/gen-hiv` | Add `Services\FontManager` and `Software\Fonts` keys |
 | `docs/objects.md` | Add Font type to ObType table, namespace, info classes |
 | `docs/syscalls.md` | No new syscalls, but document new info classes |
 | `roadmap/improvements.md` | Add future Font Manager improvements |
@@ -698,9 +717,9 @@ No new syscall. New classes dispatched via existing handler.
 
 ### Step 5: Update Ob types and syscall handlers
 
-- Add `ObType::Font = 23` to `object/types.rs`.
-- Add `ObInfoClass::FontMetrics = 38`, `FontGlyph = 39`.
-- Add `ObSetInfoClass::FontLoad = 48`, `FontSetDefault = 49`.
+- Add `ObType::Font = 24` to `object/types.rs`.
+- Add `ObInfoClass::FontMetrics = 51`, `FontGlyph = 52`.
+- Add `ObSetInfoClass::FontLoad = 62`, `FontSetDefault = 63`.
 - Implement `ObOperations` for Font objects (`FontOps`).
 - Add `on_destroy` handler to free FontHandle and buffer.
 - Add handler paths in `syscall/handlers.rs` for the new info classes.
@@ -730,7 +749,7 @@ No new syscall. New classes dispatched via existing handler.
 
 ### Step 8: Registry configuration
 
-- Add `Services\FontManager\DefaultFont = "Terminus"` to `gen_system_hiv.py`.
+- Add `Services\FontManager\DefaultFont = "Terminus"` to `tools/gen-hiv`.
 - Add `Services\FontManager\FontPath = "\System\Fonts"`.
 - Add `Software\Fonts` key structure for user-mode font queries.
 

@@ -4,28 +4,42 @@ use crate::scheduler::MmapRegion;
 
 // ── TLB shootdown helpers ────────────────────────────────────────────────
 
+/// Compute the set of CPUs that may hold stale TLB entries for a freed user
+/// page: every online CPU except `my_cpu`.
+///
+/// Pure and lock-free by construction, and it MUST stay that way. The
+/// page-free paths (`heap_free_range`, `mmap_free_range`) are invoked from
+/// `terminate_current` / `recycle_terminated`, which already hold the global
+/// `SCHEDULER` spinlock. The previous implementation queried the scheduler
+/// here, re-acquiring that non-reentrant lock and self-deadlocking the exiting
+/// CPU; on SMP>1 every other CPU then wedged spinning on the same lock with
+/// interrupts disabled (#331 "shell never returns / parent stuck in OB_WAIT").
+///
+/// Scoping the mask to the scheduler's current threads was also incomplete: a
+/// CPU that ran the process earlier still caches its page even if it now runs
+/// an unrelated (or idle) thread. This kernel uses a single shared address
+/// space (one CR3) with the user window mapped on every CPU, so all online
+/// CPUs are targeted. A spurious remote invalidation is harmless.
+#[inline]
+fn tlb_target_mask(my_cpu: usize, online_cpus: usize) -> u64 {
+    if online_cpus == 0 || my_cpu >= 64 {
+        return 0;
+    }
+    let online = if online_cpus >= 64 {
+        u64::MAX
+    } else {
+        (1u64 << online_cpus) - 1
+    };
+    online & !(1u64 << my_cpu)
+}
+
 /// Build a CPU bitmask of all CPUs that might have user pages cached in TLB.
-/// In this single-address-space kernel, all user processes share the same
-/// CR3, so we target all CPUs that have active non-terminated threads.
+/// See [`tlb_target_mask`]: lock-free, because callers may already hold the
+/// scheduler lock.
 fn build_tlb_target_mask() -> u64 {
     let my_cpu = unsafe { crate::arch::x64::cpu_local::this_cpu_id() } as usize;
     let count = crate::arch::x64::cpu_local::cpu_count() as usize;
-    let mut mask = 0u64;
-
-    crate::hal::without_interrupts(|| {
-        let s = crate::scheduler::current_scheduler();
-        let scheduler = s.lock();
-        for k in scheduler.kthreads.iter().flatten() {
-            if k.state == crate::scheduler::ThreadState::Terminated {
-                continue;
-            }
-            if (k.cpu as usize) < count && k.cpu as usize != my_cpu {
-                mask |= 1u64 << (k.cpu as usize);
-            }
-        }
-    });
-
-    mask
+    tlb_target_mask(my_cpu, count)
 }
 
 /// Perform a cross-CPU TLB shootdown for a single page.
@@ -88,11 +102,16 @@ static mut PD_HIGH: [AlignedPageTable; 4] = [
 pub const USER_BASE:  u64 = 0x0040_0000; // 4 MB
 pub const USER_LIMIT: u64 = 0x0240_0000; // 36 MB (32 MB window, v0.40)
 
-/// Per-process slot constants
-const MAX_BIN_SIZE: u64 = 64 * 1024;      // 64 KB  (mirrors run.rs)
-const USER_STACK_SIZE: u64 = 64 * 1024;   // 64 KB
-const USER_SLOT_SIZE: u64 = MAX_BIN_SIZE + USER_STACK_SIZE; // 128 KB
-pub const USER_SLOT_COUNT: u64 = (USER_LIMIT - USER_BASE) / USER_SLOT_SIZE; // 32
+/// Per-process slot constants.
+///
+/// `MAX_BIN_SIZE` is the per-binary read cap (see `usermode::MAX_PROCESS_BIN`).
+/// The user window (`USER_BASE..USER_LIMIT`) tiles into `USER_SLOT_COUNT` slots
+/// of `USER_SLOT_SIZE` each. Raised from 64 KB once `neoshell.nxe` grew past it
+/// (#458).
+pub const MAX_BIN_SIZE: u64 = 192 * 1024;   // 192 KB per user binary
+pub const USER_STACK_SIZE: u64 = 64 * 1024; // 64 KB
+pub const USER_SLOT_SIZE: u64 = MAX_BIN_SIZE + USER_STACK_SIZE; // 256 KB
+pub const USER_SLOT_COUNT: u64 = (USER_LIMIT - USER_BASE) / USER_SLOT_SIZE; // 128
 
 pub struct UserSlot {
     pub code_base: u64,
@@ -100,7 +119,16 @@ pub struct UserSlot {
     pub slot_idx: u8,
 }
 
-static mut SLOT_USED: [bool; USER_SLOT_COUNT as usize] = [false; USER_SLOT_COUNT as usize];
+static SLOT_USED: [core::sync::atomic::AtomicBool; USER_SLOT_COUNT as usize] =
+    [const { core::sync::atomic::AtomicBool::new(false) }; USER_SLOT_COUNT as usize];
+/// #476: pid that last allocated the slot (diagnostic owner tag).
+static SLOT_OWNER: [core::sync::atomic::AtomicU32; USER_SLOT_COUNT as usize] =
+    [const { core::sync::atomic::AtomicU32::new(0) }; USER_SLOT_COUNT as usize];
+/// #476: has this slot ever been handed out by `alloc_user_slot`? Synthetic
+/// test Eprocesses have a `user_slot` without a real allocation; only real
+/// allocations may raise a FREE_BAD on the free path.
+static SLOT_ALLOCATED: [core::sync::atomic::AtomicBool; USER_SLOT_COUNT as usize] =
+    [const { core::sync::atomic::AtomicBool::new(false) }; USER_SLOT_COUNT as usize];
 
 /// Per-process heap region: each Ring 3 process gets a 2 MB heap.
 /// Region starts at 256 MB to stay clear of kernel heap and image.
@@ -108,36 +136,157 @@ pub const PROCESS_HEAP_BASE: u64 = 0x1000_0000;   // 256 MB
 pub const PROCESS_HEAP_SIZE: u64 = 0x20_0000;     // 2 MB per process
 pub const MAX_HEAP_SLOTS: usize = 16;
 
-static mut HEAP_SLOT_USED: [bool; MAX_HEAP_SLOTS] = [false; MAX_HEAP_SLOTS];
+static HEAP_SLOT_USED: [core::sync::atomic::AtomicBool; MAX_HEAP_SLOTS] =
+    [const { core::sync::atomic::AtomicBool::new(false) }; MAX_HEAP_SLOTS];
+/// #476: pid that last allocated the heap slot (diagnostic owner tag).
+static HEAP_SLOT_OWNER: [core::sync::atomic::AtomicU32; MAX_HEAP_SLOTS] =
+    [const { core::sync::atomic::AtomicU32::new(0) }; MAX_HEAP_SLOTS];
+/// #476: has this heap slot ever been handed out by `alloc_heap_slot`?
+static HEAP_SLOT_ALLOCATED: [core::sync::atomic::AtomicBool; MAX_HEAP_SLOTS] =
+    [const { core::sync::atomic::AtomicBool::new(false) }; MAX_HEAP_SLOTS];
+
+/// MEM-PROC (#274): resident 4 KB heap pages per heap slot (working-set proxy).
+/// Updated only in `heap_alloc_page` / `heap_free_page` / `heap_free_range`, the
+/// single choke points for heap residency, so it also covers demand-faulted
+/// pages. Read by the scheduler snapshot under the SCHEDULER lock. Relaxed
+/// atomics: a torn read across CPUs is harmless for a diagnostic counter.
+static HEAP_SLOT_RESIDENT: [core::sync::atomic::AtomicU32; MAX_HEAP_SLOTS] =
+    [const { core::sync::atomic::AtomicU32::new(0) }; MAX_HEAP_SLOTS];
+
+/// Heap slot index for a heap virtual address, or `None` if outside the region.
+#[inline]
+pub fn heap_slot_of(virt: u64) -> Option<usize> {
+    if !is_heap_virtual_addr(virt) { return None; }
+    let idx = ((virt - PROCESS_HEAP_BASE) / PROCESS_HEAP_SIZE) as usize;
+    if idx < MAX_HEAP_SLOTS { Some(idx) } else { None }
+}
+
+/// Resident (mapped) 4 KB heap pages for a heap slot.
+#[inline]
+pub fn heap_slot_resident_pages(slot: usize) -> u32 {
+    if slot >= MAX_HEAP_SLOTS { return 0; }
+    HEAP_SLOT_RESIDENT[slot].load(core::sync::atomic::Ordering::Relaxed)
+}
+
+/// Reset a heap slot's resident counter (called when the slot is freed).
+#[inline]
+pub fn heap_slot_reset(slot: usize) {
+    if slot < MAX_HEAP_SLOTS {
+        HEAP_SLOT_RESIDENT[slot].store(0, core::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+/// Test/accounting hook: add `n` resident pages to a heap slot. The production
+/// path updates this implicitly via `heap_alloc_page`; this exists so the
+/// counter arithmetic can be unit-tested without real mappings.
+#[inline]
+pub fn heap_slot_add_resident(slot: usize, n: u32) {
+    if slot < MAX_HEAP_SLOTS {
+        HEAP_SLOT_RESIDENT[slot].fetch_add(n, core::sync::atomic::Ordering::Relaxed);
+    }
+}
 
 pub struct HeapSlot {
     pub base: u64,
 }
 
-pub fn alloc_heap_slot() -> Option<HeapSlot> {
-    unsafe {
-        for (i, slot) in HEAP_SLOT_USED.iter_mut().enumerate().take(MAX_HEAP_SLOTS) {
-            if !*slot {
-                *slot = true;
-                let base = PROCESS_HEAP_BASE + i as u64 * PROCESS_HEAP_SIZE;
-                return Some(HeapSlot { base });
-            }
+/// #477: atomically claim the first free slot in `used`, skipping any slot a
+/// concurrent CPU wins. Pure w.r.t. caller-owned state, so it is unit-testable.
+#[inline]
+fn claim_first_free(used: &[core::sync::atomic::AtomicBool]) -> Option<usize> {
+    use core::sync::atomic::Ordering;
+    for i in 0..used.len() {
+        if used[i]
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Relaxed)
+            .is_ok()
+        {
+            return Some(i);
         }
     }
     None
 }
 
+/// #477: atomically claim a specific slot. Returns `false` if another CPU
+/// already holds it (the caller must not hand out a slot it did not claim).
+#[inline]
+fn claim_at(used: &[core::sync::atomic::AtomicBool], idx: usize) -> bool {
+    use core::sync::atomic::Ordering;
+    used[idx]
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Relaxed)
+        .is_ok()
+}
+
+pub fn alloc_heap_slot() -> Option<HeapSlot> {
+    use core::sync::atomic::Ordering;
+    // #477: claim the slot atomically. A failed `compare_exchange` means another
+    // CPU won the race; keep looking instead of handing out the same slot.
+    let i = claim_first_free(&HEAP_SLOT_USED)?;
+    HEAP_SLOT_ALLOCATED[i].store(true, Ordering::Relaxed);
+    HEAP_SLOT_OWNER[i].store(crate::scheduler::current_pid(), Ordering::Relaxed);
+    let base = PROCESS_HEAP_BASE + i as u64 * PROCESS_HEAP_SIZE;
+    Some(HeapSlot { base })
+}
+
 pub fn free_heap_slot(index: u8) {
+    use core::sync::atomic::Ordering;
     let idx = index as usize;
     if idx < MAX_HEAP_SLOTS {
-        unsafe { HEAP_SLOT_USED[idx] = false; }
+        let allocated = HEAP_SLOT_ALLOCATED[idx].load(Ordering::Relaxed);
+        let was_used = HEAP_SLOT_USED[idx].swap(false, Ordering::AcqRel);
+        if allocated && !was_used {
+            // #476 FREE_BAD: freeing an already-free slot. If two processes
+            // raced on `alloc_heap_slot` they shared the slot, so this is the
+            // second (invalid) free.
+            crate::slab::record_free_bad_at(
+                crate::slab::FreeBadKind::AlreadyFree, "paging_heap_slot",
+                idx as u64, HEAP_SLOT_OWNER[idx].load(Ordering::Relaxed) as u64);
+        }
     }
 }
 
 pub fn used_heap_slots() -> usize {
-    unsafe {
-        HEAP_SLOT_USED[..MAX_HEAP_SLOTS].iter().filter(|&&used| used).count()
-    }
+    use core::sync::atomic::Ordering;
+    HEAP_SLOT_USED[..MAX_HEAP_SLOTS].iter().filter(|s| s.load(Ordering::Relaxed)).count()
+}
+
+/// Code base (load address) of user slot `slot_idx`.
+///
+/// Single source of truth for the per-process slot layout: callers must not
+/// recompute `USER_BASE + slot * USER_SLOT_SIZE` by hand.
+#[inline]
+pub fn user_slot_code_base(slot_idx: u8) -> u64 {
+    USER_BASE + (slot_idx as u64) * USER_SLOT_SIZE
+}
+
+/// Top of the user stack for user slot `slot_idx` (end of the slot).
+#[inline]
+pub fn user_slot_stack_top(slot_idx: u8) -> u64 {
+    user_slot_code_base(slot_idx) + MAX_BIN_SIZE + USER_STACK_SIZE
+}
+
+/// #477 regression: the atomic slot-claim helpers must never hand out a slot
+/// that is already claimed, and must skip contended slots. This is the
+/// primitive both `alloc_user_slot` and `alloc_heap_slot` now use.
+pub fn register_slot_tests() {
+    use core::sync::atomic::AtomicBool;
+    crate::testing::register("paging_slot_claim_atomic", || {
+        let used: [AtomicBool; 4] = core::array::from_fn(|_| AtomicBool::new(false));
+        // Distinct indices until the table is exhausted.
+        crate::test_eq!(claim_first_free(&used), Some(0));
+        crate::test_eq!(claim_first_free(&used), Some(1));
+        // An already-claimed slot is never re-issued (atomic claim).
+        crate::test_true!(!claim_at(&used, 0));
+        crate::test_true!(!claim_at(&used, 1));
+        crate::test_true!(claim_at(&used, 2));
+        crate::test_eq!(claim_first_free(&used), Some(3));
+        crate::test_eq!(claim_first_free(&used), None);
+        // Pre-claimed slots are skipped.
+        let used2: [AtomicBool; 4] = core::array::from_fn(|i| AtomicBool::new(i == 0 || i == 2));
+        crate::test_eq!(claim_first_free(&used2), Some(1));
+        crate::test_eq!(claim_first_free(&used2), Some(3));
+        crate::test_eq!(claim_first_free(&used2), None);
+        Ok(())
+    });
 }
 
 /// Allocate a free user slot, returning its base addresses.
@@ -147,9 +296,10 @@ pub fn alloc_user_slot() -> Option<UserSlot> {
     let count = USER_SLOT_COUNT as usize;
 
     // Count free slots first
-    let free_count = unsafe {
-        SLOT_USED[..count].iter().filter(|&&used| !used).count()
-    };
+    let free_count = SLOT_USED[..count]
+        .iter()
+        .filter(|s| !s.load(core::sync::atomic::Ordering::Relaxed))
+        .count();
     if free_count == 0 {
         return None;
     }
@@ -159,8 +309,8 @@ pub fn alloc_user_slot() -> Option<UserSlot> {
     if free_count == 1 {
         // Only one free slot — find it directly
         unsafe {
-            for (i, &used) in SLOT_USED.iter().enumerate().take(count) {
-                if !used {
+            for (i, s) in SLOT_USED.iter().enumerate().take(count) {
+                if !s.load(core::sync::atomic::Ordering::Relaxed) {
                     target_idx = i;
                     break;
                 }
@@ -171,8 +321,8 @@ pub fn alloc_user_slot() -> Option<UserSlot> {
         let pick = (r as usize) % free_count;
         let mut seen = 0;
         unsafe {
-            for (i, &used) in SLOT_USED.iter().enumerate().take(count) {
-                if !used {
+            for (i, s) in SLOT_USED.iter().enumerate().take(count) {
+                if !s.load(core::sync::atomic::Ordering::Relaxed) {
                     if seen == pick {
                         target_idx = i;
                         break;
@@ -187,8 +337,8 @@ pub fn alloc_user_slot() -> Option<UserSlot> {
         let pick = (tsc as usize) % free_count;
         let mut seen = 0;
         unsafe {
-            for (i, &used) in SLOT_USED.iter().enumerate().take(count) {
-                if !used {
+            for (i, s) in SLOT_USED.iter().enumerate().take(count) {
+                if !s.load(core::sync::atomic::Ordering::Relaxed) {
                     if seen == pick {
                         target_idx = i;
                         break;
@@ -199,22 +349,39 @@ pub fn alloc_user_slot() -> Option<UserSlot> {
         }
     }
 
-    unsafe {
-        SLOT_USED[target_idx] = true;
-        let base = USER_BASE + target_idx as u64 * USER_SLOT_SIZE;
-        Some(UserSlot {
-            code_base: base,
-            stack_top: base + MAX_BIN_SIZE + USER_STACK_SIZE,
-            slot_idx: target_idx as u8,
-        })
-    }
+    // #477: claim the picked slot atomically; on contention fall back to the
+    // first free slot (never hand out a slot another CPU already claimed).
+    let claimed = if claim_at(&SLOT_USED[..count], target_idx) {
+        target_idx
+    } else {
+        match claim_first_free(&SLOT_USED[..count]) {
+            Some(i) => i,
+            None => return None,
+        }
+    };
+    SLOT_ALLOCATED[claimed].store(true, core::sync::atomic::Ordering::Relaxed);
+    SLOT_OWNER[claimed].store(crate::scheduler::current_pid(), core::sync::atomic::Ordering::Relaxed);
+    Some(UserSlot {
+        code_base: user_slot_code_base(claimed as u8),
+        stack_top: user_slot_stack_top(claimed as u8),
+        slot_idx: claimed as u8,
+    })
 }
 
 /// Free a previously allocated user slot by index.
 pub fn free_user_slot(slot_idx: u8) {
+    use core::sync::atomic::Ordering;
     let idx = slot_idx as usize;
     if idx < USER_SLOT_COUNT as usize {
-        unsafe { SLOT_USED[idx] = false; }
+        let allocated = SLOT_ALLOCATED[idx].load(Ordering::Relaxed);
+        let was_used = SLOT_USED[idx].swap(false, Ordering::AcqRel);
+        if allocated && !was_used {
+            // #476 FREE_BAD: freeing an already-free user slot (a shared slot
+            // freed twice after a concurrent `alloc_user_slot`).
+            crate::slab::record_free_bad_at(
+                crate::slab::FreeBadKind::AlreadyFree, "paging_user_slot",
+                idx as u64, SLOT_OWNER[idx].load(Ordering::Relaxed) as u64);
+        }
     }
 }
 
@@ -593,11 +760,19 @@ pub fn split_2mb_page(virt: u64) -> Result<(), ()> {
         let pt = &mut *(pt_phys as *mut PageTable);
         *pt = PageTable::new();
 
-        // Fill PT with identity-mapped 4 KB entries
+        // Fill PT with identity-mapped 4 KB entries. Heap/mmap pages must be
+        // reachable from Ring 3, so mark their PTEs USER_ACCESSIBLE too — only
+        // setting it on the PDE leaves the leaves kernel-only and any Ring-3
+        // access faults with a *protection* #PF (not handled by the demand
+        // pager, which only recovers not-present faults). This is #300.
+        let leaf_is_user = is_heap_virtual_addr(virt) || is_mmap_virtual_addr(virt);
         for i in 0..512u64 {
             let entry_phys = huge_base + i * PAGE_4K;
             let mut entry_flags = huge_flags;
             entry_flags.remove(PageTableFlags::HUGE_PAGE);
+            if leaf_is_user {
+                entry_flags |= PageTableFlags::USER_ACCESSIBLE;
+            }
             pt[i as usize].set_addr(PhysAddr::new(entry_phys), entry_flags);
         }
 
@@ -673,6 +848,10 @@ pub fn heap_alloc_page(virt: u64) -> Option<u64> {
     if phys.is_null() { return None; }
     let rc = crate::hal::map_page(phys as u64, virt, 0x6); // PRESENT | WRITABLE | USER_ACCESSIBLE
     if rc != 0 { return None; }
+    // MEM-PROC (#274): count this resident page against its heap slot.
+    if let Some(slot) = heap_slot_of(virt) {
+        HEAP_SLOT_RESIDENT[slot].fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+    }
     Some(phys as u64)
 }
 
@@ -687,6 +866,13 @@ pub fn heap_free_page(virt: u64) {
     let _ = crate::hal::unmap_page(virt);
     shootdown_single_page(virt);
     crate::hal::free_page(phys as *mut u8);
+    // MEM-PROC (#274): drop this page from its heap slot's resident count.
+    if let Some(slot) = heap_slot_of(virt) {
+        let _ = HEAP_SLOT_RESIDENT[slot].fetch_update(
+            core::sync::atomic::Ordering::Relaxed,
+            core::sync::atomic::Ordering::Relaxed,
+            |v| Some(v.saturating_sub(1)));
+    }
 }
 
 /// Free all heap pages in the range `[start, end)`.
@@ -696,6 +882,7 @@ pub fn heap_free_range(start: u64, end: u64) {
     let mut addr = s & !(PAGE_4K - 1);
     let mut freed_first = 0u64;
     let mut freed_last = 0u64;
+    let mut freed_pages = 0u32;
 
     while addr < e {
         if let Some(entry) = crate::hal::walk_ptes_4k(addr) {
@@ -704,12 +891,22 @@ pub fn heap_free_range(start: u64, end: u64) {
                 if phys != addr {
                     let _ = crate::hal::unmap_page(addr);
                     crate::hal::free_page(phys as *mut u8);
+                    freed_pages += 1;
                     if freed_first == 0 { freed_first = addr; }
                     freed_last = addr + PAGE_4K;
                 }
             }
         }
         addr += PAGE_4K;
+    }
+    // MEM-PROC (#274): subtract the freed pages from the owning heap slot(s).
+    if freed_pages > 0 {
+        if let Some(slot) = heap_slot_of(s) {
+            let _ = HEAP_SLOT_RESIDENT[slot].fetch_update(
+                core::sync::atomic::Ordering::Relaxed,
+                core::sync::atomic::Ordering::Relaxed,
+                |v| Some(v.saturating_sub(freed_pages)));
+        }
     }
     if freed_first < freed_last {
         shootdown_range(freed_first, freed_last);
@@ -809,4 +1006,51 @@ pub fn map_mmio_4k(virt: u64, phys: u64, size: u64, flags: PageTableFlags) -> bo
     true
 }
 
+// ── Tests ────────────────────────────────────────────────────────────────
 
+/// Regression tests for #331: the TLB target mask must never re-acquire the
+/// scheduler lock from within the process-exit page-free path.
+pub fn register_paging_tests() {
+    use crate::{test_case, test_eq};
+
+    test_case!("tlb_target_mask_excludes_self", {
+        test_eq!(tlb_target_mask(0, 1), 0b0);
+        test_eq!(tlb_target_mask(0, 2), 0b10);
+        test_eq!(tlb_target_mask(1, 2), 0b01);
+        test_eq!(tlb_target_mask(0, 4), 0b1110);
+        test_eq!(tlb_target_mask(3, 4), 0b0111);
+    });
+
+    test_case!("tlb_target_mask_empty_on_up", {
+        test_eq!(tlb_target_mask(0, 0), 0);
+        test_eq!(tlb_target_mask(0, 1), 0);
+    });
+
+    test_case!("tlb_target_mask_is_lock_free", {
+        // #331: build_tlb_target_mask() is called from terminate_current() /
+        // recycle_terminated() while the global SCHEDULER lock is already held.
+        // It must not re-acquire that non-reentrant lock. Holding the lock and
+        // calling it here would self-deadlock before the fix.
+        crate::hal::without_interrupts(|| {
+            let guard = crate::scheduler::current_scheduler().lock();
+            let mask = build_tlb_target_mask();
+            // Keep the guard alive across the call (do not let NLL drop it early).
+            let _ = guard.current_tid;
+            // On any real machine the mask must exclude the calling CPU.
+            let my_cpu = unsafe { crate::arch::x64::cpu_local::this_cpu_id() } as usize;
+            let _ = mask & !(1u64 << my_cpu);
+        });
+    });
+
+    test_case!("tlb_target_mask_pure_under_scheduler_lock", {
+        // The pure helper is the lock-free core of build_tlb_target_mask();
+        // calling it with the scheduler lock held must be trivial.
+        let value = crate::hal::without_interrupts(|| {
+            let guard = crate::scheduler::current_scheduler().lock();
+            let v = tlb_target_mask(0, 2);
+            let _ = guard.current_tid;
+            v
+        });
+        test_eq!(value, 0b10);
+    });
+}

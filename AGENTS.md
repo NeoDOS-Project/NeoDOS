@@ -1,11 +1,11 @@
 # NeoDOS — AI Agent Context
 
-**Version:** v0.51.1 | **Tests:** 737 (kernel) | **ABI:** v8 | **SSDT:** RAX 0-59 (34 syscalls) | **Dev Server:** [neodos-dev-server](https://github.com/NeoDOS-Project/neodos-dev-server) | **NeoTools:** [NeoTools](https://github.com/NeoDOS-Project/NeoTools)
+**Version:** v0.51.4 | **Tests:** 825 (kernel) | **ABI:** v8 | **SSDT:** RAX 0-99 (37 assigned) | **Dev Server:** [neodos-dev-server](https://github.com/NeoDOS-Project/neodos-dev-server) | **NeoTools:** [NeoTools](https://github.com/NeoDOS-Project/NeoTools)
 
 ## Permanent Rules (MUST always follow)
 
 1. **No automatic builds.** Only build/test when explicitly asked.
-2. **Test before commit:** `cargo build` in `neodos-kernel/` → `neodev test` → `scripts/check_deps.py` → `npx markdownlint '**/*.md' --config .markdownlint.json`.
+2. **Test before commit:** `cargo build` in `neodos-kernel/` → `neodev test` → `neodev check-deps` → `npx markdownlint '**/*.md' --config .markdownlint.json`.
 3. **Never modify public API without updating docs.** Syscalls, ObInfoClass, NEM ABI, structs in `libneodos/`.
 4. **NT-like design philosophy:** Object Manager (`Ob`) is the central abstraction for syscalls, handles, security, and namespace.
 5. **No new Ring 0 shell commands.** All interactive commands go to `userbin/` as `.NXE` Ring 3 binaries.
@@ -14,6 +14,7 @@
 8. **Before architecture decisions:** read `docs/architecture/source-of-truth.md` — invariants are enforceable rules.
 9. **Keep AGENTS.md minimal.** Move specialized instructions to `docs/` and procedural checklists to `skills/`.
 10. **Naming:** kebab-case for files/dirs, PascalCase for types/enums/traits, snake_case for fns/vars.
+11. **Branch first.** Every feature, bug fix, investigation, refactor, audit, or architectural change MUST be developed on its own dedicated branch. Never work directly on `develop`. See [Branching Rule](#branching-rule).
 
 ## Quick Reference
 
@@ -76,6 +77,46 @@ está terminada. El changelog se genera con `sync-roadmap.sh changelog`.
 3. `release/vX.Y.Z` — rama de release desde `develop` → PR → `master`.
 4. `master` — releases estables.
 
+### Branching Rule
+
+**Every new feature, bug fix, investigation, refactor, audit, or architectural
+change MUST be developed on its own dedicated Git branch.** Do not work directly
+on `develop` for new work. Do not reuse an unrelated existing branch for a new
+task. The branch is the task-isolation mechanism and must stay focused on a
+single piece of work.
+
+Required workflow:
+
+1. Ensure the working tree is in a known (clean) state.
+2. Update/sync from the appropriate base branch when necessary.
+3. Create a dedicated branch for the work.
+4. Perform all changes and commits exclusively on that branch.
+5. Validate the work.
+6. Merge the branch back through the normal Git workflow only after validation.
+
+Branch naming follows project conventions:
+
+```text
+feat/<short-description>
+fix/<short-description>
+investigation/<short-description>
+refactor/<short-description>
+audit/<short-description>
+docs/<short-description>
+```
+
+When the work corresponds to a GitHub Issue, the branch should reference that
+Issue when practical, e.g. `fix/service-graceful-shutdown-358`.
+
+**Exception:** purely administrative/read-only operations that do not modify
+project files or Git history (inspecting the repository, searching code, reading
+issues, running tests, checking `git status`, reviewing logs, analysing
+architecture without modifying files) may be performed without a branch. When in
+doubt, **branch first**.
+
+If the current branch already contains unrelated work, stop and report it before
+making changes.
+
 ### Git Workflow (commits)
 
 1. `cargo build` in `neodos-kernel/` (or `neodev build --quick`)
@@ -85,6 +126,126 @@ está terminada. El changelog se genera con `sync-roadmap.sh changelog`.
 5. If all pass: `git add -A && git commit -m "feat|fix|refactor: descripción (#123)" && git push`
 6. Open PR → `develop`, get approval, merge (squash).
 7. On completion: update `CHANGELOG.md`, run `sync-roadmap.sh sync`, update relevant `docs/*.md`.
+
+## Proactive Capability Discovery
+
+While working on **any** NeoDOS task, the agent must actively observe the whole
+system and detect relevant capabilities that are missing, partial, limited, or
+insufficient — even when the discovery is unrelated to the current task or
+belongs to another subsystem.
+
+Scope of what to watch for: missing APIs, missing kernel capabilities, missing
+userland capabilities, incomplete infrastructure, architectural limitations,
+pending integrations, tools that should exist, significant technical debt, and
+dependencies that do not exist yet.
+
+The agent **never** turns a discovery into an implementation on its own. The
+mandatory workflow is:
+
+```text
+Discover → Verify → Search existing Issue → Create Issue if necessary → Document → Continue current task
+```
+
+### 1. Discover
+
+When something looks like it is missing, briefly decide whether it is a real
+gap (e.g. "no network-interface enumeration API", "no Ctrl+C handling in the
+shell", "no persistent configuration storage", "no per-process memory query").
+Do not open an Issue for every trivial helper — the capability needs enough
+substance to stand as its own task.
+
+### 2. Verify
+
+Before opening an Issue, confirm the capability truly does not exist, using the
+repository as the source of truth: code, APIs, syscalls, docs, tests, existing
+tools, configuration, infrastructure. Do not assume absence just because it is
+not obvious, and do not invent APIs from stale documentation.
+
+### 3. Search existing Issues
+
+```bash
+gh issue list --search "<relevant terms>"
+```
+
+Try several term combinations. If an equivalent Issue exists, do **not**
+duplicate it: reference it and link it to the current task when relevant.
+
+### 4. Create Issue
+
+If the capability is genuinely absent and no equivalent Issue exists, create a
+GitHub Issue useful enough to become a standalone task. Include, when
+applicable:
+
+```text
+## Context
+## Missing capability
+## Evidence
+## Why it matters
+## Current implementation
+## Possible approaches
+## Scope
+## Related work
+```
+
+Title style: clear, project conventions, e.g.
+`[NETWORK] Add network interface enumeration API`,
+`[SHELL] Add Ctrl+C / interrupt handling`,
+`[MEMORY] Expose process memory information`.
+
+Do not implement the capability as part of the current task unless the user
+explicitly asked for it.
+
+### 5. Blocking vs Non-blocking
+
+Distinguish the two cases explicitly.
+
+- **Blocking capability** — the gap prevents completing the current task
+  correctly: `Detect → Verify → Search Issue → Create/reference Issue → Document
+  blocker`. Never build a fake, temporary, or architecturally wrong
+  implementation just to sidestep the block.
+- **Non-blocking capability** — relevant but not blocking: `Detect → Verify →
+  Search Issue → Create/reference Issue → Document → Continue current task`.
+  A non-blocking gap must **never** cause the agent to widen the scope of the
+  current task.
+
+### 6. Never implement discoveries automatically
+
+Discovering a missing capability is **not** authorization to build it. Example:
+while implementing DNS, the agent notices NeoShell has no Ctrl+C — it must
+verify, search for an Issue, create `[SHELL] Add Ctrl+C / interrupt handling`
+if absent, document it, and **continue with DNS**.
+
+### 7. End-of-task report
+
+Every agent must separate its final report into:
+
+```text
+## Implemented
+## Discovered Capabilities
+## Existing Issues
+## New Issues
+## Blockers
+## Follow-up Work
+```
+
+This distinguishes what was implemented, what was discovered, what was already
+tracked, what just entered the backlog, and what blocked progress.
+
+### Architectural principle
+
+GitHub Issues is also the mechanism for **progressive architecture discovery**:
+the agent helps grow the backlog while working, without turning every task into
+an excuse to expand scope.
+
+```text
+Current Task
+      │
+      ├── Required capability  → implement if authorized
+      │
+      └── Discovered capability → Issue + continue
+```
+
+> **Discover → Verify → Issue → Document → Continue** — not *Discover → Implement everything*.
 
 ## Architecture
 

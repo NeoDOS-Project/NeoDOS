@@ -15,8 +15,10 @@ pub fn ob_open_path(
     token: &crate::security::token::Token,
     desired_access: u32,
 ) -> Result<ObId, ObError> {
+    ktrace!(crate::log::LogSubsys::Object, "ob_open_path '{}': begin", path_str);
     // First try a regular lookup (finds object entries).
     if let Ok(kobj_id) = crate::object::namespace::ob_lookup_path(path_str) {
+        ktrace!(crate::log::LogSubsys::Object, "ob_open_path '{}': namespace id={}", path_str, kobj_id);
         if let Some(_obj) = ob_lookup(kobj_id) {
             let sd = OB_SECURITY.lock().get(&kobj_id).cloned();
             if !crate::security::access::se_access_check(token, sd.as_ref(), desired_access) {

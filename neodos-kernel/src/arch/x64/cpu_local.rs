@@ -514,6 +514,27 @@ pub unsafe fn this_cpu_current_thread() -> *mut Kthread {
 /// Set the current CPU's Kthread pointer.
 #[inline(always)]
 pub unsafe fn this_cpu_set_current_thread(ptr: *mut Kthread) {
+    this_cpu_set_current_thread_site(ptr, crate::scheduler::diag::SITE_SET_RAW);
+}
+
+/// Set the current CPU's Kthread pointer, tagging the writing site (293-B).
+#[inline(always)]
+pub unsafe fn this_cpu_set_current_thread_site(ptr: *mut Kthread, site: u8) {
+    let old = gs_read_u64(OFFSET_CURRENT_THREAD);
+    if crate::scheduler::diag::ctx_trace_enabled() {
+        crate::scheduler::diag::ctx_ev(site, old, ptr as *const Kthread);
+    }
+    if old != ptr as u64 {
+        // #476 H1 experiment: mark the kernel stack being abandoned until the
+        // context-switch ASM runs `mov rsp` (switch_out_clear). The KPRCB is
+        // repointed here, so `is_pid_running_on_any_cpu(old_pid)` is already
+        // false while this CPU still executes on the old stack.
+        crate::scheduler::diag::kstack::note(
+            old as *const Kthread,
+            ptr as *const Kthread,
+            crate::hal::raw::raw_read_rsp(),
+        );
+    }
     gs_write_u64(OFFSET_CURRENT_THREAD, ptr as u64);
 }
 
@@ -625,8 +646,14 @@ pub fn kthread_current_cpu(kptr: *const Kthread) -> Option<u32> {
 /// No-op if GS base not yet programmed (early boot / unit tests).
 #[inline(always)]
 pub unsafe fn sync_per_cpu_current(ptr: *mut Kthread, pid: u32) {
+    sync_per_cpu_current_site(ptr, pid, crate::scheduler::diag::SITE_SYNC_SCHEDULE);
+}
+
+/// Tagged variant of [`sync_per_cpu_current`] (293-B forensics).
+#[inline(always)]
+pub unsafe fn sync_per_cpu_current_site(ptr: *mut Kthread, pid: u32, site: u8) {
     if crate::hal::safe::GsBase::read() == 0 { return; }
-    this_cpu_set_current_thread(ptr);
+    this_cpu_set_current_thread_site(ptr, site);
     this_cpu_set_current_pid(pid);
     let is_idle = ptr.is_null() || pid == 0 || unsafe { (*ptr).is_idle };
     this_cpu_set_idle(is_idle);
@@ -889,6 +916,21 @@ pub unsafe fn this_cpu_slab_free_local(cache_idx: usize, ptr: *mut u8) -> Result
     gs_write_u64(elem_offset, ptr as u64);
     gs_write_u16(count_offset, count + 1);
     Ok(())
+}
+
+/// #476 FREE_BAD: is `ptr` currently sitting in this CPU's hot cache for
+/// `cache_idx`? Used to detect a double free on the per-CPU fast path, which
+/// does not otherwise validate ownership.
+#[inline]
+pub unsafe fn this_cpu_slab_cache_contains(cache_idx: usize, ptr: *mut u8) -> bool {
+    let count = gs_read_u16(slab_free_count_offset(cache_idx)) as usize;
+    let n = count.min(SLAB_BATCH_SIZE_USIZE);
+    for i in 0..n {
+        if gs_read_u64(slab_free_list_elem_offset(cache_idx, i)) == ptr as u64 {
+            return true;
+        }
+    }
+    false
 }
 
 /// Get the per-CPU slab cache `head` pointer for a given cache index.

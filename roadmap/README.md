@@ -23,7 +23,7 @@ scripts/sync-roadmap.sh check   # Verifica conexión
 
 Cada ítem sigue esta estructura:
 
-```
+```text
 - **ID**: Título `prioridad` `etiqueta1` `etiqueta2` `hito`
   Descripción del ítem.
 

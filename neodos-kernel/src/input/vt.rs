@@ -248,4 +248,17 @@ pub fn register_tests() {
     test_case!("vt_count_at_least_2", {
         test_true!(VT_COUNT >= 2);
     });
+
+    test_case!("vt_foreground_pid_set_clear", {
+        use crate::input::manager::{foreground_pid, set_foreground_pid, clear_foreground_pid};
+        let saved = foreground_pid();
+        set_foreground_pid(4242);
+        test_eq!(foreground_pid(), 4242);
+        // Clearing a different pid must not touch the current marker.
+        clear_foreground_pid(1111);
+        test_eq!(foreground_pid(), 4242);
+        clear_foreground_pid(4242);
+        test_eq!(foreground_pid(), 0);
+        set_foreground_pid(saved);
+    });
 }

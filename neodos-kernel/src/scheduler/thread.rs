@@ -23,6 +23,7 @@ impl Kthread {
             time_slice_remaining: IDLE_TIME_SLICE,
             ticks_since_scheduled: 0,
             kernel_stack_top: stack_top,
+            kernel_stack_size: crate::scheduler::types::IDLE_STACK_SIZE,
             kernel_stack: None,
             teb_base: 0,
             cpu: 0,
@@ -61,6 +62,9 @@ impl Kthread {
             time_slice_remaining: IDLE_TIME_SLICE,
             ticks_since_scheduled: 0,
             kernel_stack_top: stack_top,
+            // #348: `new_idle_bare` builds no frame; the caller sets the real
+            // owned span. Default to the short idle size for safety.
+            kernel_stack_size: crate::scheduler::types::IDLE_STACK_SIZE,
             kernel_stack: None,
             teb_base: 0,
             cpu: 0,
@@ -105,6 +109,7 @@ impl Kthread {
             time_slice_remaining: TIME_SLICES[PRIORITY_NORMAL as usize],
             ticks_since_scheduled: 0,
             kernel_stack_top,
+            kernel_stack_size: crate::scheduler::types::KERNEL_STACK_SIZE,
             kernel_stack: Some(stack),
             teb_base: 0,
             cpu: unsafe { crate::arch::x64::cpu_local::this_cpu_id() },

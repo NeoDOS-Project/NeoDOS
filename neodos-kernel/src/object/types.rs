@@ -155,6 +155,14 @@ pub enum ObInfoClass {
     KeyboardLayouts = 37,
     Hostname = 38,
     ProcessArgs = 39,
+    /// Timezone configuration (standard offset + DST window) — #357.
+    TimeZone = 40,
+    /// RTC time converted to local time by the kernel — #357.
+    LocalDateTime = 41,
+    /// #358: query whether a graceful shutdown has been requested for the
+    /// caller's service. Returns a single byte: 0 = normal, 1 = shutdown
+    /// requested. Read on the caller's own Process object.
+    ProcessShutdownState = 42,
 }
 
 /// Info classes for sys_ob_set_info (RAX=63).
@@ -189,6 +197,7 @@ pub enum ObSetInfoClass {
     RegistrySetValue = 25,
     RegistryDeleteValue = 26,
     SetNicIp = 27,
+    SetNicGateway = 28,
     ServiceStart = 33,
     ServiceStop = 34,
     ServiceRestart = 35,
@@ -202,6 +211,12 @@ pub enum ObSetInfoClass {
     KeyboardSetLeds = 46,
     KeyboardSetModifier = 47,
     SetHostname = 49,
+    /// Set the system (RTC) clock from a `SysDateTime` payload. Admin-only.
+    DateTime = 50,
+    /// Mark the target process object as the foreground process of the caller's
+    /// VT, i.e. the Ctrl+C target. Declared explicitly by the interactive shell
+    /// for the child it is about to wait on; ignored for other callers.
+    SetForegroundProcess = 51,
 }
 
 // ═══════════════════════════════════════════════════════════════════════

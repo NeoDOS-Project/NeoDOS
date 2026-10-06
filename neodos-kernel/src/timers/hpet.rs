@@ -1,5 +1,4 @@
-use core::ptr::{read_volatile, write_volatile};
-use core::sync::atomic::{fence, Ordering};
+use core::ptr::read_volatile;
 use crate::log::LogSubsys;
 
 // ── ACPI table signatures ──────────────────────────────────────────
@@ -80,16 +79,12 @@ struct GenericAddr {
 
 #[inline]
 unsafe fn hpet_read(base: u64, offset: u64) -> u64 {
-    let ptr = (base + offset) as *const u64;
-    fence(Ordering::SeqCst);
-    read_volatile(ptr)
+    crate::hal::mmio::read64((base + offset) as usize)
 }
 
 #[inline]
 unsafe fn hpet_write(base: u64, offset: u64, val: u64) {
-    let ptr = (base + offset) as *mut u64;
-    fence(Ordering::SeqCst);
-    write_volatile(ptr, val);
+    crate::hal::mmio::write64((base + offset) as usize, val);
 }
 
 // ── ACPI table scanning ────────────────────────────────────────────
@@ -698,7 +693,7 @@ pub fn ticks_to_us(ticks: u64) -> u64 {
 pub fn sleep_us(us: u64) {
     unsafe {
         if HPET_MMIO_BASE == 0 {
-            crate::hal::sleep_hint(us as u32);
+            crate::hal::io_delay(us as u32);
             return;
         }
         // Calculate target tick count for the requested delay
@@ -714,6 +709,20 @@ pub fn sleep_us(us: u64) {
             crate::hal::raw::raw_pause();
         }
     }
+}
+
+// ── Tests ──────────────────────────────────────────────────────────
+
+/// Register HPET/ACPI tests. Called from the kernel test harness.
+pub fn register_tests() {
+    // Moved from hal/pci.rs: MCFG parsing owns the ECAM base, so the check
+    // belongs to the module that parses the table.
+    crate::testing::register("hpet_ecam_mcfg_table_parse", || {
+        if let Some((base, _seg, _start, _end)) = get_ecam_info() {
+            crate::test_true!(base > 0);
+        }
+        Ok(())
+    });
 }
 
 

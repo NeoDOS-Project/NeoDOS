@@ -11,7 +11,7 @@
 
 ### A1 — `timer_handler_asm` `src/arch/x64/idt.rs:322-385` vs `0x400db1c:400dbc9` verificado
 
-```
+```text
 HW Ring0→Ring0: push RFLAGS,CS,RIP (3×8)  RSP_irq = RSP_old-24
 push rbp,r15,r14,r13,r12,r11,r10,r9,r8,rdi,rsi,rdx,rcx,rbx,rax  15×8=120  RSP2=RSP_irq-120
 mov rdi,rsp ; call timer_handler_inner  (RSP2-8 → RSP2)
@@ -27,7 +27,7 @@ pop rbp  // consume slot14 (0)  RSP=next_rsp+120 = 0x24772c8
 iretq    // lee [RSP]=RIP [RSP+8]=CS [RSP+16]=RFLAGS
 ```
 
-* 14 pops + `pop rbp` = 15 restaura exacto. `FINAL_CS` lee `[RSP+16]` que es misma dirección que `iretq` lee como `CS` (`[iret_rsp+8]`). Entre `FINAL_CS` y `iretq` solo `pop rbp` (slot14) — no modifica frame. `disp 0x221fbe` a `FINAL_*` (`.bss 0x422fb30`) verificado `<2 GiB`, `R_X86_64_PC32` correcto, sección `WA`.
+- 14 pops + `pop rbp` = 15 restaura exacto. `FINAL_CS` lee `[RSP+16]` que es misma dirección que `iretq` lee como `CS` (`[iret_rsp+8]`). Entre `FINAL_CS` y `iretq` solo `pop rbp` (slot14) — no modifica frame. `disp 0x221fbe` a `FINAL_*` (`.bss 0x422fb30`) verificado `<2 GiB`, `R_X86_64_PC32` correcto, sección `WA`.
 
 ### A2 — `init_ring0_frame` `src/scheduler/mod.rs:213-226`
 
@@ -43,9 +43,9 @@ sp = ks_top & !0xF; stack[-1]=0x202; stack[-2]=0x08; stack[-3]=entry; for j in 4
 
 ### A4 — GDT/TSS/IDT
 
-* `GDT` `lazy_static` en `.bss 0x4224010 0x60` (no `.rodata`), construido `src/arch/x64/gdt.rs:22-38` con `P=1 S=1 DPL0 L=1 type 0xA` para `0x08`. `gdt_dump:276` decodifica correcto. `GDTR.limit` esperado `0x2F`.
-* `TSS` `#[link_section=".data"] 0x41763c0` `src/arch/x64/gdt.rs:17` writable, `TSS.RSP0` solo por `set_kernel_stack:62`/`prepare_ring3_return:112`/`prepare_timer_return:873`. En timer path `TSS.RSP0=0x24772e0 ≠0`.
-* `IDT[32]` `src/arch/x64/idt.rs:529` `set_handler_addr(timer_handler_asm)` sin IST, tipo `0xE` `IF=0`.
+- `GDT` `lazy_static` en `.bss 0x4224010 0x60` (no `.rodata`), construido `src/arch/x64/gdt.rs:22-38` con `P=1 S=1 DPL0 L=1 type 0xA` para `0x08`. `gdt_dump:276` decodifica correcto. `GDTR.limit` esperado `0x2F`.
+- `TSS` `#[link_section=".data"] 0x41763c0` `src/arch/x64/gdt.rs:17` writable, `TSS.RSP0` solo por `set_kernel_stack:62`/`prepare_ring3_return:112`/`prepare_timer_return:873`. En timer path `TSS.RSP0=0x24772e0 ≠0`.
+- `IDT[32]` `src/arch/x64/idt.rs:529` `set_handler_addr(timer_handler_asm)` sin IST, tipo `0xE` `IF=0`.
 
 ### A5 — Red zone **deshabilitada** — corrección de auditoría previa
 
@@ -86,18 +86,18 @@ sp = ks_top & !0xF; stack[-1]=0x202; stack[-2]=0x08; stack[-3]=entry; for j in 4
 
 ## D. Bugs reales independientes
 
-* **D1 (CRITICAL latente) `src/hal/raw/cpu.rs:164`** `asm!("mov ds,{0:x}; mov es,{0:x}; mov ss,{0:x}", in(reg) ds)` usa `ds` tres veces. Binario `4001201: 66 8e db / 66 8e c3 / 66 8e d3` es `mov ds,bx; mov es,bx; mov ss,bx` con `bx=0x10` — correcto solo porque `gdt::init:83` pasa `0x10` tres veces. Fix: `in(reg) ds, in(reg) es, in(reg) ss`.
-* **D2 (CRITICAL SMP) `src/arch/x64/smp.rs:348` `alloc_idt_page`** 4 KiB zerado, `limit 4095`, sin copiar `IDT:498`. `IPI 0xF0` en AP → #GP → triple fault. Solo BSP operativo.
-* **D3 `neodos-kernel/kernel.ld:9` `.rodata*` dentro de `.text`** — datos RX, viola W^X.
-* **D4 `src/scheduler/mod.rs:47` sin guard page `NO_PRESENT`** — canary no atrapa overflow grande sobre `RIP/CS`.
-* **D5 `src/slab.rs:413` magic `0x534C4142`** colisión con `linked_list_allocator` header.
-* **D6 `src/hal/raw/cpu.rs:180` `raw_set_gs` con `println!` bajo `asm` + `IF=0`** — deadlock potencial.
+- **D1 (CRITICAL latente) `src/hal/raw/cpu.rs:164`** `asm!("mov ds,{0:x}; mov es,{0:x}; mov ss,{0:x}", in(reg) ds)` usa `ds` tres veces. Binario `4001201: 66 8e db / 66 8e c3 / 66 8e d3` es `mov ds,bx; mov es,bx; mov ss,bx` con `bx=0x10` — correcto solo porque `gdt::init:83` pasa `0x10` tres veces. Fix: `in(reg) ds, in(reg) es, in(reg) ss`.
+- **D2 (CRITICAL SMP) `src/arch/x64/smp.rs:348` `alloc_idt_page`** 4 KiB zerado, `limit 4095`, sin copiar `IDT:498`. `IPI 0xF0` en AP → #GP → triple fault. Solo BSP operativo.
+- **D3 `neodos-kernel/kernel.ld:9` `.rodata*` dentro de `.text`** — datos RX, viola W^X.
+- **D4 `src/scheduler/mod.rs:47` sin guard page `NO_PRESENT`** — canary no atrapa overflow grande sobre `RIP/CS`.
+- **D5 `src/slab.rs:413` magic `0x534C4142`** colisión con `linked_list_allocator` header.
+- **D6 `src/hal/raw/cpu.rs:180` `raw_set_gs` con `println!` bajo `asm` + `IF=0`** — deadlock potencial.
 
 ---
 
 ## E. Reconstrucción exacta
 
-```
+```text
 IRQ 32 HPET/APIC → CPU push RFLAGS/CS/RIP (RSP_irq=RSP_old-24)
 → timer_handler_asm 15×push RSP_cur=RSP_irq-120 RDI=RSP_cur call timer_handler_inner
 → timer_handler_inner:883 get_ticks 4538, scheduler.lock, on_timer_tick(RSP_cur)=Ready, *(RSP_cur+128)=0x08 KERN should_preempt, k.rsp=RSP_cur, schedule()=tid2 prio-scan, next_rsp=0x2477250 TSS.RSP0=0x24772e0 current_thread=Box 0x1bca5a20 ack_irq return next_rsp
@@ -140,6 +140,7 @@ IRQ 32 HPET/APIC → CPU push RFLAGS/CS/RIP (RSP_irq=RSP_old-24)
 DBG_RIP: .8byte 0; DBG_CS: .8byte 0; DBG_RFLAGS: .8byte 0; DBG_RSP: .8byte 0
 DBG_GDTR: .space 10,0; DBG_TR: .2byte 0; DBG_CR3: .8byte 0; DBG_GS: .2byte 0
 ```
+
 `DBG_*` en `.bss` `# [no_mangle] static mut` → disp `~0x221fbe` verificado `<2 GiB` con `objdump -drwC`.
 
 **Volcado** `src/arch/x64/idt.rs:716` `gpf_handler` primera línea:

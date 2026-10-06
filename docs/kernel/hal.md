@@ -2,9 +2,11 @@
 
 ## Architecture
 
-The HAL follows the raw/safe split established in ABI v0.4. All inline assembly
-is strictly confined to `src/hal/raw/`. No `asm!()` calls exist outside this
-directory — verified by the audit constraint below.
+The HAL follows the raw/safe split established in ABI v0.4. HAL inline
+assembly is confined to `src/hal/raw/`. The kernel additionally contains
+architecture-specific assembly outside the HAL — the x86_64 AP trampoline and
+IDT entry stubs in `src/arch/x64/`, plus a few diagnostic helpers (see "Audit
+Constraint"). Device-register access is centralised in `src/hal/mmio.rs`.
 
 ### Directory Structure
 
@@ -13,7 +15,7 @@ src/hal/
   mod.rs        - HAL re-exports: pub use x64::*, pub use safe::read_cr2;
                   also provides has_rdrand(), rdrand() (retry loop)
   raw/          - Bare unsafe asm primitives (no safety checks)
-    cpu.rs      - STI/CLI, HLT, CPUID, RDTSC/RDTSCP, CR0/2/3/4, INVPCID,
+    cpu.rs      - STI/CLI, HLT, CPUID, RDTSC/RDTSCP, CR0/2/3/4,
                   RDRAND, GDT/IDT loading, segment regs, GS read/write,
                   debug port, REP STOSD, GPR reads (RAX..R15)
     io.rs       - IN/OUT to port space: inb/outb, inw/outw, inl/outl
@@ -23,11 +25,12 @@ src/hal/
                   with IS_SAFE bool flag; GsBase, KernelGsBase, FsBase,
                   ApicBase, Efer, MiscEnable, Sysenter*, TscAux
     mod.rs      - read_cr2() re-export
+  mmio.rs       - Minimal device-register MMIO access (read/write 8/32/64)
   pci.rs        - PCIe ECAM MMIO config space access
   x64/          - extern "C" ABI surface, delegates to hal/raw
-    cpu.rs      - 12 primitives (enable/disable_interrupts, halt, poweroff, reboot,
-                  read_cr2/3, write_cr3, flush_tlb, interrupts_enabled,
-                  hlt_once, cpu_info)
+    cpu.rs      - 11 extern "C" primitives (enable/disable_interrupts, halt,
+                  poweroff, reboot, read_cr2/3, write_cr3, flush_tlb,
+                  interrupts_enabled, hlt_once); cpu_info() is a Rust helper
     io.rs       - 6 primitives (inb/outb, inw/outw, inl/outl)
     irq.rs      - register_irq, ack_irq (APIC EOI + legacy PIC EOI)
     irql.rs     - IRQL subsystem: PASSIVE(0)/APC(1)/DISPATCH(2)/DIRQL(3-11)/
@@ -40,15 +43,22 @@ src/hal/
   tests.rs      - HAL test harness registration
 ```
 
-## 26 Primitives (extern "C")
+## 29 Primitives (extern "C")
+
+These are the `#[no_mangle] pub extern "C"` symbols exported by the HAL (the
+`KEEP_*` statics keep them retained in the binary).
 
 | Category | Primitives | Source |
 | ---------- | ----------- | -------- |
-| CPU Control | `enable_interrupts()`, `disable_interrupts()`, `halt() -> !`, `poweroff() -> !`, `reboot() -> !`, `read_cr2()`, `read_cr3()`, `write_cr3(val)`, `flush_tlb(virt)`, `interrupts_enabled()`, `hlt_once()`, `read_cr0()`, `read_cr4()` | `x64/cpu.rs` |
+| CPU Control | `enable_interrupts()`, `disable_interrupts()`, `halt() -> !`, `poweroff() -> !`, `reboot() -> !`, `read_cr2()`, `read_cr3()`, `write_cr3(val)`, `flush_tlb(virt)`, `interrupts_enabled()`, `hlt_once()` | `x64/cpu.rs` |
 | Port I/O | `inb(port)`, `inw(port)`, `inl(port)`, `outb(port, val)`, `outw(port, val)`, `outl(port, val)` | `x64/io.rs` |
-| Page Memory | `alloc_page() -> *mut u8`, `free_page(ptr)`, `map_page(phys, virt, flags)`, `unmap_page(virt)`, `walk_ptes_4k(virt)` | `x64/mem.rs` |
+| Page Memory | `alloc_page() -> *mut u8`, `free_page(ptr)`, `map_page(phys, virt, flags)`, `unmap_page(virt)`, `memory_barrier()` | `x64/mem.rs` |
 | Interrupt Management | `register_irq(vector, handler)`, `ack_irq(vector)` | `x64/irq.rs` |
-| Timing | `get_ticks()`, `increment_ticks()`, `sleep_hint(us)` | `x64/time.rs` |
+| Timing | `get_ticks()`, `increment_ticks()`, `sleep_hint(us)`, `get_tick_rate()`, `init_system_timer()` | `x64/time.rs` |
+
+> `register_irq` is currently a stub that returns `-1`; IRQ handlers are
+> installed directly in the IDT (`src/arch/x64/idt/`). `read_cr0`/`read_cr4`
+> and `walk_ptes_4k` are Rust helpers, not part of the `extern "C"` surface.
 
 ### Non-ABI Helpers
 
@@ -101,6 +111,28 @@ let phys_base = ApicBase::read();
 | `SYSENTER_EIP` | `0x00000176` | `SysenterEip` | true |
 | `TSC_AUX` | `0xC0000103` | `TscAux` | true |
 | `IA32_FEATURE_CONTROL` | `0x0000003A` | `Ia32FeatureControl` | false |
+
+## Device MMIO (`src/hal/mmio.rs`)
+
+Minimal abstraction for device-register MMIO access. Callers must pass an
+already-mapped address (typically UC- device memory); the module performs no
+mapping.
+
+| Function | Width |
+| ---------- | ----- |
+| `read8(addr) -> u8`, `write8(addr, val)` | 8-bit |
+| `read32(addr) -> u32`, `write32(addr, val)` | 32-bit |
+| `read64(addr) -> u64`, `write64(addr, val)` | 64-bit |
+
+Each access is a `read_volatile`/`write_volatile` guarded by a
+`compiler_fence(Ordering::SeqCst)` so the compiler cannot reorder it.
+
+Deliberately **not** covered by `hal::mmio`:
+
+- DMA descriptor memory (virtio vring, NVMe/AHCI queues) — coherent RAM, not registers.
+- ACPI tables, KPRCB, lock-free rings and user buffers.
+- The framebuffer surface.
+- 16-bit accesses (no current consumer).
 
 ## PCIe ECAM (`src/hal/pci.rs`)
 
@@ -185,15 +217,22 @@ HIGH     (15) — NMI, machine check
 
 ## Audit Constraint
 
-All inline assembly is strictly confined to `src/hal/raw/`. Run this after any
-code change:
+HAL inline assembly is confined to `src/hal/raw/`. Architecture code and a few
+diagnostic helpers legitimately contain assembly outside the HAL; the known
+exceptions are:
 
-```bash
-# No asm! outside hal/ — MUST return 0 matches
-grep -rn 'asm!(' src/ --include='*.rs' | grep -v 'hal/' || echo "CLEAN"
+- `src/arch/x64/smp.rs` — AP trampoline and early serial markers.
+- `src/arch/x64/idt/` — IDT entry stubs (`global_asm!`) and diagnostics.
+- `src/input/vt.rs`, `src/scheduler/diag/vfs_owner.rs` — diagnostic helpers.
 
-# All asm! calls are in hal/raw/
+Useful checks:
+
+```markdown
+# HAL asm must stay inside hal/raw/
 grep -rn 'asm!(' src/hal/ --include='*.rs'
+
+# Full inventory of asm outside the HAL (should match the exceptions above)
+grep -rn 'asm!\|global_asm!(' src/ --include='*.rs' | grep -v 'src/hal/'
 ```
 
 ## Backend Abstraction
@@ -208,8 +247,8 @@ without changing callers.
 ## ABI Reference
 
 > **Status**: Active. HAL ABI v0.4 with raw/safe split. ABI v0.3 binary interface is preserved
-> (26 extern "C" primitives). Internal restructuring adds `hal/raw/` (bare asm) and `hal/safe/`
-> (type-safe wrappers) to isolate all inline assembly from the rest of the kernel.
+> (29 `extern "C"` primitives, see the table above). Internal restructuring adds `hal/raw/` (bare asm)
+> and `hal/safe/` (type-safe wrappers) to keep HAL inline assembly in one place.
 >
 > **Source of truth**: `src/hal/`. This document is derivative — it formalises
 > what already exists; it does not define new behaviour.
@@ -217,6 +256,7 @@ without changing callers.
 ### ABI v0.3 — 23 extern "C" Functions
 
 #### CPU Control — `hal/x64/cpu.rs`
+
 ```rust
 pub extern "C" fn enable_interrupts();
 pub extern "C" fn disable_interrupts();
@@ -232,6 +272,7 @@ pub fn cpu_info() -> CpuInfo;                    // NOT extern "C"
 ```
 
 #### Port I/O — `hal/x64/io.rs`
+
 ```rust
 pub extern "C" fn inb(port: u16) -> u8;
 pub extern "C" fn outb(port: u16, val: u8);
@@ -242,6 +283,7 @@ pub extern "C" fn outl(port: u16, val: u32);
 ```
 
 #### Page Memory — `hal/x64/mem.rs`
+
 ```rust
 pub extern "C" fn alloc_page() -> *mut u8;
 pub extern "C" fn free_page(ptr: *mut u8);
@@ -252,6 +294,7 @@ pub fn walk_ptes_4k(virt: u64) -> Option<&'static mut PageTableEntry>;  // NOT e
 ```
 
 #### Interrupt Management — `hal/x64/irq.rs`
+
 ```rust
 pub type IrqHandler = extern "C" fn();
 pub extern "C" fn register_irq(vector: u8, handler: IrqHandler) -> i32;
@@ -259,6 +302,7 @@ pub extern "C" fn ack_irq(vector: u8);
 ```
 
 #### Timing — `hal/x64/time.rs`
+
 ```rust
 pub extern "C" fn get_ticks() -> u64;
 pub extern "C" fn increment_ticks();
@@ -295,22 +339,27 @@ Return: `rax`. Stack 16-byte aligned before `call`. Scratch regs: `rax`, `rcx`,
 ### Current Extensions (since v0.39.4)
 
 #### PCI Express ECAM (`src/hal/pci.rs`)
+
 ECAM addressing: `ECAM_BASE + (bus<<20) + (dev<<15) + (func<<12) + offset`.
 Activated at Phase 2.3 from ACPI MCFG table.
 
 #### I/O APIC (`src/interrupts/ioapic.rs`)
+
 ISA IRQs routed: IRQ0 (timer) → vec32, IRQ1 (keyboard) → vec33,
 IRQ4 (serial) → vec36, IRQ12 (PS/2 mouse) → vec44.
 
 #### MSI-X (`src/interrupts/msi.rs`)
+
 `configure_msix_entry` and `configure_msix_entries` for per-entry MSI-X setup.
 
 ### `ack_irq` Updated Contract (v0.39.4+)
+
 1. **APIC EOI** (always): Write 0 to Local APIC EOI register for ALL vectors
 2. **IOAPIC active**: Return immediately after APIC EOI — legacy PIC disabled
 3. **Legacy PIC fallback**: Proper EOI to master/slave PIC for vectors 32-47
 
 ### Error Return Convention
+
 - `0` = success
 - `-1` = generic failure
 
@@ -346,5 +395,6 @@ IDT maps 256 interrupt vectors. Exception vectors (0-31):
 | 14 | Page Fault | Fault | Panic |
 
 Hardware IRQs (32-47, PIC remapped):
+
 - **32 (IRQ0)**: System Timer (Context Switch)
 - **33 (IRQ1)**: PS/2 Keyboard

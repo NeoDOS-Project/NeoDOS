@@ -10,6 +10,16 @@ path = "src/lib.rs"
 crate-type = ["lib"]
 test = false
 
+[features]
+default = []
+# Verify NLTv3 Ed25519 signatures at load time. Off by default so ordinary
+# Ring 3 binaries do not pay the crypto size cost; production images can enable
+# it for trusted loaders (see docs/userland/nlt.md).
+i18n-signatures = ["libnlt/signatures"]
+
+[dependencies]
+libnlt = { path = "../libnlt" }
+
 [profile.release]
 panic = "abort"
 opt-level = 3

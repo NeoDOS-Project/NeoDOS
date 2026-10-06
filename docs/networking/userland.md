@@ -223,7 +223,7 @@ net.nxl.
 #### Opción A: Nuevo ObInfoClass::SocketRecv = 23
 
 Añadir en el kernel `ObInfoClass::SocketRecv = 23`. El handler en
-`src/syscall/ob.rs`:
+`src/syscall/ob/`:
 
 ```rust
 _ if info_class == ObInfoClass::SocketRecv as u32 => {
@@ -311,7 +311,7 @@ pub struct NetAbiTable {
 
     // === Configuración ===
     pub set_ip: extern "C" fn(u32, u32, u32) -> i32,
-    pub set_gateway: extern "C" fn(u32, u32) -> i32,  // stub (escribe Registry)
+    pub set_gateway: extern "C" fn(u32, u32) -> i32,  // aplica el gateway a la NIC (SetNicGateway=28)
 
     // === Estado ===
     pub get_ip: extern "C" fn(u32) -> u32,
@@ -328,7 +328,7 @@ pub struct NetAbiTable {
 - `ip` pasado como `u32` (big-endian) en vez de `*const u8` array
 - Se añadieron `get_ip`, `get_gateway`, `get_mask`, `get_dhcp_bound`
 - `get_tcp_status` y `get_socket_addr` no tienen wrapper (accesibles vía ObInfoClass directamente)
-- `set_gateway` es stub — el kernel no expone `SetNicGateway`
+- `set_gateway` aplica el gateway a la NIC vía `ObSetInfoClass::SetNicGateway` (28); la persistencia en Registry la hace el caller (p. ej. `dhcpd` escribe `Gateway`)
 
 ### 2.4 net.nxl acceso a libneodos
 
@@ -372,6 +372,31 @@ en PATH, pero si es un comando de red conocido, carga net.nxl y ejecuta.
 independiente que carga net.nxl via `loadlib()` al arrancar. No hay integración
 en el shell — el shell solo dispatching a PATH como ahora.
 
+### 2.6 libnet::config — backend de configuración compartido (#363)
+
+`netcfg`, `dhcpd`, `ipconfig`, `netapplier` (y el futuro `neocfg`) no deben
+conocer la ruta `...\Network\Interfaces\<n>` ni los nombres canónicos de sus
+valores. Todos pasan por `libnet::config`, el backend/API único:
+
+```text
+neocfg / netcfg / dhcpd / ipconfig / netapplier
+                    │
+                    ▼
+              libnet::config
+                │         │
+        Registry (Cm)   net.nxl SetNicIp/SetNicGateway
+```
+
+- `libnet-config` (crate `no_std` sin dependencias, host-testeable) define el
+  contrato puro: nombres canónicos (`VALUE_*`), `NetConfig`, `parse_ip`,
+  `format_ip`, `DEFAULT_MASK` y `build_interface_path`.
+- `libnet::config` añade el adaptador de syscalls: `load`/`store`/
+  `publish_lease`/`apply`/`apply_current`/`link_up`/`interface_ip`.
+
+Esto evita duplicar la lógica de configuración y permite que `neocfg` configure
+la red sin conocer internals de NIC. El Registry sigue siendo la única fuente de
+verdad (sin segunda fuente).
+
 ---
 
 ## 3. Herramientas NXE de Red
@@ -411,7 +436,7 @@ fn main() {
 }
 ```
 
-**Ubicación:** `userbin/ipconfig/` → `C:\Programs\ipconfig.nxe`
+**Ubicación:** `userbin/ipconfig/` → `C:\System\Tools\ipconfig.nxe`
 
 **Dependencias:**
 
@@ -587,7 +612,7 @@ fn dhcp_discover(net: &NetAbiTable) -> Result<DhcpOffer, NetError> {
 
 fn dhcp_apply(net: &NetAbiTable, config: &DhcpConfig) {
     // Guardar en Registry
-    // cm_open_key + cm_set_value para IP, Gateway, DNS, SubnetMask
+    // cm_open_key + cm_set_value para IPAddress, Gateway, DNS, SubnetMask
 
     // Aplicar IP
     (net.net_set_ip)(0, &config.ip)?;
@@ -602,30 +627,95 @@ fn dhcp_apply(net: &NetAbiTable, config: &DhcpConfig) {
 3. El kernel construya header UDP+IP+Ethernet desde `socket_send`
 4. Receive path: UDP paquetes entrantes dispatch al socket bind al puerto 68
 
-### 3.4 dnsresv.nxe (futuro)
+### 3.4 nslookup.nxe — resolución DNS (implementado)
 
 ```text
-DNSRESV <hostname> [/s dns_server]
+NSLOOKUP <hostname> [dns-server]
 
-  Resuelve hostname a IPv4 via DNS server configurado o especificado.
+  Resuelve un hostname a una o más direcciones IPv4.
+  Sin segundo argumento usa los servidores DNS configurados.
 ```
 
-Usa `net_dns_resolve()` de net.nxl, que implementa consulta DNS sobre UDP
-(puerto 53). Formato DNS: header de 12 bytes + query section.
+La resolución DNS **no** vive en `net.nxl` ni dentro de cada herramienta. El
+protocolo se implementa una sola vez en una librería compartida y `nslookup`
+y `ping` la consumen:
 
-```rust
-pub fn net_dns_resolve(hostname: &str, result_ip: &mut [u8; 4]) -> Result<(), NetError> {
-    // 1. Obtener DNS server de Registry o argumento
-    // 2. Construir consulta DNS:
-    //    Header: ID(2), flags(0x0100), QDCOUNT=1, resto=0
-    //    Question: nombre encoded + type(1=AAAA→IPv4) + class(1=IN)
-    // 3. net_socket_create(UDP) → bind to any → connect to DNS:53
-    // 4. net_socket_send(query)
-    // 5. net_socket_recv(response)
-    // 6. Parsear respuesta: extract IP de answer section
-    // 7. (futuro) cachear resultado
-}
+```text
+libdns   (crate no_std, sin dependencias)
+  ├─ encode_name / decode_name
+  ├─ build_query / parse_response   (A, CNAME, RCODE, truncation)
+  ├─ validate_hostname / parse_dotted_ip
+  └─ DnsError, DnsAnswer, DnsTransport, resolve_with_servers()
+
+libnet   (librería de red userland)
+  ├─ NetTransport     → sockets UDP vía net.nxl (puerto 53)
+  ├─ configured_servers() → Registry: DnsServer, DnsServer2, DnsServer3
+  ├─ resolve(hostname)            → DnsResult { server, addresses, ttl }
+  ├─ resolve_with_server(host, s)
+  └─ caché acotada (16 entradas, por host + servidor)
+
+nslookup.nxe   ─┐
+ping.nxe        ├─ usan libnet::dns
+(ntpd, ...)    ─┘
 ```
+
+**Configuración (Registry):**
+
+```text
+\Registry\Machine\System\CurrentControlSet\Services\Network\Interfaces\0
+  DnsServer   REG_DWORD/REG_SZ   (servidor 1, preferente)
+  DnsServer2  REG_DWORD/REG_SZ   (servidor 2, opcional)
+  DnsServer3  REG_DWORD/REG_SZ   (servidor 3, opcional)
+```
+
+Se distingue entre *configured DNS* (lo que hay en el Registry) y *effective
+DNS* (el servidor que realmente respondió, devuelto en `DnsResult.server`).
+`0.0.0.0` se trata siempre como "no configurado": nunca se envía una consulta
+a esa dirección.
+
+**Errores distintos** (`libdns::DnsError`):
+`NoConfig`, `NoServer`, `InvalidHostname`, `Timeout`, `ServerUnreachable`,
+`NxDomain`, `MalformedResponse`, `Truncated`, `ServerFailure`, `NoARecord`,
+`Network`. Cada uno se muestra con su propio mensaje localizado.
+
+**Consultas a los servidores:** se prueban en orden. `NXDOMAIN` corta la
+búsqueda de inmediato; un timeout o servidor inalcanzable pasa al siguiente.
+Solo se implementa resolución A/IPv4 (y seguimiento de CNAME); no hay fallback
+TCP (una respuesta con el bit TC se reporta como `Truncated`). La espera de
+respuesta usa un presupuesto de tiempo RDTSC (no hay `ob_wait` para sockets ni
+sleep con duración en userland).
+
+### 3.5 ping.nxe — integración con DNS (implementado)
+
+`ping <host>` acepta tanto una IPv4 literal como un hostname:
+
+```text
+hostname → libnet::dns::resolve() → IPv4 → sys_icmp_ping() (sin cambios)
+```
+
+`ping 10.0.1.1` conserva exactamente el comportamiento anterior y los flags
+`/n` y `/t`. Si el argumento parece una IP numérica pero es inválida se
+mantiene el error de IP; en caso contrario se intenta resolver por DNS y se
+muestra el error DNS específico.
+
+### 3.6 ntpd.nxe — daemon de sincronización horaria (implementado)
+
+`ntpd` es un servicio residente (StartType=Auto, gestionado por el Service
+Manager) que sincroniza el reloj del sistema con servidores NTP/SNTP. No
+configura nada: lee `Ntpd\Parameters` del Registry, consulta el servidor y
+aplica la hora vía `ob_set_datetime()` (objeto `\Global\Info\DateTime`).
+
+```text
+ntpd.nxe
+  ├─ libntp     (SNTP: request/reply, offset/delay, civil time — host-testeable)
+  ├─ libnet::dns (resolución de servidores)
+  └─ libneodos   (sockets UDP, Registry, ob_set_datetime)
+```
+
+La lógica de protocolo vive en `libntp`, igual que el DNS vive en `libdns`; el
+daemon solo aporta transporte, configuración y estado. La documentación
+completa (configuración, ciclo de vida, estado y limitaciones) está en
+[`docs/services/ntpd.md`](../services/ntpd.md).
 
 ---
 
@@ -637,7 +727,7 @@ NeoInit (`userbin/neoinit/src/main.rs`, 79 líneas) es un supervisor minimalista
 
 ```rust
 fn spawn() -> Result<u32, i64> {
-    let path_str = "\\Global\\FileSystem\\C:\\Programs\\NeoShell.nxe";
+    let path_str = "\\Global\\FileSystem\\C:\\Programs\\neoshell.nxe";
     let attrs = 0xFFu64 | (0xFFu64 << 8) | (0xFFu64 << 16);
     let fd = syscall::sys_ob_create(path_str, 1, None, attrs)?;
     let _ = syscall::sys_ob_wait(fd);
@@ -647,7 +737,7 @@ fn spawn() -> Result<u32, i64> {
 
 **Problemas:**
 
-- Path `C:\Programs\NeoShell.nxe` hardcoded
+- Path `C:\Programs\neoshell.nxe` hardcoded
 - No usa Registry
 - No inicia servicios (net, logger, etc.)
 - No se puede configurar sin recompilar
@@ -660,29 +750,34 @@ NeoInit debe leer su configuración de `\Registry\Machine\System\CurrentControlS
 
 ```text
 \Registry\Machine\System\CurrentControlSet\Services\NeoInit
-├── DefaultShell        REG_SZ   "C:\Programs\NeoShell.nxe"
-├── AutoStartServices   REG_MULTI_SZ   "netcfg"
+├── DefaultShell        REG_SZ   "C:\Programs\neoshell.nxe"
 ├── EnableVT            REG_DWORD  1
-├── VTCount             REG_DWORD  4
-└── ShellArgs           REG_SZ   ""
+├── AutoStartServices   REG_SZ   ""       (obsoleto; ver Service Manager)
+├── EnableTests         REG_DWORD  0
+└── EnableNetworkTest   REG_DWORD  0
 ```
 
-**Claves de soporte para servicios:**
+**Claves de soporte para servicios (Service Manager):**
 
 ```text
 \Registry\Machine\System\CurrentControlSet\Services
-├── netcfg
-│   ├── Path            REG_SZ   "C:\Programs\netcfg.nxe"
-│   ├── AutoStart       REG_DWORD  1
-│   └── Description     REG_SZ   "Network configuration service"
+├── Dhcpc
+│   ├── ImagePath       REG_SZ   "C:\System\Tools\dhcpd.nxe"
+│   ├── BinaryPath      REG_SZ   "C:\System\Tools\dhcpd.nxe"
+│   └── StartType       REG_DWORD  2   (Auto)   — DHCP; publica el lease
 │
-├── logger
-│   ├── Path            REG_SZ   "C:\Programs\logger.nxe"
-│   ├── AutoStart       REG_DWORD  1
+├── NetApplier
+│   ├── BinaryPath      REG_SZ   "C:\System\Tools\netapplier.nxe"
+│   └── StartType       REG_DWORD  2   (Auto)   — aplica la config a la NIC
+│
+├── NeoInit
 │   └── ...
 │
 └── <future_services>
 ```
+
+> `netapplier` es el **aplicador residente** (servicio `NetApplier`) y `dhcpd` el
+> cliente DHCP; `netcfg` es solo la CLI de configuración. Ver §4.4.
 
 ### 4.3 Nueva implementación de NeoInit
 
@@ -778,14 +873,14 @@ pub extern "C" fn _start() -> ! {
 
     // 3. Leer DefaultShell
     let shell_path = if reg_fd != 0xFF {
-        cm_query_str(reg_fd, "DefaultShell", "C:\\Programs\\NeoShell.nxe")
+        cm_query_str(reg_fd, "DefaultShell", "C:\\Programs\\neoshell.nxe")
     } else {
-        *b"C:\\Programs\\NeoShell.nxe\0"
+        *b"C:\\Programs\\neoshell.nxe\0"
     };
 
     // 4. Leer auto-start services
     let services_str = if reg_fd != 0xFF {
-        cm_query_str(reg_fd, "AutoStartServices", "")
+        cm_query_str(reg_fd, "AutoStartServices", "")   // obsoleto (ver Service Manager)
     } else {
         [0u8; 260]
     };
@@ -832,7 +927,7 @@ pub extern "C" fn _start() -> ! {
     }
 
     // 7. Cargar net.nxl si hay servicios de red
-    // (netcfg lo hará por su cuenta, pero podemos precargar)
+    // (el aplicador lo hará por su cuenta, pero podemos precargar)
     if services_str.iter().any(|&b| b == b'n' || b == b'N') {
         let _ = syscall::sys_loadlib("C:\\System\\Libraries\\net.nxl");
     }
@@ -854,7 +949,7 @@ pub extern "C" fn _start() -> ! {
     }
 
     // 9. Spawn shell (loop supervisor)
-    let shell_path_cstr = core::str::from_utf8(&shell_path).unwrap_or("C:\\Programs\\NeoShell.nxe");
+    let shell_path_cstr = core::str::from_utf8(&shell_path).unwrap_or("C:\\Programs\\neoshell.nxe");
     write_str(b"[neoinit] DefaultShell: ");
     write_str(shell_path_cstr.as_bytes());
     write_str(b"\r\n");
@@ -878,43 +973,96 @@ pub extern "C" fn _start() -> ! {
 }
 ```
 
-### 4.4 Servicio netcfg.nxe (implementado)
+### 4.4 netcfg.nxe — CLI de configuración (implementado)
 
-`netcfg.nxe` es un servicio auto-iniciado que configura la red al boot.
+`netcfg.nxe` es **exclusivamente la CLI de configuración de red one-shot**:
+lee, valida, escribe el Registry cuando corresponde, aplica explícitamente cuando
+corresponde, muestra estado y **sale**. Nunca queda residente y **no es un
+servicio** (ver #365).
 
-**Implementación real (`userbin/netcfg/src/main.rs`):**
+**Comandos (`userbin/netcfg/src/main.rs`):**
 
 ```text
-netcfg.nxe
-  │
-  ├── Cargar net.nxl vía libnet (lazy load)
-  ├── Abrir Registry:
-  │   \Registry\Machine\System\CurrentControlSet\Services\Network\Interfaces\0
-  │     ├── DHCPEnabled     REG_DWORD  1
-  │     └── IPAddress       REG_DWORD  0 (persistido)
-  │
-  ├── Si DHCPEnabled == 1:
-  │   ├── Esperar hasta 20000 yields a que kernel DHCP asigne IP
-  │   │   (kernel DHCP avanza vía dhcp_tick() en idle loop)
-  │   ├── Leer IP via libnet::get_ip(0) → NicInfo del kernel
-  │   └── Si timeout → APIPA 169.254.1.1 con net_set_ip(0, ip, mask)
-  │
-  ├── Si DHCPEnabled == 0:
-  │   ├── Leer IPAddress/SubnetMask del Registry
-  │   └── net_set_ip(0, ip, mask) vía ObSetInfoClass::SetNicIp(27)
-  │
-  └── Corre como DAEMMON (loop { yield })
+netcfg                          (sin args) aplica la config del Registry y sale
+netcfg /apply                   aplica la config del Registry a la NIC y sale
+netcfg /setip <ip> <mask> [gw]  IPv4 estática (DHCP off) + aplicar
+netcfg /setmask <mask>          máscara + aplicar
+netcfg /setgateway <gw>         gateway + aplicar
+netcfg /setdns <s1> [s2] [s3]   DNS (escribe el Registry + flush)
+netcfg /dhcp on|off             activa/desactiva DHCP
+netcfg /reset                   limpia IP/mask/gw/DNS; DHCP on
+netcfg /resetdns                limpia DNS
+netcfg /status                  Registry vs NIC (NicInfo del kernel)
+netcfg /test                    valida la config (dry-run)
+netcfg /? | help                ayuda
 ```
 
-**Diferencias con el diseño original:**
+El Registry es la **única fuente de verdad**. `netcfg` lee/escribe la
+configuración a través del backend compartido `libnet::config` (§2.6, #363) y,
+para los comandos que lo requieren, aplica el cambio de inmediato vía
+`SetNicIp = 27` / `SetNicGateway = 28`. La aplicación **continua**
+(lease DHCP, cambios desde `neocfg`, etc.) la hace el aplicador residente
+(§4.4.1), no `netcfg`.
 
-- No ejecuta `dhcp.nxe` — espera al kernel DHCP (vía `dhcp_tick()` en idle loop)
-- Path Registry: `CurrentControlSet\Services\Network\Interfaces\0` (no `\System\Network\...`)
-- netcfg corre como daemon (no termina tras configurar)
-- `set_gateway` es stub (el kernel no tiene SetNicGateway)
-- IP se guarda como REG_DWORD (no REG_SZ) para simplicidad
-- Usa APIPA (169.254.1.1) si DHCP falla
-- No hay flag "red disponible" — netcfg simplemente existe
+`dhcpd` (`Dhcpc`) hace el DORA y **publica** el lease en el Registry; el
+aplicador es quien lo lleva a la NIC. Así no hay dos programas aplicando lo mismo
+(ver #320/#365).
+
+**Diseño histórico:** el diseño original describía `netcfg` como servicio que
+hacía el DHCP y salía; después pasó a daemon (servicio `Netcfg`) y luego a
+one-shot (ver #320). Desde #365 `netcfg` es solo CLI y el rol residente se separó
+en `netapplier`.
+
+#### 4.4.1 netapplier.nxe — aplicador residente (implementado)
+
+`netapplier.nxe` es el **Network Configuration Applier**: un servicio Ring 3
+residente (`StartType = Auto`, servicio `NetApplier`) que mantiene la NIC
+sincronizada con `Network\Interfaces\0`. Es el **único aplicador**; no es
+`netcfg` (CLI) ni el worker Ring 0 `netpump` (bombeo RX del kernel). Se eligió el
+nombre `netapplier` (y no `netcfgd`) para no recoplar la identidad del daemon con
+la CLI `netcfg`.
+
+```text
+dhcpd ──► Registry ──► netapplier ──► NIC runtime
+netcfg ─► Registry / apply explícito
+```
+
+- Lee y aplica a través del backend compartido `libnet::config` (§2.6, #363).
+- Cada iteración (~decenas de ms) lee `IPAddress`/`SubnetMask`/`Gateway` y el
+  estado de enlace (`NicInfo`).
+- Si los valores cambian o el enlace sube (fl. 0→1), aplica
+  `SetNicIp = 27` / `SetNicGateway = 28`.
+- Máscara ausente o 0 → `/24` (#306/#314).
+- `DHCPEnabled = 1` → aplica el lease que publicó `dhcpd`.
+- Binario `C:\System\Tools\netapplier.nxe`; servicio `NetApplier`.
+
+> La notificación de cambios de configuración (en lugar del polling del
+> aplicador) y la capa de servicios `netd` (Ring 3) se trackean por separado (#364/#362).
+
+#### 4.4.2 netd.nxe — servicio de red Ring 3 (MVP, #372)
+
+`netd.nxe` es la **capa de servicios de red** Ring 3 (servicio `Netd`).
+**No** es el bombeo de RX: ese sigue siendo el worker Ring 0 `netpump` del
+kernel (`network_poll_all()`), que es independiente de que se programe un
+proceso Ring 3.
+
+> **Nota (#355/#376):** el autostart de `netd` se desactivó temporalmente
+> (`StartType = Demand`) mientras #376 (boot stall) estaba sin causa raíz. Con
+> el fix de #355 (anti-starvation de kernel threads Ring-0) el boot stall S2 ya
+> no se reproduce (0/16 arranques con `netd` Auto), así que se **restaura a
+> `Auto`**. `netd` sigue registrado y arrancable; el flake restante de DHCP
+> (S3) es independiente de `netd`.
+
+```text
+netd    (Ring 3) ── observa NIC / link state (NicInfo) y expone estado
+netpump (Ring 0) ── network_poll_all() + arp_tick + dns_tick  (RX pump)
+```
+
+- v1: identidad de proceso/servicio, bucle con `yield` y monitorización de
+  enlace (subida/bajada por NIC). No aplica configuración (eso es `netapplier`).
+- Fuera de alcance de v1: DHCP (`dhcpd`), DNS, routing y firewall.
+- Binario `C:\System\Tools\netd.nxe`; servicio `Netd` en el hive por defecto.
+- Identidad y frontera se deciden en #362; implementación en #372.
 
 ### 4.5 Integración con la shell: servicios en background
 
@@ -977,7 +1125,7 @@ NeoFS para datos, logs, binarios, configuraciones editables.
 │   │   ├── CurrentControlSet
 │   │   │   ├── Services
 │   │   │   │   ├── NeoInit      (ver sección 4.2)
-│   │   │   │   ├── netcfg       (Path, AutoStart, Description)
+│   │   │   │   ├── NetApplier   (BinaryPath, StartType, DisplayName)
 │   │   │   │   └── ...
 │   │   │   │
 │   │   │   ├── Control
@@ -993,11 +1141,12 @@ NeoFS para datos, logs, binarios, configuraciones editables.
 │   │   └── Network
 │   │       └── Interfaces
 │   │           └── 0
-│   │               ├── IP            REG_SZ  "10.0.2.15"
-│   │               ├── SubnetMask    REG_SZ  "255.255.255.0"
-│   │               ├── Gateway       REG_SZ  "10.0.2.1"
-│   │               ├── DNS1          REG_SZ  "10.0.2.3"
-│   │               ├── DNS2          REG_SZ  ""
+│   │               ├── IPAddress     REG_DWORD  10.0.30.20
+│   │               ├── SubnetMask    REG_DWORD  255.255.255.0
+│   │               ├── Gateway       REG_DWORD  10.0.30.1
+│   │               ├── DnsServer     REG_DWORD  10.0.30.10
+│   │               ├── DnsServer2    REG_DWORD  0
+│   │               ├── DnsServer3    REG_DWORD  0
 │   │               ├── DHCPEnabled   REG_DWORD  1
 │   │               ├── MACAddress    REG_SZ  "52:54:00:12:34:56"
 │   │               └── DriverBinding REG_SZ  "\\Device\\Nic\\0"
@@ -1061,7 +1210,7 @@ pub fn cm_flush_key(key_native_id: u64) -> Result<(), ()> {
    `cm_flush_key` se llama desde el shell (`FLUSHREG` command), o desde
    NeoInit antes de spawn shell, o en shutdown.
 2. **Periódico:** Un demonio de kernel (work queue) cada N segundos si dirty.
-3. **A petición:** Solo cuando se llama `cm_flush_key` (syscall RAX=74).
+3. **A petición:** Solo cuando se llama `cm_flush_key` (syscall RAX=57).
 
 **Decisión:** Opción 1 + 3. `cm_set_value` marca el hive como dirty.
 Antes de spawn NeoShell, NeoInit llama `cm_flush_key` para guardar.
@@ -1090,16 +1239,16 @@ pub fn create_default_registry_values() {
     // Services\NeoInit
     let services = cm_create_key(ccs, "Services").unwrap_or(ccs);
     let neoinit = cm_create_key(services, "NeoInit").unwrap_or(services);
-    cm_set_value(neoinit, "DefaultShell", REG_SZ, b"C:\\Programs\\NeoShell.nxe").ok();
-    cm_set_value(neoinit, "AutoStartServices", REG_MULTI_SZ, b"netcfg").ok();
+    cm_set_value(neoinit, "DefaultShell", REG_SZ, b"C:\\Programs\\neoshell.nxe").ok();
+    cm_set_value(neoinit, "AutoStartServices", REG_MULTI_SZ, b"").ok();
     cm_set_value(neoinit, "EnableVT", REG_DWORD, &1u32.to_le_bytes()).ok();
     cm_set_value(neoinit, "VTCount", REG_DWORD, &4u32.to_le_bytes()).ok();
 
-    // Services\netcfg
-    let netcfg = cm_create_key(services, "netcfg").unwrap_or(services);
-    cm_set_value(netcfg, "Path", REG_SZ, b"C:\\Programs\\netcfg.nxe").ok();
-    cm_set_value(netcfg, "AutoStart", REG_DWORD, &1u32.to_le_bytes()).ok();
-    cm_set_value(netcfg, "Description", REG_SZ, b"Network configuration service").ok();
+    // Services\NetApplier — único aplicador residente (netcfg es solo CLI)
+    let applier = cm_create_key(services, "NetApplier").unwrap_or(services);
+    cm_set_value(applier, "BinaryPath", REG_SZ, b"C:\\System\\Tools\\netapplier.nxe").ok();
+    cm_set_value(applier, "StartType", REG_DWORD, &2u32.to_le_bytes()).ok();
+    cm_set_value(applier, "Description", REG_SZ, b"Network configuration applier").ok();
 
     // Control
     let control = cm_create_key(ccs, "Control").unwrap_or(ccs);
@@ -1115,10 +1264,10 @@ pub fn create_default_registry_values() {
     let network = cm_create_key(root_native, "Network").unwrap_or(root_native);
     let ifaces = cm_create_key(network, "Interfaces").unwrap_or(network);
     let if0 = cm_create_key(ifaces, "0").unwrap_or(ifaces);
-    cm_set_value(if0, "IP", REG_SZ, b"0.0.0.0").ok();
-    cm_set_value(if0, "SubnetMask", REG_SZ, b"0.0.0.0").ok();
-    cm_set_value(if0, "Gateway", REG_SZ, b"0.0.0.0").ok();
-    cm_set_value(if0, "DNS1", REG_SZ, b"0.0.0.0").ok();
+    cm_set_value(if0, "IPAddress", REG_DWORD, &0u32.to_le_bytes()).ok();
+    cm_set_value(if0, "SubnetMask", REG_DWORD, &0u32.to_le_bytes()).ok();
+    cm_set_value(if0, "Gateway", REG_DWORD, &0u32.to_le_bytes()).ok();
+    cm_set_value(if0, "DnsServer", REG_DWORD, &0u32.to_le_bytes()).ok();
     cm_set_value(if0, "DHCPEnabled", REG_DWORD, &1u32.to_le_bytes()).ok();
 }
 ```
@@ -1274,7 +1423,7 @@ Core no se pueda eliminar via `cm_delete_key`. Si un proceso userland intenta
 borrar un paquete Core:
 
 ```rust
-// En syscall cm_delete_key handler (RAX=73):
+// En syscall cm_delete_key handler (RAX=56):
 let (hive_idx, cell_idx) = decode_cell(key_native_id);
 let cm = CM_MANAGER.lock();
 let hm = &cm.hives[hive_idx as usize];
@@ -1349,12 +1498,12 @@ C:\Logs\pkg.log            ← log de operaciones pkg
 | UDP | `src/net/udp.rs` | ⚠️ | Header 8B, checksum, **sin dispatch de paquetes** |
 | TCP | `src/net/tcp.rs` | ⚠️ | State machine (11 estados), buffers, **sin handshake real** |
 | TCP send/recv | `src/net/tcp.rs` | ⚠️ | `tcp_send()` escribe en send_buf local, no transmite |
-| e1000 | `src/net/e1000.rs` | ✅ | Probe, MMIO, RX/TX rings, poll_packet, send_packet |
+| e1000 | `drivers/e1000/ (NEM)` | ✅ | Probe, MMIO, RX/TX rings, poll_packet, send_packet |
 | Socket manager | `src/net/socket.rs` | ✅ | Alloc/bind/connect/listen/send/recv/close/wake |
 | Socket→NIC TX | `src/net/socket.rs` | ❌ | `socket_send()` no llama a NIC, solo escribe en send_buf local |
 | NIC→Socket RX | `src/net/mod.rs` | ❌ | `net_handle_incoming_packet` no rutea TCP/UDP a sockets |
 | ObType::Socket | `src/object/types.rs` | ✅ | type=18, ObInfoClass 17-20, ObSetInfoClass 18-22 |
-| ObSocket handler | `src/syscall/ob.rs` | ✅ | handlers para create/set/query de sockets |
+| ObSocket handler | `src/syscall/ob/` | ✅ | handlers para create/set/query de sockets |
 
 ### 7.2 Gaps críticos para red userland
 
@@ -1706,8 +1855,8 @@ Fase 8 (pkg.nxe): Sistema de paquetes v1
 | 14 | F7 | Registry: crear valores por defecto en boot | `main.rs`, `cm/mod.rs` | Pequeño |
 | 15 | F7 | NeoInit: leer Registry para DefaultShell | `userbin/neoinit/` | Pequeño |
 | 16 | F7 | NeoInit: auto-start de servicios | `userbin/neoinit/` | Medio |
-| 17 | F7 | netcfg.nxe: servicio de configuración de red | `userbin/netcfg/` | Medio |
-| 18 | F7 | Registry: persistencia a disco (cm_flush_key) | `cm/mod.rs`, `cm/hive.rs` | Medio |
+| 17 | F7 | netapplier.nxe: aplicador de red (servicio NetApplier); netcfg es la CLI | `userbin/netapplier/`, `userbin/netcfg/` | Medio |
+| 18 | F7 | Registry: persistencia a disco (cm_flush_key) | `cm/mod.rs`, `cm/hive/` | Medio |
 | 19 | F8 | pkg.nxe: sistema de paquetes v1 | `userbin/pkg/` | Grande |
 
 ### 8.2 Después de v1.0
@@ -1730,6 +1879,11 @@ Fase 8 (pkg.nxe): Sistema de paquetes v1
 
 ### 9.1 Boot completo con red
 
+> Nota: el arranque de red lo realizan dos servicios del Service Manager:
+> `Dhcpc` (`dhcpd.nxe`) hace DHCP y publica el lease en el Registry, y
+> `NetApplier` (`netapplier.nxe`) es el aplicador residente que lleva la
+> configuración a la NIC. `netcfg` es la CLI one-shot. Ver §4.4.
+
 ```text
 Bootloader (UEFI)
   ↓
@@ -1747,70 +1901,40 @@ Kernel
   │   ├── create \Registry\Machine, \Registry\User
   │   ├── mount SYSTEM hive
   │   └── create_default_registry_values()
-  │       ├── CurrentControlSet\Services\NeoInit\DefaultShell = "C:\Programs\NeoShell.nxe"
-  │       ├── CurrentControlSet\Services\NeoInit\AutoStartServices = "netcfg"
-  │       ├── CurrentControlSet\Services\netcfg\Path = "C:\Programs\netcfg.nxe"
-  │       ├── Network\Interfaces\0\DHCPEnabled = 1
-  │       └── CurrentControlSet\Control\WaitForNetwork = 0
-  │
-  ├── Phase 3.9: ABI freeze, validate syscalls
-  │
-  └── Phase 4: Spawn NeoInit (PID 1)
-       │
-       ▼
-  NeoInit (PID 1)
-       │
-       ├── [kernel API: cm_open_key, cm_query_value]
-       │
-       ├── Abrir \Registry\Machine\System\CurrentControlSet\Services\NeoInit
-       │
-       ├── Leer DefaultShell → "C:\Programs\NeoShell.nxe"
-       │
-       ├── Leer AutoStartServices → "netcfg"
-       │
-       ├── Para cada servicio en AutoStartServices:
-       │   │
-       │   ├── Abrir \Registry\...\Services\netcfg
-       │   ├── Leer Path → "C:\Programs\netcfg.nxe"
-       │   │
-       │   └── spawn_detached("C:\Programs\netcfg.nxe")
-       │        │
-       │        ▼
-       │   netcfg.nxe (PID 2)
-       │       │
-       │       ├── load_net() = sys_loadlib("C:\System\Libraries\net.nxl")
-       │       │   └── kernel carga net.nxl en slot 3 (0x1e0c0000)
-       │       │
-       │       ├── net_interface_count() → 1
-       │       │
-       │       ├── Leer Registry: DHCPEnabled=1
-       │       │
-       │       ├── dhcp_discover():
-       │       │   ├── net_socket_create(UDP, port 68)
-       │       │   ├── net_socket_bind(0.0.0.0:68)
-       │       │   ├── net_socket_connect(255.255.255.255:67)
-       │       │   ├── Construir DHCP Discover
-       │       │   ├── net_socket_send() → kernel: build UDP+IP+Ethernet → e1000 TX
-       │       │   ├── (espera DHCP Offer)
-       │       │   ├── kernel: e1000 RX → parse UDP → find socket(port 68) → recv_buf
-       │       │   ├── net_socket_recv() → DHCP Offer
-       │       │   ├── Construir DHCP Request
-       │       │   ├── net_socket_send() → e1000 TX
-       │       │   ├── net_socket_recv() → DHCP ACK
-       │       │   └── Config: IP=10.0.2.15, Gateway=10.0.2.1, DNS=10.0.2.3
-       │       │
-       │       ├── Guardar en Registry:
-       │       │   \Registry\Machine\System\Network\Interfaces\0\IP = "10.0.2.15"
-       │       │   \Registry\Machine\System\Network\Interfaces\0\Gateway = "10.0.2.1"
-       │       │   \Registry\Machine\System\Network\Interfaces\0\DNS = "10.0.2.3"
-       │       │
-       │       ├── net_set_ip(0, 10.0.2.15) → kernel actualiza NIC IP
-       │       ├── net_set_gateway(0, 10.0.2.1)
-       │       └── exit (netcfg termina)
-       │
-       ├── Leer WaitForNetwork=0 → no esperar
-       │
-       └── Loop: spawn NeoShell.nxe → wait → respawn
+   │       ├── CurrentControlSet\Services\NeoInit\DefaultShell = "C:\Programs\neoshell.nxe"
+   │       ├── CurrentControlSet\Services\Dhcpc\ImagePath = "C:\System\Tools\dhcpd.nxe"
+   │       ├── CurrentControlSet\Services\Network\Interfaces\0\DHCPEnabled = 1
+   │       └── CurrentControlSet\Control\WaitForNetwork = 0
+   │
+   ├── Phase 3.9: ABI freeze, validate syscalls
+   │
+   └── Phase 4: Spawn NeoInit (PID 1)
+        │
+        ▼
+   NeoInit (PID 1)
+        │
+        ├── [kernel API: cm_open_key, cm_query_value]
+        │
+        ├── Abrir \Registry\Machine\System\CurrentControlSet\Services\NeoInit
+        │
+        ├── Leer DefaultShell → "C:\Programs\neoshell.nxe"
+        │
+        ├── El Service Manager (kernel) arranca los servicios System/Auto:
+        │   │
+        │   ├── Dhcpc (dhcpd.nxe) — DORA; publica el lease en el Registry
+        │   │     ├── load_net() / sockets UDP 68 → 67
+        │   │     ├── dhcp_discover() → Offer → Request → ACK
+        │   │     ├── Guarda en Registry: IPAddress/SubnetMask/Gateway/DnsServer
+        │   │     └── loop { yield } (servicio)
+        │   └── NetApplier (netapplier.nxe) — aplica la config a la NIC
+        │         └── loop { Registry → SetNicIp/SetNicGateway } (servicio)
+        │
+        ├── NetApplier aplica el Registry a la NIC (estático o el lease de Dhcpc)
+        │     (aplicador residente; ver §4.4.1)
+        │
+        ├── Leer WaitForNetwork=0 → no esperar
+        │
+        └── Loop: spawn neoshell.nxe → wait → respawn
 ```
 
 ### 9.2 Flujo detallado: net_socket_send (UDP)
@@ -1823,7 +1947,7 @@ user: net_socket_send(fd=3, data=DHCP_Discover)
 
        ↓ INT 0x80
 
-  2. Kernel: handler_ob_set_info (src/syscall/ob.rs)
+  2. Kernel: handler_ob_set_info (src/syscall/ob/)
      → info_class == SocketSend(21)
      → buscar ObObject por fd → native_id = socket_id
      → llamar socket_send(socket_id, data)
@@ -1872,7 +1996,7 @@ user: net_socket_send(fd=3, data=DHCP_Discover)
 
        ↓
 
-  4. Kernel: e1000 send_packet (src/net/e1000.rs)
+  4. Kernel: e1000 send_packet (drivers/e1000/ (NEM))
      → Wait for available TX descriptor
      → Copy packet data to DMA buffer
      → Update TX descriptor (addr, len, cmd)
@@ -2016,7 +2140,7 @@ Donde `<name>` es el path proporcionado por `net_socket_create()`.
 
 Ejemplos:
 
-- `\Ob\Socket\2\DhcpClient` — socket DHCP de netcfg (PID 2)
+- `\Ob\Socket\2\DhcpClient` — socket DHCP de dhcpd (PID 2)
 - `\Ob\Socket\3\Ping` — socket ping de ping.nxe (PID 3)
 
 Si `net_socket_create()` recibe un path relativo, net.nxl lo completa:
@@ -2038,7 +2162,7 @@ Este nuevo info class no existe actualmente en el kernel.
 **Implementación en el kernel:**
 
 ```rust
-// En src/syscall/ob.rs, handler_ob_query_info:
+// En src/syscall/ob/, handler_ob_query_info:
 _ if info_class == 23 /* SocketRecv */ => {
     let ob = ob_table.lock().get(fd).ok_or(SyscallError::BadF)?;
     if ob.obj_type != ObType::Socket {
@@ -2095,36 +2219,33 @@ fn alloc_ephemeral_port() -> u16 {
 }
 ```
 
-### 10.6 netcfg.nxe — implementación
+### 10.6 netcfg.nxe / netapplier.nxe — implementación
 
 ```text
-netcfg.nxe
+netcfg.nxe  (CLI one-shot)
   │
   ├── loadlib("C:\\System\\Libraries\\net.nxl")
   │
-  ├── net_interface_count()  → si 0, exit
-  │
   ├── Abrir Registry:
-  │   fd = cm_open_key("\\Registry\\Machine\\System\\Network\\Interfaces\\0")
+  │   fd = cm_open_key("\\Registry\\Machine\\System\\CurrentControlSet\\Services\\Network\\Interfaces\\0")
   │   dhcp = cm_query_dword(fd, "DHCPEnabled")
-  │   ip    = cm_query_str(fd, "IP")
-  │   gw    = cm_query_str(fd, "Gateway")
-  │   dns   = cm_query_str(fd, "DNS1")
+  │   ip    = cm_query_dword(fd, "IPAddress")
+  │   mask  = cm_query_dword(fd, "SubnetMask")
+  │   gw    = cm_query_dword(fd, "Gateway")
+  │   dns   = cm_query_dword(fd, "DnsServer")
   │
-  ├── if dhcp == 1:
-  │   ✓ Ejecutar dhcp como subproceso
-  │     (o llamar funciones DHCP de net.nxl si existen)
-  │   dhcp_result = dhcp_discover_and_configure()
-  │   ip = dhcp_result.ip
-  │   gw = dhcp_result.gateway
-  │   dns = dhcp_result.dns
-  │   ✓ Guardar en Registry
+  ├── /setip, /setdns, /dhcp, /reset, /status, /test, /apply, ...
+  │   ✓ escribe el Registry + flush y aplica cuando corresponde; luego exit(0)
   │
-  ├── if ip != "0.0.0.0":
-  │   ✓ net_set_ip(0, parse_ip(ip))
-  │   ✓ net_set_gateway(0, parse_ip(gw))
-  │
-  └── exit(0)
+  └── sin args = /apply (una vez) y exit(0) — nunca residente
+
+netapplier.nxe  (servicio NetApplier, aplicador residente)
+  ├── cada ~decenas de ms lee ip/mask/gw y el link (NicInfo)
+  ├── el DHCP lo publica Dhcpc en el Registry (DORA/renovación)
+  ├── si cambian o el link sube (0→1):
+  │     ✓ net_set_ip(0, ip, mask)
+  │     ✓ net_set_gateway(0, gw)
+  └── loop { Registry → NIC } (el servicio nunca termina)
 ```
 
 ### 10.7 Persistencia del Registry
@@ -2161,11 +2282,11 @@ fn init_cm() {
 | Socket UDP dispatch | Crear socket UDP, enviar paquete sintético, verificar recv_buf | kernel test framework |
 | libneodos wrappers | Tests de compilación (no ejecución) | cargo test (host) |
 | net.nxl | Tests unitarios de parsing (no requieren NIC) | cargo test (host) con mock de syscall |
-| ipconfig.nxe | Test de integración: ejecutar ipconfig y verificar salida | auto_test.py |
-| ping.nxe | Enviar ping a 127.0.0.1 (loopback futura) o QEMU host | auto_test.py |
-| dhcp.nxe | Simular servidor DHCP, verificar client | auto_test.py |
+| ipconfig.nxe | Test de integración: ejecutar ipconfig y verificar salida | `neodev test` |
+| ping.nxe | Enviar ping a 127.0.0.1 (loopback futura) o QEMU host | `neodev test` |
+| dhcp.nxe | Simular servidor DHCP, verificar client | `neodev test` |
 | NeoInit Registry | Test unitario de cm_open_key + cm_query_value | kernel test framework |
-| pkg.nxe | Test de instalación/remoción con paquete de prueba | auto_test.py |
+| pkg.nxe | Test de instalación/remoción con paquete de prueba | `neodev test` |
 
 ---
 
@@ -2176,9 +2297,9 @@ fn init_cm() {
 | Archivo | Cambio | Estado |
 | --------- | -------- | -------- |
 | `src/object/types.rs` | `ObInfoClass::SocketRecv = 23`, `ObSetInfoClass::SetNicIp = 27` | ✅ |
-| `src/syscall/ob.rs` | Handler SocketRecv (class 23) en query_info — copia `recv_buf`, `-EAGAIN` | ✅ |
-| `src/syscall/ob.rs` | Handler SetNicIp (class 27) en set_info — llama `nic_set_ip()` | ✅ |
-| `src/main.rs` | `AutoStartServices` default incluye `C:\Programs\netcfg.nxe` | ✅ |
+| `src/syscall/ob/` | Handler SocketRecv (class 23) en query_info — copia `recv_buf`, `-EAGAIN` | ✅ |
+| `src/syscall/ob/` | Handler SetNicIp (class 27) en set_info — llama `nic_set_ip()` | ✅ |
+| `tools/gen-hiv` | Crea el servicio `NetApplier` (`netapplier.nxe`, StartType=Auto) y `Dhcpc` | ✅ |
 | `src/scheduler/mod.rs` | `dhcp_tick()` llamado desde idle loop para que DHCP progrese | ✅ |
 
 ### 11.2 libneodos
@@ -2187,7 +2308,7 @@ fn init_cm() {
 | --------- | -------- | -------- |
 | `src/syscall.rs` | `ob_type::SOCKET = 18`, `ObInfoClass::SocketRecv=23` | ✅ |
 | `src/syscall.rs` | Wrappers: `ob_socket_create/connect/bind/listen/send/recv/close` | ✅ |
-| `src/syscall.rs` | `SocketAddrV4` struct, `sys_cm_set_value` (RAX=70) + `ob_syscall_5!` macro | ✅ |
+| `src/syscall/mod.rs` | `SocketAddrV4` struct, `sys_cm_set_value` (RAX=53) + `ob_syscall_5!` macro | ✅ |
 | `src/syscall.rs` | `ObSetInfoClass::SetNicIp = 27` | ✅ |
 
 ### 11.3 Nuevos proyectos
@@ -2196,17 +2317,18 @@ fn init_cm() {
 | ---------- | ------ | --------- | -------- |
 | libnet-nxl | `libnet-nxl/` | `net.nxl` → `C:\System\Libraries\net.nxl` (slot 3, `0x1e0c0000`) | ✅ |
 | libnet | `libnet/` | Static library wrapper con lazy loading | ✅ |
-| netcfg | `userbin/netcfg/` | `netcfg.nxe` → servicio de red (daemon) | ✅ |
+| netcfg | `userbin/netcfg/` | `netcfg.nxe` → CLI de configuración de red (one-shot) | ✅ |
+| netapplier | `userbin/netapplier/` | `netapplier.nxe` → aplicador residente (servicio `NetApplier`) | ✅ |
 | ipconfig | `userbin/ipconfig/` | `ipconfig.nxe` → muestra info de interfaces | ✅ |
 | ping | `userbin/ping/` | *(pendiente)* | ❌ |
 | dhcp | `userbin/dhcp/` | *(pendiente — DHCP se hace en kernel vía idle loop)* | ❌ |
 
 ### 11.4 Scripts
 
-| Script | Cambio | Estado |
+| Componente | Cambio | Estado |
 |--------|--------|--------|
-| `scripts/build.sh` | Build loop incluye `netcfg`, añadido build de `libnet-nxl` | ✅ |
-| `scripts/create_ne2_image.py` | Incluye `net.nxl` (System\Libraries) y `netcfg.nxe` (Programs) | ✅ |
+| `neodev build` | Build loop incluye `netcfg`, añadido build de `libnet-nxl` | ✅ |
+| `neodev/src/image.rs` | Incluye `net.nxl` (System\Libraries) y `netcfg.nxe` (System\Tools) | ✅ |
 
 ---
 

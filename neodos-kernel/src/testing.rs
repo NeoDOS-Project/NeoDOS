@@ -217,12 +217,15 @@ pub fn register_irql_tests() {
 
 pub fn register_tests() {
     crate::crash::register_crash_tests();
+    crate::arch::x64::paging::register_slot_tests();
     crate::input::register_tests();
     crate::input::vt::register_tests();
     crate::scheduler::register_tests();
     crate::syscall::register_syscall_table_tests();
+    crate::syscall::register_path_tests();
     crate::syscall::register_sync_tests();
     crate::syscall::register_ob_stats_tests();
+    crate::syscall::register_ob_set_tests();
     crate::nem::register_nem_tests();
     crate::elf::register_elf_tests();
     crate::eventbus::register_tests();
@@ -259,6 +262,10 @@ pub fn register_tests() {
     crate::arch::x64::smp::register_smp_tests();
     // IPI infrastructure tests (A1.4)
     crate::arch::x64::ipi::register_ipi_tests();
+    // Paging / TLB shootdown tests (#331)
+    crate::arch::x64::paging::register_paging_tests();
+    // Filesystem lock-order invariant tests (#343)
+    crate::lock_order::register_tests();
     // HAL v0.4 raw/safe split tests (A2.3)
     crate::hal::tests::register_hal_tests();
     // IRQL framework tests (A2.4)
@@ -269,6 +276,8 @@ pub fn register_tests() {
     crate::security::register_security_tests();
     // A2.1: PCIe ECAM tests
     crate::hal::pci::register_tests();
+    // HPET/MCFG ownership tests
+    crate::timers::hpet::register_tests();
     // A2.2: I/O APIC tests
     crate::interrupts::ioapic::register_tests();
     // NT5.5: Unified resource namespace (URN) tests
@@ -287,6 +296,7 @@ pub fn register_tests() {
     crate::drivers::virtio_blk::register_tests();
     // B2.1 Z6: Registry hive database (Cm) tests
     crate::cm::register_cm_tests();
+    crate::cm::timezone::register_timezone_tests();
     // SM-001: Service Manager tests
     crate::services::register_service_tests();
     // PM-PHASE1: HAL ACPI reboot/FADT/S5 primitives
@@ -301,6 +311,10 @@ pub fn register_tests() {
     register_alloc_tests();
     // Slab allocator tests
     register_slab_tests();
+    // #476 allocator FREE_BAD ownership detector tests
+    crate::memory::register_free_bad_tests();
+    // NLT i18n format tests (shared libnlt)
+    crate::i18n_tests::register_i18n_tests();
 }
 
 // ── UTF-8 tests ────────────────────────────────────────────────────
@@ -481,6 +495,34 @@ pub fn register_slab_tests() {
         }
         for (i, b) in v2.iter().enumerate() {
             test_eq!(**b, (i as u32) * 10);
+        }
+    });
+
+    // #383: a large fallback allocation whose contents happen to contain the
+    // bytes "SLAB" at a 4 KiB-aligned offset must still free correctly. Under
+    // the old payload-magic heuristic the free was misrouted into a slab cache,
+    // injecting a foreign pointer and corrupting the heap. With range routing
+    // this must round-trip without corruption.
+    test_case!("slab_383_fallback_with_slab_magic_bytes", {
+        // 16 KiB is served by the fallback heap (larger than MAX_SLAB_SIZE).
+        let mut b = Box::new([0u8; 16384]);
+        // Plant "SLAB" at a 4 KiB-aligned offset inside the buffer.
+        for page in 0..4 {
+            let off = page * 4096;
+            b[off] = b'S';
+            b[off + 1] = b'L';
+            b[off + 2] = b'A';
+            b[off + 3] = b'B';
+        }
+        test_eq!(b[0], b'S');
+        core::mem::drop(b);
+        // Heap must still be usable and consistent after the free.
+        let mut v: Vec<Box<u64>> = Vec::new();
+        for i in 0..64 {
+            v.push(Box::new(i));
+        }
+        for (i, x) in v.iter().enumerate() {
+            test_eq!(**x, i as u64);
         }
     });
 }

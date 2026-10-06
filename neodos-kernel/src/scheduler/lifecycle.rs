@@ -20,6 +20,9 @@ use crate::scheduler::Scheduler;
 /// without bound and heap/user slot exhaustion.
 const MAX_ZOMBIES: usize = 64;
 
+/// NeoInit's PID. INV-10: it MUST NEVER BE KILLED (source-of-truth.md §INV-10).
+pub const INIT_PID: u32 = 1;
+
 lazy_static! {
     static ref ZOMBIE_PIDS: Mutex<Vec<u32>> = Mutex::new(Vec::with_capacity(MAX_ZOMBIES));
 }
@@ -164,6 +167,7 @@ fn free_eprocess_resources(eproc: &mut Eprocess) {
         );
         let heap_idx = ((eproc.heap_base - crate::arch::x64::paging::PROCESS_HEAP_BASE)
             / crate::arch::x64::paging::PROCESS_HEAP_SIZE) as u8;
+        crate::arch::x64::paging::heap_slot_reset(heap_idx as usize);
         crate::arch::x64::paging::free_heap_slot(heap_idx);
         eproc.heap_base = 0;
         eproc.heap_break = 0;
@@ -397,6 +401,23 @@ impl Scheduler {
         Ok(pid)
     }
 
+    /// Publish a freshly-created process's initial thread as `Ready`
+    /// (`Suspended -> Ready`). Idempotent: returns `true` only when a
+    /// `Suspended` thread for `pid` was activated. This is the single
+    /// activation path shared by the `ObWait` hand-off and the Service
+    /// Manager; it does not enqueue twice (a thread already `Ready`/`Running`
+    /// is left untouched).
+    pub fn activate_suspended_process(&mut self, pid: u32) -> bool {
+        let mut activated = false;
+        for k in self.kthreads.iter_mut().flatten() {
+            if k.pid == pid && k.state == ThreadState::Suspended {
+                Self::make_thread_ready(k);
+                activated = true;
+            }
+        }
+        activated
+    }
+
     /// Ensure the eprocesses and kthreads Vecs have at least one free slot,
     /// growing them now so no realloc happens inside the critical section.
     /// P0.2: use try_reserve to avoid panic on OOM (was push() panic).
@@ -489,6 +510,7 @@ impl Scheduler {
             time_slice_remaining: TIME_SLICES[priority as usize],
             ticks_since_scheduled: 0,
             kernel_stack_top,
+            kernel_stack_size: KERNEL_STACK_SIZE,
             kernel_stack: Some(stack),
             teb_base: 0, cpu: 0,
             obj_id: None,
@@ -507,7 +529,8 @@ impl Scheduler {
         // Fase 3 P1/P5: capturar frame inicial 18 slots y canary
         let (kptr, base, top, init_rsp, ent) = {
             let k = self.kthreads[th_slot].as_ref().unwrap();
-            let b = k.kernel_stack_top.wrapping_sub(KERNEL_STACK_SIZE as u64);
+            // #348: derive the canary base from the thread's actual stack size.
+            let b = k.kernel_stack_top.wrapping_sub(k.kernel_stack_size as u64);
             (&**k as *const Kthread as u64, b, k.kernel_stack_top, k.rsp, k.rip)
         };
         if let Some(k) = self.kthreads[th_slot].as_mut() {
@@ -528,6 +551,9 @@ impl Scheduler {
     /// Kill an entire EPROCESS and all its threads.
     pub fn kill_pid(&mut self, pid: u32) -> bool {
         if pid == 0 { return false; }
+        // INV-10 (source-of-truth.md): NeoInit (PID 1) must never be killed.
+        // Refuse silently; callers treat `false` as "not killed".
+        if pid == INIT_PID { return false; }
 
         // Unregister EPROCESS from Ob (OB-046)
         for ep in self.eprocesses.iter().flatten() {
@@ -591,6 +617,10 @@ impl Scheduler {
                 t.as_ref().is_some_and(|k| k.tid == *tid)
             });
             if let Some(th_idx) = th_idx {
+                // #476 H1 experiment: guard the stack before dropping.
+                if let Some(th) = self.kthreads[th_idx].as_mut() {
+                    Self::guard_kstack_reclaim(th);
+                }
                 self.kthreads[th_idx] = None;
             }
         }
@@ -599,8 +629,40 @@ impl Scheduler {
             defer_reap(pid);
         }
 
+        // #358: forced termination must converge through the same deferred
+        // process-exit path as a voluntary exit (#374), so the Service Manager
+        // observes a killed service and finalizes it. `terminate_current` does
+        // this for voluntary exits/exceptions; `kill_pid` is the forced path and
+        // never runs `terminate_current`, so it notifies here. The notification
+        // is bounded, allocation-free and lock-safe (called with the scheduler
+        // lock held), exactly like the `terminate_current` call site. `-1`
+        // denotes an abnormal/forced termination.
+        crate::services::notify_process_exit(pid, -1);
+
         crate::trace_sched!(2, pid, 0); // KILL_PROCESS
         true
+    }
+
+    /// #476 H1 experiment — never free a kernel stack that another CPU is
+    /// still abandoning (KPRCB repointed, `mov rsp` not yet executed). The
+    /// conflicting stack is *leaked* so the experiment can continue without
+    /// corrupting memory; the event is recorded as `[KSTACK_RECLAIM_CONFLICT]`.
+    /// Returns true when a conflict was detected.
+    fn guard_kstack_reclaim(th: &mut Kthread) -> bool {
+        if let Some((owner, _otid, _opid, orsp, nks)) =
+            crate::scheduler::diag::kstack::reclaim_conflict(th.kernel_stack_top)
+        {
+            let reclaimer = unsafe { crate::arch::x64::cpu_local::this_cpu_id() } as usize;
+            crate::scheduler::diag::kstack::record_conflict(
+                reclaimer, owner, th.tid as u64, th.pid as u64,
+                th.kernel_stack_top, th.kernel_stack_size as u64, orsp, nks);
+            if let Some(b) = th.take_kernel_stack() {
+                core::mem::forget(b);
+            }
+            true
+        } else {
+            false
+        }
     }
 
     /// Recycle a terminated EPROCESS (only when last thread exits).
@@ -642,10 +704,13 @@ impl Scheduler {
                 });
                 if let Some(th_idx) = th_idx {
                     // Unregister thread Ob
-                    if let Some(th) = &self.kthreads[th_idx] {
+                    if let Some(th) = self.kthreads[th_idx].as_mut() {
                         if let Some(kid) = th.obj_id {
                             let _ = object::ob_destroy_object(kid);
                         }
+                        // #476 H1 experiment: do not free a stack another CPU
+                        // is still abandoning (leaked instead).
+                        Self::guard_kstack_reclaim(th);
                     }
                     self.kthreads[th_idx] = None;
                 }
@@ -728,6 +793,10 @@ impl Scheduler {
                         Self::make_thread_ready(k);
                     }
                 }
+                // #374: notify the Service Manager that this process exited.
+                // Deferred and lock-free here (we hold the scheduler lock); the
+                // restart policy is applied later from syscall context.
+                crate::services::notify_process_exit(pid, exit_code);
                 do_reap = Some(pid);
             }
         }
@@ -764,6 +833,10 @@ impl Scheduler {
             t.as_ref().is_some_and(|k| k.tid == tid)
         });
         if let Some(th_idx) = th_idx {
+            // #476 H1 experiment: guard the stack before dropping.
+            if let Some(th) = self.kthreads[th_idx].as_mut() {
+                Self::guard_kstack_reclaim(th);
+            }
             self.kthreads[th_idx] = None;
             crate::trace_sched!(3, tid as u64, 1);
             true

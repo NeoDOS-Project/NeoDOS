@@ -17,7 +17,7 @@
 | `object/power.rs` | `PowerManager` Ob object at `\System\PowerManager`, `ObType::PowerManager(21)`. Shutdown/reboot via `ob_set_info(PowerShutdown=37/PowerReboot=38)`. |
 | `hal/x64/cpu.rs` | `poweroff()` — QEMU debug ports (0x404, 0x604, 0xB004, 0x4004) + PS/2 reset. `reboot()` — new: 0xCF9 reset + PS/2 reset. |
 | `syscall/handlers.rs` | `handler_poweroff` **removed** (was at lines 229-241). Power management via Ob API. |
-| `syscall/mod.rs` | `t[42]` **removed**. Power management via `handler_ob_set_info` (RAX=63) with `PowerShutdown`/`PowerReboot`. |
+| `syscall/mod.rs` | `t[42]` **removed**. Power management via `handler_ob_set_info` (RAX=43) with `PowerShutdown`/`PowerReboot`. |
 | `timers/hpet.rs` | ACPI table scanner: RSDP → RSDT/XSDT. Finds HPET, MCFG, MADT tables. **No FADT, no DSDT, no S5.** |
 | `watchdog/mod.rs:238` | `watchdog_reset_system()` — now calls `crate::object::power::power_reboot()` (correctly uses reboot path). |
 | `arch/x64/idt.rs` | Ctrl+Alt+Del now calls `crate::object::power::power_shutdown()` (flush + event dispatch + hal). |
@@ -37,10 +37,10 @@
 
 #### Object Manager
 
-- 20 ObTypes (0–22), Service(20), PowerManager(21), KeyboardDevice(22).
+- 22 ObTypes (0–22, gap at 19), Service(20), PowerManager(21), KeyboardDevice(22).
 - `ob_query_info`: classes 0–31 (27 query classes).
 - `ob_set_info`: classes 0–36 (33 set classes — 33=ServiceStart, 34=ServiceStop, 35=ServiceRestart, 36=ServiceSetConfig).
-- `sys_ob_service` (RAX=77): control de servicios via handle.
+- `sys_ob_service` (RAX=47): control de servicios via handle.
 
 #### libneodos
 
@@ -77,7 +77,7 @@
 
 ### Current limitations
 
-1. ~~**`sys_poweroff` es una syscall directa (RAX=42)**, no integrada en el Object Manager.~~ ✅ **CORREGIDO**: Power management via `ob_open(\\System\\PowerManager)` + `ob_set_info(PowerShutdown/Reboot)` (RAX=63). Syscall 42 eliminada.
+1. ~~**`sys_poweroff` es una syscall directa (RAX=42)**, no integrada en el Object Manager.~~ ✅ **CORREGIDO**: Power management via `ob_open(\\System\\PowerManager)` + `ob_set_info(PowerShutdown/Reboot)` (RAX=43). Syscall 42 eliminada.
 
 2. **API incompleta.** Shutdown y reboot implementados. Falta `suspend()`, `hibernate()`, consulta de estado.
 
@@ -127,7 +127,7 @@ El Power Manager debe ser un **subsistema del kernel**, no un servicio Ring 3, p
                                 │ ob_open / ob_set_info / ob_query_info
                      ┌──────────▼───────────────┐
                      │  Object Manager           │
-                     │  \Device\PowerManager     │
+                     │  \System\PowerManager     │
                      │  ObType::PowerManager(21) │
                      └──────────┬───────────────┘
                                 │ internal calls
@@ -162,7 +162,7 @@ New variant in `src/object/types.rs`.
 PowerManager = 21,  // Power Manager singleton object
 ```
 
-The singleton lives at `\Device\PowerManager` in the Ob namespace, created at boot (Phase 3.883, after Service Manager).
+The singleton lives at `\System\PowerManager` in the Ob namespace, created at boot (Phase 3.883, after Service Manager).
 
 #### `src/power/mod.rs` — new module
 
@@ -275,7 +275,7 @@ pub const EVENT_POWER_SOURCE_CHANGE: EventType = 26; // AC ↔ battery switch (f
 | 41 | PowerSetPlan | Switch active power plan |
 | 42 | PowerSetPolicy | Modify a policy value in the active plan |
 
-These extend the existing class tables in `src/syscall/ob.rs`.
+These extend the existing class tables in `src/syscall/ob/`.
 
 ### 3.5 New files/modules
 
@@ -296,7 +296,7 @@ These extend the existing class tables in `src/syscall/ob.rs`.
 | `src/hal/x64/mod.rs` | Export new HAL primitives |
 | `src/hal/mod.rs` | Re-export `reboot`, `acpi_s5_write` |
 | `src/syscall/mod.rs` | Update `MAX_VALID` and `ASSIGNED` arrays |
-| `src/syscall/ob.rs` | Add dispatch for new info classes 32–34 and 37–42 in Power Manager handle |
+| `src/syscall/ob/` | Add dispatch for new info classes 32–34 and 37–42 in Power Manager handle |
 | `src/eventbus/mod.rs` | Add new event types 19–26 |
 | `src/abi_freeze.rs` | Update frozen checks for new event types |
 | `main.rs` | Add PHASE 3.883 for Power Manager init (after Service Manager) |
@@ -311,7 +311,7 @@ These extend the existing class tables in `src/syscall/ob.rs`.
 
 ```text
 1. User app calls power_shutdown()
-2. libneodos: ob_open("\Device\PowerManager") → fd
+2. libneodos: ob_open("\System\PowerManager") → fd
 3. libneodos: ob_set_info(fd, PowerShutdown, NULL, 0) → ! (doesn't return)
 4. Kernel handler:
    a. Transition state: Active → ShuttingDown
@@ -450,7 +450,7 @@ pub struct PowerSystemStatus {
 
 ## 6. API Contract
 
-### 6.1 `ob_set_info(PowerShutdown = 37)` on `\Device\PowerManager` handle
+### 6.1 `ob_set_info(PowerShutdown = 37)` on `\System\PowerManager` handle
 
 - **Args:** `fd` = handle to PowerManager object, `class` = 37, `buf`/`size` = unused.
 - **Returns:** Does not return (system halts).
@@ -458,7 +458,7 @@ pub struct PowerSystemStatus {
 - **Preconditions:** Caller token must be admin. System state must be `Active`. All cached writes are flushed before poweroff.
 - **Sequence:** See 3.7.
 
-### 6.2 `ob_set_info(PowerReboot = 38)` on `\Device\PowerManager` handle
+### 6.2 `ob_set_info(PowerReboot = 38)` on `\System\PowerManager` handle
 
 - **Args:** `fd` = handle to PowerManager object, `class` = 38, `buf`/`size` = unused.
 - **Returns:** Does not return.
@@ -466,26 +466,26 @@ pub struct PowerSystemStatus {
 - **Preconditions:** Same as PowerShutdown.
 - **Sequence:** Same as shutdown but ends with `HAL::reboot()` instead of `poweroff()`.
 
-### 6.3 `ob_set_info(PowerSuspend = 39)` on `\Device\PowerManager` handle
+### 6.3 `ob_set_info(PowerSuspend = 39)` on `\System\PowerManager` handle
 
 - **Args:** `fd` = handle, `class` = 39.
 - **Returns:** 0 on success (resumed), `-NotSupported` if S3 not available, `-Perm` (no admin).
 - **Preconditions:** System must support S3 (`capabilities.supports_s3`). Must be running on ACPI-capable hardware.
 
-### 6.4 `ob_set_info(PowerHibernate = 40)` on `\Device\PowerManager` handle
+### 6.4 `ob_set_info(PowerHibernate = 40)` on `\System\PowerManager` handle
 
 - **Args:** `fd` = handle, `class` = 40.
 - **Returns:** 0 on success, `-NotSupported` if S4 not available, `-Perm` (no admin).
 - **Preconditions:** System must support S4. Hibernate file must exist (future).
 
-### 6.5 `ob_set_info(PowerSetPlan = 41)` on `\Device\PowerManager` handle
+### 6.5 `ob_set_info(PowerSetPlan = 41)` on `\System\PowerManager` handle
 
 - **Args:** `fd` = handle, `class` = 41, `buf` = pointer to u32 (0=Balanced, 1=Performance, 2=PowerSaver), `size` = 4.
 - **Returns:** 0 on success, `-Inval` for invalid plan index, `-Perm` (no admin).
 - **Preconditions:** None.
 - **Side effects:** Writes `ActivePlan` to Registry. Applies plan policies immediately.
 
-### 6.6 `ob_set_info(PowerSetPolicy = 42)` on `\Device\PowerManager` handle
+### 6.6 `ob_set_info(PowerSetPolicy = 42)` on `\System\PowerManager` handle
 
 - **Args:** `fd` = handle, `class` = 42, `buf` = `PowerPolicyUpdate` struct, `size` = 12.
 
@@ -500,18 +500,18 @@ pub struct PowerSystemStatus {
 - **Returns:** 0 on success, `-Inval` for unknown policy_id, `-Perm` (no admin).
 - **Preconditions:** None.
 
-### 6.7 `ob_query_info(PowerPlanInfo = 32)` on `\Device\PowerManager` handle
+### 6.7 `ob_query_info(PowerPlanInfo = 32)` on `\System\PowerManager` handle
 
 - **Args:** `fd` = handle, `class` = 32, `buf` = `&mut PowerPlanInfo` (output), `size` = sizeof(PowerPlanInfo).
 - **Returns:** Bytes written on success, `-Fault` if buffer too small.
 - **No admin required:** Any process can query.
 
-### 6.8 `ob_query_info(PowerStatus = 33)` on `\Device\PowerManager` handle
+### 6.8 `ob_query_info(PowerStatus = 33)` on `\System\PowerManager` handle
 
 - **Args:** `fd` = handle, `class` = 33, `buf` = `&mut PowerSystemStatus` (output), `size` = 8.
 - **Returns:** Bytes written on success, `-Fault` if buffer too small.
 
-### 6.9 `ob_query_info(PowerSystemState = 34)` on `\Device\PowerManager` handle
+### 6.9 `ob_query_info(PowerSystemState = 34)` on `\System\PowerManager` handle
 
 - **Args:** `fd` = handle, `class` = 34, `buf` = `&mut u32` (output), `size` = 4.
 - **Returns:** 4 on success.
@@ -542,7 +542,7 @@ pub extern "C" fn poweroff() -> !;  // Updated to try ACPI S5 first
 | # | Test | Expected |
 | --- | ------ | ---------- |
 | 1 | `POWER_MANAGER.lock()` after Phase 3.883 returns valid state `Active` | State == Active |
-| 2 | `\Device\PowerManager` exists in Ob namespace after init | ob_lookup_path succeeds |
+| 2 | `\System\PowerManager` exists in Ob namespace after init | ob_lookup_path succeeds |
 | 3 | `ob_query_info(PowerPlanInfo)` returns Balanced plan with default policies | Balanced plan, DisplayTimeout=300 |
 | 4 | `ob_query_info(PowerStatus)` returns capabilities matching hardware | capabilities.supports_s5 == true if FADT found |
 
@@ -630,13 +630,13 @@ pub extern "C" fn poweroff() -> !;  // Updated to try ACPI S5 first
 
 1. Add `PowerManager = 21` to `ObType` enum
 2. Add PHASE 3.883 in `main.rs`: `power::power_manager_init()`
-   - Register `\Device\PowerManager` in Ob namespace
+   - Register `\System\PowerManager` in Ob namespace
    - Initialize `PowerManager` struct
    - Store `ObId` in PowerManager for fast handle resolution
 
 ### Step 4: Syscall dispatch (1 day)
 
-**Files:** `src/syscall/ob.rs`, `src/syscall/mod.rs`
+**Files:** `src/syscall/ob/`, `src/syscall/mod.rs`
 
 1. In `handler_ob_set_info`: add match arms for classes 37–42
    - Resolve handle → verify ObType::PowerManager → delegate to `PowerManager`
@@ -674,7 +674,7 @@ pub extern "C" fn poweroff() -> !;  // Updated to try ACPI S5 first
 
 1. `libneodos/src/power.rs`: `power_shutdown()`, `power_reboot()`, `power_get_active_plan()`, `power_set_active_plan()`, `power_set_policy()`
 2. Data types: `PowerPlanInfo`, `PowerSystemStatus`, `PowerPolicyUpdate`
-3. Internal: `ob_open("\Device\PowerManager")` → cache fd → `ob_set_info`/`ob_query_info`
+3. Internal: `ob_open("\System\PowerManager")` → cache fd → `ob_set_info`/`ob_query_info`
 4. Update `libneodos/src/lib.rs` to export power module
 
 ### Step 9: Shell commands (0.5 day)
@@ -708,7 +708,7 @@ pub extern "C" fn poweroff() -> !;  // Updated to try ACPI S5 first
 ## Integration with existing invariants
 
 1. **No automatic builds.** All changes compilable with `cargo build` in `neodos-kernel/`.
-2. **Tests before commit.** All 656 existing tests must pass + new power tests.
+2. **Tests before commit.** All 754 existing tests must pass + new power tests.
 3. **No new Ring 0 shell commands.** Power commands (POWEROFF, REBOOT) remain built-in in neoshell, using public API.
 4. **RAX ≥ 77 → sys_ob_*.** Power operations use existing `ob_set_info`/`ob_query_info` with new info classes. No new RAX needed beyond existing 60–66.
 5. **Code is truth.** Update docs when architecture changes.

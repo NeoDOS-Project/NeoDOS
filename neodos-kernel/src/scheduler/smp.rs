@@ -94,6 +94,8 @@ impl Scheduler {
             // Update ownership optimistically
             let old_cpu: Option<u32> = if let Some(k) = self.find_kthread_mut(tid_popped) {
                 let old = k.cpu;
+                crate::scheduler::diag::kcpu_ev(
+                    crate::scheduler::diag::SITE_KCPU_STEAL, k, thief as u32);
                 k.cpu = thief as u32;
                 Some(old)
             } else {
@@ -113,6 +115,8 @@ impl Scheduler {
                 // Rollback: restore cpu and push back to victim
                 if let Some(old) = old_cpu {
                     if let Some(k) = self.find_kthread_mut(tid_popped) {
+                        crate::scheduler::diag::kcpu_ev(
+                            crate::scheduler::diag::SITE_KCPU_STEAL_REVERT, k, old);
                         k.cpu = old;
                     }
                 }

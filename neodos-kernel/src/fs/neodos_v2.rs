@@ -63,6 +63,14 @@ impl BTreeIO for NeoDosFsV2 {
         if block_lba == 0 { return 0; }
         let sector_lba = block_lba * 8;
         let abs_sector = self.io_stack.translate_lba(sector_lba);
+        // Lock order: PAGE_CACHE before BLOCK_DEVICES. This matches
+        // `IoStack::read_sectors`/`write_sectors` and
+        // `globals::flush_cache_if_needed`. Taking BLOCK_DEVICES first here
+        // (as the code used to) is the inverse order and deadlocks against
+        // those paths under SMP (#343).
+        let _ord_pc = crate::lock_order::Guard::new(crate::lock_order::PAGE_CACHE);
+        let mut pc = crate::globals::PAGE_CACHE.lock();
+        let _ord_bd = crate::lock_order::Guard::new(crate::lock_order::BLOCK_DEVICES);
         let mut bdevs = crate::globals::BLOCK_DEVICES.lock();
         let dev = match bdevs.get(self.io_stack.device_id) { Some(d) => d, None => return 0 };
         let mut buf = [0u8; NODE_SIZE];
@@ -75,10 +83,7 @@ impl BTreeIO for NeoDosFsV2 {
         // Invalidate page cache for these sectors — a freed data block
         // may have dirty pages left over from file_write, which would
         // overwrite B-tree metadata on flush.
-        {
-            let mut pc = crate::globals::PAGE_CACHE.lock();
-            pc.invalidate_range(abs_sector, abs_sector + 8);
-        }
+        pc.invalidate_range(abs_sector, abs_sector + 8);
         block_lba
     }
 }
@@ -185,9 +190,12 @@ impl FileSystem for NeoDosFsV2 {
     fn read(&mut self, inode: u32, offset: u64, buf: &mut [u8]) -> Result<usize, VfsError> {
         let (_, entry) = self.inode_cache.get(inode as usize).and_then(|x| x.as_ref()).ok_or(VfsError::NotFound)?;
         let abs_lba = self.io_stack.translate_lba(entry.extent_lba * 8);
+        // Lock order: PAGE_CACHE before BLOCK_DEVICES (#343).
+        let _ord_pc = crate::lock_order::Guard::new(crate::lock_order::PAGE_CACHE);
+        let mut pc = crate::globals::PAGE_CACHE.lock();
+        let _ord_bd = crate::lock_order::Guard::new(crate::lock_order::BLOCK_DEVICES);
         let mut bdevs = crate::globals::BLOCK_DEVICES.lock();
         let dev = bdevs.get(self.io_stack.device_id).ok_or(VfsError::IOError)?;
-        let mut pc = crate::globals::PAGE_CACHE.lock();
         // Translate partition-relative block LBA to absolute sector LBA for page cache
         let mut adj_entry = entry.clone();
         adj_entry.extent_lba = abs_lba;
@@ -196,13 +204,18 @@ impl FileSystem for NeoDosFsV2 {
 
     fn write(&mut self, inode: u32, offset: u64, buf: &[u8]) -> Result<usize, VfsError> {
         let (btree_root, entry) = self.inode_cache.get(inode as usize).and_then(|x| x.as_ref()).cloned().ok_or(VfsError::NotFound)?;
+        // Lock order: PAGE_CACHE before BLOCK_DEVICES (#343).
+        let _ord_pc = crate::lock_order::Guard::new(crate::lock_order::PAGE_CACHE);
+        let mut pc = crate::globals::PAGE_CACHE.lock();
+        let _ord_bd = crate::lock_order::Guard::new(crate::lock_order::BLOCK_DEVICES);
         let mut bdevs = crate::globals::BLOCK_DEVICES.lock();
         let dev = bdevs.get(self.io_stack.device_id).ok_or(VfsError::IOError)?;
-        let mut pc = crate::globals::PAGE_CACHE.lock();
         let part_base = self.io_stack.translate_lba(0);
         let new_entry = file_write(&entry, offset, buf, &mut self.freelist, &mut *pc, dev, part_base).map_err(|_| VfsError::IOError)?;
-        drop(pc);
         drop(bdevs);
+        drop(_ord_bd);
+        drop(pc);
+        drop(_ord_pc);
 
         let new_root = BTree::insert(self, btree_root, &new_entry.name, &{
             let mut tmp = [0u8; DIRENTRY_SIZE]; new_entry.serialize(&mut tmp); tmp.to_vec()

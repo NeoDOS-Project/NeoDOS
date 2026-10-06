@@ -48,7 +48,7 @@ use crate::drivers::nem::hst::{
     hst_virt_to_phys,
 };
 use crate::drivers::nem::net_bridge::{
-    hst_register_network_device, hst_unregister_network_device,
+    hst_register_network_device, hst_set_network_link_state, hst_unregister_network_device,
 };
 
 static KERNEL_EXPORTS: &[KernelExport] = &[
@@ -70,6 +70,7 @@ static KERNEL_EXPORTS: &[KernelExport] = &[
     export_entry!(hst_unregister_block_device),
     export_entry!(hst_register_network_device),
     export_entry!(hst_unregister_network_device),
+    export_entry!(hst_set_network_link_state),
     export_entry!(hst_virt_to_phys),
 ];
 

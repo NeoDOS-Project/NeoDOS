@@ -30,7 +30,7 @@ NeoDOS es un sistema operativo de 64 bits con arquitectura híbrida (kernel mono
 
 - Código 100% Rust (sin C en la base)
 - HAL con asm aislado en `hal/raw/`
-- 537 tests automáticos en kernel
+- 805 tests automáticos en kernel
 - Certificación de drivers con 7 estados
 - Sistema de capacidades para control de acceso granular
 - IRQL framework para prioridad de interrupciones
@@ -85,7 +85,7 @@ NeoDOS es un sistema operativo moderno de 64 bits para la plataforma x86-64, dis
 
 1. **Explícito sobre mágico.** Cada asignación de memoria, cada cambio de contexto, cada transición de estado debe ser rastreable en el código. Sin "scheduler magic", sin "memory manager magic".
 
-2. **Capas, no montones.** Separación clara de responsabilidades. HAL es HAL. VFS es VFS. Scheduler es scheduler. Las dependencias prohibidas se documentan y se verifican con herramientas automáticas (`check_deps.py`).
+2. **Capas, no montones.** Separación clara de responsabilidades. HAL es HAL. VFS es VFS. Scheduler es scheduler. Las dependencias prohibidas se documentan y se verifican con herramientas automáticas (`neodev check-deps`).
 
 3. **Fallo rápido, fallo claro.** Cuando algo va mal, el sistema debe detenerse con un mensaje que identifique el componente, el error y la posible causa. Sin pánicos genéricos.
 
@@ -95,7 +95,7 @@ NeoDOS es un sistema operativo moderno de 64 bits para la plataforma x86-64, dis
 
 6. **La compatibilidad es un contrato.** Una vez que una syscall, una estructura ABI, o un formato de driver se declara estable, no cambia. El versionado semántico se aplica a nivel de kernel, no solo de API.
 
-7. **Los tests son especificación.** 656 tests no son una métrica de calidad — son la especificación ejecutable del comportamiento del kernel. Si no hay test, el comportamiento no está definido.
+7. **Los tests son especificación.** 805 tests no son una métrica de calidad — son la especificación ejecutable del comportamiento del kernel. Si no hay test, el comportamiento no está definido.
 
 ---
 
@@ -495,7 +495,7 @@ pub struct DeviceNode {
 
 ### 7.4 Registry (Base de Datos de Configuración)
 
-**Qué es:** Una base de datos jerárquica tipo Windows Registry con claves, valores, y tipos. Persistente en disco en `C:\System\Config\`.
+**Qué es:** Una base de datos jerárquica tipo Windows Registry con claves, valores, y tipos. Persistente en disco en `C:\System\Registry\`.
 
 ```text
 HKEY_LOCAL_MACHINE\
@@ -791,7 +791,7 @@ HAL ─── Arch (x86_64)
 | Métrica | Actual | Objetivo v1.0 |
 | --------- | -------- | --------------- |
 | Líneas de código kernel | ~45.580 | <60K |
-| Tests automáticos | 656 (test_case!) | >800 |
+| Tests automáticos | 754 (test_case!) | >800 |
 | Cobertura de líneas | ~60% | >90% |
 | Syscalls (handlers SSDT) | 29 | 50–60 |
 | Procesos simultáneos | Ilimitado (Vec dinámica) | Ilimitado |

@@ -16,7 +16,7 @@ NeoDOS boot is **intermittently unstable** under QEMU TCG emulation due to the A
 
 The hang occurs specifically when loading `C:\Programs\neoinit.nxe` (17,552 bytes = ~35 sectors) via the FAT32 driver. Each sector is read individually:
 
-```
+```text
 FAT32::read_file_by_cluster()
   → for each sector in cluster:
       → read_sector(lba + i)        // 1 sector at a time
@@ -45,6 +45,7 @@ After the command completes (CI bit 0 clears), the next call reuses the same slo
 ### No inter-command synchronization
 
 Between commands, the AHCI driver:
+
 - Does NOT read `PxIS` to clear pending interrupt status bits (write-1-to-clear)
 - Does NOT re-read the completed command's PRDBC from the `CmdHeader`
 - Does NOT verify the IDE bus is idle (`PxTFD` without `BSY`/`DRQ`) before issuing the next command
@@ -69,7 +70,7 @@ Even with batching and slot alternation, QEMU TCG AHCI intermittently stalls (~1
 
 ### Proposed retry mechanism
 
-```
+```text
 dma_xfer():
   1. Issue command via PORT_CI
   2. Poll PORT_CI for 10M iterations (current)
@@ -88,7 +89,6 @@ This is safe because the AHCI command table and DMA buffer are not modified by t
 
 The slot alternation + PxIS clear + batching should be kept as first-line defenses, with the retry as a last-resort recovery for QEMU emulation quirks.
 
-
 ## Proposed Solution: Multi-Sector Read Batching
 
 ### Strategy
@@ -97,7 +97,7 @@ Instead of issuing one AHCI command per 512-byte sector, batch consecutive secto
 
 ### Design
 
-```
+```text
 FAT32::read_file_by_cluster()
   → for each cluster in chain:
       → compute consecutive sector range (N contiguous sectors)
@@ -131,9 +131,14 @@ while batch_offset < sectors_per_cluster {
 }
 ```
 
-#### 2. AHCI command retry with port reset (NOT YET IMPLEMENTED)
+#### 2. AHCI command retry with port reset (IMPLEMENTED)
 
-The current timeout in `dma_xfer()` returns an error immediately. Implement a retry loop:
+Implemented in `drivers/boot_ahci.rs`: the DMA transfer path uses a retry loop
+(`boot_ahci.rs:515`) that, on timeout, clears `PORT_IS`/`PORT_SERR`, stops the
+command engine (`CMD_ST | CMD_FRE`), and restarts it via `port_reset_and_start()`
+(`boot_ahci.rs:242`) before re-issuing the command table.
+
+The reference pseudo-code below is kept for historical context:
 
 ```rust
 for retry in 0..2 {
@@ -162,7 +167,7 @@ The `boot_ahci.rs` driver has built-in `boot_benchmark` hooks (`ahci_cmd_start`,
 
 Recommended trace points for future debugging:
 
-```
+```text
 [AHCI_CMD] slot=X lba=X count=X
 [AHCI_DONE] slot=X status=X
 [AHCI_TIMEOUT] slot=X lba=X
@@ -188,7 +193,7 @@ These can be added behind a `#[cfg(feature = "ahci_trace")]` or runtime flag.
 
 Recommended trace points (gated behind `AHCI_DEBUG` compile flag or a runtime `AtomicBool`):
 
-```
+```text
 [AHCI_CMD] slot=X lba=X count=X         // before issuing
 [AHCI_DONE] slot=X status=X poll=Y      // after completion
 [AHCI_TIMEOUT] slot=X lba=X CI=0x...    // if poll loop expires

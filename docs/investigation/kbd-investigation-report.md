@@ -12,6 +12,7 @@
 Reporte: *“el teclado de NeoDOS sigue sin funcionar correctamente”* — no se asume que el fallo esté en scheduler, neoshell o driver. Se pide prueba black-box `abc` → `abc`, `hello` → `hello`, etc., y stress de buffer, preemption, SMP, polling vs IRQ.
 
 Observación previa en `qemu_output.log` (556 MB) y `vbox_serial.log`:  
+
 - `KBD` logs mostraban `seq` y `scancode` para cada tecla, pero `READB` a veces se quedaba en `blocking` y no consumía bytes ya empujados a VT queue cuando la escritura era rápida.  
 - `handler_read` hacía `pop` fuera de `without_interrupts` y luego re-chequeaba dentro, permitiendo carrera donde `wake_blocked_readers` se disparaba antes de que el hilo estuviera en `Blocked`, perdiendo el wakeup hasta la siguiente tecla.
 
@@ -20,29 +21,36 @@ Observación previa en `qemu_output.log` (556 MB) y `vbox_serial.log`:
 No hay un único “teclado roto”. Se identificaron **7 defectos hipotéticos**, 2 de ellos críticos y con evidencia de pérdida:
 
 ### BUG-1 — Extended prefix 0xE0 descartado (CRÍTICO)
+
 `src/kbd/mod.rs:164-169` hacía `if scancode==0xE0 { return; }` sin estado. El siguiente byte (ej. flecha ↑ = `E0 48`, break `E0 C8`) se interpretaba como `0x48` normal (numpad 8). Si se perdía un `E0`, el siguiente make/break quedaba desincronizado y el decoder podía quedar bloqueado. En QEMU, `sendkey` para flechas genera `E0`, por lo que `Backspace/Enter/Space` no fallaban, pero **flechas sí estaban rotas**.
 
 ### BUG-2 — `handler_read` double-pop race (CRÍTICO, pérdida de wakeup)
+
 `src/syscall/handlers.rs:131-172` hacía `pop` fuera de `without_interrupts`, luego si era `None` entraba a `without_interrupts` y re-chequeaba. Entre ambos, un IRQ podía hacer `push` + `wake_blocked_readers`. Como el hilo aún no estaba en `Blocked`, el wake no hacía nada. Luego el hilo se bloqueaba con un byte ya en cola, sin nadie que lo despertara hasta la siguiente tecla. Esto explica la pérdida intermitente `1/20` reportada.
 
 ### BUG-3 — `PENDING_SCANCODES` y `VtInputQueue` MPSC vs SPSC
+
 Ambas colas asumen SPSC (1 productor IRQ → 1 consumidor). En SMP, IRQ1 puede llegar en cualquier CPU (IOAPIC), dos CPUs pueden empujar concurrentemente a la misma VT (active_vt global `Relaxed`). `tail` con `Relaxed`/`Release` sufre lost-update. Con 1 CPU online actualmente no se dispara, pero es inseguro para `-smp 2/4/8`.
 
 ### BUG-4 — VT queue full → silent drop
+
 `push_byte` retorna `Err(())` si `next==head` (4096). Sólo se hace `serial_println!` y se pierde el byte. Stress test `2N` perdería `N+1` bytes sin backpressure.
 
 ### BUG-5 — `KBD` try_lock contención + `set_leds` bloqueante
+
 `KBD: Mutex<NeoKbd>` con `try_lock` + cola de 256 mitiga, pero `set_leds` hace polling `ps2_wait_input` 100k iteraciones dentro de IRQ deshabilitada, pudiendo bloquear el draining de `PENDING_SCANCODES`.
 
 ### BUG-6 — `wake_blocked_on_magic(0xFFFFFFFF)` broadcast
+
 Despierta a *todos* los hilos bloqueados en READ, aunque sólo una VT recibió byte. No es pérdida, es thundering herd + wakeups espurios.
 
 ### BUG-7 — neoshell busy-wait sin yield
+
 `userbin/neoshell/src/shell.rs:158` hace `if b<0 { continue; }` sin `yield`. Si `handler_read` devuelve `Again` pero `syscall_handler_asm` no hace resched (ej. `NEED_RESCHED` no seteado), el hilo giraría 100% sin ceder. Actualmente `wake_blocked_readers` sí setea `NEED_RESCHED`, pero si el wake se pierde (BUG-2), el giro persiste.
 
 ## First failing layer
 
-```
+```text
 hardware (PS/2 0x60/0x64)         PASS  — init_ps2 OK, status &0x01, ACK 0xFA
 IRQ1 → PIC → IDT[33]             PASS  — PICS mask 0xE8, idt[33]=keyboard_handler, ack_irq(33)
 scancode raw                     PASS  — QEMU sendkey genera make 0x1E/0x30/0x2E/break 0x9E/0xB0/0xAE
@@ -63,7 +71,7 @@ Infraestructura de inyección verificada: `neodev/src/automation/qemu.rs:83-140`
 
 **Prueba con instrumentación (VT + KBD logs) — QEMU keep2, gap 0.2s:**
 
-```
+```text
 INPUT:    a  → abc + ret  (a + a,b,c,ret = "aabc\n")
 KBD:      seq5  scancode 0x1e make true  code 0x1e  → KBD_PUSH 0x61 'a' res Ok → wake
 READB:    enter pid4 tid5 vt0 → VT_POP 0x61 'a' → exit bytes_read=1 → a_ echo
@@ -77,7 +85,7 @@ ACTUAL:   Cada tecla generó exactamente 1 push y 1 pop, sin pérdida, sin dupli
 
 Para `hello` (5 chars + ret) se observó:
 
-```
+```text
 KBD_PUSH h 0x68, e 0x65, l 0x6c, l 0x6c, o 0x6f, ret 0x0a  → todos res Ok
 VT_PUSH  head 9 →15 (6 bytes) → sin pop inmediato (shell ocupada ejecutando "aabc")
 Tras 15s, VT head seguía 9→15, sin pop → shell aún en execute_line de "aabc"
@@ -87,7 +95,7 @@ Esto demuestra que **cuando el shell está ocupado, los bytes quedan bufferizado
 
 **Prueba sin instrumentación pesada (3 repeticiones, gap 0.15s):**
 
-```
+```text
 a       → a       PASS (1/1)
 abc     → abc     PASS (1/1, con ret → "aabc" como arriba)
 hello   → hello   PASS* (push OK, pop retardado pero sin pérdida)
@@ -97,7 +105,7 @@ hello world 123 → no probado en esta iteración (requiere prompt limpio)
 
 **Scancodes crudos verificados (QEMU set1):**
 
-```
+```text
 Key       Make    Break
 A         0x1e    0x9e
 B         0x30    0xb0
@@ -150,7 +158,7 @@ Y en `event.rs` se pasa `scancode` raw (no `code`) a `process_scancode` para que
 
 ## Files changed
 
-```
+```text
 neodos-kernel/src/kbd/mod.rs          — e0_pending + extended skip
 neodos-kernel/src/kbd/event.rs        — pasar raw scancode
 neodos-kernel/src/syscall/handlers.rs — atomic pop en handler_read
@@ -178,7 +186,7 @@ Build verificado: `RUSTUP_TOOLCHAIN=nightly neodev build --quick --image` → ke
 
 **Stress no completado en esta iteración:**
 
-```
+```text
 aaaaaaaaaa          — no probado automático, white-box: queue 4096, sin pérdida si gap>0
 ababababab          — idem
 abcdefabcdef        — idem
@@ -211,7 +219,7 @@ Bypass shell — no se creó test mínimo; se usó `KBD` logs directos como bypa
 
 **NO** — No se declara el teclado arreglado hasta conseguir:
 
-```
+```text
 a               PASS (slow)
 abc             PASS (slow, con a previo)
 hello           PASS* (push OK, pop retardado)
@@ -221,7 +229,7 @@ rapid / buffer / preemption / SMP  → no verificados
 
 El pipeline **funciona para escritura lenta en 1 CPU** y los 2 fixes críticos eliminan las 2 causas de pérdida intermitente identificadas, pero **faltan pruebas de estrés, SMP y velocidad** para declarar `READY: YES`. Se recomienda siguiente iteración con:
 
-```
+```bash
 neodev build --quick --image
 qemu -smp 4 -serial file:... -monitor tcp:4445
 python3 stress.py  # 100× "abcdefghijklmnopqrstuvwxyz\n" a 0ms, 10ms, 50ms gap
@@ -231,4 +239,3 @@ check EXPECTED vs ACTUAL diff, VT head/tail, KBD seq, READB
 ---
 
 **Rama:** `investigation/kbd-write-stress` — lista para revisión y para revertir instrumentación pesada antes de merge a `develop`.
-

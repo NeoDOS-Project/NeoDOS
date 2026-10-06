@@ -65,18 +65,22 @@ pub fn net_is_initialized() -> bool {
 /// The raw pointer stored in this static keeps the function alive
 /// through LTO and provides the real runtime address.
 #[no_mangle]
-pub extern "C" fn netd_entry_wrapper() {
-    netd_entry();
+pub extern "C" fn netpump_entry_wrapper() {
+    netpump_entry();
 }
 
 /// Store the address in a static so we can reference it from main.rs.
 /// Using as u64 on a fn item produces thunks; reading from a static
 /// that holds the real address avoids that issue.
 #[used]
-pub static NETD_PTR: unsafe extern "C" fn() = netd_entry_wrapper;
+pub static NETPUMP_PTR: unsafe extern "C" fn() = netpump_entry_wrapper;
 
-pub fn netd_entry() -> ! {
-    crate::serial_println!("[NET] netd running");
+/// Kernel Ring-0 RX pump ("netpump"). This is the always-on data-plane worker
+/// that drives `network_poll_all()`; it is deliberately **not** the Ring 3
+/// `netd` network service (see #362/#372). It must stay in Ring 0 so RX keeps
+/// flowing even when no userland thread is scheduled.
+pub fn netpump_entry() -> ! {
+    crate::serial_println!("[NET] netpump running");
     let mut iters: u64 = 0;
     let mut last_cpu: u32 = u32::MAX;
     loop {
@@ -87,7 +91,7 @@ pub fn netd_entry() -> ! {
         let cpu = unsafe { crate::arch::x64::cpu_local::this_cpu_id() };
         if cpu != last_cpu {
             if last_cpu != u32::MAX {
-                crate::serial_println!("[NET] netd migrated cpu={} -> {}", last_cpu, cpu);
+                crate::serial_println!("[NET] netpump migrated cpu={} -> {}", last_cpu, cpu);
             }
             last_cpu = cpu;
         }
@@ -97,7 +101,7 @@ pub fn netd_entry() -> ! {
         if iters <= 5 || iters % 1_000_000 == 0 {
             use core::sync::atomic::Ordering::Relaxed;
             crate::serial_println!(
-                "[NET] netd cpu={} rx={} tx={} arp_rx={} arp_tx={} icmp_rx={} icmp_tx={}",
+                "[NET] netpump cpu={} rx={} tx={} arp_rx={} arp_tx={} icmp_rx={} icmp_tx={}",
                 cpu,
                 crate::net::counters::COUNTERS.rx_packets.load(Relaxed),
                 crate::net::counters::COUNTERS.tx_packets.load(Relaxed),
@@ -128,7 +132,7 @@ pub fn net_tick() {
     // Heartbeat every ~100 ticks: proves netd is actually scheduled and running.
     // Without this, netd could be spawned but never picked by the scheduler.
     if t == 1 {
-        kinfo!(LogSubsys::Net, "[NET] netd alive — first tick (network_poll_all + arp_tick + dns_tick)");
+        kinfo!(LogSubsys::Net, "[NET] netpump alive — first tick (network_poll_all + arp_tick + dns_tick)");
     } else if t % 1000 == 0 {
         crate::net::counters::dump_counters();
     }
@@ -297,6 +301,16 @@ pub fn net_handle_incoming_packet(_nic_id: u32, nic: &mut dyn crate::net::nic::N
 
 pub fn network_poll_all() {
     if !net_is_initialized() { return; }
+    // #376: NIC_REGISTRY is a non-IRQ-safe spin lock. If the polling thread is
+    // descheduled while holding it, every other CPU that polls RX (e.g. dhcpd's
+    // sys_yield -> network_poll_all) spins on it with interrupts disabled and
+    // the CPU wedges. Do not allow preemption across the poll (and the
+    // SOCKET_MANAGER lock taken by udp_dispatch inside it).
+    crate::scheduler::preempt_disable();
+    // Refresh link state from the drivers first so the NicInfo query and
+    // netapplier's link-up edge detection observe real hardware state. The driver
+    // poll runs without NIC_REGISTRY held (lock order: registry → driver).
+    crate::net::nic::nic_poll_link_state();
     let mut registry = NIC_REGISTRY.lock();
     registry.for_each(|nic_id, nic| {
         let mut buf = [0u8; 2048];
@@ -304,6 +318,8 @@ pub fn network_poll_all() {
             net_handle_incoming_packet(nic_id, &mut **nic, &buf[..len]);
         }
     });
+    drop(registry);
+    crate::scheduler::preempt_enable();
 }
 
 pub fn register_net_tests() {

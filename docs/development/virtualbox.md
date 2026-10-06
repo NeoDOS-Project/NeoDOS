@@ -9,32 +9,37 @@ VirtualBox is a fully supported backend alongside QEMU.
 
 - [VirtualBox](https://www.virtualbox.org/) installed
 - `VBoxManage` in PATH (included with VirtualBox)
+- NeoDev >= 0.3.0 for automatic raw image → VDI synchronization (see below)
 
 ### Installation
 
 **Debian/Ubuntu:**
+
 ```bash
 sudo apt install virtualbox virtualbox-ext-pack
 ```
 
 **Fedora:**
+
 ```bash
 sudo dnf install VirtualBox
 ```
 
 **Arch:**
+
 ```bash
 sudo pacman -S virtualbox
 ```
 
 Verify installation:
+
 ```bash
 VBoxManage --version
 ```
 
 ## Quick Start
 
-```bash
+```markdown
 # 1. Build NeoDOS disk image
 neodev build --image
 
@@ -48,38 +53,47 @@ neodev run --backend virtualbox --headless
 ## VM Lifecycle
 
 ### Create VM
+
 ```bash
 neodev vm create --backend virtualbox
 ```
+
 Creates and configures the VM if it doesn't exist. Automatically converts
 `disk_image.img` to `disk_image.vdi`.
 
 ### Start VM
+
 ```bash
 neodev vm start --backend virtualbox           # GUI mode
 neodev vm start --backend virtualbox --headless # Headless mode
 ```
 
 ### Stop VM
+
 ```bash
 neodev vm stop --backend virtualbox
 ```
+
 Sends ACPI power button signal. Forces poweroff if ACPI fails.
 
 ### Reset VM
+
 ```bash
 neodev vm reset --backend virtualbox
 ```
 
 ### Check Status
+
 ```bash
 neodev vm status --backend virtualbox
 ```
 
 ### Delete VM
+
 ```bash
 neodev vm delete --backend virtualbox
 ```
+
 Removes the VirtualBox VM and all associated files.
 
 ## Configuration
@@ -94,6 +108,7 @@ cpus = 4
 ```
 
 Override per-command with `--backend`:
+
 ```bash
 neodev run --backend qemu
 neodev run --backend virtualbox
@@ -121,7 +136,7 @@ The VirtualBox backend automatically configures:
 
 ## Running Tests
 
-```bash
+```markdown
 # With QEMU (default)
 neodev test
 
@@ -133,9 +148,15 @@ The test runner starts the VM headless, monitors the serial log for
 completion markers (`ALL_TESTS_COMPLETE`, `CMDTEST_COMPLETE`, etc.),
 and stops the VM when tests finish or timeout.
 
+Before the VM starts, the backend synchronizes `disk_image.vdi` with
+`disk_image.img` (same path used by `run`), so `neodev test` can never boot a
+VDI that is older than the freshly built raw image. See
+[VDI synchronization](#vdi-synchronization) for the exact rule.
+
 ## Serial Output
 
 VirtualBox serial output is logged to file for debugging:
+
 - Default path during testing: `/tmp/neodos_serial.log`
 - During interactive runs: path specified via `--serial` flag
 
@@ -167,7 +188,7 @@ network router.
 
 ### Running the Test
 
-```bash
+```markdown
 # 1. Build NeoDOS with all components
 neodev build --image
 
@@ -190,7 +211,7 @@ neodev dhcp --backend virtualbox
 
 ### Expected Output
 
-```
+```text
 [*] NeoDOS DHCP Integration Test
   Backend: virtualbox
   Network: Bridged (real DHCP)
@@ -255,6 +276,7 @@ neodev dhcp --backend virtualbox --timeout 300
 ## Troubleshooting
 
 ### VBoxManage not found
+
 ```bash
 which VBoxManage
 # Should output a path like /usr/bin/VBoxManage
@@ -262,19 +284,75 @@ which VBoxManage
 ```
 
 ### VM already exists
+
 If the VM already exists, NeoDev reuses it automatically. To recreate:
+
 ```bash
 neodev vm delete --backend virtualbox
 neodev vm create --backend virtualbox
 ```
 
 ### Disk image updated
+
 When `disk_image.img` is rebuilt, NeoDev automatically re-converts it to
-VDI on the next run if the raw image is newer.
+`disk_image.vdi` on the next `run` **or** `test` if the raw image is newer.
+See [VDI synchronization](#vdi-synchronization).
+
+## VDI synchronization
+
+The VirtualBox backend keeps a single authoritative check,
+`vbox::ensure_vdi_current()`, which runs before the VM starts for both
+`neodev run --backend virtualbox` and `neodev test --backend virtualbox`.
+
+```text
+if disk_image.img exists
+and disk_image.vdi exists
+and mtime(img) > mtime(vdi):
+    regenerate VDI from IMG
+```
+
+| Raw image | VDI | Action |
+|-----------|-----|--------|
+| missing | — | fail with `Raw disk image not found` (never boot a stale VDI) |
+| present | missing | `VBoxManage convertfromraw disk_image.img disk_image.vdi --format VDI` |
+| present | `mtime(vdi) >= mtime(img)` | no conversion |
+| present | `mtime(vdi) < mtime(img)` | reconvert |
+
+Details:
+
+- The filesystem timestamps are compared directly; equal timestamps mean the
+  VDI is current. There is no fixed sleep or fudge factor.
+- If the VDI is already attached, it is detached (`storageattach … --medium
+  none`, `closemedium`) before conversion and re-attached afterwards, so an
+  attached medium is never blindly deleted or overwritten. VM name, firmware,
+  chipset, AHCI controller, port/device, MAC and network settings are preserved.
+- If the VM is running or paused, the disk is not touched; NeoDev returns a
+  clear error asking you to stop the VM first.
+- After conversion NeoDev verifies that the VDI exists and is at least as new as
+  the raw image, and that `convertfromraw` exited successfully.
+
+### Validating the synchronization
+
+The validation harness ships with NeoDev at `scripts/vbox-vdi-sync-check.sh`.
+Run it from the NeoDev checkout, pointing it at this repository:
+
+```markdown
+# Force IMG newer than VDI, then run the VirtualBox test suite and verify.
+/path/to/NeoDev/scripts/vbox-vdi-sync-check.sh --neodos-root /path/to/neodos
+
+# Rebuild the image first instead of touching it.
+/path/to/NeoDev/scripts/vbox-vdi-sync-check.sh --neodos-root /path/to/neodos --build --timeout 240
+```
+
+The script records the `IMG`/`VDI` mtimes before and after, runs
+`neodev test --backend virtualbox`, and asserts the VDI is at least as new as the
+raw image. Exit status is non-zero on failure.
 
 ### Permission denied
+
 Ensure your user has permission to run VirtualBox VMs:
-```bash
+
+```markdown
 # Add user to vboxusers group
 sudo usermod -aG vboxusers $USER
 # Log out and back in
@@ -284,6 +362,7 @@ sudo usermod -aG vboxusers $USER
 
 The old `scripts/vbox-setup.sh` has been removed. All VirtualBox management
 is now handled by NeoDev via:
+
 ```bash
 neodev vm create --backend virtualbox
 neodev run --backend virtualbox

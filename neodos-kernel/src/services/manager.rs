@@ -32,6 +32,11 @@ pub enum ServiceState {
     Running   = 2,
     Stopping  = 3,
     Failed    = 4,
+    /// #358: a graceful stop has been requested and the shutdown notification
+    /// has been (or is about to be) delivered. The service is still alive and
+    /// is expected to clean up and exit voluntarily. If it does not exit before
+    /// `stop_deadline`, the forced-termination fallback runs.
+    StopPending = 5,
 }
 
 #[repr(u8)]
@@ -85,6 +90,11 @@ impl SmError {
 // Service struct
 // ═══════════════════════════════════════════════════════════════════════
 
+/// #358: default graceful-shutdown timeout used when the caller passes 0.
+/// Matches the Service Manager design document's 5 s start/stop handshake
+/// convention.
+pub const DEFAULT_STOP_TIMEOUT_MS: u32 = 5000;
+
 #[derive(Debug, Clone)]
 pub struct ServiceConfig {
     pub start_type: ServiceStartType,
@@ -108,6 +118,16 @@ pub struct Service {
     pub failure_count: u32,
     pub max_failures: u32,
     pub start_tick: u64,
+    /// #358: set while a graceful shutdown has been requested and the service
+    /// has not yet exited. Cleared when the process exits (or restarts).
+    pub shutdown_requested: bool,
+    /// #358: true once the deferred drain has delivered the shutdown
+    /// notification (user APC) for this request. Prevents re-notifying on every
+    /// drain while the service is still exiting.
+    pub shutdown_notified: bool,
+    /// #358: absolute tick deadline by which a `StopPending` service must exit
+    /// before forced termination. Only meaningful while `shutdown_requested`.
+    pub stop_deadline: u64,
 }
 
 impl Service {
@@ -147,6 +167,19 @@ impl ServiceManager {
         self.services.iter().position(|s| s.obj_id == obj_id)
     }
 
+    /// Find service index by the PID of its running process.
+    ///
+    /// Only services that currently have a live process (`pid != 0`) are
+    /// considered, so a stale PID from a previous run never matches.
+    pub fn find_by_pid(&self, pid: u32) -> Option<usize> {
+        if pid == 0 {
+            return None;
+        }
+        self.services
+            .iter()
+            .position(|s| s.pid != 0 && s.pid == pid)
+    }
+
     /// Register a service from config. Creates Ob object in \Service\<Name>.
     pub fn register(&mut self, name: &str, display_name: &str, binary_path: &str,
                     config: ServiceConfig, deps: &[String]) -> Result<usize, SmError> {
@@ -182,6 +215,9 @@ impl ServiceManager {
             failure_count: 0,
             max_failures: config.max_failures,
             start_tick: 0,
+            shutdown_requested: false,
+            shutdown_notified: false,
+            stop_deadline: 0,
         });
 
         // Write config to Registry
@@ -377,7 +413,8 @@ impl ServiceManager {
         }
     }
 
-    /// Actually spawn a process for a service via process creation.
+    /// Spawn a process for a service via the shared kernel process-creation
+    /// path (the same one used by `ObCreate(Process)`).
     fn spawn_process(&mut self, name: &str, binary_path: &str) -> Result<u32, SmError> {
         // Build Ob path: \Global\FileSystem\<path>
         let ob_path = if binary_path.starts_with("\\Global\\FileSystem\\") {
@@ -387,108 +424,109 @@ impl ServiceManager {
         } else {
             return Err(SmError::NotFound);
         };
-        let vfs_path = ob_path.strip_prefix("\\Global\\FileSystem\\").unwrap_or(&binary_path);
 
-        // Read the binary from VFS
-        const MAX_BIN: usize = 65536;
-        let bin_data = {
-            let mut buf = alloc::vec![0u8; MAX_BIN];
-            let bin_size = crate::globals::with_vfs(|vfs| {
-                match vfs.resolve_path(vfs_path) {
-                    Ok((drive_idx, node)) => {
-                        if (node.mode & crate::fs::vfs::MODE_FILE) == 0 { return 0; }
-                        match vfs.read(drive_idx, node.inode, 0, &mut buf) {
-                            Ok(n) => { if n > MAX_BIN { 0 } else { n } }
-                            Err(_) => 0,
-                        }
-                    }
-                    Err(_) => 0,
-                }
-            });
-            if bin_size < 4 {
-                return Err(SmError::NotFound);
-            }
-            buf.truncate(bin_size);
-            buf
-        };
+        let created = crate::usermode::create_process_from_ob_path(
+            &ob_path, 2, "\\", 0, name, // cwd_drive=C, cwd_path=\, parent_pid=0 (kernel)
+        )
+        .map_err(|e| match e {
+            crate::usermode::CreateProcessError::NotFound => SmError::NotFound,
+            crate::usermode::CreateProcessError::InvalidElf => SmError::InvalidTransition,
+            crate::usermode::CreateProcessError::NoMemory => SmError::OutOfMemory,
+        })?;
 
-        // Allocate user slot
-        let slot = match crate::arch::x64::paging::alloc_user_slot() {
-            Some(s) => s,
-            None => return Err(SmError::OutOfMemory),
-        };
+        // The ObWait hand-off activates a Suspended child; services are not
+        // spawned through ObWait, so publish the initial thread Ready now via
+        // the shared activation path (single implementation).
+        crate::usermode::activate_process(created.pid);
 
-        // Load ELF
-        let result = match crate::elf::load_elf(&bin_data, None, slot.code_base) {
-            Ok(r) => r,
-            Err(_) => {
-                crate::arch::x64::paging::free_user_slot(slot.slot_idx);
-                return Err(SmError::InvalidTransition);
-            }
-        };
-
-        // Spawn the process — F-04: free user slot on failure (transactional rollback)
-        let child_pid = match crate::usermode::spawn_usermode(
-            result.entry, slot.stack_top, slot.slot_idx,
-            2, "\\", 0, name, // cwd_drive=C, cwd_path=\, parent_pid=0 (kernel)
-        ) {
-            Ok(pid) => pid,
-            Err(e) => {
-                crate::arch::x64::paging::free_user_slot(slot.slot_idx);
-                crate::serial_println!("[SM] spawn failed, freed user_slot {} err={:?}", slot.slot_idx, e);
-                return Err(SmError::OutOfMemory);
-            }
-        };
-
-        // spawn_usermode leaves the initial thread Suspended (the ObCreate/ObWait
-        // path activates it on hand-off).  Services are not spawned through ObWait,
-        // so nothing would ever publish their thread Ready and they would never run.
-        // Perform the same activation the ObWait hand-off does.
-        crate::hal::without_interrupts(|| {
-            let s = crate::scheduler::current_scheduler();
-            let mut lock = s.lock();
-            for k in lock.kthreads.iter_mut().flatten() {
-                if k.pid == child_pid && k.state == crate::scheduler::ThreadState::Suspended {
-                    crate::scheduler::Scheduler::make_thread_ready(k);
-                }
-            }
-        });
-
-        Ok(child_pid)
+        Ok(created.pid)
     }
 
-    /// Stop a service by index.
-    pub fn stop_service(&mut self, idx: usize, _timeout_ms: u32) -> Result<(), SmError> {
+    /// Request a graceful stop of a service by index.
+    ///
+    /// #358: this does **not** terminate the process. It transitions the service
+    /// to `StopPending`, marks `shutdown_requested` and hands the request to the
+    /// deferred shutdown queue. The actual notification (a user APC to the
+    /// service thread) and the bounded-timeout forced termination are performed
+    /// by `process_pending_shutdowns`, which runs in syscall context outside all
+    /// kernel locks. This mirrors the #374 deferred process-exit architecture and
+    /// keeps `SERVICE_MANAGER` safety intact.
+    ///
+    /// `timeout_ms == 0` selects [`DEFAULT_STOP_TIMEOUT_MS`].
+    pub fn stop_service(&mut self, idx: usize, timeout_ms: u32) -> Result<(), SmError> {
         let state = self.services[idx].state;
-        if state == ServiceState::Stopped || state == ServiceState::Failed {
-            return Err(SmError::AlreadyStopped);
+        match state {
+            ServiceState::Stopped | ServiceState::Failed => {
+                return Err(SmError::AlreadyStopped);
+            }
+            ServiceState::StopPending | ServiceState::Stopping => {
+                return Err(SmError::Busy);
+            }
+            _ => {}
         }
-        if state == ServiceState::Stopping {
-            return Err(SmError::Busy);
-        }
-
-        self.services[idx].state = ServiceState::Stopping;
 
         let pid = self.services[idx].pid;
-        if pid != 0 {
-            // Send ProcessTerminate
-            let _ = self.kill_process(pid);
+        // A service with no live process can transition straight to Stopped:
+        // there is nothing to notify or wait for.
+        if pid == 0 {
+            self.services[idx].state = ServiceState::Stopped;
+            self.services[idx].shutdown_requested = false;
+            self.services[idx].shutdown_notified = false;
+            self.services[idx].stop_deadline = 0;
+            return Ok(());
         }
 
-        // Transition to Stopped
-        self.services[idx].state = ServiceState::Stopped;
-        self.services[idx].pid = 0;
+        let timeout_ms = if timeout_ms == 0 { DEFAULT_STOP_TIMEOUT_MS } else { timeout_ms };
+
+        self.services[idx].state = ServiceState::StopPending;
+        self.services[idx].shutdown_requested = true;
+        self.services[idx].shutdown_notified = false;
+        self.services[idx].stop_deadline = Self::deadline_from_now(timeout_ms);
+
+        crate::services::request_service_shutdown(pid);
         Ok(())
     }
 
+    /// Compute an absolute tick deadline `timeout_ms` in the future.
+    #[inline]
+    pub fn deadline_from_now(timeout_ms: u32) -> u64 {
+        let rate = crate::hal::get_tick_rate().max(1);
+        let ticks = (timeout_ms as u64).saturating_mul(rate) / 1000;
+        crate::hal::get_ticks().saturating_add(ticks.max(1))
+    }
+
+    /// True when the service is past its graceful-shutdown deadline.
+    #[inline]
+    pub fn stop_deadline_elapsed(&self, idx: usize) -> bool {
+        let svc = &self.services[idx];
+        svc.shutdown_requested && crate::hal::get_ticks() >= svc.stop_deadline
+    }
+
     /// Restart a service by index.
-    pub fn restart_service(&mut self, idx: usize, timeout_ms: u32) -> Result<(), SmError> {
-        self.stop_service(idx, timeout_ms)?;
+    ///
+    /// #358: a restart is an immediate administrative operation, not a graceful
+    /// stop: it must complete within the syscall. It therefore force-terminates
+    /// the current process (if any) and starts a fresh one, exactly as before.
+    /// Graceful shutdown semantics belong to `stop_service` only.
+    pub fn restart_service(&mut self, idx: usize, _timeout_ms: u32) -> Result<(), SmError> {
+        let state = self.services[idx].state;
+        if state == ServiceState::StopPending || state == ServiceState::Stopping {
+            return Err(SmError::Busy);
+        }
+        let pid = self.services[idx].pid;
+        if pid != 0 {
+            let _ = self.kill_process(pid);
+            self.services[idx].pid = 0;
+        }
+        self.services[idx].state = ServiceState::Stopped;
+        self.services[idx].shutdown_requested = false;
+        self.services[idx].shutdown_notified = false;
+        self.services[idx].stop_deadline = 0;
         self.start_service(idx)
     }
 
     /// Kill a process by PID (internal).
-    fn kill_process(&self, pid: u32) -> Result<(), SmError> {
+    pub fn kill_process(&self, pid: u32) -> Result<(), SmError> {
         crate::hal::without_interrupts(|| {
             let s = crate::scheduler::current_scheduler();
             let mut lock = s.lock();
@@ -512,13 +550,29 @@ impl ServiceManager {
         self.services[idx].exit_count += 1;
         self.services[idx].last_exit_code = exit_code;
         self.services[idx].pid = 0;
+        // #358: any exit (graceful or forced) ends the shutdown request. This is
+        // what prevents an intentional administrative stop from being mistaken
+        // for a crash and triggering a restart below.
+        let was_shutdown_requested = self.services[idx].shutdown_requested;
+        self.services[idx].shutdown_requested = false;
+        self.services[idx].shutdown_notified = false;
+        self.services[idx].stop_deadline = 0;
 
         match state {
-            ServiceState::Stopping => {
+            ServiceState::Stopping | ServiceState::StopPending => {
+                // Intentional administrative stop: never restart, regardless of
+                // restart policy or exit code.
                 self.services[idx].state = ServiceState::Stopped;
                 self.services[idx].failure_count = 0;
             }
             ServiceState::Running | ServiceState::Starting => {
+                // A shutdown request that raced with a natural exit still counts
+                // as intentional: honour the administrative stop.
+                if was_shutdown_requested {
+                    self.services[idx].state = ServiceState::Stopped;
+                    self.services[idx].failure_count = 0;
+                    return;
+                }
                 let should_restart = match restart_policy {
                     ServiceRestartPolicy::Never => false,
                     ServiceRestartPolicy::OnCrash => exit_code != 0,
@@ -539,6 +593,22 @@ impl ServiceManager {
                 }
             }
             _ => {}
+        }
+    }
+
+    /// Handle the exit of the process identified by `pid` (0 if unknown).
+    ///
+    /// This is the production entry point: it is invoked when the scheduler
+    /// observes that a service process has fully exited, routes it to the
+    /// owning service and applies the restart policy. Returns `true` if a
+    /// service was found for `pid`.
+    pub fn on_process_exit_by_pid(&mut self, pid: u32, exit_code: i64) -> bool {
+        match self.find_by_pid(pid) {
+            Some(idx) => {
+                self.on_process_exit(idx, exit_code);
+                true
+            }
+            None => false,
         }
     }
 

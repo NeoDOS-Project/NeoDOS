@@ -12,6 +12,53 @@ use super::ipv4::{compute_ip_checksum, build_ipv4_header, Ipv4Header};
 use super::icmp::IcmpHeader;
 use super::udp::UdpHeader;
 
+/// Minimal test NIC used by the IPv4 gateway/next-hop tests. It only records
+/// transmitted frames (optionally) and never receives.
+struct CaptureNic {
+    mac: MacAddr,
+    ip: Ipv4Addr,
+    sent: alloc::sync::Arc<spin::Mutex<alloc::vec::Vec<alloc::vec::Vec<u8>>>>,
+}
+
+impl super::nic::NetworkInterface for CaptureNic {
+    fn mac_address(&self) -> MacAddr { self.mac }
+    fn name(&self) -> &str { "capture-nic" }
+    fn send_packet(&mut self, packet: &[u8]) -> Result<(), ()> {
+        self.sent.lock().push(packet.to_vec());
+        Ok(())
+    }
+    fn poll_packet(&mut self, _buf: &mut [u8]) -> Option<usize> { None }
+    fn set_ip_address(&mut self, ip: Ipv4Addr) { self.ip = ip; }
+    fn ip_address(&self) -> Ipv4Addr { self.ip }
+}
+
+/// Test NIC with a controllable link state, used by the #339 regression tests.
+struct LinkNic {
+    mac: MacAddr,
+    ip: Ipv4Addr,
+    up: alloc::sync::Arc<core::sync::atomic::AtomicBool>,
+}
+
+impl super::nic::NetworkInterface for LinkNic {
+    fn mac_address(&self) -> MacAddr { self.mac }
+    fn name(&self) -> &str { "link-nic" }
+    fn send_packet(&mut self, _packet: &[u8]) -> Result<(), ()> { Ok(()) }
+    fn poll_packet(&mut self, _buf: &mut [u8]) -> Option<usize> { None }
+    fn set_ip_address(&mut self, ip: Ipv4Addr) { self.ip = ip; }
+    fn ip_address(&self) -> Ipv4Addr { self.ip }
+    fn is_link_up(&self) -> bool {
+        self.up.load(core::sync::atomic::Ordering::Acquire)
+    }
+}
+
+fn capture_nic(mac_last: u8) -> CaptureNic {
+    CaptureNic {
+        mac: MacAddr::new([0x02, 0, 0, 0, 0, mac_last]),
+        ip: Ipv4Addr::unspecified(),
+        sent: alloc::sync::Arc::new(spin::Mutex::new(alloc::vec::Vec::new())),
+    }
+}
+
 pub fn register_net_tests() {
     test_case!("net_mac_addr_basics", {
         let mac = MacAddr::new([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
@@ -176,6 +223,168 @@ pub fn register_net_tests() {
         let reg = NicRegistry::new();
         test_eq!(reg.count(), 0);
         test_true!(reg.default_nic_id().is_none());
+    });
+
+    // #339: a freshly registered NIC must not be advertised as link-up until
+    // its driver reports a real link, and the registry must follow the driver
+    // once polled (netd's `network_poll_all` path).
+    test_case!("net_nic_link_state_follows_driver_poll", {
+        use core::sync::atomic::Ordering;
+        let up = alloc::sync::Arc::new(core::sync::atomic::AtomicBool::new(false));
+        let nic = LinkNic {
+            mac: MacAddr::new([0x02, 0, 0, 0, 0, 0x39]),
+            ip: Ipv4Addr::unspecified(),
+            up: up.clone(),
+        };
+        let mut reg = NicRegistry::new();
+        let id = reg.register(alloc::boxed::Box::new(nic)).expect("register");
+
+        // Before the first poll: not advertised as usable.
+        test_true!(!reg.link_up(id));
+        test_true!(!reg.default_link_up());
+
+        // Driver reports link-down: the registry must not flip it up.
+        reg.poll_link_state();
+        test_true!(!reg.link_up(id));
+
+        // Driver reports link-up: the next poll propagates it.
+        up.store(true, Ordering::Release);
+        reg.poll_link_state();
+        test_true!(reg.link_up(id));
+        test_true!(reg.default_link_up());
+
+        // Driver reports link-down again: the registry follows.
+        up.store(false, Ordering::Release);
+        reg.poll_link_state();
+        test_true!(!reg.link_up(id));
+    });
+
+    test_case!("net_nic_gateway_default_and_next_hop", {
+        // Isolated registry: no global state, no real NIC.
+        let mut reg = NicRegistry::new();
+        let id = reg.register(alloc::boxed::Box::new(capture_nic(1))).expect("register");
+
+        // A. Default gateway is unset (0.0.0.0), never a hidden 10.0.1.1.
+        test_eq!(reg.get_gateway(id), Some(Ipv4Addr::unspecified()));
+
+        reg.set_ip(id, Ipv4Addr::new([10, 0, 1, 10]));
+        reg.set_mask(id, Ipv4Addr::new([255, 255, 255, 0]));
+
+        // C. On-link -> the destination itself.
+        test_eq!(
+            reg.next_hop_ip(Ipv4Addr::new([10, 0, 1, 20])),
+            Some(Ipv4Addr::new([10, 0, 1, 20]))
+        );
+
+        // E. Off-link without gateway -> no valid next hop.
+        test_eq!(reg.next_hop_ip(Ipv4Addr::new([8, 8, 8, 8])), None);
+
+        // B/D. Configured gateway is returned and used only for off-link.
+        reg.set_gateway(id, Ipv4Addr::new([10, 0, 1, 1]));
+        test_eq!(reg.get_gateway(id), Some(Ipv4Addr::new([10, 0, 1, 1])));
+        test_eq!(
+            reg.next_hop_ip(Ipv4Addr::new([8, 8, 8, 8])),
+            Some(Ipv4Addr::new([10, 0, 1, 1]))
+        );
+        test_eq!(
+            reg.next_hop_ip(Ipv4Addr::new([10, 0, 1, 20])),
+            Some(Ipv4Addr::new([10, 0, 1, 20]))
+        );
+    });
+
+    test_case!("net_udp_offlink_uses_gateway_or_fails", {
+        use super::arp::{ArpPacket, ARP_OP_REQUEST};
+        use super::ethernet::{EthernetHeader, ETH_HDR_LEN, ETH_TYPE_ARP};
+        use super::nic::{nic_register, nic_unregister, NIC_REGISTRY};
+
+        let sent = alloc::sync::Arc::new(spin::Mutex::new(alloc::vec::Vec::new()));
+        let nic_id = nic_register(alloc::boxed::Box::new(CaptureNic {
+            mac: MacAddr::new([0x02, 0, 0, 0, 0, 2]),
+            ip: Ipv4Addr::unspecified(),
+            sent: sent.clone(),
+        }))
+        .expect("register mock NIC");
+
+        // Configure through the registry (no gratuitous ARP, no global propagation).
+        {
+            let mut reg = NIC_REGISTRY.lock();
+            reg.set_ip(nic_id, Ipv4Addr::new([10, 0, 1, 10]));
+            reg.set_mask(nic_id, Ipv4Addr::new([255, 255, 255, 0]));
+            reg.set_gateway(nic_id, Ipv4Addr::unspecified());
+        }
+
+        let local = SocketAddrV4::new(Ipv4Addr::new([10, 0, 1, 10]), 50000);
+        let remote = SocketAddrV4::new(Ipv4Addr::new([8, 8, 8, 8]), 53);
+
+        // E. Off-link, no gateway: the send fails and no ARP is emitted at all
+        // (we must not ARP the remote destination).
+        test_true!(super::socket::socket_send_udp_raw(local, remote, b"x").is_err());
+        test_eq!(sent.lock().len(), 0);
+
+        // D. With a gateway: the ARP request targets the gateway, not 8.8.8.8.
+        {
+            let mut reg = NIC_REGISTRY.lock();
+            reg.set_gateway(nic_id, Ipv4Addr::new([10, 0, 1, 1]));
+        }
+        let _ = super::socket::socket_send_udp_raw(local, remote, b"x");
+        let frames = sent.lock().clone();
+        test_eq!(frames.len(), 1);
+        let eth: &EthernetHeader = unsafe { &*(frames[0].as_ptr() as *const EthernetHeader) };
+        test_eq!(eth.ethertype(), ETH_TYPE_ARP);
+        let arp: &ArpPacket =
+            unsafe { &*(frames[0].as_ptr().add(ETH_HDR_LEN) as *const ArpPacket) };
+        test_eq!(arp.operation(), ARP_OP_REQUEST);
+        test_eq!(arp.target_ip_addr(), Ipv4Addr::new([10, 0, 1, 1]));
+
+        nic_unregister(nic_id);
+    });
+
+    test_case!("net_static_config_registry_roundtrip", {
+        use super::nic::{nic_register, nic_unregister, NIC_REGISTRY};
+
+        let nic_id = nic_register(alloc::boxed::Box::new(CaptureNic {
+            mac: MacAddr::new([0x02, 0, 0, 0, 0, 3]),
+            ip: Ipv4Addr::unspecified(),
+            sent: alloc::sync::Arc::new(spin::Mutex::new(alloc::vec::Vec::new())),
+        }))
+        .expect("register mock NIC");
+
+        // Values as they come from the interface Registry in static mode:
+        // DHCPEnabled = 0 with IPAddress / SubnetMask / Gateway populated.
+        let ip = Ipv4Addr::new([10, 0, 30, 20]);
+        let mask = Ipv4Addr::new([255, 255, 255, 0]);
+        let gw = Ipv4Addr::new([10, 0, 30, 1]);
+
+        {
+            let mut reg = NIC_REGISTRY.lock();
+            reg.set_ip(nic_id, ip);
+            reg.set_mask(nic_id, mask);
+            reg.set_gateway(nic_id, gw);
+        }
+
+        test_eq!(NIC_REGISTRY.lock().get_ip(nic_id), Some(ip));
+        test_eq!(NIC_REGISTRY.lock().get_mask(nic_id), Some(mask));
+        test_eq!(NIC_REGISTRY.lock().get_gateway(nic_id), Some(gw));
+
+        // On-link destinations resolve directly; off-link uses the configured
+        // gateway (static configuration must not imply a /0 mask).
+        test_eq!(
+            NIC_REGISTRY.lock().next_hop_ip(Ipv4Addr::new([10, 0, 30, 99])),
+            Some(Ipv4Addr::new([10, 0, 30, 99]))
+        );
+        test_eq!(
+            NIC_REGISTRY.lock().next_hop_ip(Ipv4Addr::new([8, 8, 8, 8])),
+            Some(gw)
+        );
+
+        nic_unregister(nic_id);
+    });
+
+    test_case!("net_obsetinfo_nic_gateway_abi", {
+        use crate::object::types::ObSetInfoClass;
+        // Additive class: existing IDs unchanged.
+        test_eq!(ObSetInfoClass::SetNicIp as u32, 27);
+        test_eq!(ObSetInfoClass::SetNicGateway as u32, 28);
     });
 
     test_case!("net_handle_incoming_no_deadlock", {

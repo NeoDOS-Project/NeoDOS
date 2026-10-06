@@ -29,6 +29,7 @@ Correctly implement IPC primitives with proper reference counting, blocking sema
 Global `Vec<Option<Mutex<PipeInner>>>` (max 16 pipes, v0.41+). Each pipe has a `Box<[u8; 4096]>` ring buffer, read/write cursors, and reference counts.
 
 API:
+
 ```rust
 pub fn pipe_alloc() -> Option<PipeId>;                 // allocate new pipe
 pub fn pipe_write(pipe_id: PipeId, buf: &[u8]) -> Result<usize, i64>;  // returns -EPIPE if no readers
@@ -71,6 +72,7 @@ pub struct Irp { op: IrpOp, buffer: *mut u8, length: usize, lba: u64, count: u64
 `IrpOp`: `Read(0)`, `Write(1)`, `Flush(2)`, `Discard(3)`, `Ioctl(4)`.
 
 `BlockDevice` trait:
+
 ```rust
 pub trait BlockDevice { fn submit_irp(&self, irp_id: IrpId); fn poll_irp(&self, irp_id: IrpId) -> Option<IrpStatus>; }
 ```

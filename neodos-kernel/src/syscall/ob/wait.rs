@@ -91,18 +91,17 @@ pub fn handler_ob_wait(regs: crate::syscall::Registers) -> u64 {
                     // inherited handles are installed. ObWait is the
                     // hand-off point: activate the child before blocking
                     // the parent, otherwise the child is never schedulable.
-                    let mut activated = false;
-                    for child in lock.kthreads.iter_mut().flatten() {
-                        if child.pid == pid && child.state == ThreadState::Suspended {
-                            crate::scheduler::Scheduler::make_thread_ready(child);
-                            activated = true;
-                        }
-                    }
+                    let activated = lock.activate_suspended_process(pid);
                     if activated {
                         crate::serial_println!(
                             "[OB_WAIT] activated child pid={} before blocking parent pid={}",
                             pid, lock.current_pid());
                     }
+                    // NOTE: the foreground process is *not* inferred from the
+                    // wait. `neoinit` also waits on `neoshell`, so doing so made
+                    // Ctrl+C at a fresh prompt kill the shell. The interactive
+                    // shell declares its foreground command explicitly with
+                    // `ObSetInfoClass::SetForegroundProcess`.
                     // Atomically check-and-block: we hold the lock so the child
                     // cannot exit (modify thread_count) between check and block.
                     if let Some(k) = lock.current_kthread_mut() {

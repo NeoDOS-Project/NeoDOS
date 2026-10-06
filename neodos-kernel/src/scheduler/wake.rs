@@ -4,6 +4,9 @@ use crate::scheduler::Scheduler;
 
 impl Scheduler {
     pub fn wake_waiters(&mut self, pid: u32) {
+        // The foreground process is gone: Ctrl+C must no longer target it.
+        // Called on both normal exit and termination.
+        crate::input::manager::clear_foreground_pid(pid);
         // Legacy magic waitpid (0x8000_0000 | pid) — kept for compat, now u64
         let legacy_magic: u64 = (pid as u64) | 0x8000_0000;
         // KWait ChildExit magic — F-03 full-width

@@ -17,14 +17,77 @@ pub mod wake;
 pub mod schedule;
 pub mod snapshot;
 pub mod accounting;
+pub mod diag;
 
-pub use types::{Kthread, Eprocess, ThreadState, MmapRegion, KernelName, NAME_MAX, KERNEL_STACK_SIZE, IDLE_TIME_SLICE, PRIORITY_HIGH, PRIORITY_ABOVE_NORMAL, PRIORITY_NORMAL, PRIORITY_IDLE, PRIORITY_COUNT, TIME_SLICES, BOOT_TID, IDLE_TID, AGING_INTERVAL_TICKS, MAX_STARVATION_TICKS, TEB_SIZE, STACK_CANARY};
-pub use stack::{AlignedKStack, check_kernel_stack_canary, spawn_net_kthread, init_ring3_frame};
+pub use types::{Kthread, Eprocess, ThreadState, MmapRegion, KernelName, NAME_MAX, KERNEL_STACK_SIZE, IDLE_STACK_SIZE, IDLE_TIME_SLICE, PRIORITY_HIGH, PRIORITY_ABOVE_NORMAL, PRIORITY_NORMAL, PRIORITY_IDLE, PRIORITY_COUNT, TIME_SLICES, BOOT_TID, IDLE_TID, AGING_INTERVAL_TICKS, MAX_STARVATION_TICKS, TEB_SIZE, STACK_CANARY};
+pub use stack::{AlignedKStack, check_kernel_stack_canary, check_kernel_stack_canary_sized, kernel_stack_canary_addr, spawn_net_kthread, init_ring3_frame};
 pub use schedule::{sched_forensic_enable, sched_forensic_verbose_enable, sched_forensic_verbose};
 pub use snapshot::{
     kernel_snapshot_dump, kernel_snapshot_into, ProcSnapshot, ProcessSnapshot, ThreadSnapshot,
     MAX_SNAPSHOT_PROCESSES, MAX_SNAPSHOT_THREADS,
 };
+
+// ── Preempt-disable for kernel spinlock critical sections ──────────────────
+//
+// The per-CPU run queues are FIFO and the FS spinlocks (VFS/PAGE_CACHE/
+// BLOCK_DEVICES) are not IRQ-safe by themselves. A thread holding one of them
+// must not be descheduled by the timer: if it is published `Ready` with a
+// Ring-0 frame, the Ring-3 selection paths reject it while every waiter spins
+// on the held lock with interrupts disabled — a permanent deadlock (#376).
+//
+// `with_vfs`/`with_page_cache`/`with_block_devices` bracket their critical
+// sections with `preempt_disable()`/`preempt_enable()`; `on_timer_tick` does
+// not deschedule a thread while the counter is non-zero.
+use core::sync::atomic::{AtomicU32, Ordering};
+pub static PREEMPT_COUNT: [AtomicU32; crate::arch::x64::cpu_local::MAX_CPUS] =
+    [const { AtomicU32::new(0) }; crate::arch::x64::cpu_local::MAX_CPUS];
+
+/// Preempt tracking is only safe once the per-CPU `%gs` area exists. Enabled
+/// after SMP/per-CPU bring-up; before that `preempt_disable` is a no-op.
+static PREEMPT_TRACKING: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
+
+#[inline]
+pub fn preempt_tracking_enable() {
+    PREEMPT_TRACKING.store(true, Ordering::Release);
+}
+
+#[inline]
+fn preempt_tracking_on() -> bool {
+    PREEMPT_TRACKING.load(Ordering::Acquire)
+}
+
+#[inline]
+pub fn preempt_disable() {
+    if !preempt_tracking_on() {
+        return;
+    }
+    let cpu = unsafe { crate::arch::x64::cpu_local::this_cpu_id() } as usize;
+    if cpu < PREEMPT_COUNT.len() {
+        PREEMPT_COUNT[cpu].fetch_add(1, Ordering::AcqRel);
+    }
+}
+
+#[inline]
+pub fn preempt_enable() {
+    if !preempt_tracking_on() {
+        return;
+    }
+    let cpu = unsafe { crate::arch::x64::cpu_local::this_cpu_id() } as usize;
+    if cpu < PREEMPT_COUNT.len() {
+        PREEMPT_COUNT[cpu].fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
+#[inline]
+pub fn preempt_disabled() -> bool {
+    if !preempt_tracking_on() {
+        return false;
+    }
+    let cpu = unsafe { crate::arch::x64::cpu_local::this_cpu_id() } as usize;
+    cpu < PREEMPT_COUNT.len() && PREEMPT_COUNT[cpu].load(Ordering::Acquire) > 0
+}
+
 
 use alloc::boxed::Box;
 use alloc::collections::VecDeque;
@@ -130,6 +193,15 @@ impl Scheduler {
             if let Some(tid) = crate::arch::x64::cpu_local::try_per_cpu_tid() {
                 return tid;
             }
+        } else if crate::scheduler::ap_sched_active() {
+            // #345 diagnostic: the per-CPU KPRCB identity is unavailable, so the
+            // shared global `current_tid` is used. Record the reason.
+            let gs = crate::hal::safe::GsBase::read();
+            if gs != 0 {
+                let ptr = unsafe { crate::arch::x64::cpu_local::this_cpu_current_thread() };
+                crate::scheduler::diag::kprcb_fallback_ev(
+                    "current_tid_for_this_cpu", gs, ptr, self.current_tid);
+            }
         }
         self.current_tid
     }
@@ -149,6 +221,14 @@ impl Scheduler {
         let tid = if self.kprcb_thread_in_self() {
             crate::arch::x64::cpu_local::try_per_cpu_tid().unwrap_or(self.current_tid)
         } else {
+            if crate::scheduler::ap_sched_active() {
+                let gs = crate::hal::safe::GsBase::read();
+                if gs != 0 {
+                    let ptr = unsafe { crate::arch::x64::cpu_local::this_cpu_current_thread() };
+                    crate::scheduler::diag::kprcb_fallback_ev(
+                        "current_kthread_mut", gs, ptr, self.current_tid);
+                }
+            }
             self.current_tid
         };
         self.find_kthread_mut(tid)
@@ -209,6 +289,10 @@ impl Scheduler {
             time_slice_remaining: TIME_SLICES[PRIORITY_NORMAL as usize],
             ticks_since_scheduled: 0,
             kernel_stack_top: boot_ks_top,
+            // Boot runs on the bootstrap stack, not a scheduler-managed one.
+            // The canary is never checked for TID 0 (`check_kernel_stack_canary`
+            // returns early for ks_top==0, and boot is excluded from dispatch).
+            kernel_stack_size: KERNEL_STACK_SIZE,
             kernel_stack: None,
             teb_base: 0,
             cpu: 0,
@@ -225,7 +309,16 @@ impl Scheduler {
 
         // Idle KTHREAD (TID 1) — runs the halt loop when nothing else is Ready.
         // Shares the PID 0 EPROCESS (no separate address space needed for idle).
-        let idle_stack_top = unsafe { crate::scheduler::stack::IDLE_STACK.as_ptr().add(crate::scheduler::stack::IDLE_STACK_SIZE) as u64 } & !0xF;
+        //
+        // #348: the idle stack is only `IDLE_STACK_SIZE` (4 KiB), and its real
+        // owned span starts at the `IDLE_STACK` symbol. Initialize its canary
+        // here and give the Kthread the *exact* owned size so the canary checker
+        // inspects the idle stack bottom (not `ks_top - KERNEL_STACK_SIZE`).
+        unsafe { crate::scheduler::stack::init_idle_stack_canary(); }
+        let idle_stack_top = unsafe {
+            crate::scheduler::stack::IDLE_STACK.as_ptr() as u64
+                + crate::scheduler::stack::IDLE_STACK_SIZE as u64
+        };
         let idle_thread = Kthread::new_idle(
             IDLE_TID, 0,
             crate::scheduler::stack::idle_task as *const () as u64,
@@ -234,6 +327,7 @@ impl Scheduler {
         {
             // Phase 14-A: per-CPU idle names ("idle/0"), bounded.
             let mut mut_idle = idle_thread;
+            mut_idle.kernel_stack_size = crate::scheduler::stack::IDLE_STACK_SIZE;
             let mut n = KernelName::from_str("idle/");
             n.push_u32(0);
             mut_idle.name = n;
@@ -405,6 +499,10 @@ pub fn dump_per_cpu_current() {
     crate::serial_println!(
         "[READY_GUARD_STATS] rejected={} ready_while_running={} stale_rsp_dispatch={} stack_ownership_conflict={}",
         rejected, ready_while_running, stale_rsp_dispatch, stack_conflict);
+    crate::serial_println!(
+        "[IRETQ_AUDIT] checked={} bad={}",
+        crate::scheduler::diag::iretq::IRETQ_CHECKED.load(core::sync::atomic::Ordering::Relaxed),
+        crate::scheduler::diag::iretq::IRETQ_BAD_COUNT.load(core::sync::atomic::Ordering::Relaxed));
     // Phase 14-B: explicit process/thread snapshot for this SMP evidence dump.
     snapshot::kernel_snapshot_dump();
 }

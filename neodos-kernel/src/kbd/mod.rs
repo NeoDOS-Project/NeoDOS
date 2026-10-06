@@ -243,6 +243,17 @@ impl NeoKbd {
         }
 
         let mods = self.state.modifiers;
+
+        // Ctrl+C: physical 'C' (scancode 0x2E) with Ctrl held. Handled here,
+        // before layout decoding, so it works regardless of the active layout's
+        // ctrl column. Interrupts the foreground process if there is one.
+        if (mods & KBD_CTRL) != 0 && code == 0x2E {
+            if crate::input::manager::request_foreground_interrupt() {
+                crate::syscall::set_need_resched();
+                return;
+            }
+        }
+
         if let Some(layout) = self.active_layout() {
             if let Some(codepoint) = layout::lookup_codepoint(layout, code, mods) {
                 if layout::is_dead_key(layout, code, mods) {
@@ -260,6 +271,13 @@ impl NeoKbd {
                 let utf8 = unicode::unicode_to_utf8(final_cp);
                 for &b in utf8.iter() {
                     if b == 0 { break; }
+                    // Ctrl+C: request deferred termination of the foreground
+                    // process instead of queueing ETX for whoever is reading.
+                    // Only atomics + the IRQ-safe work queue run here.
+                    if b == 0x03 && crate::input::manager::request_foreground_interrupt() {
+                        crate::syscall::set_need_resched();
+                        continue;
+                    }
                     if crate::input::push_byte(b).is_err() {
                         crate::serial_println!("[KBD] VT input queue full (4096), byte 0x{:02x} dropped", b);
                     }

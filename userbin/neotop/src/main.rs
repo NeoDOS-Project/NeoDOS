@@ -41,6 +41,8 @@ const IDS_COL_CUR: u32 = 1031;
 const IDS_COL_IDLE: u32 = 1032;
 const IDS_HELP_QUIT: u32 = 1033;
 const IDS_HELP_REFRESH: u32 = 1034;
+const IDS_COL_WSS: u32 = 1035;
+const IDS_COL_COMMIT: u32 = 1036;
 
 /// Must be >= the kernel's `MAX_SNAPSHOT_PROCESSES`.
 const PROC_SNAP_MAX: usize = 64;
@@ -250,6 +252,30 @@ impl<'a> SnapshotView<'a> {
         }
         0
     }
+
+    /// MEM-PROC (#274): process committed bytes (heap + mmap).
+    fn find_process_commit(&self, pid: u32) -> u64 {
+        for i in 0..self.hdr.process_returned as usize {
+            if let Some(p) = self.process(i) {
+                if p.pid == pid {
+                    return p.committed_bytes;
+                }
+            }
+        }
+        0
+    }
+
+    /// MEM-PROC (#274): process working-set bytes (resident heap pages).
+    fn find_process_ws(&self, pid: u32) -> u64 {
+        for i in 0..self.hdr.process_returned as usize {
+            if let Some(p) = self.process(i) {
+                if p.pid == pid {
+                    return p.working_set_bytes;
+                }
+            }
+        }
+        0
+    }
 }
 
 /// Render one frame. `history` holds the previous snapshot's per-process CPU
@@ -296,11 +322,15 @@ fn render_frame(view: &SnapshotView, history: &logic::CpuHistory, wall_delta: u6
     write_str(b"  ");
     write_field_right(tr_id!(IDS_COL_CPU).as_bytes(), 3);
     write_str(b"  ");
+    write_field_right(tr_id!(IDS_COL_WSS).as_bytes(), 6);
+    write_str(b"  ");
+    write_field_right(tr_id!(IDS_COL_COMMIT).as_bytes(), 6);
+    write_str(b"  ");
     write_field_left(tr_id!(IDS_COL_CUR).as_bytes(), 1);
     write_str(b" ");
     write_field_left(tr_id!(IDS_COL_IDLE).as_bytes(), 1);
     write_str(b"\r\n");
-    write_str(b"-----  --------------  -----  --------------  ----------  --------  ---  - -\r\n");
+    write_str(b"-----  --------------  -----  --------------  ----------  --------  ---  ------  ------  - -\r\n");
 
     for i in 0..view.hdr.thread_returned as usize {
         let t = match view.thread(i) {
@@ -328,6 +358,16 @@ fn render_frame(view: &SnapshotView, history: &logic::CpuHistory, wall_delta: u6
         write_percent_x10(pct);
         write_str(b"  ");
         write_u32_field(t.cpu, 3);
+        write_str(b"  ");
+        {
+            let mut b = [0u8; 8];
+            write_str(logic::format_bytes(&mut b, view.find_process_ws(t.pid)));
+        }
+        write_str(b"  ");
+        {
+            let mut b = [0u8; 8];
+            write_str(logic::format_bytes(&mut b, view.find_process_commit(t.pid)));
+        }
         write_str(b"  ");
         write_str(if t.is_current_thread() { b"*" } else { b"-" });
         write_str(b" ");

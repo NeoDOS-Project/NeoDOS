@@ -14,8 +14,7 @@
 //! ║  Internal register constants MUST NOT be reassigned.            ║
 //! ╚═══════════════════════════════════════════════════════════════════╝
 
-use core::ptr::{read_volatile, write_volatile};
-use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use core::sync::atomic::{fence, AtomicBool, AtomicU64, Ordering};
 use crate::log::LogSubsys;
 
 // ── I/O APIC MMIO register offsets ─────────────────────────────────
@@ -55,8 +54,10 @@ fn ioapic_read_reg(reg: u32) -> u32 {
     let base = IOAPIC_ADDR.load(Ordering::Relaxed);
     if base == 0 { return 0; }
     unsafe {
-        write_volatile((base + IOAPIC_IOREGSEL) as *mut u32, reg);
-        read_volatile((base + IOAPIC_IOWIN) as *const u32)
+        crate::hal::mmio::write32((base + IOAPIC_IOREGSEL) as usize, reg);
+        // The register-select write must be visible before the window access.
+        fence(Ordering::SeqCst);
+        crate::hal::mmio::read32((base + IOAPIC_IOWIN) as usize)
     }
 }
 
@@ -65,8 +66,10 @@ fn ioapic_write_reg(reg: u32, value: u32) {
     let base = IOAPIC_ADDR.load(Ordering::Relaxed);
     if base == 0 { return; }
     unsafe {
-        write_volatile((base + IOAPIC_IOREGSEL) as *mut u32, reg);
-        write_volatile((base + IOAPIC_IOWIN) as *mut u32, value);
+        crate::hal::mmio::write32((base + IOAPIC_IOREGSEL) as usize, reg);
+        // The register-select write must be visible before the window access.
+        fence(Ordering::SeqCst);
+        crate::hal::mmio::write32((base + IOAPIC_IOWIN) as usize, value);
     }
 }
 
@@ -194,6 +197,7 @@ pub fn init() -> bool {
     }
 
     IOAPIC_ACTIVE.store(true, Ordering::SeqCst);
+    crate::hal::set_ioapic_active(true);
     kinfo!(LogSubsys::Ioapic, "Initialised, PIC disabled");
     true
 }

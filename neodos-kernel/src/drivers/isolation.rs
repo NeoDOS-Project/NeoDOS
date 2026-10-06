@@ -573,7 +573,7 @@ pub fn validate_driver_data_ptr(ptr: *const u8, size: usize) -> Result<(), &'sta
 
 // ── Debug / diagnostics ──
 
-/// Format isolated region info for display (used by NDREG).
+/// Format isolated region info for display (used by driver diagnostics).
 pub fn format_isolation_info(driver_id: u32) -> alloc::string::String {
     for region in ISOLATED_REGIONS.lock().iter() {
         if region.in_use && region.driver_id == driver_id {

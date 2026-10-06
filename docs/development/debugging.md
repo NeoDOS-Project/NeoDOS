@@ -7,8 +7,8 @@ NeoDOS is typically debugged under QEMU using serial output, the QEMU monitor, a
 From `neodos/`:
 
 ```bash
-bash scripts/build.sh
-bash scripts/qemu-debug.sh
+neodev build --image
+neodev run
 ```
 
 This writes a full transcript to `neodos/qemu_output.log`.

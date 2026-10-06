@@ -11,7 +11,10 @@ pub trait NetworkInterface: Send + Sync {
     fn set_ip_address(&mut self, ip: Ipv4Addr);
     fn ip_address(&self) -> Ipv4Addr;
     fn subnet_mask(&self) -> Ipv4Addr { Ipv4Addr::new([255, 255, 255, 0]) }
-    fn gateway(&self) -> Ipv4Addr { Ipv4Addr::new([10, 0, 1, 1]) }
+    /// Driver-level gateway getter. The runtime source of truth is
+    /// `NicSlot::gateway` (used by [`NicRegistry::next_hop_ip`]); the default is
+    /// unset and must not be a hidden `10.0.1.1`.
+    fn gateway(&self) -> Ipv4Addr { Ipv4Addr::unspecified() }
     fn is_link_up(&self) -> bool { true }
     fn mtu(&self) -> usize { 1500 }
     fn vendor_id(&self) -> u16 { 0 }
@@ -23,9 +26,14 @@ struct NicSlot {
     interface: Option<Box<dyn NetworkInterface>>,
     ip: Ipv4Addr,
     mask: Ipv4Addr,
+    gateway: Ipv4Addr,
     mac: MacAddr,
     vendor_id: u16,
     device_id: u16,
+    /// Last link state polled by [`NicRegistry::poll_link_state`]. The
+    /// `NicInfo` query and `netapplier` edge detection read this, so a missing NIC
+    /// (interface `None`) can still report the last known state.
+    link_up: bool,
 }
 
 pub struct NicRegistry {
@@ -40,9 +48,11 @@ impl NicRegistry {
             interface: None,
             ip: Ipv4Addr::new([0; 4]),
             mask: Ipv4Addr::new([0; 4]),
+            gateway: Ipv4Addr::new([0; 4]),
             mac: MacAddr::new([0; 6]),
             vendor_id: 0,
             device_id: 0,
+            link_up: false,
         };
         NicRegistry {
             nics: [EMPTY; MAX_NICS],
@@ -57,19 +67,51 @@ impl NicRegistry {
                 let mac = interface.mac_address();
                 let vendor = interface.vendor_id();
                 let device = interface.device_id();
+                // Report the driver's real link state at registration, but do not
+                // call back into a driver that is still loading. NEM drivers are
+                // registered before their link query is available; the netd poll
+                // (`poll_link_state`) refreshes this. Default to link-down so a
+                // not-yet-ready NIC is never advertised as usable.
+                let link_up = false;
                 self.nics[i] = NicSlot {
                     interface: Some(interface),
                     ip: Ipv4Addr::unspecified(),
-                    mask: Ipv4Addr::unspecified(),
+                    mask: Ipv4Addr::new([255, 255, 255, 0]),
+                    gateway: Ipv4Addr::unspecified(),
                     mac,
                     vendor_id: vendor,
                     device_id: device,
+                    link_up,
                 };
                 self.active_count += 1;
                 return Some(i as u32);
             }
         }
         None
+    }
+
+    /// Refresh `link_up` for every slot from its interface.
+    pub fn poll_link_state(&mut self) {
+        for i in 0..MAX_NICS {
+            if let Some(ref nic) = self.nics[i].interface {
+                self.nics[i].link_up = nic.is_link_up();
+            }
+        }
+    }
+
+    pub fn link_up(&self, id: u32) -> bool {
+        if (id as usize) < MAX_NICS {
+            self.nics[id as usize].link_up
+        } else {
+            false
+        }
+    }
+
+    pub fn default_link_up(&self) -> bool {
+        match self.default_nic_id() {
+            Some(id) => self.link_up(id),
+            None => false,
+        }
     }
 
     pub fn unregister(&mut self, id: u32) {
@@ -134,18 +176,47 @@ impl NicRegistry {
         }
     }
 
-    pub fn next_hop_mac(&mut self, dest_ip: Ipv4Addr) -> Option<MacAddr> {
-        let nic = self.nics[0].interface.as_ref()?;
-        let my_ip = nic.ip_address();
-        let mask = nic.subnet_mask();
-        let gateway = nic.gateway();
+    pub fn get_gateway(&self, id: u32) -> Option<Ipv4Addr> {
+        if (id as usize) < MAX_NICS && self.nics[id as usize].interface.is_some() {
+            return Some(self.nics[id as usize].gateway);
+        }
+        None
+    }
 
-        let target = if (dest_ip.to_u32() & mask.to_u32()) == (my_ip.to_u32() & mask.to_u32()) {
-            dest_ip
+    pub fn set_gateway(&mut self, id: u32, gateway: Ipv4Addr) {
+        if (id as usize) < MAX_NICS && self.nics[id as usize].interface.is_some() {
+            self.nics[id as usize].gateway = gateway;
+        }
+    }
+
+    /// IPv4 next hop for `dest_ip` on the default NIC:
+    /// - on-link                     -> `dest_ip`
+    /// - off-link with a gateway     -> configured gateway
+    /// - off-link with gateway unset -> `None` (no valid next hop)
+    /// - broadcast                   -> `dest_ip`
+    pub fn next_hop_ip(&self, dest_ip: Ipv4Addr) -> Option<Ipv4Addr> {
+        let id = self.default_nic_id()?;
+        let slot = &self.nics[id as usize];
+        if slot.interface.is_none() {
+            return None;
+        }
+        if dest_ip.is_broadcast() {
+            return Some(dest_ip);
+        }
+        let same_subnet = (dest_ip.to_u32() & slot.mask.to_u32())
+            == (slot.ip.to_u32() & slot.mask.to_u32());
+        if same_subnet {
+            Some(dest_ip)
+        } else if slot.gateway.is_unspecified() {
+            None
         } else {
-            gateway
-        };
+            Some(slot.gateway)
+        }
+    }
 
+    /// MAC of the next hop for `dest_ip` if it is already in the ARP cache.
+    pub fn next_hop_mac(&mut self, dest_ip: Ipv4Addr) -> Option<MacAddr> {
+        let target = self.next_hop_ip(dest_ip)?;
         crate::net::arp::arp_lookup(target)
     }
 
@@ -170,6 +241,35 @@ pub fn nic_register(interface: Box<dyn NetworkInterface>) -> Option<u32> {
 
 pub fn nic_unregister(id: u32) {
     NIC_REGISTRY.lock().unregister(id);
+}
+
+/// Poll the driver-reported link state of every registered NIC and store it in
+/// the registry.
+///
+/// Called from `network_poll_all` (netd) — the one place allowed to invoke the
+/// driver's `is_link_up` without holding `NIC_REGISTRY`. Lock order is
+/// `NIC_REGISTRY → driver (no locks)`; the driver must not take the registry
+/// lock from `is_link_up`. This is what keeps the `NicInfo` link state and
+/// `netapplier`'s link-up edge detection live even though the NEM bridge bootstrap
+/// object has no pollable vtable at registration time.
+pub fn nic_poll_link_state() {
+    let mut reg = NIC_REGISTRY.lock();
+    for i in 0..MAX_NICS {
+        if let Some(ref nic) = reg.nics[i].interface {
+            let up = nic.is_link_up();
+            reg.nics[i].link_up = up;
+        }
+    }
+}
+
+/// Cached link state of a NIC as last polled by [`nic_poll_link_state`].
+pub fn nic_is_link_up(id: u32) -> bool {
+    NIC_REGISTRY.lock().link_up(id)
+}
+
+/// Link state of the default NIC as last polled by [`nic_poll_link_state`].
+pub fn nic_default_link_up() -> bool {
+    NIC_REGISTRY.lock().default_link_up()
 }
 
 pub fn nic_send_packet(nic_id: u32, packet: &[u8]) -> Result<(), ()> {
@@ -256,6 +356,28 @@ pub fn nic_set_mask(nic_id: u32, mask: Ipv4Addr) {
             reg.set_mask(i as u32, mask);
         }
     }
+}
+
+pub fn nic_get_gateway(nic_id: u32) -> Option<Ipv4Addr> {
+    NIC_REGISTRY.lock().get_gateway(nic_id)
+}
+
+pub fn nic_set_gateway(nic_id: u32, gateway: Ipv4Addr) {
+    let mut reg = NIC_REGISTRY.lock();
+    reg.set_gateway(nic_id, gateway);
+    // Propagate to all NICs (multiple drivers may share the same hardware).
+    for i in 0..MAX_NICS {
+        if i != nic_id as usize && reg.get(i as u32).is_some() {
+            reg.set_gateway(i as u32, gateway);
+        }
+    }
+}
+
+/// Resolve the IPv4 next hop for `dest_ip` on the default NIC (see
+/// [`NicRegistry::next_hop_ip`]). `None` means "no valid next hop" (off-link
+/// without a configured gateway).
+pub fn nic_next_hop(dest_ip: Ipv4Addr) -> Option<Ipv4Addr> {
+    NIC_REGISTRY.lock().next_hop_ip(dest_ip)
 }
 
 pub fn nic_default_id() -> Option<u32> {

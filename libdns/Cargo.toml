@@ -1,0 +1,12 @@
+[package]
+name = "libdns"
+version = "0.1.0"
+edition = "2021"
+description = "NeoDOS shared DNS wire format + resolver core (no_std, dependency-free)"
+
+[lib]
+name = "libdns"
+path = "src/lib.rs"
+crate-type = ["lib"]
+
+[dependencies]

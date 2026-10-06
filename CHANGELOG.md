@@ -2,6 +2,199 @@
 
 <!-- markdownlint-disable MD013 MD024 MD056 -->
 
+## v0.51.4 — 2026-10-06
+
+### Fixed
+
+- **#474: SMP2 Ring-0 `INVALID_OPCODE` (`rip=0x148`) — wild `iretq` from a
+  non-dispatchable frame.** A user thread interrupted inside a syscall
+  (`cs == 0x08`) with `yield_requested` set was published `Ready` by the timer's
+  Ring-0 preemption branch with a transient kernel call frame as its saved
+  `rsp`. A later `mov rsp,next_rsp; pop 15; iretq` consumed stack data as
+  RIP/CS and jumped to a wild address. The branch now defers such threads to
+  their syscall-return path via
+  `schedule::ring0_publish_is_dispatchable`. Regression test
+  `n474_ring0_preempt_only_publishes_dispatchable_frame`. See
+  `docs/investigation/issue-474-smp2-ring0-invalid-opcode.md`.
+
+- **#476: syscall KPRCB/RSP ownership window closed (#480).** The syscall
+  reschedule path ran with IF=1 at the handoff boundary, so
+  `schedule_with_handoff`'s `KPRCB.current_thread = NEXT` was observable by a
+  timer before the ASM `mov rsp,next_rsp` (`RSP_FOREIGN`). `syscall_handler_asm`
+  now keeps IF=0 across the publication → physical switch; a permanent
+  site-tagged ownership assertion (`switch_out_clear_at`) guards the boundary.
+
+- **#477: atomic user/heap slot claim (#481).** `alloc_user_slot` and
+  `alloc_heap_slot` used an unsynchronized check-then-set, so concurrent spawns
+  could be handed the same slot. They now claim with
+  `compare_exchange(false,true)` and skip contended slots. Regression
+  `paging_slot_claim_atomic`.
+
+- **#482: `wait_for_process` publishes `KPRCB.current_thread` only after leaving
+  the bootstrap stack (#483).** The launch handover published the target
+  identity while the CPU still executed on the bootstrap stack; it is now
+  published at IF=0 immediately before the Ring-3 `iretq`. Regression
+  `[WF_ORDER_VIOLATION]`.
+
+- **#488: boot-thread `IRETQ_BAD_FRAME` false positive removed (#489).** The
+  boot thread's `kernel_stack_top` is an RSP snapshot, not the bootstrap stack
+  top; the IRETQ audit now exempts `BOOT_TID` (the general Ring-3 check is
+  unchanged).
+
+### Known issues
+
+- **#490: three post-#482 residual failures** (`Option::unwrap() on None`,
+  Object Manager `#GP`, Ring-3 `#UD`) are **not reproduced** across QEMU
+  SMP1/2/4 and VBox SMP2 churn campaigns; tracked, not fixed.
+- **#491: `ntpd` cannot apply the clock** (`ob_set_datetime` →
+  `rtc_write_unacked`).
+- `#353` (`neodev test` Command/Shell detection flaky at SMP2) and `#486` (TCP
+  data path incomplete) remain open.
+
+## v0.51.3 — 2026-10-03
+
+### Added
+
+- **NLTv3 internationalization — complete NLT milestone (#90, #91, #106–#111).**
+  The NLT format now lives in a single shared, `no_std`, unit-tested crate
+  `libnlt` (38 tests) used by the compiler (`nltc`), the runtime
+  (`libneodos::i18n`) and the tools, replacing the duplicated NLTv2 parser that
+  used to live in `libneodos`. New in NLTv3: LZSS payload compression,
+  UTF-16LE string storage with UTF-8 transcoding on load, CLDR plural forms
+  (`plural_id!`), regional number/currency/date/time formatting
+  (`[region]` block), RTL detection and visual run reordering, and optional
+  Ed25519 signatures (`libnlt/signatures`, `nltc --verify`). The old
+  string-key design doc `docs/design/i18n-design.md` was removed;
+  `docs/userland/nlt.md` is now the format reference. NeoShell gained a
+  `LOCALE [LIST | SET <tag>]` built-in and `i18n_format`/`i18n_available_locales`
+  are wired up; `neolocale` was converted into a real host tool
+  (validate/stats/diff/check/create) and `nxlocale` gained a `region` command.
+
+### Changed
+
+- Milestone separation: the NLT i18n work is published as its own **v0.51.3**
+  milestone instead of being bundled into the v0.56–v0.60 range. See
+  `ROADMAP.md` M0.2. The per-user locale (I18N-P6) remains in v0.56.
+
+### Fixed
+
+- `res_read_all()` read the whole scratch buffer instead of the resource size,
+  corrupting package-bundled NLTs at load time (`copy_from_slice` length
+  mismatch panic during NeoInit). It now reads exactly `ObQueryInfo(File).size`.
+
+### Tests
+
+- 13 new in-kernel i18n tests (`neodos-kernel/src/i18n_tests.rs`); kernel suite
+  **791 → 804 passing**. 38 `libnlt` host tests.
+
+## Unreleased
+
+### Added
+
+- **Shared network configuration backend `libnet::config` (#363).** A single API
+  for reading/writing the interface configuration and applying it to the NIC.
+  `netcfg`, `dhcpd`, `ipconfig` and `netapplier` no longer hardcode
+  `Network\Interfaces\0` or its value names. The pure contract (canonical names,
+  `NetConfig`, IPv4 parse/format, `/24` default, interface path) lives in the
+  new dependency-free host-testable `libnet-config` crate (7 unit tests); the
+  syscall adapter (`load`/`store`/`publish_lease`/`apply`/…) lives in
+  `libnet::config`. The Registry remains the single source of truth.
+- **`ntpd` — persistent NTP/SNTP synchronization daemon (#26).** New Ring 3
+  service (`userbin/ntpd/`, `C:\System\Tools\ntpd.nxe`) started by the Service
+  Manager (`Services\Ntpd`, StartType=Auto). Reads `Services\Ntpd\Parameters`
+  (`Enabled`, `Servers`, `Interval`, `Timeout`), resolves servers via
+  `libnet::dns`, performs SNTP unicast (UDP 123), computes offset/delay and
+  applies the corrected UTC time. Publishes status to `Services\Ntpd\Status`.
+  Retries with exponential backoff and tolerates missing network/DNS/servers.
+  Protocol logic lives in the new host-testable `libntp` crate (18 unit tests).
+- **System clock set API.** `ObSetInfoClass::DateTime` (50) on
+  `\Global\Info\DateTime` (admin-only), plumbed through `rtc_bridge` and a new
+  `EVENT_RTC_WRITE` (32) handled by `rtc.nem`; `libneodos::ob_set_datetime()`.
+  This is a direct step; slew/drift discipline is tracked in #356.
+- Default `Ntpd` service and `Parameters` key in the generated Registry hive
+  (`tools/gen-hiv`).
+- Kernel tests `ob_set_datetime_accepts_valid` and
+  `ob_set_datetime_rejects_invalid`.
+
+### Changed
+
+- **`netcfg` is now exclusively the network configuration CLI (#365).** The
+  resident configurator daemon was removed from `netcfg` (no more
+  `run_daemon()`, no `Netcfg` service); bare `netcfg` applies the Registry
+  configuration once and exits, so it can no longer block NeoShell. The
+  continuous application role moved to a new Ring 3 service, **`NetApplier`**
+  (`userbin/netapplier/`, `C:\System\Tools\netapplier.nxe`, StartType=Auto), the
+  single authority that reads `Network\Interfaces\0` and applies IP/mask/gateway
+  to the NIC. `dhcpd` still only publishes the lease. The generated Registry
+  hive (`tools/gen-hiv`) now creates `Services\NetApplier` instead of
+  `Services\Netcfg`. `netd` is not the applier (see #362). `SetNicIp` (27) /
+  `SetNicGateway` (28) and the interface value names are unchanged.
+
+### Fixed
+
+- **Default `/24` subnet mask is now correct (#367).** `DEFAULT_MASK` in
+  `libnet-config` was `0x00FF_FFFF` (byte-swapped: `0.255.255.255`), so an
+  interface with `SubnetMask = 0` got a wrong mask and same-subnet gateways were
+  treated as off-subnet. It is now `0xFFFF_FF00` (`255.255.255.0`), matching
+  `parse_ip`/`Ipv4Addr::to_u32`. `dhcpd`'s lease default (`0x00FFFFFF`) and the
+  APIPA `/16` mask (`0x0000FFFF` -> `0xFFFF0000`) were fixed as well.
+- **e1000 RX ring is now initialized before `RCTL.EN` is set (#341).**
+  `init_e1000_hw()` previously set `RCTL.EN` **before** programming
+  `RDBAL/RDBAH/RDLEN/RDH/RDT` and the per-descriptor `addr`/`status`, enabling
+  the receive engine against a partially built ring. That produced descriptors
+  with `DD` set and `length == 0` (320–1248 per boot) and caused frames present
+  on the wire — notably a DHCP `OFFER` — to be dropped, forcing a `DISCOVER`
+  retry. The ring is now fully programmed first and `RCTL.EN` is set last
+  (matches the Intel 8254x init flow and the Linux `e1000` driver). No change to
+  descriptor consumption, RX polling, the socket path, the scheduler or DHCP
+  timing.
+- **e1000 link state is now real, not assumed (#339).** The NEM e1000 driver
+  exposed the `NetworkInterface::is_link_up` default (`true`), so the kernel
+  always reported the NIC as up even before the controller/link settled.
+  `init_e1000_hw()` now performs a bounded wait for `STATUS.LU` and caches
+  readiness; the driver exports `driver_link_up()`, which publishes live link
+  state via `hst_set_network_link_state`, and `netd` stores it in
+  `NicSlot::link_up` through `nic_poll_link_state()`. The `NicInfo` query and
+  `netcfg`'s link-up edge detection now read the cached real state instead of a
+  hardcoded `1`. A freshly registered NIC defaults to link-down and is never
+  advertised as usable before its driver reports a real link.
+- Regression test `net_nic_link_state_follows_driver_poll` (kernel 744 → 745).
+
+### Notes
+
+- #341 evidence (see `docs/investigation/netd-dhcp-first-discover-2026-09-27.md`):
+  a controlled A/B changing only the RX init order moved `DD+len=0` from
+  320–1248/boot to **0** and the guest-side OFFER-loss class (`GUEST_MISS`)
+  from 6/25 to **0/25**, while the independent external server miss
+  (`EXTERNAL_MISS`) stayed unchanged (6/25 vs 7/25).
+- The #339 investigation determined that the first DHCP `DISCOVER` is not lost
+  during an RX/link bring-up window. The intermittent first-`DISCOVER` loss has
+  two independent remainders: an external server miss and a `dhcpd` timeout that
+  is counted in `sys_yield` iterations; both are tracked separately.
+
+## v0.51.2 — 2026-09-27
+
+### Fixed
+
+- **SMP4 shell GPF — idle-fallback cross-CPU ownership (#293).** The idle
+  fallback in `syscall_try_resched` scanned the global KTHREAD table and took
+  the first `is_idle` without checking CPU ownership. On SMP, several CPUs could
+  adopt the same idle KTHREAD and execute on one kernel stack
+  (`STACK_OWNER_MISMATCH`), leading to an invalid frame and a `#GP`/`#PF` on the
+  shell/SMP path. The fallback now requires `k.is_idle && k.cpu == this_cpu`,
+  and uses the selected idle's TID instead of the constant `IDLE_TID`
+  (per-CPU idle TIDs 1..N). No scheduling policy change. See
+  `docs/investigation/smp4-shell-gpf-2026-09-27.md` (Phases 293-A..293-D).
+- Regression test `scheduler::tests::idle_fallback_requires_cpu_ownership`
+  (kernel suite 737 → 738).
+
+### Validation
+
+- 738/738 kernel tests PASS.
+- VirtualBox SMP4 real-shell smoke test PASS; 46
+  `read → syscall_try_resched → idle fallback` cycles exercised;
+  `CTX_DOUBLE_OWNER=0`, `STACK_OWNER_MISMATCH=0`, `GPF/PF/PANIC=0`.
+
 ## v0.51.1 — 2026-09-27
 
 ### Added — Phase 15-A.1 (CPU accounting + `neotop v0.2`)

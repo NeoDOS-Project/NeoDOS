@@ -16,7 +16,7 @@ The scheduler uses a **two-tier** decision mechanism:
 | 2    | **Global Priority Scan** | Fair round-robin selection across all Ready threads |
 | 3    | **Idle fallback** | Select TID 1 (PRIORITY_IDLE) when no Ready thread exists |
 
-```
+```text
 Thread wakes / created / unblocked
         |
         v
@@ -41,6 +41,7 @@ Thread wakes / created / unblocked
 ### Key invariant: the run queue is NOT a scheduling cache
 
 The per-CPU run queue is used **only** for:
+
 - Notification of new threads (`add_ring3_process`, `add_thread_to_process`)
 - Remote wakeups (`wake_waiters`, `wake_blocked_on_magic` → IPI to target CPU)
 - SMP work stealing (`try_work_steal` → `steal_from_cpu_run_queue`)
@@ -56,7 +57,7 @@ bypassing the fairness guarantees of the scan.
 
 ### State transitions
 
-```
+```text
                  ┌─────────────────┐
                  │     READY       │
                  └────────┬────────┘
@@ -77,7 +78,7 @@ bypassing the fairness guarantees of the scan.
 
 ### Thread creation flow
 
-```
+```text
 spawn_kthread()          add_ring3_process()
     │                         │
     ├─ alloc_kthread_slot()   ├─ alloc_eprocess_slot()
@@ -140,16 +141,58 @@ Ready threads at the same priority.
 
 ## Timer Tick
 
-`on_timer_tick()` at each timer interrupt:
+`on_timer_tick(current_rsp, interrupted_cs)` at each timer interrupt:
 
 1. Increment `timer_ticks`
 2. If current thread is Running:
    - Decrement `time_slice_remaining`
-   - On expiry: `state = Ready`, emit `trace_sched_state!`, set `needs_resched`
+   - On expiry: emit `trace_sched_state!`, set `needs_resched`
 3. Every `AGING_INTERVAL_TICKS` (500): run aging check
 
 The expired thread transitions to Ready but is **not** re-enqueued in the run
 queue. The next `schedule()` call finds it via the global priority scan.
+
+### #338: Ring-0 interruption must not publish a Ready dispatch frame
+
+`interrupted_cs` is the CS of the frame the timer interrupted (`cs & 3 == 3`
+means Ring 3). Timeslice expiry only transitions the thread to `Ready` when the
+interrupted context was **Ring 3**. A user thread whose slice expires while it
+is inside a syscall runs on its Ring-0 kernel stack (`cs == 0x08`); publishing
+it `Ready` with that frame would make it permanently undispatchable, because
+`schedule_with(require_ring3 = true)` rejects every non-Ring-3 frame. In that
+case the thread keeps a fresh slice and stays `Running`; its syscall return path
+captures the real Ring-3 frame and re-enqueues it.
+
+Invariant:
+
+```text
+Ready + saved dispatch frame  =>  cs & 3 == 3   (for user threads)
+```
+
+The same gate is applied to the timer switch-out save block in `arch/x64/idt.rs`
+(user-preempt branch): a non-Ring-3 frame is never published as a Ready dispatch
+frame for a user thread. Kernel threads and idle threads (threads without a user
+image: `Eprocess::user_slot == None`, or `is_idle`) are exempt — they run in
+Ring 0 by design and are dispatched through their Ring-0 frame by
+`schedule_with(require_ring3 = false)`. Exempting them by `pid == 0` would be
+wrong: `spawn_kthread_named` gives kernel threads a real pid (e.g. `netpump`), so
+keying on the pid starves them.
+
+#### #474: the kernel-preempt branch is not kernel-only
+
+#338 left the *kernel-preempt* branch of `timer_handler_inner` ungated, on the
+assumption that only kernel threads reach it. A **user** thread interrupted while
+in Ring 0 (`cs == 0x08`, inside a syscall) reaches it too. When it has
+`yield_requested` set (`sys_yield` records the intent; a timer can land before
+`syscall_try_resched` consumes it), the branch published the thread `Ready` with
+a transient Ring-0 call frame. A later `mov rsp,next_rsp; pop 15; iretq` then read
+arbitrary stack contents as RIP/CS and jumped to a wild address
+(`INVALID_OPCODE rip=0x148` on SMP2). The gate is now applied there as well via
+`schedule::ring0_publish_is_dispatchable(interrupted_cs, is_kernel_thread)`: a
+user thread in Ring 0 is deferred to its syscall-return path (NEED_RESCHED),
+while genuine kernel/idle threads keep the historical Ring-0 preemption.
+
+See `docs/investigation/issue-474-smp2-ring0-invalid-opcode.md`.
 
 ---
 
@@ -279,6 +322,7 @@ timer_handler_asm:
 ## Kernel Threads (`spawn_kthread`)
 
 Kernel threads are created with:
+
 - A **heap-allocated stack** (`Box<AlignedKStack>` of 16 KB, 16-byte aligned)
 - An EPROCESS marked as kernel (`Eprocess::new_kernel`)
 - State `Ready`, enqueued in `kthreads` table but **not** in the per-CPU run queue
@@ -287,26 +331,32 @@ Kernel threads are created with:
 The kernel stack is freed when the Kthread is dropped (via `kill_pid` or
 `recycle_thread`), which drops the `Box<AlignedKStack>`.
 
-### `netd` — network kernel thread
+### `netpump` — network kernel thread (RX pump)
 
 ```rust
 pub fn spawn_net_kthread(entry: u64) -> Option<u32> {
     crate::hal::without_interrupts(|| {
-        current_scheduler().lock().spawn_kthread(entry, PRIORITY_NORMAL)
+        current_scheduler().lock()
+            .spawn_kthread_named(entry, PRIORITY_NORMAL, "netpump")
     })
 }
 ```
 
-`netd` is created during boot (in `main.rs`) after all kernel tests complete.
-It runs `net_kthread_entry()` which loops:
+`netpump` is created during boot (in `main.rs`) after all kernel tests complete.
+It runs `netpump_entry()` which loops:
+
 ```rust
-pub fn net_kthread_entry() -> ! {
+pub fn netpump_entry() -> ! {
     loop {
         net_tick();                       // network_poll_all + arp_tick + dns_tick
+        yield_current_thread();
         for _ in 0..64 { core::hint::spin_loop(); }
     }
 }
 ```
+
+This is the Ring-0 data-plane worker. It is **not** the Ring 3 `netd` network
+service (#362/#372), which the kernel Service Manager launches separately.
 
 **Scheduler lock protection**: `spawn_net_kthread` wraps the lock acquisition in
 `without_interrupts`. This prevents a deadlock where the timer IRQ handler
@@ -336,7 +386,7 @@ is empty and another has Ready threads.
 
 ### Symptom
 
-When `netd` was first introduced, the static `NET_THREAD_STACK` ([u8; 16384])
+When the network kernel thread was first introduced, the static `NET_THREAD_STACK` ([u8; 16384])
 caused a GPF at the `iretq` instruction (`0x400c811`) with error code `0xb17c`
 (segment selector referencing the LDT). The CS value at `[sp-16]` of the initial
 frame (written by `init_ring0_frame()`) was corrupted.
@@ -381,7 +431,7 @@ Shared per-process resources: address space, handle table, heap, mmap, token.
 ### ThreadState
 
 ```rust
-pub enum ThreadState { Ready, Running, Blocked { waiting_for: u32 }, Terminated }
+pub enum ThreadState { Ready, Running, Blocked { waiting_for: u64 }, Suspended, Terminated }
 ```
 
 ### Names (Phase 14-A)
@@ -404,7 +454,7 @@ metadata only**:
   ASCII. No heap allocation is performed for names.
 - Defaults: BSP idle `idle/0`; AP idle `idle/<cpu>` (`register_ap_idle`); boot
   thread `boot`; `spawn_kthread` `kthread`; spawned user processes take the
-  executable basename (e.g. `neoshell`); the network thread is `netd`.
+  executable basename (e.g. `neoshell`); the network kernel thread is `netpump`.
 
 ### Inspection Snapshot (Phase 14-B)
 
@@ -419,13 +469,23 @@ the logical process/thread registry (`Scheduler.eprocesses` /
   does not appear. `Terminated`-but-not-yet-reaped threads remain visible with
   `state == Terminated`.
 - Snapshot model: bounded, owned copies — `ProcessSnapshot { pid, name,
-  thread_count, cpu_time }` and `ThreadSnapshot { tid, pid, name, state, cpu,
-  idle, is_current, cpu_time }`. Names reuse `KernelName` (`NAME_MAX = 32`); no
-  references into live objects and no heap allocation proportional to string
-  length. The container is fixed-capacity (`MAX_SNAPSHOT_PROCESSES` /
-  `MAX_SNAPSHOT_THREADS`) and sets `truncated` when the registry is larger.
-  `cpu_time` is the Phase 15-A.1 monotonic execution counter (see "CPU Execution
-  Accounting" above); process `cpu_time` is the sum over its threads.
+  thread_count, cpu_time, committed_bytes, working_set_bytes }` and
+  `ThreadSnapshot { tid, pid, name, state, cpu, idle, is_current, cpu_time }`.
+  Names reuse `KernelName` (`NAME_MAX = 32`); no references into live objects and
+  no heap allocation proportional to string length. The container is
+  fixed-capacity (`MAX_SNAPSHOT_PROCESSES` / `MAX_SNAPSHOT_THREADS`) and sets
+  `truncated` when the registry is larger. `cpu_time` is the Phase 15-A.1
+  monotonic execution counter (see "CPU Execution Accounting" above); process
+  `cpu_time` is the sum over its threads.
+- Memory (MEM-PROC #274): `committed_bytes` = heap span
+  (`heap_break - heap_base`) plus the sum of `mmap_regions.len`;
+  `working_set_bytes` = mapped 4 KB heap pages × 4096, maintained per heap slot
+  in `arch::x64::paging` at the single choke points `heap_alloc_page` /
+  `heap_free_page` / `heap_free_range` (so demand-faulted pages are counted
+  too). Idle processes report 0. Note: processes that do not grow their heap or
+  map regions legitimately report `0` for both (many `.nxe` use static buffers);
+  a process is only expected to show non-zero memory while it holds allocated
+  heap/mmap.
 - Consistency: all fields are copied while the global `SCHEDULER` mutex is held;
   the lock is released before the snapshot is formatted or printed (no console
   I/O under a lock). `KPRCB.current_thread` is written under the same mutex, so
@@ -471,7 +531,7 @@ Each CPU has a KPRCB at a fixed address, accessed via GS segment:
 | Function                          | Purpose                        |
 |-----------------------------------|--------------------------------|
 | `sched_set_process_priority(pid, priority)` | Change priority at runtime   |
-| `sys_yield(RAX=2)`                | Voluntary yield                 |
+| `sys_yield(RAX=1)`                | Voluntary yield                 |
 | `spawn_kthread(entry, priority)`  | Create kernel thread (Ring 0)   |
 | `add_ring3_process(...)`          | Create user thread (Ring 3)     |
 

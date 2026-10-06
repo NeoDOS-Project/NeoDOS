@@ -77,6 +77,54 @@ pub fn pad_width(len: usize, width: usize) -> usize {
     width.saturating_sub(len)
 }
 
+/// MEM-PROC (#274): render a byte count as a short human-readable string with a
+/// fixed-ish width, using binary units. Zero renders as `0K`, `< 1 KiB` as
+/// `0.5K`, and values are one decimal in KiB/MiB/GiB. Writes into `out` and
+/// returns the slice actually used (no allocation, no formatting machinery).
+///
+/// `out` must be at least 8 bytes. The result is deterministic so the column
+/// width stays stable across frames.
+pub fn format_bytes(out: &mut [u8], bytes: u64) -> &[u8] {
+    const KIB: u64 = 1024;
+    const MIB: u64 = 1024 * KIB;
+    const GIB: u64 = 1024 * MIB;
+    let (val10, unit): (u64, u8) = if bytes >= GIB {
+        (bytes.saturating_mul(10) / GIB, b'G')
+    } else if bytes >= MIB {
+        (bytes.saturating_mul(10) / MIB, b'M')
+    } else if bytes >= KIB {
+        (bytes.saturating_mul(10) / KIB, b'K')
+    } else if bytes > 0 {
+        (bytes.saturating_mul(10) / KIB, b'K') // < 1 KiB → 0.0K..0.9K
+    } else {
+        (0, b'K')
+    };
+    let whole = val10 / 10;
+    let frac = val10 % 10;
+    // Write "whole.frac<unit>" right-aligned to width 7, e.g. "  1.5M".
+    let mut tmp = [0u8; 8];
+    let mut n = 0usize;
+    // whole
+    let mut digits = [0u8; 20];
+    let mut dn = 0usize;
+    let mut w = whole;
+    if w == 0 { digits[0] = b'0'; dn = 1; } else {
+        while w > 0 { digits[dn] = b'0' + (w % 10) as u8; dn += 1; w /= 10; }
+    }
+    let mut di = dn;
+    while di > 0 { di -= 1; tmp[n] = digits[di]; n += 1; }
+    tmp[n] = b'.'; n += 1;
+    tmp[n] = b'0' + frac as u8; n += 1;
+    tmp[n] = unit; n += 1;
+    // right-align into a fixed inner width of 6
+    let inner = 6usize;
+    let mut total = 0usize;
+    let pad = inner.saturating_sub(n);
+    for i in 0..pad { out[total] = b' '; total += 1; let _ = i; }
+    for i in 0..n { out[total] = tmp[i]; total += 1; }
+    &out[..total]
+}
+
 /// Map `Kthread::state` (`ThreadState::to_u8`) to a display string.
 pub fn thread_state_str(state: u8) -> &'static str {
     match state {
@@ -259,10 +307,23 @@ mod tests {
 
     #[test]
     fn proc_header_validation() {
-        assert!(proc_header_matches(2, 48, 56, 2, 48, 56));
-        assert!(!proc_header_matches(1, 48, 56, 2, 48, 56));
-        assert!(!proc_header_matches(2, 40, 56, 2, 48, 56));
-        assert!(!proc_header_matches(2, 48, 48, 2, 48, 56));
+        assert!(proc_header_matches(3, 64, 56, 3, 64, 56));
+        assert!(!proc_header_matches(2, 64, 56, 3, 64, 56));
+        assert!(!proc_header_matches(1, 64, 56, 3, 64, 56));
+        assert!(!proc_header_matches(3, 48, 56, 3, 64, 56));
+        assert!(!proc_header_matches(3, 64, 48, 3, 64, 56));
+    }
+
+    #[test]
+    fn bytes_formatting() {
+        let mut b = [0u8; 8];
+        assert_eq!(format_bytes(&mut b, 0), b"  0.0K");
+        assert_eq!(format_bytes(&mut b, 1536), b"  1.5K");
+        assert_eq!(format_bytes(&mut b, 1024 * 1024), b"  1.0M");
+        assert_eq!(format_bytes(&mut b, 3 * 1024 * 1024 + 512 * 1024), b"  3.5M");
+        assert_eq!(format_bytes(&mut b, 2 * 1024 * 1024 * 1024), b"  2.0G");
+        // sub-KiB non-zero must not round up to a whole KiB
+        assert_eq!(format_bytes(&mut b, 512), b"  0.5K");
     }
 
     #[test]

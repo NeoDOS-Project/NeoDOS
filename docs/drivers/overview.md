@@ -250,16 +250,12 @@ pub struct BootSummary {
 If a BOOT driver fails, the kernel continues (no panic); the driver is marked
 FAULTED and logged. 8 tests.
 
-## NDREG CLI
+## Driver diagnostics
 
-Shell command `NDREG` for driver diagnostics:
-
-| Command | Purpose                                |
-|---------|----------------------------------------|
-| LIST    | List all loaded drivers + state        |
-| SHOW    | Show driver details                    |
-| QUERY   | Query driver capabilities              |
-| RUNTIME | Runtime statistics                     |
+There is currently no userland driver-diagnostics CLI: the interim tools
+(`ndreg.nxe`, `loadnem.nxe`) were removed pending a redesigned interface.
+Driver state is observable through the Object Manager
+(`ob_open("\Global\Info\Drivers")` + `ob_query_info(Drivers)`).
 | HEALTH  | Health check (state, errors, caps)     |
 | DEBUG   | Debug-level info (isolation, memory)   |
 | LOAD    | Load a .nem file                      |

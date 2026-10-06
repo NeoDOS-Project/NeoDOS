@@ -67,6 +67,7 @@ Connection lifecycle: `build_tcp_segment()`, `send_tcp_segment()`, `tcp_send_syn
 | 21 | `SocketSend` | Send data on connected socket |
 | 22 | `SocketClose` | Close socket (FIN or RST) |
 | 27 | `SetNicIp` | Set NIC IP address from userspace |
+| 28 | `SetNicGateway` | Set NIC default gateway (`0.0.0.0` = unset) |
 
 Socket creation via `ob_create` with `attrs` encoding: bits 0-7 = socket type (1=TCP, 2=UDP, 3=Raw), bits 8-23 = port for well-known bindings.
 
@@ -122,6 +123,28 @@ NIC (e1000)
 5. Userspace DHCP service (`dhcpd.nxe`) configures IP asynchronously
 6. ARP cache begins accepting entries
 
+### Link state (`is_link_up`)
+
+NIC drivers run as NEM modules (`drivers/e1000`). The kernel NEM bridge
+(`src/drivers/nem/net_bridge.rs`) registers a bootstrap `NetworkInterface` at
+driver-load time, so it cannot call back into a driver that is still loading.
+Instead:
+
+- The e1000 driver exports `driver_link_up()`, which reads `STATUS.LU`
+  (with a link-ready flag cached during `init_e1000_hw`) and publishes the
+  state through `hst_set_network_link_state`.
+- The Ring-0 `netpump` kernel thread calls `nic::nic_poll_link_state()` once per `network_poll_all()` and
+  stores the result in `NicSlot::link_up`; the `NicInfo` query and the
+  `netapplier` link-up edge detection read that cached value.
+- A NIC is never advertised as link-up before its driver reports a real link.
+
+The e1000 is polled, not interrupt-driven: RX is drained by `network_poll_all()`
+from the Ring-0 `netpump` worker and from the `sys_yield` syscall path. (`netd`
+is now the Ring 3 network service — see `userland.md` — not the RX pump.)
+#339 established that this
+polling (not driver link/ring bring-up) is the relevant variable for the first
+DHCP `DISCOVER`.
+
 ### NicRegistry
 
 Manages up to 4 NIC slots. Each slot holds a `Box<dyn NetworkInterface>`.
@@ -148,11 +171,12 @@ dhcpd.nxe (Ring 3 user service)
   ├─ Performs DORA sequence:
   │   ├─ DISCOVER → wait → OFFER
   │   ├─ REQUEST  → wait → ACK
-  │   └─ On ACK: set NIC IP via libnet::set_ip()
+  │   └─ On ACK: publish IP/mask/gw/DNS to the Registry
+  │              (the netapplier service applies it to the NIC)
   │
   ├─ Manages lease renewal at 50% of lease time
   ├─ Falls back to APIPA (169.254.1.1) if DHCP fails
-  └─ Persists IP configuration to Registry
+  └─ Publishes IP configuration to the Registry (never applies it directly)
 
 Kernel (Ring 0) provides:
   ├─ NIC access (e1000 kernel stub or NEM driver)
@@ -166,7 +190,9 @@ Kernel (Ring 0) provides:
 1. **DISCOVER**: Broadcast UDP packet with DHCPDISCOVER message type
 2. **OFFER**: Received on bound UDP socket (port 68), parsed for offered IP and options
 3. **REQUEST**: Unicast or broadcast DHCPREQUEST with offered server ID
-4. **ACK**: Final acknowledgment, IP is configured via `ob_set_info(SetNicIp)`
+4. **ACK**: Final acknowledgment; the lease is published to the Registry and the
+   `netapplier` service applies it to the NIC (`SetNicIp`) — `dhcpd` never
+   configures the NIC directly
 
 ### Lease Renewal
 
@@ -184,7 +210,7 @@ The previous kernel-based DHCP implementation had fundamental architectural prob
 - `build_dhcp_packet()` used `Vec` (heap allocation) from timer IRQ context
 - `nic_send_packet()` acquired `NIC_REGISTRY.lock()` (spinlock) from IRQ context, risking deadlock
 - `dhcp_tick()` in the idle loop never ran because user threads were always `Ready`
-- Result: DHCP never progressed, and `netcfg` always fell back to APIPA
+- Result: DHCP never progressed, and the DHCP client always fell back to APIPA
 
 Moving DHCP to userspace resolves all these issues:
 
@@ -206,6 +232,56 @@ Moving DHCP to userspace resolves all these issues:
   DHCPServer  = <server IP> (DWORD)
 ```
 
+`dhcpd` only **publishes** here; the resident `netapplier` service reads this key
+and applies IP/mask/gateway to the runtime NIC (single applier; see #365).
+
+## DNS Resolver (Userland)
+
+DNS resolution is **not** a kernel subsystem: like DHCP, it runs in user mode on
+top of the kernel's UDP sockets. The protocol is implemented once in the
+`libdns` crate and used by `libnet` (and therefore by `nslookup` and `ping`).
+
+| Layer | Path | Responsibility |
+| ------- | ------ | -------------- |
+| Wire format + resolver core | `libdns/src/lib.rs` | Query/response encoding, A/CNAME parsing, hostname validation, `DnsError`, retries/server selection |
+| Userland transport + config | `libnet/src/dns.rs` | UDP via `net.nxl`, Registry servers (`DnsServer`, `DnsServer2/3`), bounded cache, `resolve()` / `resolve_with_server()` |
+| Tools | `userbin/nslookup`, `userbin/ping` | Consume the shared resolver API |
+
+The kernel `src/net/dns.rs` module remains as an internal kernel-side parser and
+cache used by tests/`dns_tick`; it is not exposed to userland and does not
+duplicate the userland resolver path. Unifying it with `libdns` is tracked in
+issue #68.
+
+See `docs/networking/userland.md` §3.4–3.5 for the API, configuration and error
+taxonomy.
+
+## UDP Send Path (next-hop routing)
+
+Making DNS work on a real network required three fixes in the kernel/userland
+send path (both were latent because DHCP only uses broadcast):
+
+- **Source address.** A UDP socket bound to `0.0.0.0` (the DNS resolver binds
+  port 0) had an unspecified source address in the IP header. `socket_send_udp_raw`
+  now fills it from the NIC, except for broadcast datagrams (DHCP DISCOVER keeps
+  `0.0.0.0`).
+- **Next-hop routing.** IPv4 next-hop is centralized in `nic_next_hop(dest)`
+  (`NicRegistry::next_hop_ip`): on-link → the destination; off-link → the NIC's
+  configured gateway; off-link **without** a gateway (`0.0.0.0`, unset) → no valid
+  next hop and the send fails cleanly (it never ARPs the remote destination). The
+  gateway is a real per-NIC property (`NicSlot::gateway`), set by
+  `ObSetInfoClass::SetNicGateway` (28) from DHCP Option 3 / static config, and
+  persisted in `Network\Interfaces\0\Gateway`. `socket_send_udp_raw` and
+  `icmp_ping` both use `nic_next_hop`. There is no implicit `10.0.1.1` fallback.
+- **Datagram dispatch.** `udp_dispatch` matched connected sockets only by
+  `remote.port`; it now matches the socket's **local port** (`dst_port`) and,
+  when set, the remote port, so a previous socket cannot capture replies
+  addressed to a different local port.
+
+Because `netpump` (not the syscall) drives RX polling and there is no blocking
+socket wait syscall, the userland resolver waits for the reply with an RDTSC time
+budget rather than a bare `sys_yield` loop (which returns immediately when no
+other thread is runnable).
+
 ## QEMU Networking
 
 NeoDOS uses QEMU's user-mode networking (SLiRP) by default, which requires **no root/sudo privileges**.
@@ -223,7 +299,7 @@ The host is accessible at 10.0.1.1 and provides NAT to the outside world.
 ### TAP Mode (requires privileges)
 
 ```bash
-bash scripts/qemu-debug.sh --tap
+neodev run --net tap
 ```
 
 TAP networking requires:
@@ -246,7 +322,7 @@ Useful when the guest needs direct network access (e.g., DHCP from a real LAN se
 | tcp.rs | `src/net/tcp.rs` |
 | socket.rs | `src/net/socket.rs` |
 | nic.rs | `src/net/nic.rs` |
-| e1000.rs | `src/net/e1000.rs` |
+| e1000 | `drivers/e1000/` (NEM) |
 | tests.rs | `src/net/tests.rs` |
 
 User-mode DHCP service: `userbin/dhcpd/src/main.rs`

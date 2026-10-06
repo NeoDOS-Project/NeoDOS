@@ -157,19 +157,18 @@ pub fn icmp_ping(dest_ip: crate::net::types::Ipv4Addr, timeout_us: u64) -> Optio
     if src_ip == Ipv4Addr::unspecified() { return None; }
 
     // Get source MAC
-    let (src_mac, subnet_mask, gateway) = {
+    let src_mac = {
         let mut registry = NIC_REGISTRY.lock();
-        let nic = registry.get_mut(nic_id)?;
-        (nic.mac_address(), nic.subnet_mask(), nic.gateway())
+        registry.get_mut(nic_id)?.mac_address()
     };
 
-    // Determine target IP for ARP resolution (gateway if off-subnet)
-    let arp_target = if (dest_ip.to_u32() & subnet_mask.to_u32()) == (src_ip.to_u32() & subnet_mask.to_u32()) {
-        dest_ip
-    } else {
-        ktrace!(crate::log::LogSubsys::Icmp, "{} is off-subnet, routing via gateway {}", dest_ip, gateway);
-        gateway
-    };
+    // Next hop (single source of truth, `nic_next_hop`): on-link -> destination;
+    // off-link -> configured gateway; off-link without a gateway -> fail cleanly
+    // (never ARP the remote destination).
+    let arp_target = crate::net::nic::nic_next_hop(dest_ip)?;
+    if arp_target != dest_ip {
+        ktrace!(crate::log::LogSubsys::Icmp, "{} is off-subnet, routing via gateway {}", dest_ip, arp_target);
+    }
 
     // Resolve destination MAC — try ARP cache first
     let dest_mac = crate::net::arp::arp_lookup(arp_target).or_else(|| {

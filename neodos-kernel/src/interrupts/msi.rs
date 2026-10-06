@@ -198,11 +198,17 @@ pub fn configure_msix_entry(
     let virt_table = table_phys;
     let entry_addr = virt_table + (entry_index as u64) * 16;
     unsafe {
+        // The MSI-X table lives in device MMIO (mapped UC-). Write each entry
+        // field through the HAL MMIO abstraction.
         let entry = entry_addr as *mut MsixTableEntry;
-        (*entry).msg_addr_low = 0xFEE0_0000;
-        (*entry).msg_addr_high = 0;
-        (*entry).msg_data = vector as u32;
-        (*entry).vector_ctrl = 0;
+        crate::hal::mmio::write32(
+            core::ptr::addr_of_mut!((*entry).msg_addr_low) as usize, 0xFEE0_0000);
+        crate::hal::mmio::write32(
+            core::ptr::addr_of_mut!((*entry).msg_addr_high) as usize, 0);
+        crate::hal::mmio::write32(
+            core::ptr::addr_of_mut!((*entry).msg_data) as usize, vector as u32);
+        crate::hal::mmio::write32(
+            core::ptr::addr_of_mut!((*entry).vector_ctrl) as usize, 0);
     }
 
     let new_ctrl = msg_ctrl | (1 << 15);

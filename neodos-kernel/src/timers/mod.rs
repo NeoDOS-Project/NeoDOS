@@ -45,9 +45,29 @@ pub fn init() {
     if hpet::init_hpet() {
         kinfo!(LogSubsys::Timers, "HPET initialized at 1 KHz");
         set_active(TimerSource::Hpet);
-        return;
+    } else {
+        kwarn!(LogSubsys::Timers, "HPET not available, using PIT (18.2 Hz)");
+        set_active(TimerSource::Pit);
     }
 
-    kwarn!(LogSubsys::Timers, "HPET not available, using PIT (18.2 Hz)");
-    set_active(TimerSource::Pit);
+    register_hal_hooks();
+}
+
+/// Push the timer source's tick rate and busy-wait down into the HAL so the
+/// HAL does not need to depend on the `timers` subsystem.
+fn register_hal_hooks() {
+    let rate = match active() {
+        TimerSource::Pit => 18,
+        TimerSource::Hpet | TimerSource::ApicTimer => 1_000_000_000 / TICK_INTERVAL_US,
+    };
+    let sleep = if active() == TimerSource::Hpet {
+        Some(hpet_sleep_adapter as fn(u32))
+    } else {
+        None
+    };
+    crate::hal::set_timer_hooks(rate, sleep, Some(init as fn()));
+}
+
+fn hpet_sleep_adapter(us: u32) {
+    hpet::sleep_us(us as u64);
 }

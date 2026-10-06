@@ -1,0 +1,43 @@
+[meta]
+app = "nslookup"
+language = "en-US"
+
+[ids]
+IDS_USAGE = 1001
+IDS_USAGE_LINE2 = 1002
+IDS_SERVER = 1003
+IDS_ADDRESS = 1004
+IDS_NAME = 1005
+IDS_ADDRESSES = 1006
+IDS_LOCAL = 1007
+IDS_ERR_NOCONFIG = 1010
+IDS_ERR_NOSERVER = 1011
+IDS_ERR_INVALID_HOST = 1012
+IDS_ERR_TIMEOUT = 1013
+IDS_ERR_UNREACHABLE = 1014
+IDS_ERR_NXDOMAIN = 1015
+IDS_ERR_MALFORMED = 1016
+IDS_ERR_TRUNCATED = 1017
+IDS_ERR_SERVER_FAILURE = 1018
+IDS_ERR_NO_A = 1019
+IDS_ERR_NETWORK = 1020
+
+[strings]
+IDS_USAGE = "nslookup <hostname> [dns-server]"
+IDS_USAGE_LINE2 = "  Resolve a hostname to IPv4 addresses using DNS."
+IDS_SERVER = "Server:    "
+IDS_ADDRESS = "Address:   "
+IDS_NAME = "Name:      "
+IDS_ADDRESSES = "Addresses: "
+IDS_LOCAL = "local"
+IDS_ERR_NOCONFIG = "nslookup: DNS configuration unavailable."
+IDS_ERR_NOSERVER = "nslookup: no DNS server configured."
+IDS_ERR_INVALID_HOST = "nslookup: invalid hostname."
+IDS_ERR_TIMEOUT = "nslookup: DNS request timed out."
+IDS_ERR_UNREACHABLE = "nslookup: DNS server unreachable."
+IDS_ERR_NXDOMAIN = "nslookup: hostname does not exist (NXDOMAIN)."
+IDS_ERR_MALFORMED = "nslookup: malformed DNS response."
+IDS_ERR_TRUNCATED = "nslookup: truncated DNS response."
+IDS_ERR_SERVER_FAILURE = "nslookup: DNS server returned an error."
+IDS_ERR_NO_A = "nslookup: no A record found."
+IDS_ERR_NETWORK = "nslookup: network unavailable."

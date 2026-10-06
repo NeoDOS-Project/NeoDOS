@@ -18,7 +18,7 @@ This command invokes the tdd-guide agent to enforce test-driven development.
 
 ## TDD Cycle
 
-```
+```text
 RED → GREEN → REFACTOR → REPEAT
 ```
 

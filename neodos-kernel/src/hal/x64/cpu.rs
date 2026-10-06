@@ -1,4 +1,25 @@
+use core::sync::atomic::{AtomicUsize, Ordering};
 use crate::hal::raw;
+
+type PowerFn = fn();
+
+static RESET_HOOK: AtomicUsize = AtomicUsize::new(0);
+static S5_HOOK: AtomicUsize = AtomicUsize::new(0);
+
+/// Register the power subsystem's reset and S5 shutdown hooks. The HAL does
+/// not depend on `power`; the power subsystem pushes its handlers down.
+pub fn set_power_hooks(reset: Option<PowerFn>, s5: Option<PowerFn>) {
+    RESET_HOOK.store(reset.map_or(0, |f| f as usize), Ordering::Release);
+    S5_HOOK.store(s5.map_or(0, |f| f as usize), Ordering::Release);
+}
+
+fn run_power_hook(hook: &AtomicUsize) {
+    let h = hook.load(Ordering::Acquire);
+    if h != 0 {
+        let f: PowerFn = unsafe { core::mem::transmute(h) };
+        f();
+    }
+}
 
 #[no_mangle]
 #[inline(never)]
@@ -30,10 +51,8 @@ pub extern "C" fn halt() -> ! {
 #[inline(never)]
 pub extern "C" fn reboot() -> ! {
     disable_interrupts();
-    // 1. ACPI reset register (from FADT)
-    if let Some(state) = crate::power::acpi::get_state() {
-        crate::power::acpi::acpi_reset(state);
-    }
+    // 1. ACPI reset register (from FADT), if the power subsystem registered it
+    run_power_hook(&RESET_HOOK);
     // 2. QEMU / legacy reset via 0xCF9
     unsafe {
         raw::raw_outb(0xCF9, 0x06);
@@ -49,10 +68,8 @@ pub extern "C" fn reboot() -> ! {
 #[inline(never)]
 pub extern "C" fn poweroff() -> ! {
     disable_interrupts();
-    // 1. ACPI S5 (soft-off)
-    if let Some(state) = crate::power::acpi::get_state() {
-        crate::power::acpi::acpi_s5_write(state);
-    }
+    // 1. ACPI S5 (soft-off), if the power subsystem registered it
+    run_power_hook(&S5_HOOK);
     // 2. QEMU / virtual machine debug ports
     unsafe {
         for &(port, val) in &[(0x404u16, 0x2000u16), (0x604u16, 0x2000u16),
@@ -60,10 +77,8 @@ pub extern "C" fn poweroff() -> ! {
             raw::raw_outw(port, val);
         }
     }
-    // 3. PS/2 keyboard controller (legacy)
-    unsafe {
-        raw::raw_outb(0x64u16, 0xFEu8);
-    }
+    // No PS/2 reset fallback: `0x64/0xFE` is a reset (reboot), not a power-off.
+    // If ACPI S5 and the VM ports above did not power off the machine, halt.
     halt()
 }
 
