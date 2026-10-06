@@ -16,16 +16,17 @@
 //! | 0x015  | 1    | need_resched          |
 //! | 0x016  | 1    | current_irql          |
 //! | 0x017  | 1    | _pad0                 |
-//! | 0x018  | 32   | run_queue (CpuRunQueue) |
-//! | 0x038  | 288  | slab_caches[9] (PerCpuSlabCache) |
-//! | 0x158  | 8    | interrupt_count       |
-//! | 0x160  | 8    | context_switch_count  |
-//! | 0x168  | 8    | timer_tick_count      |
-//! | 0x170  | 64   | exit context (RSP, RIP, RBX, R12-R15, RBP) |
-//! | 0x1B0  | 1    | exit_now              |
-//! | 0x1B1  | 1    | _pad1                 |
+//! | 0x018  | 1064 | run_queue (CpuRunQueue) |
+//! | 0x440  | 2592 | slab_caches[9] (PerCpuSlabCache) |
+//! | 0xE60  | 8    | interrupt_count       |
+//! | 0xE68  | 8    | context_switch_count  |
+//! | 0xE70  | 8    | timer_tick_count      |
+//! | 0xE78  | 64   | exit context (RSP, RIP, RBX, R12-R15, RBP) |
+//! | 0xEB8  | 1    | exit_now              |
+//! | 0xEB9  | 1    | _pad1                 |
 //! | ...    | ...  | (remaining bytes)     |
 
+use core::sync::atomic::{AtomicU8, Ordering};
 use crate::scheduler::Kthread;
 
 // ── Constants ────────────────────────────────────────────────────────────
@@ -49,16 +50,16 @@ pub const SLAB_BATCH_SIZE: usize = 32;
 use spin::Mutex;
 pub(crate) static RUNQUEUE_LOCKS: [Mutex<()>; MAX_CPUS] = [const { Mutex::new(()) }; MAX_CPUS];
 
-pub const RUNQUEUE_PRIO_CAP: usize = 15;
+pub const RUNQUEUE_PRIO_CAP: usize = 64;
 
 /// Priority sub-queue within a CpuRunQueue.
 #[repr(C)]
 pub struct PrioritySubQueue {
     pub entries: [u32; RUNQUEUE_PRIO_CAP],
-    pub head_idx: u8,
-    pub tail_idx: u8,
-    pub count: u8,
-    pub _pad: u8,
+    pub head_idx: u16,
+    pub tail_idx: u16,
+    pub count: u16,
+    pub _pad: u16,
 }
 
 impl PrioritySubQueue {
@@ -152,7 +153,7 @@ impl PrioritySubQueue {
 /// Per-CPU O(1) Priority RunQueue: 4 priority levels with bitmap indexing.
 #[repr(C)]
 pub struct CpuRunQueue {
-    pub active_bitmap: u8,
+    pub active_bitmap: AtomicU8,
     pub _pad0: u8,
     pub count: u16,
     pub _pad1: u32,
@@ -162,7 +163,7 @@ pub struct CpuRunQueue {
 impl CpuRunQueue {
     pub const fn new() -> Self {
         CpuRunQueue {
-            active_bitmap: 0,
+            active_bitmap: AtomicU8::new(0),
             _pad0: 0,
             count: 0,
             _pad1: 0,
@@ -179,7 +180,7 @@ impl CpuRunQueue {
     pub fn push_priority(&mut self, tid: u32, prio: u8) -> bool {
         let p = (prio as usize).min(3);
         if self.queues[p].push(tid) {
-            self.active_bitmap |= 1 << p;
+            self.active_bitmap.fetch_or(1 << p, Ordering::Release);
             self.count += 1;
             true
         } else {
@@ -189,32 +190,35 @@ impl CpuRunQueue {
 
     #[inline]
     pub fn push(&mut self, tid: u32) -> bool {
-        self.push_priority(tid, 2)
+        self.push_priority(tid, crate::scheduler::types::PRIORITY_NORMAL)
     }
 
     #[inline]
     pub fn pop(&mut self) -> Option<u32> {
-        if self.count == 0 || self.active_bitmap == 0 {
+        let bm = self.active_bitmap.load(Ordering::Acquire);
+        if self.count == 0 || bm == 0 {
             return None;
         }
-        let p = self.active_bitmap.trailing_zeros() as usize;
+        let p = bm.trailing_zeros() as usize;
         if p >= 4 {
             return None;
         }
         let tid = self.queues[p].pop()?;
         if self.queues[p].count == 0 {
-            self.active_bitmap &= !(1 << p);
+            self.active_bitmap.fetch_and(!(1 << p), Ordering::Release);
         }
+        debug_assert!(self.count > 0, "CpuRunQueue underflow");
         self.count = self.count.saturating_sub(1);
         Some(tid)
     }
 
     #[inline]
     pub fn peek_highest(&self) -> Option<u32> {
-        if self.count == 0 || self.active_bitmap == 0 {
+        let bm = self.active_bitmap.load(Ordering::Acquire);
+        if self.count == 0 || bm == 0 {
             None
         } else {
-            let p = self.active_bitmap.trailing_zeros() as usize;
+            let p = bm.trailing_zeros() as usize;
             if p < 4 {
                 self.queues[p].peek()
             } else {
@@ -229,7 +233,7 @@ impl CpuRunQueue {
     }
 
     pub fn clear(&mut self) {
-        self.active_bitmap = 0;
+        self.active_bitmap.store(0, Ordering::Release);
         self.count = 0;
         for q in self.queues.iter_mut() {
             q.head_idx = 0;
@@ -259,8 +263,9 @@ impl CpuRunQueue {
         for (p, q) in self.queues.iter_mut().enumerate() {
             if q.remove(tid) {
                 if q.count == 0 {
-                    self.active_bitmap &= !(1 << p);
+                    self.active_bitmap.fetch_and(!(1 << p), Ordering::Release);
                 }
+                debug_assert!(self.count > 0, "CpuRunQueue underflow");
                 self.count = self.count.saturating_sub(1);
                 return true;
             }
@@ -596,19 +601,29 @@ pub const OFFSET_IDLE: u32 = 0x014;
 pub const OFFSET_NEED_RESCHED: u32 = 0x015;
 pub const OFFSET_CURRENT_IRQL: u32 = 0x016;
 pub const OFFSET_RUN_QUEUE: u32 = 0x018;
-pub const OFFSET_SLAB_CACHES: u32 = 0x120;
-pub const OFFSET_INTERRUPT_COUNT: u32 = 0xB40;
-pub const OFFSET_CONTEXT_SWITCH_COUNT: u32 = 0xB48;
-pub const OFFSET_TIMER_TICK_COUNT: u32 = 0xB50;
-pub const OFFSET_EXIT_RSP: u32 = 0xB58;
-pub const OFFSET_EXIT_RIP: u32 = 0xB60;
-pub const OFFSET_EXIT_RBX: u32 = 0xB68;
-pub const OFFSET_EXIT_R12: u32 = 0xB70;
-pub const OFFSET_EXIT_R13: u32 = 0xB78;
-pub const OFFSET_EXIT_R14: u32 = 0xB80;
-pub const OFFSET_EXIT_R15: u32 = 0xB88;
-pub const OFFSET_EXIT_RBP: u32 = 0xB90;
-pub const OFFSET_EXIT_NOW: u32 = 0xB98;
+pub const OFFSET_SLAB_CACHES: u32 = 0x440;
+pub const OFFSET_INTERRUPT_COUNT: u32 = 0xE60;
+pub const OFFSET_CONTEXT_SWITCH_COUNT: u32 = 0xE68;
+pub const OFFSET_TIMER_TICK_COUNT: u32 = 0xE70;
+pub const OFFSET_EXIT_RSP: u32 = 0xE78;
+pub const OFFSET_EXIT_RIP: u32 = 0xE80;
+pub const OFFSET_EXIT_RBX: u32 = 0xE88;
+pub const OFFSET_EXIT_R12: u32 = 0xE90;
+pub const OFFSET_EXIT_R13: u32 = 0xE98;
+pub const OFFSET_EXIT_R14: u32 = 0xEA0;
+pub const OFFSET_EXIT_R15: u32 = 0xEA8;
+pub const OFFSET_EXIT_RBP: u32 = 0xEB0;
+pub const OFFSET_EXIT_NOW: u32 = 0xEB8;
+
+/// Lockless read of a CPU's active priority bitmap. Requires ZERO spinlocks.
+#[inline(always)]
+pub fn read_active_bitmap(cpu: usize) -> u8 {
+    if cpu >= MAX_CPUS { return 0; }
+    let addr = unsafe { KPRCB_PAGES[cpu] };
+    if addr == 0 { return 0; }
+    let rq_ptr = (addr + OFFSET_RUN_QUEUE as u64) as *const CpuRunQueue;
+    unsafe { (*rq_ptr).active_bitmap.load(Ordering::Acquire) }
+}
 
 // ── High-level per-CPU accessors ─────────────────────────────────────────
 

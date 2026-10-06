@@ -15,7 +15,13 @@ impl Scheduler {
             if rq.contains(k.tid) {
                 true
             } else {
-                rq.push_priority(k.tid, k.priority);
+                let pushed = rq.push_priority(k.tid, k.priority);
+                if !pushed {
+                    crate::serial_println!(
+                        "[SMPSCHED_WARN] CpuRunQueue FULL cpu={} tid={} prio={}",
+                        cpu, k.tid, k.priority
+                    );
+                }
                 false
             }
         });

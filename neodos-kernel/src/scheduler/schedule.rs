@@ -182,7 +182,7 @@ impl Scheduler {
     pub(crate) fn highest_ready_priority(&self) -> u8 {
         let mut p = PRIORITY_COUNT;
         for cpu in 0..MAX_CPUS {
-            let bitmap = crate::arch::x64::cpu_local::with_runqueue(cpu, |rq| rq.active_bitmap);
+            let bitmap = crate::arch::x64::cpu_local::read_active_bitmap(cpu);
             if bitmap != 0 {
                 let lowest_bit = bitmap.trailing_zeros() as u8;
                 if lowest_bit < p {

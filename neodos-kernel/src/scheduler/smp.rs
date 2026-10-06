@@ -94,7 +94,10 @@ impl Scheduler {
             // Pop victim
             let tid_popped = victim_rq.pop().unwrap();
             debug_assert_eq!(tid, tid_popped);
-            let prio = self.find_kthread(tid_popped).map(|k| k.priority).unwrap_or(2);
+            let prio = self
+                .find_kthread(tid_popped)
+                .map(|k| k.priority)
+                .unwrap_or(crate::scheduler::types::PRIORITY_NORMAL);
             // Update ownership optimistically
             let old_cpu: Option<u32> = if let Some(k) = self.find_kthread_mut(tid_popped) {
                 let old = k.cpu;
