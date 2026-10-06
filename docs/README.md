@@ -129,6 +129,7 @@
 | [KBD SMP Queue Validation](investigation/kbd-smp-queue-validation.md) | Keyboard SMP queue validation report |
 | [#331 SMP>1 exit TLB-shootdown self-deadlock](investigation/smp331-exit-tlb-shootdown-self-deadlock.md) | Recursive `SCHEDULER` lock in process-exit page free |
 | [#491 ntpd clock-set denied](investigation/issue-491-ntpd-clock-set-denied.md) | Stale RTC NEM driver in the image; build-pipeline root cause |
+| [#501 NeoInit SUSP](investigation/issue-501-neoinit-suspend.md) | Bootstrap hand-off marked the wrong thread; shell never started |
 
 ## Design Proposals
 
