@@ -187,6 +187,10 @@ Tests: 723 kernel + userbin/shell PASS.
    quedar obsoletos respecto a la fuente. `neodev build --quick --image` **no** los
    reconstruye y usa el fallback. Acción: ejecutar `neodev build --userbin --nxl --nem --image`
    tras cambios de ABI, o forzar reconstrucción en `--quick`.
+   **Actualización (#491 / NeoDev#21):** la generación de imagen ya reconstruye
+   los NEM drivers cuando se le permite construir, de modo que `--quick --image`
+   no vuelve a empaquetar un `rtc.nem` obsoleto (causa de que `ntpd` no pudiera
+   fijar el reloj). Los `.nxe`/`.nxl` siguen requiriendo el build completo.
 3. **`SYSCALL_CORRUPT` ruidoso**: aparece repetidamente durante cambios de contexto de
    usuario (p.ej. `pid=3 tid=5`). No impide la conectividad pero contamina el serial.
    Pre-existente; candidato a investigar aparte.

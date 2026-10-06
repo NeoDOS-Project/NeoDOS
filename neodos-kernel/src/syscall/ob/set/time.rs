@@ -57,3 +57,31 @@ pub(super) fn dispatch(
         _ => err_to_u64(SyscallError::Inval),
     }
 }
+
+/// Register the `DateTime` clock-set tests.
+///
+/// Kept in this module (not `mod.rs`) because `rtc_bridge` is a dependency of
+/// `time` already; this avoids adding a new `syscall -> drivers` dependency
+/// edge from the dispatcher facade.
+pub(super) fn register_tests() {
+    use crate::{test_case, test_true};
+
+    // #491: `ob_set_datetime` only succeeds if the bound RTC driver
+    // acknowledges `EVENT_RTC_WRITE` with a fresh `EVENT_RTC_DATA` read-back.
+    // A stale `rtc.nem` that predates `EVENT_RTC_WRITE` support binds the same
+    // way but never ACKs, so this guards the image against packaging an
+    // obsolete RTC driver. Skipped when no RTC driver is bound (e.g. a
+    // kernel-only image), where the syscall path cannot be exercised.
+    test_case!("ob_set_datetime_rtc_write_acks", {
+        let rtc_bound = crate::eventbus::EVENT_BUS
+            .count_handlers(crate::eventbus::EVENT_RTC_WRITE) > 0;
+        if rtc_bound {
+            match crate::drivers::rtc_bridge::request_datetime() {
+                // Write the current time back and require the driver ACK.
+                Some(now) => test_true!(crate::drivers::rtc_bridge::set_datetime(&now)),
+                // Driver is bound but the read-back path is broken.
+                None => test_true!(false),
+            }
+        }
+    });
+}

@@ -117,6 +117,7 @@
   syscall/ob/query/devices.rs: imports 'drivers::driver_runtime::get_driver' which contains forbidden dep(s): drivers/driver_runtime
   syscall/ob/query/time.rs: imports 'drivers::rtc_bridge::request_datetime' which contains forbidden dep(s): drivers/rtc_bridge
   syscall/ob/set/time.rs: imports 'drivers::rtc_bridge::DateTime' which contains forbidden dep(s): drivers/rtc_bridge
+  syscall/ob/set/time.rs: imports 'drivers::rtc_bridge::request_datetime' which contains forbidden dep(s): drivers/rtc_bridge
   syscall/ob/set/time.rs: imports 'drivers::rtc_bridge::set_datetime' which contains forbidden dep(s): drivers/rtc_bridge
   syscall/resched.rs: imports 'invariants::is_in_timer_irq' which contains forbidden dep(s): invariants
   urn/mod.rs: imports 'security::acl::ACCESS_READ' which contains forbidden dep(s): security
