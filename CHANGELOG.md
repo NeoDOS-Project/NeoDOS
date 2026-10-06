@@ -2,6 +2,20 @@
 
 <!-- markdownlint-disable MD013 MD024 MD056 -->
 
+## Unreleased
+
+### Fixed
+
+- **#491: `ntpd` could not apply the clock (`clock set denied`).** The root
+  cause was not a kernel/security/RTC source bug: the disk image packaged a
+  stale `rtc.nem` (from the gitignored `data/nem_bin/**` fallback) that
+  predates `EVENT_RTC_WRITE` support (#366), so `rtc_bridge::set_datetime`
+  never received its read-back ACK. Fixed in the NeoDev image pipeline
+  (NeoDOS-Project/NeoDev#21): image generation now builds the NEM drivers
+  before packaging them. Added the `ob_set_datetime_rtc_write_acks` kernel
+  regression guard. See
+  `docs/investigation/issue-491-ntpd-clock-set-denied.md`.
+
 ## v0.51.4 — 2026-10-06
 
 ### Fixed
