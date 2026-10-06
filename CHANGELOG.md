@@ -2,7 +2,7 @@
 
 <!-- markdownlint-disable MD013 MD024 MD056 -->
 
-## Unreleased
+## v0.51.4 — 2026-10-06
 
 ### Fixed
 
@@ -16,6 +16,40 @@
   `schedule::ring0_publish_is_dispatchable`. Regression test
   `n474_ring0_preempt_only_publishes_dispatchable_frame`. See
   `docs/investigation/issue-474-smp2-ring0-invalid-opcode.md`.
+
+- **#476: syscall KPRCB/RSP ownership window closed (#480).** The syscall
+  reschedule path ran with IF=1 at the handoff boundary, so
+  `schedule_with_handoff`'s `KPRCB.current_thread = NEXT` was observable by a
+  timer before the ASM `mov rsp,next_rsp` (`RSP_FOREIGN`). `syscall_handler_asm`
+  now keeps IF=0 across the publication → physical switch; a permanent
+  site-tagged ownership assertion (`switch_out_clear_at`) guards the boundary.
+
+- **#477: atomic user/heap slot claim (#481).** `alloc_user_slot` and
+  `alloc_heap_slot` used an unsynchronized check-then-set, so concurrent spawns
+  could be handed the same slot. They now claim with
+  `compare_exchange(false,true)` and skip contended slots. Regression
+  `paging_slot_claim_atomic`.
+
+- **#482: `wait_for_process` publishes `KPRCB.current_thread` only after leaving
+  the bootstrap stack (#483).** The launch handover published the target
+  identity while the CPU still executed on the bootstrap stack; it is now
+  published at IF=0 immediately before the Ring-3 `iretq`. Regression
+  `[WF_ORDER_VIOLATION]`.
+
+- **#488: boot-thread `IRETQ_BAD_FRAME` false positive removed (#489).** The
+  boot thread's `kernel_stack_top` is an RSP snapshot, not the bootstrap stack
+  top; the IRETQ audit now exempts `BOOT_TID` (the general Ring-3 check is
+  unchanged).
+
+### Known issues
+
+- **#490: three post-#482 residual failures** (`Option::unwrap() on None`,
+  Object Manager `#GP`, Ring-3 `#UD`) are **not reproduced** across QEMU
+  SMP1/2/4 and VBox SMP2 churn campaigns; tracked, not fixed.
+- **#491: `ntpd` cannot apply the clock** (`ob_set_datetime` →
+  `rtc_write_unacked`).
+- `#353` (`neodev test` Command/Shell detection flaky at SMP2) and `#486` (TCP
+  data path incomplete) remain open.
 
 ## v0.51.3 — 2026-10-03
 
