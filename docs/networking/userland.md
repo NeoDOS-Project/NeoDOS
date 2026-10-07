@@ -1146,6 +1146,16 @@ NeoFS para datos, logs, binarios, configuraciones editables.
 │   │               ├── DnsServer2    REG_DWORD  0
 │   │               ├── DnsServer3    REG_DWORD  0
 │   │               ├── DHCPEnabled   REG_DWORD  1
+│   │               ├── DHCPBound     REG_DWORD  1
+│   │               ├── DHCPServer    REG_DWORD  10.0.30.1
+│   │               ├── LeaseTime     REG_DWORD  4000
+│   │               ├── LeaseObtained REG_DWORD  <unix secs>
+│   │               ├── T1Renew        REG_DWORD  0 (=unset)
+│   │               ├── T2Rebind       REG_DWORD  0 (=unset)
+│   │               ├── Domain        REG_SZ     "home.arpa"
+│   │               ├── Broadcast     REG_DWORD  0 (=unset)
+│   │               ├── NtpServer     REG_DWORD  0 (=unset)
+│   │               ├── MTU           REG_DWORD  0 (=unset)
 │   │               ├── MACAddress    REG_SZ  "52:54:00:12:34:56"
 │   │               └── DriverBinding REG_SZ  "\\Device\\Nic\\0"
 │   │
