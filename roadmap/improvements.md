@@ -745,71 +745,101 @@ v0.56–v0.60 y se publica como v0.51.3. Formato compartido en `libnlt`.
 > `docs/investigation/audit-code-health-2026-09.md`.
 
 - **CH-01**: Dead code sweep — remove ~230 unreferenced functions `priority/medium` `area/kernel` `type/cleanup` `v0.66 — Bugfixes & Hardening`
-  Automated scan: ~230 functions and ~36 statics have zero references beyond their definition (32 statics are intentional `KEEP_*` HAL ABI anchors). Examples: `se_access_check_sid`, `handler_waitpid`, `has_privilege`/`enable_privilege`/`disable_privilege`, `ob_lookup_by_path` + several Ob namespace helpers, `urn_read/write/seek`, `reload_driver`, page-cache `flush_inode`/`prefetch`, socket `wake_socket_*`. Full inventory in the audit doc Appendix A. Delete or wire up; keep intentional external API behind documented ABI with tests.
+  Automated scan: ~230 functions and ~36 statics have zero references beyond their definition (32 statics are intentional `KEEP_*` HAL ABI anchors). Examples: `se_access_check_sid`, `handler_waitpid`, `has_privilege`/`enable_privilege`/`disable_privilege`, `ob_lookup_by_path` + several Ob namespace helpers, `urn_read/write/seek`, `reload_driver`, page-cache `flush_inode`/`prefetch`, socket `wake_socket_*`. Full inventory in the audit doc Appendix A. Delete or wire up; keep intentional external API behind documented ABI with tests. (#505)
   state: open
 
 - **CH-02**: Remove Ob process-create placeholder stub `priority/low` `area/object-manager` `type/cleanup` `v0.66 — Bugfixes & Hardening`
-  `syscall/ob/create_process.rs:11` `handle_process_create` is an explicit placeholder returning `NoSys`; its own comment says the real logic stays in `create.rs` (Process arm). Complete the extraction or delete the file/module — currently it is dead code and a duplicated ~140-line branch.
+  `syscall/ob/create_process.rs:11` `handle_process_create` is an explicit placeholder returning `NoSys`; its own comment says the real logic stays in `create.rs` (Process arm). Complete the extraction or delete the file/module — currently it is dead code and a duplicated ~140-line branch. (#506)
   state: open
 
 - **CH-03**: Consolidate duplicate FSCK implementations `priority/medium` `area/fs` `type/refactor` `v0.66 — Bugfixes & Hardening`
-  Two `FsckIntegrity` impls (`fs/fsck.rs` `Ne2Fsck`, `drivers/fsck_neodos.rs`) duplicate `read_block`/`write_block`/`verify_magic`/`process_leaf_entry`; `fs/fsck.rs` also carries `#![allow(dead_code)]`. Two CRC32 impls (`fs/crc32.rs` vs `drivers/fsck_neodos.rs:83`). Related: VFS-2.2.
+  Two `FsckIntegrity` impls (`fs/fsck.rs` `Ne2Fsck`, `drivers/fsck_neodos.rs`) duplicate `read_block`/`write_block`/`verify_magic`/`process_leaf_entry`; `fs/fsck.rs` also carries `#![allow(dead_code)]`. Two CRC32 impls (`fs/crc32.rs` vs `drivers/fsck_neodos.rs:83`). Related: VFS-2.2. (#507)
   state: open
 
 - **CH-04**: Remove triplicated IPI send functions `priority/low` `area/kernel` `type/cleanup` `v0.66 — Bugfixes & Hardening`
-  `send_ipi`/`send_ipi_all`/`send_ipi_all_excl_self` are defined in `arch/x64/ipi.rs`, `arch/x64/smp.rs` and `timers/apic.rs`; only `arch::x64::ipi::send_ipi` is wired (`scheduler/queue.rs:45`). The `_all` variants are never called. Keep one canonical implementation.
+  `send_ipi`/`send_ipi_all`/`send_ipi_all_excl_self` are defined in `arch/x64/ipi.rs`, `arch/x64/smp.rs` and `timers/apic.rs`; only `arch::x64::ipi::send_ipi` is wired (`scheduler/queue.rs:45`). The `_all` variants are never called. Keep one canonical implementation. (#508)
   state: open
 
 - **CH-05**: Deduplicate low-level primitives (MMIO, port I/O, ACPI RSDP, CRC32) `priority/medium` `area/kernel` `type/refactor` `v0.66 — Bugfixes & Hardening`
-  Copy-pasted `mmio_read32/64` + `mmio_write32/64` in `boot_ahci.rs`, `nvme.rs`, `virtio/transport.rs`; `inb/outb/inw/outw/inl/outl` in `hal/x64/io.rs` and `virtio/transport.rs`; ACPI RSDP parser duplicated in `timers/hpet.rs` and `power/acpi.rs` (`acpi_checksum`, `scan_range_for_rsdp`, `validate_rsdp`, `find_rsdp`, `find_table_in_rsdt/xsdt`). Extract shared helpers.
+  Copy-pasted `mmio_read32/64` + `mmio_write32/64` in `boot_ahci.rs`, `nvme.rs`, `virtio/transport.rs`; `inb/outb/inw/outw/inl/outl` in `hal/x64/io.rs` and `virtio/transport.rs`; ACPI RSDP parser duplicated in `timers/hpet.rs` and `power/acpi.rs` (`acpi_checksum`, `scan_range_for_rsdp`, `validate_rsdp`, `find_rsdp`, `find_table_in_rsdt/xsdt`). Extract shared helpers. (#509)
   state: open
 
 - **CH-06**: ObInfoClass::PowerState has no handler `priority/medium` `area/object-manager` `type/bug` `v0.66 — Bugfixes & Hardening`
-  `ObInfoClass::PowerState=32` is declared (`object/types.rs:150`) and documented as live (`docs/kernel/objects.md:206`, `syscalls.md:377`) but `syscall/ob/query.rs` has no dispatch arm. Also enum gaps (`ObInfoClass` 26→29; `ObSetInfoClass` 28→33/39→43/47→49) and `ObType` gap at 19; MCP reports "16 types / 7 syscalls" vs actual 22 types / 9 Ob syscalls (RAX 40-48). Add a completeness test that every enum variant has a handler.
+  `ObInfoClass::PowerState=32` is declared (`object/types.rs:150`) and documented as live (`docs/kernel/objects.md:206`, `syscalls.md:377`) but `syscall/ob/query.rs` has no dispatch arm. Also enum gaps (`ObInfoClass` 26→29; `ObSetInfoClass` 28→33/39→43/47→49) and `ObType` gap at 19; MCP reports "16 types / 7 syscalls" vs actual 22 types / 9 Ob syscalls (RAX 40-48). Add a completeness test that every enum variant has a handler. (#510)
   state: open
 
 - **CH-07**: Correct syscall numbers, ABI and totals in docs `priority/medium` `area/meta` `type/docs` `v0.66 — Bugfixes & Hardening`
-  Ob syscalls are RAX 40-48 (docs still say 60-66) and Cm 50-59 (docs say 67-76); `docs/kernel/syscalls.md:363` says "Total active: 34, Highest: 59" vs actual 37 assigned / highest 99; `AGENTS.md:3` says "RAX 0-59 (34 syscalls)"; `libneodos.md` says ABI v7 vs v8. Stale in `objects.md`, `registry.md`, `source-of-truth.md` §12.2, `overview.md`, `libneodos.md`, `ipc.md`, `shell.md`, `memory.md`, `scheduler.md`, `power-manager.md`.
+  Ob syscalls are RAX 40-48 (docs still say 60-66) and Cm 50-59 (docs say 67-76); `docs/kernel/syscalls.md:363` says "Total active: 34, Highest: 59" vs actual 37 assigned / highest 99; `AGENTS.md:3` says "RAX 0-59 (34 syscalls)"; `libneodos.md` says ABI v7 vs v8. Stale in `objects.md`, `registry.md`, `source-of-truth.md` §12.2, `overview.md`, `libneodos.md`, `ipc.md`, `shell.md`, `memory.md`, `scheduler.md`, `power-manager.md`. (#511)
   state: open
 
 - **CH-08**: Refresh stale test counts and source paths in docs `priority/low` `area/meta` `type/docs` `v0.66 — Bugfixes & Hardening`
-  Docs claim 738 tests (`AGENTS.md:3`, `docs/README.md:3`, `boot-flow.md:82`; `testing.md` says 716) — the #346 investigation records 752/754. Docs reference removed paths `src/syscall/ob.rs` (now a dir), `src/cm/hive.rs` (dir), `src/net/e1000.rs` (NEM driver), `src/drivers/builtin_drivers.rs`, `buffer/block_cache.rs`, `src/kobj/*`, `src/pipe.rs`, `src/slab_container.rs`. Wrong names too: `NeoDosFs`→`NeoDosFsV2`, `ob_resolve_path`→`ob_lookup_path`, `MapView`→`SectionMapView`, `\Device\PowerManager`→`\System\PowerManager`.
+  Docs claim 738 tests (`AGENTS.md:3`, `docs/README.md:3`, `boot-flow.md:82`; `testing.md` says 716) — the #346 investigation records 752/754. Docs reference removed paths `src/syscall/ob.rs` (now a dir), `src/cm/hive.rs` (dir), `src/net/e1000.rs` (NEM driver), `src/drivers/builtin_drivers.rs`, `buffer/block_cache.rs`, `src/kobj/*`, `src/pipe.rs`, `src/slab_container.rs`. Wrong names too: `NeoDosFs`→`NeoDosFsV2`, `ob_resolve_path`→`ob_lookup_path`, `MapView`→`SectionMapView`, `\Device\PowerManager`→`\System\PowerManager`. (#512)
   state: open
 
 - **CH-09**: Fix broken internal links in vfs-patterns.md `priority/low` `area/meta` `type/docs` `v0.66 — Bugfixes & Hardening`
-  Relative links omit `../../` and resolve to nonexistent `docs/filesystem/neodos-kernel/...` targets (lines 22, 47, 165, 339-341, 435, 445, 463, 474).
+  Relative links omit `../../` and resolve to nonexistent `docs/filesystem/neodos-kernel/...` targets (lines 22, 47, 165, 339-341, 435, 445, 463, 474). (#513)
   state: open
 
 - **CH-10**: NeoDOS MCP server reports false results `priority/medium` `area/tools` `type/tooling` `v0.66 — Bugfixes & Hardening`
-  `check_consistency` ignores its `targets` argument (all targets return only the 10 invariants — no actual validation); `get_build_errors` reports `kernel.elf`/`bootloader.efi` NOT FOUND though `neodos/kernel.elf` and `neodos/bootloader.efi` exist; `list_loaded_modules` returns empty despite the `.nxl` files. Artifact paths are misconfigured — fix them or fail loudly.
+  `check_consistency` ignores its `targets` argument (all targets return only the 10 invariants — no actual validation); `get_build_errors` reports `kernel.elf`/`bootloader.efi` NOT FOUND though `neodos/kernel.elf` and `neodos/bootloader.efi` exist; `list_loaded_modules` returns empty despite the `.nxl` files. Artifact paths are misconfigured — fix them or fail loudly. (#514)
   state: open
 
 - **CH-11**: KERNEL_VERSION_CODE stale vs package version `priority/low` `area/kernel` `type/bug` `v0.66 — Bugfixes & Hardening`
-  `src/main.rs:92` `KERNEL_VERSION_CODE = (10 << 8) | 5` (= `0x0A05`, comment "v0.10.5") while `Cargo.toml` is `0.51.2`. Clarify whether it is a bootloader protocol version and fix the comment/derivation (boot-flow docs discuss a v0.51.1/0.51.2 mismatch at a moved line).
+  `src/main.rs:92` `KERNEL_VERSION_CODE = (10 << 8) | 5` (= `0x0A05`, comment "v0.10.5") while `Cargo.toml` is `0.51.2`. Clarify whether it is a bootloader protocol version and fix the comment/derivation (boot-flow docs discuss a v0.51.1/0.51.2 mismatch at a moved line). (#515)
   state: open
 
 - **CH-12**: Eliminate silent work loss in bounded queues `priority/medium` `area/kernel` `type/bug` `v0.66 — Bugfixes & Hardening`
-  Work queue `CAPACITY=64`; `irp_complete` (`irp/mod.rs:285`) frees the callback `Box` and never runs it when `push_high` fails; `DPC_QUEUE_SIZE=128` drops silently; hot-reload drops past 16 entries with only a `kwarn!`; `IRP_POOL_SIZE=64` with modulo collision; `MAX_ZOMBIES=64` grows unbounded. Define an overflow/backpressure policy and make loss observable.
+  Work queue `CAPACITY=64`; `irp_complete` (`irp/mod.rs:285`) frees the callback `Box` and never runs it when `push_high` fails; `DPC_QUEUE_SIZE=128` drops silently; hot-reload drops past 16 entries with only a `kwarn!`; `IRP_POOL_SIZE=64` with modulo collision; `MAX_ZOMBIES=64` grows unbounded. Define an overflow/backpressure policy and make loss observable. (#516)
   state: open
 
-- **CH-13**: Introduce fault-safe `copy_from_user`/`copy_to_user` `priority/medium` `area/kernel` `type/security` `v0.66 — Bugfixes & Hardening`
-  Only `copy_user_string` has TOCTOU-safe user access; `handler_read`/`handler_write` validate non-atomically then dereference (`handlers.rs:56,122`), `ob/set.rs` decodes user structs with ~40 raw `read_volatile` calls without size checks, `ob/wait.rs:28` reads a user pointer unchecked. Add one helper with page-fault fixup and route all syscall handlers through it.
+- **CH-13**: Introduce fault-safe copy_from_user/copy_to_user `priority/medium` `area/kernel` `type/security` `v0.66 — Bugfixes & Hardening`
+  Only `copy_user_string` has TOCTOU-safe user access; `handler_read`/`handler_write` validate non-atomically then dereference (`handlers.rs:56,122`), `ob/set.rs` decodes user structs with ~40 raw `read_volatile` calls without size checks, `ob/wait.rs:28` reads a user pointer unchecked. Add one helper with page-fault fixup and route all syscall handlers through it. (#517)
   state: open
 
 - **CH-14**: Unify fixed-size object/slot tables behind a generic allocator `priority/medium` `area/kernel` `type/refactor` `v0.66 — Bugfixes & Hardening`
-  Timer/Semaphore/Section/Pipe managers, IRP pool and event-bus handlers each hand-roll slot alloc/free with inconsistent overflow (`None`/`false`/silent). ~10 hard caps (`MAX_TIMERS=64`, `MAX_SEMAPHORES=64`, `MAX_SECTIONS=32`, `MAX_PIPES=16`, `IRP_POOL_SIZE=64`, `MAX_HANDLERS=64`, ...). `ObError::TableFull` exists but is never used. Provide a generic `SlotTable<T>` returning `Result<_, ObError>` so exhaustion is distinguishable.
+  Timer/Semaphore/Section/Pipe managers, IRP pool and event-bus handlers each hand-roll slot alloc/free with inconsistent overflow (`None`/`false`/silent). ~10 hard caps (`MAX_TIMERS=64`, `MAX_SEMAPHORES=64`, `MAX_SECTIONS=32`, `MAX_PIPES=16`, `IRP_POOL_SIZE=64`, `MAX_HANDLERS=64`, ...). `ObError::TableFull` exists but is never used. Provide a generic `SlotTable<T>` returning `Result<_, ObError>` so exhaustion is distinguishable. (#518)
   state: open
 
 - **CH-15**: Reduce global-lock contention and O(n) lookups `priority/low` `area/kernel` `type/perf` `v0.66 — Bugfixes & Hardening`
-  Single `SCHEDULER` mutex with linear `find_eprocess`/`find_kthread` (`scheduler/mod.rs:271`); `OB_TABLE` mutex with linear `ObId` lookup hit by every handle access (`object/table.rs:218`); global `VFS`/`PAGE_CACHE`/`BLOCK_DEVICES` locks (`globals.rs:11`) with `vfs/mount.rs:150` bypassing the `with_vfs` lock-order guard; net `SOCKET_MANAGER`→`TCP` nested locking. Index by id and/or shard; forbid direct global access outside helpers. Overlaps existing #83 (remove VFS global lock) and #119 (lock-free scheduler); this item covers the Ob table and the remaining lock-order/tight-coupling cases.
+  Single `SCHEDULER` mutex with linear `find_eprocess`/`find_kthread` (`scheduler/mod.rs:271`); `OB_TABLE` mutex with linear `ObId` lookup hit by every handle access (`object/table.rs:218`); global `VFS`/`PAGE_CACHE`/`BLOCK_DEVICES` locks (`globals.rs:11`) with `vfs/mount.rs:150` bypassing the `with_vfs` lock-order guard; net `SOCKET_MANAGER`→`TCP` nested locking. Index by id and/or shard; forbid direct global access outside helpers. Overlaps existing #83 (remove VFS global lock) and #119 (lock-free scheduler); this item covers the Ob table and the remaining lock-order/tight-coupling cases. (#519)
   state: open
 
 - **CH-16**: Collapse duplicated driver registries and mount tables `priority/low` `area/drivers` `type/refactor` `v0.66 — Bugfixes & Hardening`
-  `driver_runtime::DRIVER_RUNTIME`, `nem::runtime::LOADED_DRIVERS`, `DriverManager`, the hot-reload registries and `ISOLATED_REGIONS` track driver state independently; `fs/vfs.rs` `drives`/`mounts` and `vfs/mount.rs` `MountManager` are two mount sources of truth with manual rollback. Unify per logical resource.
+  `driver_runtime::DRIVER_RUNTIME`, `nem::runtime::LOADED_DRIVERS`, `DriverManager`, the hot-reload registries and `ISOLATED_REGIONS` track driver state independently; `fs/vfs.rs` `drives`/`mounts` and `vfs/mount.rs` `MountManager` are two mount sources of truth with manual rollback. Unify per logical resource. (#520)
   state: open
 
 - **CH-17**: Extend ObOperations beyond on_destroy `priority/low` `area/object-manager` `type/refactor` `v0.66 — Bugfixes & Hardening`
-  `object/table.rs:8` `ObOperations` exposes only `on_destroy`, so read/write/ioctl/wait dispatch reaches into concrete managers from syscall code — contrary to the NT-like "Ob is the central abstraction" invariant. Add read/write/ioctl/wait hooks and route `handler_read`/`handler_write`/`handler_poll` through them.
+  `object/table.rs:8` `ObOperations` exposes only `on_destroy`, so read/write/ioctl/wait dispatch reaches into concrete managers from syscall code — contrary to the NT-like "Ob is the central abstraction" invariant. Add read/write/ioctl/wait hooks and route `handler_read`/`handler_write`/`handler_poll` through them. (#521)
+  state: open
+
+### v0.66 — Audit 2026-10-07 (system-audit-2026-10-07.md)
+
+> Evidence: `docs/reference/system-audit-2026-10-07.md`.
+> **AUD-001** (runqueue dedup / stale entries) is already tracked by #246, #247,
+> #248, #252 — not duplicated here.
+
+- **AUD-002**: P0 SMP: cerrar ventana de bugs iretq/KPRCB documentados `priority/critical` `area/scheduler` `type/bug` `v0.66 — Bugfixes & Hardening`
+  Consolidar fixes de los informes `docs/investigation/issue-476-*`, #346, #348, #488, #474 y validar la rama `fix/scheduler-critical-invariants` (mergeada en #504). Criterio de aceptación: `neodev test` verde en SMP>1 (QEMU y, si aplica, VirtualBox). Relacionado: #490. (#522)
+  state: open
+
+- **AUD-003**: P2 Docs: marcar kernel/obj-arch.md como histórico + banner RAX 40-48 `priority/medium` `area/meta` `type/docs` `v0.66 — Bugfixes & Hardening`
+  El documento aún cita Ob syscalls RAX 60-66. Añadir aviso "histórico pre-v0.50" y tabla corregida o enlace a kernel/syscalls.md + kernel/objects.md. Archivos: docs/kernel/obj-arch.md, referencias en design/neocfg-design.md, design/users-security-design.md. (#523)
+  state: open
+
+- **AUD-004**: P2 Docs: actualizar architecture/vision.md diagnóstico 2026-10 `priority/medium` `area/meta` `type/docs` `v0.66 — Bugfixes & Hardening`
+  Corregir afirmaciones obsoletas (p. ej. "sin gestión de energía" vs src/power/, docs/services/power-manager.md). Actualizar tabla fortalezas/debilidades alineada con system-audit-2026-10-07.md. No reescribir el roadmap completo; solo diagnóstico §1 y §5. (#524)
+  state: open
+
+- **AUD-005**: P2 Docs: refrescar architecture/repository.md post-migración `priority/low` `area/meta` `type/docs` `v0.66 — Bugfixes & Hardening`
+  Actualizar conteo userbin (49), eliminar tools/neodev del árbol, enlazar NeoTools/neodos-dev-server como repos externos. Coherente con la nota de cabecera del doc y AGENTS.md. (#525)
+  state: open
+
+- **AUD-006**: P1 Ob: test de completitud ObInfoClass/ObSetInfoClass dispatch `priority/high` `area/object-manager` `type/bug` `v0.66 — Bugfixes & Hardening`
+  Test en kernel que falle si un variant de ObInfoClass/ObSetInfoClass no tiene brazo en query/set. Previene regresiones como PowerState (CH-06). Archivos: object/types.rs, syscall/ob/query/*, syscall/ob/set/*. (#526)
+  state: open
+
+- **AUD-007**: P2 Meta: publicar kernel ABI manifest (JSON/YAML) `priority/medium` `area/meta` `type/feature` `v0.66 — Bugfixes & Hardening`
+  Manifest versionado con syscalls, ObInfoClass, ObType, NEM ABI — solicitado en reference/audit-report.md §5.2. Consumido por NeoTools, MCP, LSP externo. Generación en build o script en tools/. (#527)
   state: open
 
 ### v0.52 — VirtIO + Sessions + FS Security
