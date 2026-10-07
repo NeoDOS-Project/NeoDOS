@@ -2,7 +2,7 @@
 
 ## TCP/IP Stack
 
-Directory: `src/net/` (12 files, ~2500 lines). Modular protocol stack with socket abstraction, NIC drivers, and ARP cache.
+Directory: `src/net/` (13 files, ~2700 lines). Modular protocol stack with socket abstraction, NIC drivers, and ARP cache.
 
 ### Module Overview
 
@@ -16,7 +16,8 @@ Directory: `src/net/` (12 files, ~2500 lines). Modular protocol stack with socke
 | `udp.rs` | ~150 | UDP header (8 bytes), pseudo-header checksum, `build_udp_datagram()` |
 | `tcp.rs` | ~800 | TCP state machine (11 states), connection lifecycle, send/recv buffers (16 KB sliding window), segment building |
 | `socket.rs` | ~700 | `SocketManager`, bind/connect/listen/send/recv/close, KWait wake, `udp_dispatch()`, `tcp_dispatch()` |
-| `nic.rs` | ~210 | `NetworkInterface` trait (9 methods), `NicRegistry` (4 slots), IP/next-hop/gateway, vendor/device/description per NIC. NICs registered via NEM bridge |
+| `nic.rs` | ~240 | `NetworkInterface` trait (9 methods), `NicRegistry` (4 slots), IP/next-hop/gateway, `Route` local-routing decision, vendor/device/description per NIC. NICs registered via NEM bridge |
+| `loopback.rs` | ~120 | Loopback interface (127.0.0.0/8, #484): TX queue, `LoopbackInterface`, `loopback_send/pump`, `\Device\Loopback` |
 | `net_bridge.rs` | ~100 | NEM network bridge: `hst_register_network_device`, wraps NEM callbacks as `NetworkInterface` |
 | `counters.rs` | ~45 | Per-protocol packet/byte counters (RX/TX, ARP, ICMP), periodic dump every 1000 ticks |
 | `tests.rs` | ~300 | 18+ integration tests |
@@ -113,6 +114,23 @@ NIC (e1000)
                     -> data delivery to socket recv buffer
                     -> KWait wake for SocketRead
 ```
+
+## Loopback (127.0.0.0/8, #484)
+
+Virtual interface **outside** `NicRegistry` (registering it would change
+`default_nic_id()` and consume a NIC slot). Frames to 127/8 are queued in
+`loopback.rs` and drained through the single dispatch path
+`net_handle_incoming_packet()`, both from `network_poll_all()` and
+synchronously on the send path (so back-to-back send+recv never sees `EAGAIN`).
+
+Rules: no NIC required (works with 0 NICs), no ARP, no gateway lookup, no new
+syscalls (sockets keep using `ObType::Socket`), `\Device\Loopback` in the Ob
+namespace. Synthetic MAC `02:00:00:00:00:01` (`MacAddr::loopback()`), never on
+the wire. `nic_route()` classifies destinations as
+`Route::{Loopback, OnLink, ViaGateway, Unreachable}`. `ping 127.0.0.1` answers
+through the real ICMP dispatch (request → echo reply → notify); RAX 36 reports
+a nominal 1 µs since 0 means failure. Validated in VirtualBox: 4 kernel tests
+(`net_loopback_*`) green plus a Ring-3 `ping 127.0.0.1` check in `cmdtest.nxe`.
 
 ## NIC Initialization (Phase 3.88)
 
