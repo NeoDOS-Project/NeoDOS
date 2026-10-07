@@ -145,7 +145,7 @@ pub struct SocketAddrV4 {
 // Desde libnet-nxl (C ABI, retornan i32):
 pub extern "C" fn net_iface_count() -> u32;
 pub unsafe extern "C" fn net_iface_info(idx: u32, info: *mut NetIfaceInfo) -> i32;
-pub extern "C" fn net_iface_stats(idx: u32, stats: *mut NetIfaceStats) -> i32;  // stub
+pub extern "C" fn net_iface_stats(idx: u32, stats: *mut NetIfaceStats) -> i32;  // #373
 pub extern "C" fn net_get_ip(iface: u32) -> u32;
 pub extern "C" fn net_get_gateway(iface: u32) -> u32;
 pub extern "C" fn net_get_mask(iface: u32) -> u32;
@@ -157,9 +157,7 @@ consulta `ObInfoClass::NicInfo` (class 20). El kernel devuelve un array de
 registros NicInfoRaw de 15 bytes cada uno. No existe `\Global\Info\NicInfo`
 — el handler NicInfo es global y funciona con cualquier fd válido.
 
-**net_iface_stats** retorna -1 (pendiente de implementar estadísticas en kernel).
-
-**Sobre stats:** Planificado pero no implementado.
+**net_iface_stats** devuelve contadores por interfaz (#373, clase `NetStats` = 28): paquetes/bytes RX/TX y errores, en el mismo orden que `NicInfo`.
 
 #### 2.2.3 Funciones de socket (implementadas)
 
@@ -1148,6 +1146,16 @@ NeoFS para datos, logs, binarios, configuraciones editables.
 │   │               ├── DnsServer2    REG_DWORD  0
 │   │               ├── DnsServer3    REG_DWORD  0
 │   │               ├── DHCPEnabled   REG_DWORD  1
+│   │               ├── DHCPBound     REG_DWORD  1
+│   │               ├── DHCPServer    REG_DWORD  10.0.30.1
+│   │               ├── LeaseTime     REG_DWORD  4000
+│   │               ├── LeaseObtained REG_DWORD  <unix secs>
+│   │               ├── T1Renew        REG_DWORD  0 (=unset)
+│   │               ├── T2Rebind       REG_DWORD  0 (=unset)
+│   │               ├── Domain        REG_SZ     "home.arpa"
+│   │               ├── Broadcast     REG_DWORD  0 (=unset)
+│   │               ├── NtpServer     REG_DWORD  0 (=unset)
+│   │               ├── MTU           REG_DWORD  0 (=unset)
 │   │               ├── MACAddress    REG_SZ  "52:54:00:12:34:56"
 │   │               └── DriverBinding REG_SZ  "\\Device\\Nic\\0"
 │   │

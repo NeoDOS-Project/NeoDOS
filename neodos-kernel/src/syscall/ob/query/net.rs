@@ -9,6 +9,7 @@ pub(super) fn handles(info_class: u32) -> bool {
         || info_class == ObInfoClass::TcpStatus as u32
         || info_class == ObInfoClass::SocketRecv as u32
         || info_class == ObInfoClass::NicInfo as u32
+        || info_class == ObInfoClass::NetStats as u32
         || info_class == ObInfoClass::Hostname as u32
 }
 
@@ -209,6 +210,64 @@ pub(super) fn dispatch(
                 unsafe {
                     core::ptr::copy_nonoverlapping(
                         &raw as *const NicInfoRaw as *const u8,
+                        (buf_ptr as *mut u8).add(total * entry_size),
+                        entry_size,
+                    );
+                }
+                total += 1;
+            }
+            (total * entry_size) as u64
+        }
+        _ if info_class == ObInfoClass::NetStats as u32 => {
+            // Layout mirrors userland `NetIfaceStats` (libnet/libnet-nxl):
+            // rx_packets u64, tx_packets u64, rx_bytes u64, tx_bytes u64,
+            // rx_errors u32, tx_errors u32 (40 bytes, no padding).
+            #[repr(C)]
+            struct NetStatsRaw {
+                rx_packets: u64,
+                tx_packets: u64,
+                rx_bytes: u64,
+                tx_bytes: u64,
+                rx_errors: u32,
+                tx_errors: u32,
+            }
+            let entry_size = core::mem::size_of::<NetStatsRaw>();
+            let max_entries = buf_size / entry_size;
+            if max_entries == 0 { return 0u64; }
+            // Same order as NicInfo: physical NIC slots, then loopback.
+            let phys = crate::net::nic::nic_count().min(max_entries);
+            let mut total = 0usize;
+            for i in 0..phys {
+                let (rxp, txp, rxb, txb, rxe, txe) =
+                    crate::net::counters::snapshot(i);
+                let raw = NetStatsRaw {
+                    rx_packets: rxp, tx_packets: txp,
+                    rx_bytes: rxb, tx_bytes: txb,
+                    rx_errors: rxe.min(u32::MAX as u64) as u32,
+                    tx_errors: txe.min(u32::MAX as u64) as u32,
+                };
+                unsafe {
+                    core::ptr::copy_nonoverlapping(
+                        &raw as *const NetStatsRaw as *const u8,
+                        (buf_ptr as *mut u8).add(total * entry_size),
+                        entry_size,
+                    );
+                }
+                total += 1;
+            }
+            if total < max_entries {
+                let (rxp, txp, rxb, txb, rxe, txe) = crate::net::counters::snapshot(
+                    crate::net::counters::LOOPBACK_SLOT,
+                );
+                let raw = NetStatsRaw {
+                    rx_packets: rxp, tx_packets: txp,
+                    rx_bytes: rxb, tx_bytes: txb,
+                    rx_errors: rxe.min(u32::MAX as u64) as u32,
+                    tx_errors: txe.min(u32::MAX as u64) as u32,
+                };
+                unsafe {
+                    core::ptr::copy_nonoverlapping(
+                        &raw as *const NetStatsRaw as *const u8,
                         (buf_ptr as *mut u8).add(total * entry_size),
                         entry_size,
                     );
