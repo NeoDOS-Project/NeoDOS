@@ -296,7 +296,7 @@ For every subsystem, consult its doc — not this file:
 | Testing | `docs/development/testing.md` | Test suites, how to add tests |
 | History | `docs/reference/history.md` | Project history |
 | Audit Report | `docs/reference/audit-report.md` | Previous architecture audit |
-| Package Manager Arch | `docs/reference/package-manager-arch.md` | Package manager design |
+| Package Manager Arch | `docs/architecture/package-manager-arch.md` | Package manager design |
 | Roadmap | `ROADMAP.md` | Master roadmap: phases, milestones, priorities (project root) |
 | GitHub Sync | `scripts/sync-roadmap.sh` | Sync roadmap local ↔ GitHub Issues (idempotent) |
 | Roadmap Data | `roadmap/` | Labels, milestones, improvements.md, issue templates |

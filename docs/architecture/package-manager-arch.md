@@ -1,6 +1,6 @@
 # NeoDOS Package Manager — Architecture
 
-> **Document:** `docs/ARCHITECTURE_PACKAGE_MANAGER.md`
+> **Document:** `docs/architecture/package-manager-arch.md`
 > **Status:** Draft v1 — design complete, pending implementation
 > **Binary:** `neoget` — `userbin/neoget/`
 > **Library:** `libneopkg` — `libneopkg/` (new internal crate)
