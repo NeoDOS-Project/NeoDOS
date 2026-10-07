@@ -315,6 +315,11 @@ pub fn socket_set_local(id: u32, local: SocketAddrV4) {
 /// Caller must NOT hold SOCKET_MANAGER lock (lock order: SOCKET_MANAGER → NIC_REGISTRY
 /// conflicts with incoming path NIC_REGISTRY → SOCKET_MANAGER).
 pub fn socket_send_udp_raw(local: SocketAddrV4, remote: SocketAddrV4, data: &[u8]) -> Result<usize, ()> {
+    // Loopback (#484): 127.0.0.0/8 never touches a NIC or ARP, works with
+    // 0 NICs and leaves the default route untouched.
+    if remote.ip.is_loopback() {
+        return socket_send_udp_loopback(local, remote, data);
+    }
     let nic_id = nic_default_id().ok_or(())?;
 
     let src_mac = {
@@ -365,6 +370,39 @@ pub fn socket_send_udp_raw(local: SocketAddrV4, remote: SocketAddrV4, data: &[u8
 
     let frame = build_ethernet_frame(dst_mac, src_mac, ETH_TYPE_IPV4, &ip_pkt);
     nic_send_packet(nic_id, &frame)?;
+    Ok(data.len())
+}
+
+/// Loopback UDP send path (#484): no NIC, no ARP, no gateway lookup.
+/// Builds the full Ethernet/IPv4/UDP frame with the synthetic loopback MAC
+/// and delivers it synchronously via `loopback_pump()`, so a back-to-back
+/// send+recv never observes `EAGAIN` for lack of scheduling.
+pub fn socket_send_udp_loopback(local: SocketAddrV4, remote: SocketAddrV4, data: &[u8]) -> Result<usize, ()> {
+    let mac = MacAddr::loopback();
+    // A loopback datagram must carry a loopback source (RFC 1122 §3.2.1.3).
+    let mut src_ip = local.ip;
+    if !src_ip.is_loopback() {
+        src_ip = Ipv4Addr::localhost();
+    }
+    let udp_data = crate::net::udp::build_udp_datagram(
+        src_ip.0, remote.ip.0,
+        local.port, remote.port,
+        data,
+    );
+    let ip_hdr = build_ipv4_header(src_ip, remote.ip, IPV4_PROTO_UDP, udp_data.len(), 0);
+    let ip_bytes = unsafe {
+        core::slice::from_raw_parts(
+            &ip_hdr as *const Ipv4Header as *const u8,
+            IPV4_HDR_MIN_LEN,
+        )
+    };
+    let mut ip_pkt = Vec::with_capacity(IPV4_HDR_MIN_LEN + udp_data.len());
+    ip_pkt.extend_from_slice(ip_bytes);
+    ip_pkt.extend_from_slice(&udp_data);
+
+    let frame = build_ethernet_frame(mac, mac, ETH_TYPE_IPV4, &ip_pkt);
+    crate::net::loopback::loopback_send(&frame)?;
+    crate::net::loopback::loopback_pump();
     Ok(data.len())
 }
 

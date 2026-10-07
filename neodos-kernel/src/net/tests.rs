@@ -643,4 +643,86 @@ pub fn register_net_tests() {
         cache.clear();
         test_eq!(cache.len(), 0);
     });
+
+    // ── Loopback (#484) tests ──
+    test_case!("net_loopback_route_no_nic", {
+        use super::nic::{nic_route, Route};
+        // Loopback and broadcast classify without touching NIC_REGISTRY:
+        // valid with 0 NICs registered.
+        test_eq!(nic_route(Ipv4Addr::new([127, 0, 0, 1])), Route::Loopback);
+        test_eq!(nic_route(Ipv4Addr::new([127, 0, 0, 2])), Route::Loopback);
+        test_eq!(nic_route(Ipv4Addr::new([127, 255, 255, 255])), Route::Loopback);
+        test_true!(nic_route(Ipv4Addr::new([128, 0, 0, 1])) != Route::Loopback);
+        test_true!(nic_route(Ipv4Addr::new([10, 0, 2, 15])) != Route::Loopback);
+        test_eq!(
+            nic_route(Ipv4Addr::broadcast()),
+            Route::OnLink(Ipv4Addr::broadcast())
+        );
+        // Synthetic MAC: locally administered unicast, never on the wire.
+        test_eq!(
+            super::types::MacAddr::loopback(),
+            super::types::MacAddr::new([0x02, 0, 0, 0, 0, 0x01])
+        );
+    });
+
+    test_case!("net_loopback_udp_e2e", {
+        super::loopback::loopback_pump(); // clear leftovers from earlier tests
+        let rx = SOCKET_MANAGER.lock().alloc_socket(SocketType::Udp).unwrap();
+        let tx = SOCKET_MANAGER.lock().alloc_socket(SocketType::Udp).unwrap();
+        test_true!(socket_bind(rx, SocketAddrV4::new(Ipv4Addr::new([127, 0, 0, 1]), 41001)));
+        test_true!(socket_bind(tx, SocketAddrV4::new(Ipv4Addr::new([127, 0, 0, 1]), 41002)));
+        {
+            let mut mgr = SOCKET_MANAGER.lock();
+            let s = mgr.get_socket_mut(tx).unwrap();
+            s.remote = SocketAddrV4::new(Ipv4Addr::new([127, 0, 0, 1]), 41001);
+            s.direction = SocketDirection::Connected;
+            let r = mgr.get_socket_mut(rx).unwrap();
+            r.remote = SocketAddrV4::new(Ipv4Addr::new([127, 0, 0, 1]), 41002);
+            r.direction = SocketDirection::Connected;
+        }
+        let (local, remote) = {
+            let mgr = SOCKET_MANAGER.lock();
+            (mgr.get_socket(tx).unwrap().local, mgr.get_socket(tx).unwrap().remote)
+        };
+        // Works with 0 NICs: no nic_default_id(), no ARP.
+        test_true!(super::socket::socket_send_udp_raw(local, remote, b"hello-lo").is_ok());
+        // Synchronously delivered: nothing left queued.
+        test_eq!(super::loopback::loopback_pending(), 0);
+        let mut buf = [0u8; 64];
+        let n = super::socket::socket_recv(rx, &mut buf).unwrap();
+        test_eq!(n, 8);
+        test_eq!(&buf[..n], b"hello-lo");
+        SOCKET_MANAGER.lock().free_socket(tx);
+        SOCKET_MANAGER.lock().free_socket(rx);
+    });
+
+    test_case!("net_loopback_ping", {
+        // Whole 127/8 answers through the real ICMP dispatch path.
+        test_true!(super::icmp::icmp_ping(Ipv4Addr::new([127, 0, 0, 1]), 1_000_000).is_some());
+        test_true!(super::icmp::icmp_ping(Ipv4Addr::new([127, 0, 0, 2]), 1_000_000).is_some());
+        test_eq!(super::loopback::loopback_pending(), 0);
+    });
+
+    test_case!("net_loopback_tcp_segment_no_nic", {
+        super::loopback::loopback_pump();
+        // SYN to 127/8 succeeds with 0 NICs (no ARP) and drains synchronously.
+        test_true!(super::tcp::send_tcp_segment(
+            [0x02, 0, 0, 0, 0, 0x01],
+            [127, 0, 0, 1], [127, 0, 0, 1],
+            40001, 40002, 1000, 0,
+            super::tcp::TCP_FLAG_SYN, 65535, &[],
+        ));
+        test_eq!(super::loopback::loopback_pending(), 0);
+    });
+
+    test_case!("net_loopback_nic_info_entry", {
+        let (id, mac, ip, link, name, desc) = super::loopback::nic_info_entry();
+        // Sentinel id: never a real NicRegistry slot (read-only by construction).
+        test_eq!(id, super::loopback::LOOPBACK_NIC_ID);
+        test_eq!(mac, super::types::MacAddr::loopback().0);
+        test_eq!(ip, super::types::Ipv4Addr::localhost().0);
+        test_eq!(link, 1);
+        test_eq!(&name[..8], b"loopback");
+        test_eq!(&desc[..18], b"Loopback Interface");
+    });
 }

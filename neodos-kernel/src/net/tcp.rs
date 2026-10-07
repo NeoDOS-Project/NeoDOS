@@ -425,6 +425,21 @@ pub fn send_tcp_segment(dst_mac: [u8; 6], src_ip: [u8; 4], dst_ip: [u8; 4],
     ip_pkt.extend_from_slice(ip_bytes);
     ip_pkt.extend_from_slice(&segment);
 
+    // Loopback (#484): 127/8 never resolves ARP nor touches a NIC. The frame
+    // re-enters through the single dispatch path via loopback_pump().
+    if crate::net::types::Ipv4Addr(dst_ip).is_loopback() {
+        let mac = crate::net::types::MacAddr::loopback();
+        let frame = crate::net::ethernet::build_ethernet_frame(
+            mac, mac,
+            crate::net::ethernet::ETH_TYPE_IPV4, &ip_pkt,
+        );
+        if crate::net::loopback::loopback_send(&frame).is_err() {
+            return false;
+        }
+        crate::net::loopback::loopback_pump();
+        return true;
+    }
+
     let nic_id = match crate::net::nic::nic_default_id() { Some(id) => id, None => return false };
     let mut registry = crate::net::nic::NIC_REGISTRY.lock();
     let nic = match registry.get_mut(nic_id) { Some(n) => n, None => return false };
@@ -464,6 +479,12 @@ pub fn tcp_send_syn_ack(socket_id: usize, src_port: u16, dst_port: u16, their_se
     }
     drop(mgr);
 
+    // Loopback (#484): skip ARP, send_tcp_segment routes 127/8 via loopback.
+    if crate::net::types::Ipv4Addr(dst_ip).is_loopback() {
+        send_tcp_segment(crate::net::types::MacAddr::loopback().0, src_ip, dst_ip, src_port, dst_port,
+            my_seq, their_seq.wrapping_add(1), TCP_FLAG_SYN | TCP_FLAG_ACK, 65535, &[]);
+        return;
+    }
     let dst_mac = match crate::net::arp::arp_resolve(crate::net::types::Ipv4Addr(dst_ip)) {
         Some(m) => m.0,
         None => return,

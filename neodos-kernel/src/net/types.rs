@@ -15,6 +15,9 @@ impl MacAddr {
     pub const fn new(bytes: [u8; MAC_ADDR_LEN]) -> Self { MacAddr(bytes) }
     pub const fn broadcast() -> Self { MacAddr([0xFF; MAC_ADDR_LEN]) }
     pub const fn zero() -> Self { MacAddr([0; MAC_ADDR_LEN]) }
+    /// Synthetic MAC for the loopback interface (#484). Locally administered
+    /// unicast (`02:...`), never on the wire, no ARP.
+    pub const fn loopback() -> Self { MacAddr([0x02, 0, 0, 0, 0, 0x01]) }
 
     pub fn is_broadcast(&self) -> bool { self.0 == [0xFF; MAC_ADDR_LEN] }
     pub fn is_multicast(&self) -> bool { self.0[0] & 1 != 0 }
