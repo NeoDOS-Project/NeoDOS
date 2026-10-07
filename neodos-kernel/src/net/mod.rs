@@ -131,6 +131,7 @@ pub fn net_tick() {
     network_poll_all();
     arp::arp_tick();
     dns::dns_tick();
+    tcp::tcp_tick();
 
     let t = TICK_COUNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
     // Heartbeat every ~100 ticks: proves netd is actually scheduled and running.

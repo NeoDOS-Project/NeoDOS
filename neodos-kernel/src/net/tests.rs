@@ -5,8 +5,14 @@ use alloc::format;
 use alloc::vec;
 use super::types::{TcpState, MacAddr, Ipv4Addr, SocketType, SocketDirection, SocketAddrV4};
 use super::arp::ArpCache;
-use super::socket::{SocketManager, SOCKET_MANAGER, socket_bind};
-use super::tcp::{tcp_alloc_connection, tcp_bind, tcp_listen, tcp_connect, tcp_close, tcp_get_state, tcp_free_connection};
+use super::socket::{
+    SocketManager, SOCKET_MANAGER, socket_bind, socket_connect,
+    socket_listen, socket_set_tcp_conn,
+};
+use super::tcp::{
+    tcp_alloc_connection, tcp_bind, tcp_listen, tcp_connect, tcp_close,
+    tcp_get_state, tcp_free_connection, tcp_send, tcp_recv, tcp_tick,
+};
 use super::nic::NicRegistry;
 use super::ipv4::{compute_ip_checksum, build_ipv4_header, Ipv4Header};
 use super::icmp::IcmpHeader;
@@ -743,5 +749,113 @@ pub fn register_net_tests() {
         test_eq!(snapshot(99), (0, 0, 0, 0, 0, 0));
         test_true!(super::nic::nic_route(Ipv4Addr::new([127, 0, 0, 1]))
             == super::nic::Route::Loopback);
+    });
+
+    test_case!("net_tcp_loopback_e2e", {
+        use super::loopback::loopback_pump;
+        // Server: bind + listen on 127.0.0.1:50011.
+        let srv_sock = SOCKET_MANAGER.lock().alloc_socket(SocketType::Tcp).unwrap();
+        let srv_tcp = tcp_alloc_connection().unwrap();
+        socket_set_tcp_conn(srv_sock, srv_tcp);
+        test_true!(socket_bind(
+            srv_sock,
+            SocketAddrV4::new(Ipv4Addr::new([127, 0, 0, 1]), 50011)
+        ));
+        test_true!(socket_listen(srv_sock));
+        test_eq!(tcp_get_state(srv_tcp), Some(TcpState::Listen));
+
+        // Client: ephemeral port, connect. SYN goes out synchronously.
+        let cli_sock = SOCKET_MANAGER.lock().alloc_socket(SocketType::Tcp).unwrap();
+        let cli_tcp = tcp_alloc_connection().unwrap();
+        socket_set_tcp_conn(cli_sock, cli_tcp);
+        test_true!(socket_bind(
+            cli_sock,
+            SocketAddrV4::new(Ipv4Addr::new([127, 0, 0, 1]), 0)
+        ));
+        test_true!(socket_connect(
+            cli_sock,
+            SocketAddrV4::new(Ipv4Addr::new([127, 0, 0, 1]), 50011)
+        ));
+        // The handshake may complete synchronously inside connect (nested
+        // loopback pump): SynSent or already Established are both fine.
+        test_true!(
+            tcp_get_state(cli_tcp) == Some(TcpState::SynSent)
+                || tcp_get_state(cli_tcp) == Some(TcpState::Established)
+        );
+
+        // Drive handshake: SYN -> SYN+ACK -> ACK.
+        for _ in 0..500 {
+            tcp_tick();
+            loopback_pump();
+            if tcp_get_state(cli_tcp) == Some(TcpState::Established)
+                && tcp_get_state(srv_tcp) == Some(TcpState::Established)
+            {
+                break;
+            }
+        }
+        test_eq!(tcp_get_state(cli_tcp), Some(TcpState::Established));
+        test_eq!(tcp_get_state(srv_tcp), Some(TcpState::Established));
+
+        // Data client -> server through the real dispatch + ACK path.
+        test_eq!(tcp_send(cli_tcp, b"hello-tcp"), Ok(9));
+        let mut got_c2s = false;
+        for _ in 0..500 {
+            tcp_tick();
+            loopback_pump();
+            let mut buf = [0u8; 64];
+            if let Ok(n) = tcp_recv(srv_tcp, &mut buf) {
+                test_eq!(n, 9);
+                test_eq!(&buf[..n], b"hello-tcp");
+                got_c2s = true;
+                break;
+            }
+        }
+        test_eq!(got_c2s, true);
+
+        // And back server -> client.
+        test_eq!(tcp_send(srv_tcp, b"back"), Ok(4));
+        let mut got_s2c = false;
+        for _ in 0..500 {
+            tcp_tick();
+            loopback_pump();
+            let mut buf = [0u8; 64];
+            if let Ok(n) = tcp_recv(cli_tcp, &mut buf) {
+                test_eq!(n, 4);
+                test_eq!(&buf[..n], b"back");
+                got_s2c = true;
+                break;
+            }
+        }
+        test_eq!(got_s2c, true);
+
+        // Orderly close: client FIN -> server CloseWait -> server FIN ->
+        // client Closed -> server Closed.
+        tcp_close(cli_tcp);
+        for _ in 0..500 {
+            tcp_tick();
+            loopback_pump();
+            if tcp_get_state(srv_tcp) == Some(TcpState::CloseWait) {
+                break;
+            }
+        }
+        test_eq!(tcp_get_state(srv_tcp), Some(TcpState::CloseWait));
+        tcp_close(srv_tcp);
+        for _ in 0..500 {
+            tcp_tick();
+            loopback_pump();
+            if tcp_get_state(cli_tcp) == Some(TcpState::Closed)
+                && tcp_get_state(srv_tcp) == Some(TcpState::Closed)
+            {
+                break;
+            }
+        }
+        test_eq!(tcp_get_state(cli_tcp), Some(TcpState::Closed));
+        test_eq!(tcp_get_state(srv_tcp), Some(TcpState::Closed));
+        test_eq!(super::loopback::loopback_pending(), 0);
+
+        SOCKET_MANAGER.lock().free_socket(cli_sock);
+        SOCKET_MANAGER.lock().free_socket(srv_sock);
+        tcp_free_connection(cli_tcp);
+        tcp_free_connection(srv_tcp);
     });
 }
