@@ -725,6 +725,7 @@ impl DhcpClient {
     fn supervise_lease(&mut self) -> bool {
         use config::{rebind_at, renew_at};
         let mut tick = 0u32;
+        let mut last_send = 0u32;
         loop {
             tick = tick.wrapping_add(1);
             if tick % 1024 == 0 {
@@ -742,15 +743,24 @@ impl DhcpClient {
                         self.reconnect(self.server_ip);
                         self.send_dhcp(DHCP_REQUEST, None);
                         self.state = DhcpState::Renewing;
+                        last_send = tick;
                     } else if self.state == DhcpState::Renewing && elapsed >= t2 {
                         write_str(b"[dhcpd] T2 reached, broadcast rebind\r\n");
                         self.reconnect(0xFFFF_FFFF);
                         self.send_dhcp(DHCP_REQUEST, None);
                         self.state = DhcpState::Rebinding;
+                        last_send = tick;
                     }
                 }
             }
             if self.state == DhcpState::Renewing || self.state == DhcpState::Rebinding {
+                // Resend periodically: the first REQUEST can be dropped while
+                // ARP re-resolves the server (same race the DORA and NTP retry
+                // loops already handle).
+                if tick.wrapping_sub(last_send) >= 512 {
+                    self.send_dhcp(DHCP_REQUEST, None);
+                    last_send = tick;
+                }
                 if let Some(ip) = self.poll_response() {
                     if ip == 0xFFFF_FFFF {
                         write_str(b"[dhcpd] NAK during renewal, restarting DORA\r\n");
