@@ -129,7 +129,9 @@ namespace. Synthetic MAC `02:00:00:00:00:01` (`MacAddr::loopback()`), never on
 the wire. `nic_route()` classifies destinations as
 `Route::{Loopback, OnLink, ViaGateway, Unreachable}`. `ping 127.0.0.1` answers
 through the real ICMP dispatch (request → echo reply → notify); RAX 36 reports
-a nominal 1 µs since 0 means failure. Validated in VirtualBox: 4 kernel tests
+a nominal 1 µs since 0 means failure. The interface is also enumerated by the
+`NicInfo` query (sentinel `nic_id`, read-only) and shown by `ipconfig` as the
+Loopback adapter. Validated in VirtualBox: 4 kernel tests
 (`net_loopback_*`) green plus a Ring-3 `ping 127.0.0.1` check in `cmdtest.nxe`.
 
 ## NIC Initialization (Phase 3.88)
