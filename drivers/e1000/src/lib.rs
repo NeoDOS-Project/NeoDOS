@@ -210,26 +210,32 @@ struct TxDesc {
 }
 
 // ── Driver state ──
+//
+// Multi-NIC (#536): one slot per detected controller (cap = MAX_DEVICES,
+// matching the 4-slot kernel `NicRegistry`). Rings, buffers, cursors and link
+// flags are per device; the kernel routes each NIC to its slot through
+// dedicated send/poll trampolines (same C ABI, no routing token needed).
 
-struct E1000State {
-    mmio_base: u32,
-    nic_id: i32,
-    bus: u8,
-    dev: u8,
-    func: u8,
-    mac: [u8; 6],
-    rx_cur: usize,
-    tx_cur: usize,
-}
+/// Max e1000 instances brought up by one probe pass.
+const MAX_DEVICES: usize = 4;
 
 static INITIALIZED: AtomicU8 = AtomicU8::new(0);
 static ACTIVE: AtomicU8 = AtomicU8::new(0);
-static MMIO_BASE: AtomicU32 = AtomicU32::new(0);
-static NIC_ID: AtomicU32 = AtomicU32::new(0xFFFFFFFF);
-static RX_CUR: AtomicU32 = AtomicU32::new(0);
-static TX_CUR: AtomicU32 = AtomicU32::new(0);
+static MMIO: [AtomicU32; MAX_DEVICES] =
+    [AtomicU32::new(0), AtomicU32::new(0), AtomicU32::new(0), AtomicU32::new(0)];
+static NIC_IDS: [AtomicU32; MAX_DEVICES] = [
+    AtomicU32::new(0xFFFF_FFFF),
+    AtomicU32::new(0xFFFF_FFFF),
+    AtomicU32::new(0xFFFF_FFFF),
+    AtomicU32::new(0xFFFF_FFFF),
+];
+static RX_CUR: [AtomicU32; MAX_DEVICES] =
+    [AtomicU32::new(0), AtomicU32::new(0), AtomicU32::new(0), AtomicU32::new(0)];
+static TX_CUR: [AtomicU32; MAX_DEVICES] =
+    [AtomicU32::new(0), AtomicU32::new(0), AtomicU32::new(0), AtomicU32::new(0)];
 /// Set once the controller/link is actually ready to carry traffic.
-static LINK_READY: AtomicU8 = AtomicU8::new(0);
+static LINK_READY: [AtomicU8; MAX_DEVICES] =
+    [AtomicU8::new(0), AtomicU8::new(0), AtomicU8::new(0), AtomicU8::new(0)];
 /// Poll counter for throttled link-state publication (#529).
 static LINK_POLL_COUNT: AtomicU32 = AtomicU32::new(0);
 
@@ -237,25 +243,38 @@ static LINK_POLL_COUNT: AtomicU32 = AtomicU32::new(0);
 #[repr(align(4096))]
 struct Aligned4k([u8; 4096]);
 
-static mut RX_DESCS: Aligned4k = Aligned4k([0u8; 4096]);
-static mut TX_DESCS: Aligned4k = Aligned4k([0u8; 4096]);
+static mut RX_DESCS: [Aligned4k; MAX_DEVICES] = [
+    Aligned4k([0u8; 4096]),
+    Aligned4k([0u8; 4096]),
+    Aligned4k([0u8; 4096]),
+    Aligned4k([0u8; 4096]),
+];
+static mut TX_DESCS: [Aligned4k; MAX_DEVICES] = [
+    Aligned4k([0u8; 4096]),
+    Aligned4k([0u8; 4096]),
+    Aligned4k([0u8; 4096]),
+    Aligned4k([0u8; 4096]),
+];
 
 // Packet buffers (aligned to 64 bytes for DMA)
 const BUF_POOL_SIZE: usize = NUM_RX_DESC * RX_BUF_SIZE + NUM_TX_DESC * RX_BUF_SIZE;
 #[repr(align(64))]
 struct Aligned64([u8; BUF_POOL_SIZE]);
-static mut BUF_POOL: Aligned64 = Aligned64([0u8; BUF_POOL_SIZE]);
+static mut BUF_POOL: [Aligned64; MAX_DEVICES] = [
+    Aligned64([0u8; BUF_POOL_SIZE]),
+    Aligned64([0u8; BUF_POOL_SIZE]),
+    Aligned64([0u8; BUF_POOL_SIZE]),
+    Aligned64([0u8; BUF_POOL_SIZE]),
+];
 
 // ── MMIO helpers ──
 
-fn mmio_base() -> u32 { MMIO_BASE.load(Ordering::Relaxed) }
-
-fn read_reg(reg: u32) -> u32 {
-    unsafe { core::ptr::read_volatile((mmio_base() as u64 + reg as u64) as *const u32) }
+fn read_reg(mmio: u32, reg: u32) -> u32 {
+    unsafe { core::ptr::read_volatile((mmio as u64 + reg as u64) as *const u32) }
 }
 
-fn write_reg(reg: u32, val: u32) {
-    unsafe { core::ptr::write_volatile((mmio_base() as u64 + reg as u64) as *mut u32, val); }
+fn write_reg(mmio: u32, reg: u32, val: u32) {
+    unsafe { core::ptr::write_volatile((mmio as u64 + reg as u64) as *mut u32, val); }
 }
 
 fn read_mac_from_bar(base: u32) -> [u8; 6] {
@@ -291,12 +310,12 @@ fn pci_read_bar(bus: u8, dev: u8, func: u8, bar: u8) -> u32 {
 
 // ── e1000 hardware init ──
 
-unsafe fn init_e1000_hw(mmio: u32) -> bool {
-    MMIO_BASE.store(mmio, Ordering::Relaxed);
+unsafe fn init_e1000_hw(mmio: u32, slot: usize) -> bool {
+    MMIO[slot].store(mmio, Ordering::Relaxed);
     // Reset NIC
-    write_reg(REG_CTRL, 0);
-    let ctrl = read_reg(REG_CTRL);
-    write_reg(REG_CTRL, ctrl | CTRL_SLU);
+    write_reg(mmio, REG_CTRL, 0);
+    let ctrl = read_reg(mmio, REG_CTRL);
+    write_reg(mmio, REG_CTRL, ctrl | CTRL_SLU);
 
     // Initialize RX.
     //
@@ -311,21 +330,21 @@ unsafe fn init_e1000_hw(mmio: u32) -> bool {
     //  which enables RX only after the ring is initialized.)
 
     // 1. RX descriptor ring base/length/head/tail.
-    let rx_virt = &raw const RX_DESCS as u64;
+    let rx_virt = &raw const RX_DESCS[slot] as u64;
     let rx_phys = hst_virt_to_phys(rx_virt);
     if rx_phys == 0 { return false; }
-    write_reg(REG_RDBAL, (rx_phys & 0xFFFFFFFF) as u32);
-    write_reg(REG_RDBAH, (rx_phys >> 32) as u32);
-    write_reg(REG_RDLEN, (NUM_RX_DESC * core::mem::size_of::<RxDesc>()) as u32);
-    write_reg(REG_RDH, 0);
-    write_reg(REG_RDT, (NUM_RX_DESC - 1) as u32);
+    write_reg(mmio, REG_RDBAL, (rx_phys & 0xFFFFFFFF) as u32);
+    write_reg(mmio, REG_RDBAH, (rx_phys >> 32) as u32);
+    write_reg(mmio, REG_RDLEN, (NUM_RX_DESC * core::mem::size_of::<RxDesc>()) as u32);
+    write_reg(mmio, REG_RDH, 0);
+    write_reg(mmio, REG_RDT, (NUM_RX_DESC - 1) as u32);
 
     // 2. RX descriptor buffers (must be valid before hardware can fetch them).
     let rx_descs = core::slice::from_raw_parts_mut(
-        &raw mut RX_DESCS.0 as *mut u8 as *mut RxDesc, NUM_RX_DESC
+        &raw mut RX_DESCS[slot].0 as *mut u8 as *mut RxDesc, NUM_RX_DESC
     );
     for (i, desc) in rx_descs.iter_mut().enumerate() {
-        let buf_virt = (&BUF_POOL.0[i * RX_BUF_SIZE] as *const u8) as u64;
+        let buf_virt = (&BUF_POOL[slot].0[i * RX_BUF_SIZE] as *const u8) as u64;
         let buf_phys = hst_virt_to_phys(buf_virt);
         if buf_phys == 0 { return false; }
         desc.addr = buf_phys;
@@ -333,37 +352,37 @@ unsafe fn init_e1000_hw(mmio: u32) -> bool {
     }
 
     // 3. Enable RX only now that the whole ring is programmed.
-    write_reg(REG_RCTRL, RCTL_EN | RCTL_UPE | RCTL_MPE | RCTL_BAM | RCTL_SZ_2048 | RCTL_SECRC);
+    write_reg(mmio, REG_RCTRL, RCTL_EN | RCTL_UPE | RCTL_MPE | RCTL_BAM | RCTL_SZ_2048 | RCTL_SECRC);
 
     // Initialize TX
-    write_reg(REG_TCTRL, TCTL_EN | TCTL_PSP | TCTL_CT | TCTL_COLD);
+    write_reg(mmio, REG_TCTRL, TCTL_EN | TCTL_PSP | TCTL_CT | TCTL_COLD);
 
-    let tx_virt = &raw const TX_DESCS as u64;
+    let tx_virt = &raw const TX_DESCS[slot] as u64;
     let tx_phys = hst_virt_to_phys(tx_virt);
     if tx_phys == 0 { return false; }
-    write_reg(REG_TDBAL, (tx_phys & 0xFFFFFFFF) as u32);
-    write_reg(REG_TDBAH, (tx_phys >> 32) as u32);
-    write_reg(REG_TDLEN, (NUM_TX_DESC * core::mem::size_of::<TxDesc>()) as u32);
-    write_reg(REG_TDH, 0);
-    write_reg(REG_TDT, 0);
+    write_reg(mmio, REG_TDBAL, (tx_phys & 0xFFFFFFFF) as u32);
+    write_reg(mmio, REG_TDBAH, (tx_phys >> 32) as u32);
+    write_reg(mmio, REG_TDLEN, (NUM_TX_DESC * core::mem::size_of::<TxDesc>()) as u32);
+    write_reg(mmio, REG_TDH, 0);
+    write_reg(mmio, REG_TDT, 0);
 
     // Enable interrupts
-    write_reg(REG_IMS, 0x1F6DC);
-    write_reg(REG_ICR, 0xFFFFFFFF);
+    write_reg(mmio, REG_IMS, 0x1F6DC);
+    write_reg(mmio, REG_ICR, 0xFFFFFFFF);
 
     // Bounded wait for the link to come up (`STATUS.LU`). The controller is
     // brought up long before network services start, so this is a no-op in the
     // common case; it only guards against exposing a NIC whose link has not
     // settled. The timeout bounds the cost when no cable/peer is present.
     let link_start = hst_get_ticks();
-    while read_reg(REG_STATUS) & STATUS_LINK_UP == 0 {
+    while read_reg(mmio, REG_STATUS) & STATUS_LINK_UP == 0 {
         if hst_get_ticks().wrapping_sub(link_start) > LINK_READY_TIMEOUT_MS {
             break;
         }
         core::hint::spin_loop();
     }
-    LINK_READY.store(
-        (read_reg(REG_STATUS) & STATUS_LINK_UP != 0) as u8,
+    LINK_READY[slot].store(
+        (read_reg(mmio, REG_STATUS) & STATUS_LINK_UP != 0) as u8,
         Ordering::Release,
     );
 
@@ -371,53 +390,57 @@ unsafe fn init_e1000_hw(mmio: u32) -> bool {
 }
 
 // ── C-callable callbacks for kernel NIC registry ──
+//
+// Multi-NIC (#536): the NEM ABI passes no per-instance token, so each device
+// slot gets its own send/poll trampoline pair (same C signatures). The kernel
+// routes each registered NIC to its slot through these entry points.
 
-unsafe extern "C" fn e1000_send(device_id: u32, buf: *const u8, len: u32) -> i32 {
-    let _ = device_id;
-    let tx_cur = TX_CUR.load(Ordering::Relaxed) as usize % NUM_TX_DESC;
+fn e1000_send_to(slot: usize, buf: *const u8, len: u32) -> i32 {
+    let tx_cur = TX_CUR[slot].load(Ordering::Relaxed) as usize % NUM_TX_DESC;
     let pkt_len = (len as usize).min(RX_BUF_SIZE - 4);
     if pkt_len == 0 { return -1; }
 
     let tx_offset = NUM_RX_DESC * RX_BUF_SIZE + tx_cur * RX_BUF_SIZE;
-    let tx_buf_ptr = (&BUF_POOL.0[tx_offset]) as *const u8 as *mut u8;
+    let tx_buf_ptr = unsafe { (&BUF_POOL[slot].0[tx_offset]) as *const u8 as *mut u8 };
     for i in 0..pkt_len {
-        *tx_buf_ptr.add(i) = *buf.add(i);
+        unsafe { *tx_buf_ptr.add(i) = *buf.add(i); }
     }
 
-    let tx_descs = core::slice::from_raw_parts_mut(
-        &raw mut TX_DESCS.0 as *mut u8 as *mut TxDesc, NUM_TX_DESC
-    );
+    let tx_descs = unsafe { core::slice::from_raw_parts_mut(
+        &raw mut TX_DESCS[slot].0 as *mut u8 as *mut TxDesc, NUM_TX_DESC
+    ) };
     let desc = &mut tx_descs[tx_cur];
-    desc.addr = hst_virt_to_phys(tx_buf_ptr as u64);
+    desc.addr = unsafe { hst_virt_to_phys(tx_buf_ptr as u64) };
     desc.length = pkt_len as u16;
     desc.cmd = CMD_EOP | CMD_IFCS | CMD_RS;
     desc.status = 0;
 
     core::sync::atomic::fence(core::sync::atomic::Ordering::Release);
 
-    let old_tdt = read_reg(REG_TDT);
-    write_reg(REG_TDT, old_tdt.wrapping_add(1) % NUM_TX_DESC as u32);
-    TX_CUR.store((tx_cur + 1) as u32, Ordering::Relaxed);
+    let mmio = MMIO[slot].load(Ordering::Relaxed);
+    let old_tdt = read_reg(mmio, REG_TDT);
+    write_reg(mmio, REG_TDT, old_tdt.wrapping_add(1) % NUM_TX_DESC as u32);
+    TX_CUR[slot].store((tx_cur + 1) as u32, Ordering::Relaxed);
     0
 }
 
-unsafe extern "C" fn e1000_poll(device_id: u32, buf: *mut u8, out_len: *mut u32) -> i32 {
-    let _ = device_id;
+fn e1000_poll_to(slot: usize, buf: *mut u8, out_len: *mut u32) -> i32 {
+    let mmio = MMIO[slot].load(Ordering::Relaxed);
 
     // Publish link state (throttled, #529): the NEM bridge has no link-query
     // slot, so the kernel registry only learns STATUS.LU from here. One MMIO
     // read every 512 polls is negligible on this path.
     if LINK_POLL_COUNT.fetch_add(1, Ordering::Relaxed) % 512 == 0 {
-        let hw = read_reg(REG_STATUS) & STATUS_LINK_UP != 0;
-        let ready = LINK_READY.load(Ordering::Acquire) != 0;
+        let hw = read_reg(mmio, REG_STATUS) & STATUS_LINK_UP != 0;
+        let ready = LINK_READY[slot].load(Ordering::Acquire) != 0;
         unsafe { hst_set_network_link_state((hw || ready) as u32); }
     }
 
-    let rx_cur = RX_CUR.load(Ordering::Relaxed) as usize % NUM_RX_DESC;
+    let rx_cur = RX_CUR[slot].load(Ordering::Relaxed) as usize % NUM_RX_DESC;
 
-    let rx_descs = core::slice::from_raw_parts_mut(
-        &raw mut RX_DESCS.0 as *mut u8 as *mut RxDesc, NUM_RX_DESC
-    );
+    let rx_descs = unsafe { core::slice::from_raw_parts_mut(
+        &raw mut RX_DESCS[slot].0 as *mut u8 as *mut RxDesc, NUM_RX_DESC
+    ) };
 
     if rx_descs[rx_cur].status & 0x01 == 0 {
         return -1; // No packet ready
@@ -427,27 +450,57 @@ unsafe extern "C" fn e1000_poll(device_id: u32, buf: *mut u8, out_len: *mut u32)
     if pkt_len == 0 || pkt_len > RX_BUF_SIZE {
         rx_descs[rx_cur].status = 0;
         core::sync::atomic::fence(core::sync::atomic::Ordering::Release);
-        let old_rdt = read_reg(REG_RDT);
-        write_reg(REG_RDT, (old_rdt + 1) % NUM_RX_DESC as u32);
-        RX_CUR.store((rx_cur + 1) as u32, Ordering::Relaxed);
+        let old_rdt = read_reg(mmio, REG_RDT);
+        write_reg(mmio, REG_RDT, (old_rdt + 1) % NUM_RX_DESC as u32);
+        RX_CUR[slot].store((rx_cur + 1) as u32, Ordering::Relaxed);
         return -1;
     }
 
-    let rx_buf = &BUF_POOL.0[rx_cur * RX_BUF_SIZE..];
+    let rx_buf = unsafe { &BUF_POOL[slot].0[rx_cur * RX_BUF_SIZE..] };
     let rx_src = rx_buf.as_ptr();
     for i in 0..pkt_len {
-        *buf.add(i) = *rx_src.add(i);
+        unsafe { *buf.add(i) = *rx_src.add(i); }
     }
-    *out_len = pkt_len as u32;
+    unsafe { *out_len = pkt_len as u32; }
 
     // Return buffer to NIC
     rx_descs[rx_cur].status = 0;
     core::sync::atomic::fence(core::sync::atomic::Ordering::Release);
-    let old_rdt = read_reg(REG_RDT);
-    write_reg(REG_RDT, (old_rdt + 1) % NUM_RX_DESC as u32);
-    RX_CUR.store((rx_cur + 1) as u32, Ordering::Relaxed);
+    let old_rdt = read_reg(mmio, REG_RDT);
+    write_reg(mmio, REG_RDT, (old_rdt + 1) % NUM_RX_DESC as u32);
+    RX_CUR[slot].store((rx_cur + 1) as u32, Ordering::Relaxed);
     0
 }
+
+macro_rules! slot_trampolines {
+    ($slot:expr, $send:ident, $poll:ident) => {
+        unsafe extern "C" fn $send(
+            _device_id: u32,
+            buf: *const u8,
+            len: u32,
+        ) -> i32 {
+            e1000_send_to($slot, buf, len)
+        }
+        unsafe extern "C" fn $poll(
+            _device_id: u32,
+            buf: *mut u8,
+            out_len: *mut u32,
+        ) -> i32 {
+            e1000_poll_to($slot, buf, out_len)
+        }
+    };
+}
+
+slot_trampolines!(0, e1000_send_0, e1000_poll_0);
+slot_trampolines!(1, e1000_send_1, e1000_poll_1);
+slot_trampolines!(2, e1000_send_2, e1000_poll_2);
+slot_trampolines!(3, e1000_send_3, e1000_poll_3);
+
+type SendFn = unsafe extern "C" fn(u32, *const u8, u32) -> i32;
+type PollFn = unsafe extern "C" fn(u32, *mut u8, *mut u32) -> i32;
+
+const SEND_FNS: [SendFn; MAX_DEVICES] = [e1000_send_0, e1000_send_1, e1000_send_2, e1000_send_3];
+const POLL_FNS: [PollFn; MAX_DEVICES] = [e1000_poll_0, e1000_poll_1, e1000_poll_2, e1000_poll_3];
 
 // ── Probe PCI for e1000 ──
 
@@ -480,6 +533,7 @@ fn log_registered(nic_id: i32) {
 }
 
 fn probe_e1000() -> bool {
+    let mut found = 0usize;
     for bus in 0..=1 {
         for dev in 0..32 {
             for func in 0..8 {
@@ -502,10 +556,11 @@ fn probe_e1000() -> bool {
                 let cmd = pci_config_read(bus, dev, func, 4);
                 pci_config_write(bus, dev, func, 4, cmd | 0x7);
 
-            if !unsafe { init_e1000_hw(mmio) } { continue; }
+            let slot = found;
+            if !unsafe { init_e1000_hw(mmio, slot) } { continue; }
 
-            RX_CUR.store(0, Ordering::Relaxed);
-                TX_CUR.store(0, Ordering::Relaxed);
+            RX_CUR[slot].store(0, Ordering::Relaxed);
+            TX_CUR[slot].store(0, Ordering::Relaxed);
 
                 // Build driver name as stack buffer
                 let mut name_buf = [0u8; 24];
@@ -531,19 +586,25 @@ fn probe_e1000() -> bool {
                         device as u32,
                         desc_s.as_ptr(),
                         desc_s.len() as u32,
-                        e1000_send, e1000_poll,
+                        SEND_FNS[slot], POLL_FNS[slot],
                     )
                 };
                 if nic_id >= 0 {
-                    NIC_ID.store(nic_id as u32, Ordering::Relaxed);
+                    NIC_IDS[slot].store(nic_id as u32, Ordering::Relaxed);
                     log_registered(nic_id);
-                    return true;
+                    found += 1;
                 }
-                return false;
+                // else: leave the slot unused and keep probing the rest.
+            }
+            if found >= MAX_DEVICES {
+                break;
             }
         }
+        if found >= MAX_DEVICES {
+            break;
+        }
     }
-    false
+    found > 0
 }
 
 // ── Entry points ──
@@ -591,8 +652,11 @@ pub extern "C" fn driver_link_up() -> i32 {
     if INITIALIZED.load(Ordering::Acquire) == 0 {
         return 0;
     }
-    let hw = read_reg(REG_STATUS) & STATUS_LINK_UP != 0;
-    let ready = LINK_READY.load(Ordering::Acquire) != 0;
+    // Dead code (nothing calls it; #529 publishes from poll instead).
+    // Preserved with slot-0 semantics.
+    let mmio = MMIO[0].load(Ordering::Relaxed);
+    let hw = read_reg(mmio, REG_STATUS) & STATUS_LINK_UP != 0;
+    let ready = LINK_READY[0].load(Ordering::Acquire) != 0;
     let up = (hw || ready) as i32;
     unsafe { hst_set_network_link_state(up as u32); }
     up
@@ -600,12 +664,15 @@ pub extern "C" fn driver_link_up() -> i32 {
 
 #[no_mangle]
 pub extern "C" fn driver_fini() {
-    let nic_id = NIC_ID.load(Ordering::Relaxed);
-    LINK_READY.store(0, Ordering::Release);
-    unsafe { hst_set_network_link_state(0); }
-    if nic_id != 0xFFFFFFFF {
-        unsafe { hst_unregister_network_device(nic_id as i32); }
+    for slot in 0..MAX_DEVICES {
+        let nic_id = NIC_IDS[slot].load(Ordering::Relaxed);
+        LINK_READY[slot].store(0, Ordering::Release);
+        NIC_IDS[slot].store(0xFFFF_FFFF, Ordering::Relaxed);
+        if nic_id != 0xFFFFFFFF {
+            unsafe { hst_unregister_network_device(nic_id as i32); }
+        }
     }
+    unsafe { hst_set_network_link_state(0); }
     ACTIVE.store(0, Ordering::Release);
     INITIALIZED.store(0, Ordering::Release);
     log("[E1000] Unloaded");
