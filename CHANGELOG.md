@@ -19,6 +19,19 @@
   A work-stealing overflow counter (`RUNQUEUE_OVERFLOW`) is reported in the boot
   diagnostics. `docs/scheduler/scheduler.md` updated.
 
+### Changed
+
+- **#18 / VFS-2.2: trait-based FSCK (`FsckTrait`).** Filesystem integrity
+  checking is now a pluggable trait (`check`/`repair`) implemented per
+  filesystem, replacing the single NeoFS-only path. `src/fs/fsck/` holds the
+  framework plus `ne2.rs` (NeoFS v2, generic B-tree walker + CRC32 + freelist
+  rebuild) and `fat32.rs` (FAT32 geometry validation, cross-link and orphan
+  detection, orphan repair). Removed the duplicated `drivers/fsck_neodos.rs`
+  module and the second CRC32 implementation (#507); the checker now uses the
+  shared `fs/crc32.rs`. `FsckStats.repaired` reports the count of fixed issues
+  instead of a boolean. Both filesystems are reachable from Ring 3 through
+  `ObInfoClass::FsckStatus` / `ObSetInfoClass::FsckRepair` and `fsck.nxe`.
+
 ### Fixed
 
 - **Scheduler snapshot self-deadlock (BSP freeze before `[PROC_SNAPSHOT]`).**
