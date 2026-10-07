@@ -152,7 +152,10 @@ Instead:
 
 - The e1000 driver exports `driver_link_up()`, which reads `STATUS.LU`
   (with a link-ready flag cached during `init_e1000_hw`) and publishes the
-  state through `hst_set_network_link_state`.
+  state through `hst_set_network_link_state`. Since the NEM bridge has no
+  link-query slot, the driver also re-publishes from its RX `poll` entry
+  (throttled: 1 MMIO read per 512 polls, #529); unload publishes down via
+  `driver_fini`.
 - The Ring-0 `netpump` kernel thread calls `nic::nic_poll_link_state()` once per `network_poll_all()` and
   stores the result in `NicSlot::link_up`; the `NicInfo` query and the
   `netapplier` link-up edge detection read that cached value.
