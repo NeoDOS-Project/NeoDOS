@@ -385,6 +385,7 @@ pub fn register_net_tests() {
         // Additive class: existing IDs unchanged.
         test_eq!(ObSetInfoClass::SetNicIp as u32, 27);
         test_eq!(ObSetInfoClass::SetNicGateway as u32, 28);
+        test_eq!(ObSetInfoClass::SocketBindNic as u32, 29);
     });
 
     test_case!("net_handle_incoming_no_deadlock", {

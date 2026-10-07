@@ -203,6 +203,8 @@ pub enum ObSetInfoClass {
     RegistryDeleteValue = 26,
     SetNicIp = 27,
     SetNicGateway = 28,
+    /// Pin a socket to a NIC for send-interface selection (u32 LE nic_id).
+    SocketBindNic = 29,
     ServiceStart = 33,
     ServiceStop = 34,
     ServiceRestart = 35,
