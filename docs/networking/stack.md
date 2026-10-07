@@ -197,7 +197,8 @@ dhcpd.nxe (Ring 3 user service)
   │   └─ On ACK: publish IP/mask/gw/DNS to the Registry
   │              (the netapplier service applies it to the NIC)
   │
-  ├─ Manages lease renewal at 50% of lease time
+  ├─ Supervises the lease (#316): unicast renew at server T1 (default 50%),
+  │            broadcast rebind at server T2 (default 87.5%), DORA restart on NAK/expiry
   ├─ Falls back to APIPA (169.254.1.1) if DHCP fails
   └─ Publishes IP configuration to the Registry (never applies it directly)
 

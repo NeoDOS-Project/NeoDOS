@@ -84,14 +84,14 @@ struct DhcpHeader {
 
 const DHCP_HDR_LEN: usize = 240;
 
+#[derive(PartialEq, Eq, Clone, Copy)]
 enum DhcpState {
     Init,
     Selecting,
     Requesting,
-    #[allow(dead_code)]
     Bound,
-    #[allow(dead_code)]
     Renewing,
+    Rebinding,
 }
 
 struct DhcpClient {
@@ -114,6 +114,7 @@ struct DhcpClient {
     ntp_count: usize,
     mtu: u32,
     nak_count: u32,
+    obtained: u32,
     renew_interval: u64,
     ticks_in_state: u64,
     retry_count: u8,
@@ -482,6 +483,7 @@ impl DhcpClient {
             ntp_count: 0,
             mtu: 0,
             nak_count: 0,
+            obtained: 0,
             renew_interval: 43200,
             ticks_in_state: 0,
             retry_count: 0,
@@ -581,7 +583,7 @@ impl DhcpClient {
                     }
                 }
 
-                DhcpState::Bound | DhcpState::Renewing => {
+                DhcpState::Bound | DhcpState::Renewing | DhcpState::Rebinding => {
                     // This state is handled in the outer loop after run() returns
                     return self.offered_ip;
                 }
@@ -662,28 +664,122 @@ impl DhcpClient {
         self.mtu = opts.mtu;
     }
 
-    #[allow(dead_code)]
-    fn renew(&mut self) -> bool {
-        write_str(b"");
-                    write_str(tr_id!(IDS_PREFIX).as_bytes());
-                    write_str(b"Renewing lease...\r\n");
-        self.send_dhcp(DHCP_REQUEST, Some(self.offered_ip));
-        for _ in 0..TIMEOUT_ITERATIONS {
-            if let Some(ip) = self.poll_response() {
-                if ip == 0xFFFFFFFF { return false; }
-                write_str(b"");
-                    write_str(tr_id!(IDS_PREFIX).as_bytes());
-                    write_str(b"Renewal OK: IP=");
-                write_ip(ip);
-                write_str(b"\r\n");
-                return true;
+    /// Reset for a fresh DISCOVER round (lease lost, #316).
+    fn reset_for_discovery(&mut self) {
+        self.state = DhcpState::Init;
+        self.server_ip = 0;
+        self.offered_ip = 0;
+        self.ticks_in_state = 0;
+        self.retry_count = 0;
+    }
+
+    /// Reconnect the DHCP socket: unicast to the server (renew) or
+    /// broadcast (discover/rebind). Best effort; a failed unicast connect
+    /// just falls back to broadcast delivery.
+    fn reconnect(&self, server: u32) {
+        let _ = syscall::ob_socket_connect(
+            self.socket_fd as u8,
+            server.to_be_bytes(),
+            67,
+        );
+    }
+
+    /// Publish the in-memory lease (DORA or renewal ACK) through the shared
+    /// config backend. Returns the stamped `obtained` time.
+    fn publish_current_lease(&self) -> u32 {
+        let mut cfg = config::load(0).unwrap_or_default();
+        cfg.ip = self.offered_ip;
+        cfg.mask = self.subnet_mask;
+        cfg.gateway = self.gateway;
+        let mut dns = [0u32; MAX_DHCP_DNS];
+        let n = self.dns_count.min(MAX_DHCP_DNS);
+        for i in 0..n { dns[i] = self.dns[i]; }
+        cfg.dns = dns;
+        cfg.lease_time = self.lease_time;
+        cfg.dhcp_server = self.server_ip;
+        cfg.dhcp_bound = true;
+        cfg.lease_obtained = config::now_unix();
+        cfg.t1_renew = self.t1;
+        cfg.t2_rebind = self.t2;
+        cfg.domain = self.domain;
+        cfg.broadcast = self.broadcast;
+        cfg.ntp = self.ntp;
+        cfg.mtu = self.mtu;
+        let _ = config::publish_lease(0, &cfg);
+        cfg.lease_obtained
+    }
+
+    /// Log the renewal schedule once per bound lease (#316).
+    fn log_schedule(&self) {
+        use config::{rebind_at, renew_at};
+        write_str(b"[dhcpd] Renew in ");
+        write_dec_u32(renew_at(self.lease_time, self.t1).min(u32::MAX as u64) as u32);
+        write_str(b"s, rebind in ");
+        write_dec_u32(rebind_at(self.lease_time, self.t2).min(u32::MAX as u64) as u32);
+        write_str(b"s\r\n");
+    }
+
+    /// Supervise a bound lease: unicast renew at T1, broadcast rebind at T2,
+    /// full restart on NAK/expiry (#316). Returns true when the caller must
+    /// restart DORA from scratch.
+    fn supervise_lease(&mut self) -> bool {
+        use config::{rebind_at, renew_at};
+        let mut tick = 0u32;
+        let mut last_send = 0u32;
+        loop {
+            tick = tick.wrapping_add(1);
+            if tick % 1024 == 0 {
+                let now = config::now_unix();
+                if now != 0 {
+                    let elapsed = now.saturating_sub(self.obtained) as u64;
+                    let t1 = renew_at(self.lease_time, self.t1);
+                    let t2 = rebind_at(self.lease_time, self.t2);
+                    if self.lease_time != 0 && elapsed >= self.lease_time as u64 {
+                        write_str(b"[dhcpd] Lease expired, restarting DORA\r\n");
+                        return true;
+                    }
+                    if self.state == DhcpState::Bound && elapsed >= t1 {
+                        write_str(b"[dhcpd] T1 reached, unicast renew\r\n");
+                        self.reconnect(self.server_ip);
+                        self.send_dhcp(DHCP_REQUEST, None);
+                        self.state = DhcpState::Renewing;
+                        last_send = tick;
+                    } else if self.state == DhcpState::Renewing && elapsed >= t2 {
+                        write_str(b"[dhcpd] T2 reached, broadcast rebind\r\n");
+                        self.reconnect(0xFFFF_FFFF);
+                        self.send_dhcp(DHCP_REQUEST, None);
+                        self.state = DhcpState::Rebinding;
+                        last_send = tick;
+                    }
+                }
             }
-            yield_for(1);
+            if self.state == DhcpState::Renewing || self.state == DhcpState::Rebinding {
+                // Resend periodically: the first REQUEST can be dropped while
+                // ARP re-resolves the server (same race the DORA and NTP retry
+                // loops already handle).
+                if tick.wrapping_sub(last_send) >= 512 {
+                    self.send_dhcp(DHCP_REQUEST, None);
+                    last_send = tick;
+                }
+                if let Some(ip) = self.poll_response() {
+                    if ip == 0xFFFF_FFFF {
+                        write_str(b"[dhcpd] NAK during renewal, restarting DORA\r\n");
+                        return true;
+                    }
+                    // Stray OFFERs (not for our address) are ignored; only an
+                    // ACK for the bound address refreshes the lease.
+                    if ip == self.offered_ip {
+                        self.obtained = self.publish_current_lease();
+                        self.state = DhcpState::Bound;
+                        write_str(b"[dhcpd] Renewal OK: IP=");
+                        write_ip(ip);
+                        write_str(b"\r\n");
+                        self.log_schedule();
+                    }
+                }
+            }
+            syscall::sys_yield();
         }
-        write_str(b"");
-                    write_str(tr_id!(IDS_PREFIX).as_bytes());
-                    write_str(b"Renewal failed\r\n");
-        false
     }
 }
 
@@ -814,6 +910,9 @@ pub extern "C" fn _start() -> ! {
 
     let xid = 0x12345678;
     let mut client = DhcpClient::new(xid, sock_fd as i32, mac);
+
+    // DORA + supervision: a lost lease restarts discovery (#316).
+    loop {
     let ip = client.run();
 
     if ip != 0 {
@@ -837,30 +936,11 @@ pub extern "C" fn _start() -> ! {
         write_ip(client.broadcast);
         write_str(b"\r\n");
 
-        // Publish the lease through the shared config backend. The `netapplier`
-        // service is the one that applies it to the NIC (single applier; see
-        // #320/#314/#365).
-        let mut cfg = config::load(0).unwrap_or_default();
-        cfg.ip = ip;
-        cfg.mask = client.subnet_mask;
-        cfg.gateway = client.gateway;
-        // DHCP-provided DNS (option 6) is authoritative; zero any slot beyond
-        // the number of servers actually offered.
-        let mut dns = [0u32; MAX_DHCP_DNS];
-        let n = client.dns_count.min(MAX_DHCP_DNS);
-        for i in 0..n { dns[i] = client.dns[i]; }
-        cfg.dns = dns;
-        cfg.lease_time = client.lease_time;
-        cfg.dhcp_server = client.server_ip;
-        cfg.dhcp_bound = true;
-        cfg.lease_obtained = config::now_unix();
-        cfg.t1_renew = client.t1;
-        cfg.t2_rebind = client.t2;
-        cfg.domain = client.domain;
-        cfg.broadcast = client.broadcast;
-        cfg.ntp = client.ntp;
-        cfg.mtu = client.mtu;
-        let _ = config::publish_lease(0, &cfg);
+        // Publish via the shared helper (netapplier applies it to the NIC;
+        // see #320/#314/#365).
+        client.obtained = client.publish_current_lease();
+        client.state = DhcpState::Bound;
+        client.log_schedule();
 
         write_str(b"");
                     write_str(tr_id!(IDS_PREFIX).as_bytes());
@@ -875,6 +955,15 @@ pub extern "C" fn _start() -> ! {
         publish_apipa();
     }
 
-    // Main loop: yield forever (DHCP renew handled by OS)
-    loop { syscall::sys_yield(); }
+    // APIPA (offered_ip == 0) has no server to renew against: keep the
+    // old yield-forever behavior. A bound lease is supervised; a lost
+    // lease restarts DORA at the top of the loop.
+    if client.offered_ip == 0 {
+        loop { syscall::sys_yield(); }
+    }
+    if client.supervise_lease() {
+        client.reset_for_discovery();
+        continue;
+    }
+    } // outer DORA loop (#316)
 }
