@@ -242,7 +242,7 @@ fn write_datetime(secs: u32) {
     write_str(b"\r\n");
 }
 
-fn print_iface(iface_idx: u32, info: &libnet::NetIfaceInfo, cfg: &NetConfig) {
+fn print_iface(iface_idx: u32, info: &libnet::NetIfaceInfo, cfg: &NetConfig, has_cfg: bool) {
     let _ = iface_idx;
     write_str(b"\r\n");
     write_label(IDS_ETHERNET);
@@ -312,7 +312,8 @@ fn print_iface(iface_idx: u32, info: &libnet::NetIfaceInfo, cfg: &NetConfig) {
     write_str(b"\r\n");
 
     write_label(IDS_CONFIG_SOURCE);
-    if config::is_apipa(ip_u32) { write_label(IDS_AUTOCONFIG); }
+    if !has_cfg { write_label(IDS_NONE); }
+    else if config::is_apipa(ip_u32) { write_label(IDS_AUTOCONFIG); }
     else if cfg.dhcp_bound { write_label(IDS_DHCP); }
     else if ip_u32 != 0 { write_label(IDS_STATIC); }
     else { write_label(IDS_NONE); }
@@ -441,12 +442,14 @@ pub extern "C" fn _start() -> ! {
             continue;
         }
         // Per-interface Registry config (loopback has no key: defaults).
-        let cfg = config::load(i).unwrap_or_default();
+        let loaded = config::load(i);
+        let has_cfg = loaded.is_some();
+        let cfg = loaded.unwrap_or_default();
         if mode_all {
             if info.nic_id == LOOPBACK_NIC_ID {
                 print_loopback(&info);
             } else {
-                print_iface(i, &info, &cfg);
+                print_iface(i, &info, &cfg, has_cfg);
             }
             print_stats(i);
         } else {
