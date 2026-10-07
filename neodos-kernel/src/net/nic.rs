@@ -273,9 +273,17 @@ pub fn nic_default_link_up() -> bool {
 }
 
 pub fn nic_send_packet(nic_id: u32, packet: &[u8]) -> Result<(), ()> {
-    NIC_REGISTRY.lock().get_mut(nic_id)
+    let r = NIC_REGISTRY.lock().get_mut(nic_id)
         .ok_or(())?
-        .send_packet(packet)
+        .send_packet(packet);
+    // Per-interface accounting (#373); unknown ids are never counted.
+    if let Some(slot) = crate::net::counters::stats_slot_for_nic(nic_id) {
+        match r {
+            Ok(()) => crate::net::counters::note_tx(slot, packet.len()),
+            Err(()) => crate::net::counters::note_tx_err(slot),
+        }
+    }
+    r
 }
 
 pub fn nic_count() -> usize {

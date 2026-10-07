@@ -19,7 +19,7 @@ Directory: `src/net/` (13 files, ~2700 lines). Modular protocol stack with socke
 | `nic.rs` | ~240 | `NetworkInterface` trait (9 methods), `NicRegistry` (4 slots), IP/next-hop/gateway, `Route` local-routing decision, vendor/device/description per NIC. NICs registered via NEM bridge |
 | `loopback.rs` | ~120 | Loopback interface (127.0.0.0/8, #484): TX queue, `LoopbackInterface`, `loopback_send/pump`, `\Device\Loopback` |
 | `net_bridge.rs` | ~100 | NEM network bridge: `hst_register_network_device`, wraps NEM callbacks as `NetworkInterface` |
-| `counters.rs` | ~45 | Per-protocol packet/byte counters (RX/TX, ARP, ICMP), periodic dump every 1000 ticks |
+| `counters.rs` | ~150 | Global + per-interface counters (RX/TX packets/bytes/errors per NIC slot + loopback), exposed via `NetStats` (28); periodic dump every 1000 ticks |
 | `tests.rs` | ~300 | 18+ integration tests |
 
 ### TCP State Machine

@@ -142,8 +142,17 @@ pub fn net_tick() {
     }
 }
 
-pub fn net_handle_incoming_packet(_nic_id: u32, nic: &mut dyn crate::net::nic::NetworkInterface, packet: &[u8]) {
-    if packet.len() < crate::net::ethernet::ETH_HDR_LEN { return; }
+pub fn net_handle_incoming_packet(nic_id: u32, nic: &mut dyn crate::net::nic::NetworkInterface, packet: &[u8]) {
+    let slot = crate::net::counters::stats_slot_for_nic(nic_id);
+    if packet.len() < crate::net::ethernet::ETH_HDR_LEN {
+        if let Some(slot) = slot {
+            crate::net::counters::note_rx_err(slot);
+        }
+        return;
+    }
+    if let Some(slot) = slot {
+        crate::net::counters::note_rx(slot, packet.len());
+    }
 
     let eth_hdr: &crate::net::ethernet::EthernetHeader = unsafe {
         &*(packet.as_ptr() as *const crate::net::ethernet::EthernetHeader)

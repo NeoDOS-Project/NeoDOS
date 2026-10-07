@@ -204,6 +204,7 @@ Supports the following info classes:
 | 25 | ThreadStats | All-thread snapshot `[StatsHeader][ThreadStatsEntry]` — `\Global\Info\Threads` |
 | 26 | ProcessSnapshot | Coherent process+thread snapshot `[ProcSnapshotHeader][ProcessInfoRaw][ThreadInfoRaw]` — `\Global\Info\Processes` |
 | 27 | SmpStats | Global work-stealing counters `SmpStats` (24 bytes) — `\Global\Info\CpuInfo` (Fase 3 M3.2) |
+| 28 | NetStats | Per-interface counters (40 bytes/entry: rx/tx packets/bytes, rx/tx errors) in `NicInfo` enumeration order — #373 |
 | 29 | ServiceState | Service state (state+pid+uptime) |
 | 30 | ServiceConfig | Service configuration (start type, restart policy, max failures) |
 | 31 | ServiceStatus | Comprehensive status (state+pid+exit count+exit code+failures+uptime) |

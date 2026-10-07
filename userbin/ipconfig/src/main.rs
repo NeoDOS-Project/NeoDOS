@@ -54,6 +54,10 @@ const IDS_YES: u32 = 1021;
 const IDS_NO: u32 = 1022;
 const IDS_ERR_NXL: u32 = 1023;
 const IDS_NO_IFACES: u32 = 1024;
+const IDS_STATS_RX: u32 = 1025;
+const IDS_STATS_TX: u32 = 1026;
+const IDS_STATS_RX_BYTES: u32 = 1027;
+const IDS_STATS_TX_BYTES: u32 = 1028;
 const IDS_LOOPBACK: u32 = 1029;
 const IDS_DHCP_SERVER: u32 = 1030;
 const IDS_AUTOCONFIG: u32 = 1031;
@@ -115,6 +119,34 @@ fn write_mac(mac: &[u8; 6]) {
         write_str(&[h, l]);
         if i < 5 { write_str(b":"); }
     }
+    write_str(b"\r\n");
+}
+
+fn write_u64(mut v: u64) {
+    if v == 0 { write_str(b"0"); return; }
+    let mut tmp = [0u8; 20];
+    let mut i = 20;
+    while v > 0 { i -= 1; tmp[i] = b'0' + (v % 10) as u8; v /= 10; }
+    write_str(&tmp[i..20]);
+}
+
+fn write_stat_line(id: u32, val: u64, suffix: &[u8]) {
+    write_label(id);
+    write_u64(val);
+    if suffix.len() > 0 { write_str(suffix); }
+    write_str(b"\r\n");
+}
+
+fn print_stats(idx: u32) {
+    let mut st = libnet::NetIfaceStats {
+        rx_packets: 0, tx_packets: 0, rx_bytes: 0, tx_bytes: 0,
+        rx_errors: 0, tx_errors: 0,
+    };
+    if libnet::iface_stats(idx, &mut st) != 0 { return; }
+    write_stat_line(IDS_STATS_RX, st.rx_packets, b" packets");
+    write_stat_line(IDS_STATS_TX, st.tx_packets, b" packets");
+    write_stat_line(IDS_STATS_RX_BYTES, st.rx_bytes, b" bytes");
+    write_stat_line(IDS_STATS_TX_BYTES, st.tx_bytes, b" bytes");
     write_str(b"\r\n");
 }
 
@@ -310,6 +342,7 @@ pub extern "C" fn _start() -> ! {
             } else {
                 print_iface(i, &info, &cfg);
             }
+            print_stats(i);
         }
     }
 

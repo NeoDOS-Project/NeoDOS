@@ -146,6 +146,9 @@ pub enum ObInfoClass {
     ProcessSnapshot = 26,
     /// Work-stealing / SMP balancing counters (global, read-only). Fase 3 M3.2.
     SmpStats = 27,
+    /// Per-interface network counters (read-only). #373: one 40-byte entry
+    /// per `NicInfo` enumeration slot (physical NICs, then loopback).
+    NetStats = 28,
     ServiceState = 29,
     ServiceConfig = 30,
     ServiceStatus = 31,

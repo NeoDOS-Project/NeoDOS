@@ -145,7 +145,7 @@ pub struct SocketAddrV4 {
 // Desde libnet-nxl (C ABI, retornan i32):
 pub extern "C" fn net_iface_count() -> u32;
 pub unsafe extern "C" fn net_iface_info(idx: u32, info: *mut NetIfaceInfo) -> i32;
-pub extern "C" fn net_iface_stats(idx: u32, stats: *mut NetIfaceStats) -> i32;  // stub
+pub extern "C" fn net_iface_stats(idx: u32, stats: *mut NetIfaceStats) -> i32;  // #373
 pub extern "C" fn net_get_ip(iface: u32) -> u32;
 pub extern "C" fn net_get_gateway(iface: u32) -> u32;
 pub extern "C" fn net_get_mask(iface: u32) -> u32;
@@ -157,9 +157,7 @@ consulta `ObInfoClass::NicInfo` (class 20). El kernel devuelve un array de
 registros NicInfoRaw de 15 bytes cada uno. No existe `\Global\Info\NicInfo`
 — el handler NicInfo es global y funciona con cualquier fd válido.
 
-**net_iface_stats** retorna -1 (pendiente de implementar estadísticas en kernel).
-
-**Sobre stats:** Planificado pero no implementado.
+**net_iface_stats** devuelve contadores por interfaz (#373, clase `NetStats` = 28): paquetes/bytes RX/TX y errores, en el mismo orden que `NicInfo`.
 
 #### 2.2.3 Funciones de socket (implementadas)
 

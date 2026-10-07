@@ -725,4 +725,22 @@ pub fn register_net_tests() {
         test_eq!(&name[..8], b"loopback");
         test_eq!(&desc[..18], b"Loopback Interface");
     });
+
+    test_case!("net_stats_loopback_advances", {
+        use super::counters::{snapshot, LOOPBACK_SLOT};
+        let before = snapshot(LOOPBACK_SLOT);
+        // A loopback UDP send counts 1 TX (enqueue) + 1 RX (dispatch).
+        let local = SocketAddrV4::new(Ipv4Addr::new([127, 0, 0, 1]), 42001);
+        let remote = SocketAddrV4::new(Ipv4Addr::new([127, 0, 0, 1]), 42002);
+        test_true!(super::socket::socket_send_udp_loopback(local, remote, b"stats").is_ok());
+        let after = snapshot(LOOPBACK_SLOT);
+        test_eq!(after.0, before.0 + 1); // rx_packets
+        test_eq!(after.1, before.1 + 1); // tx_packets
+        test_true!(after.2 > before.2); // rx_bytes
+        test_true!(after.3 > before.3); // tx_bytes
+        // Unknown slots are never counted and snapshot to zero.
+        test_eq!(snapshot(99), (0, 0, 0, 0, 0, 0));
+        test_true!(super::nic::nic_route(Ipv4Addr::new([127, 0, 0, 1]))
+            == super::nic::Route::Loopback);
+    });
 }

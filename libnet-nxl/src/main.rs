@@ -9,6 +9,7 @@ const OB_TYPE_SOCKET: u32 = 18;
 
 // ── ObInfoClass constants ──
 const INFO_CLASS_NIC_INFO: u32 = 20;
+const INFO_CLASS_NET_STATS: u32 = 28;
 const INFO_CLASS_HOSTNAME: u32 = 38;
 
 // ── ObSetInfoClass constants ──
@@ -196,8 +197,39 @@ pub unsafe extern "C" fn net_iface_info(idx: u32, info: *mut NetIfaceInfo) -> i3
 }
 
 #[no_mangle]
-pub extern "C" fn net_iface_stats(_idx: u32, _stats: *mut NetIfaceStats) -> i32 {
-    -1
+pub extern "C" fn net_iface_stats(idx: u32, stats: *mut NetIfaceStats) -> i32 {
+    if stats.is_null() { return -1; }
+    // Room for MAX_NICS (4) + loopback (#484); same order as NicInfo (#373).
+    let mut buf = [0u8; 512];
+    let fd = unsafe {
+        match ob_open("\\Global\\Info\\Network\0", OB_READ) {
+            r if r >= 0 => r as u8,
+            _ => return -1,
+        }
+    };
+    let r = unsafe { ob_query_info(fd, INFO_CLASS_NET_STATS, buf.as_mut_ptr(), buf.len()) };
+    unsafe { ob_close(fd) };
+    if r < 0 { return -1; }
+    let entry_sz = core::mem::size_of::<NetIfaceStats>();
+    let offset = (idx as usize) * entry_sz;
+    if offset + entry_sz > r as usize { return -1; }
+    let raw = &buf[offset..offset + entry_sz];
+    let le64 = |o: usize| u64::from_le_bytes([
+        raw[o], raw[o + 1], raw[o + 2], raw[o + 3],
+        raw[o + 4], raw[o + 5], raw[o + 6], raw[o + 7],
+    ]);
+    let le32 = |o: usize| u32::from_le_bytes([raw[o], raw[o + 1], raw[o + 2], raw[o + 3]]);
+    unsafe {
+        core::ptr::write(stats, NetIfaceStats {
+            rx_packets: le64(0),
+            tx_packets: le64(8),
+            rx_bytes: le64(16),
+            tx_bytes: le64(24),
+            rx_errors: le32(32),
+            tx_errors: le32(36),
+        });
+    }
+    0
 }
 
 #[no_mangle]

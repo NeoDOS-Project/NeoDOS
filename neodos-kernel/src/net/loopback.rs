@@ -55,9 +55,11 @@ impl super::nic::NetworkInterface for LoopbackInterface {
 pub fn loopback_send(frame: &[u8]) -> Result<(), ()> {
     let mut q = LOOPBACK_QUEUE.lock();
     if q.len() >= LOOPBACK_QUEUE_MAX {
+        crate::net::counters::note_tx_err(super::counters::LOOPBACK_SLOT);
         return Err(());
     }
     q.push_back(frame.to_vec());
+    crate::net::counters::note_tx(super::counters::LOOPBACK_SLOT, frame.len());
     Ok(())
 }
 
