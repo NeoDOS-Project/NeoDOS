@@ -144,6 +144,8 @@ pub enum ObInfoClass {
     ThreadStats = 25,
     /// Phase 15-A: coherent process+thread inspection snapshot (read-only).
     ProcessSnapshot = 26,
+    /// Work-stealing / SMP balancing counters (global, read-only). Fase 3 M3.2.
+    SmpStats = 27,
     ServiceState = 29,
     ServiceConfig = 30,
     ServiceStatus = 31,

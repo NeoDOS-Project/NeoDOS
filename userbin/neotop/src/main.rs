@@ -14,8 +14,8 @@ mod logic;
 use core::mem::size_of;
 use libneodos::i18n;
 use libneodos::syscall::{
-    self, CpuStatsEntry, ProcessInfoRaw, ProcSnapshotHeader, StatsHeader, ThreadInfoRaw,
-    PROC_SNAPSHOT_VERSION,
+    self, CpuStatsEntry, ProcessInfoRaw, ProcSnapshotHeader, SmpStats, StatsHeader, ThreadInfoRaw,
+    PROC_SNAPSHOT_VERSION, SMP_STATS_VERSION,
 };
 use libneodos::tr_id;
 
@@ -43,6 +43,7 @@ const IDS_HELP_QUIT: u32 = 1033;
 const IDS_HELP_REFRESH: u32 = 1034;
 const IDS_COL_WSS: u32 = 1035;
 const IDS_COL_COMMIT: u32 = 1036;
+const IDS_STEAL: u32 = 1037;
 
 /// Must be >= the kernel's `MAX_SNAPSHOT_PROCESSES`.
 const PROC_SNAP_MAX: usize = 64;
@@ -56,6 +57,9 @@ const PROC_BUF_LEN: usize = size_of::<ProcSnapshotHeader>()
 /// Room for the stats header plus one CPU entry. Entries are emitted in CPU
 /// order, so a single-entry buffer yields CPU0 (the BSP) — the wall clock.
 const CPU_BUF_LEN: usize = size_of::<StatsHeader>() + size_of::<CpuStatsEntry>();
+
+/// Buffer for one `SmpStats` (global work-stealing counters).
+const SMP_BUF_LEN: usize = size_of::<SmpStats>();
 
 /// Output accumulator: sized for title + process/thread table (~128 rows).
 const OUT_CAP: usize = 16384;
@@ -129,6 +133,12 @@ fn u64_bytes(mut v: u64, buf: &mut [u8; 20]) -> &[u8] {
 fn write_u32_field(v: u32, width: usize) {
     let mut buf = [0u8; 20];
     let bytes = u64_bytes(v as u64, &mut buf);
+    write_field_right(bytes, width);
+}
+
+fn write_u64_field(v: u64, width: usize) {
+    let mut buf = [0u8; 20];
+    let bytes = u64_bytes(v, &mut buf);
     write_field_right(bytes, width);
 }
 
@@ -281,7 +291,7 @@ impl<'a> SnapshotView<'a> {
 /// Render one frame. `history` holds the previous snapshot's per-process CPU
 /// counters (empty on the first frame), and `wall_delta` is the measured
 /// elapsed interval in timer units (0 on the first frame).
-fn render_frame(view: &SnapshotView, history: &logic::CpuHistory, wall_delta: u64, clear: bool) {
+fn render_frame(view: &SnapshotView, history: &logic::CpuHistory, wall_delta: u64, clear: bool, smp: Option<SmpStats>) {
     if clear {
         // ANSI home + clear, mirroring `corecls` (no new console subsystem).
         write_str(b"\x1b[2J\x1b[H");
@@ -306,7 +316,16 @@ fn render_frame(view: &SnapshotView, history: &logic::CpuHistory, wall_delta: u6
         write_str(b"  ");
         write_str(tr_id!(IDS_TRUNCATED).as_bytes());
     }
-    write_str(b"\r\n\r\n");
+    write_str(b"\r\n");
+    if let Some(s) = smp {
+        write_str(tr_id!(IDS_STEAL).as_bytes());
+        write_str(b": ");
+        write_u64_field(s.steal_success, 1);
+        write_str(b"/");
+        write_u64_field(s.steal_attempts, 1);
+        write_str(b"\r\n");
+    }
+    write_str(b"\r\n");
 
     write_field_right(tr_id!(IDS_COL_PID).as_bytes(), 5);
     write_str(b"  ");
@@ -408,6 +427,21 @@ fn read_wall_tick(cpu_fd: u8, buf: &mut [u8]) -> Option<u64> {
     Some(e.timer_tick_count)
 }
 
+/// Read the global work-stealing counters via the CpuInfo fd. `None` when the
+/// class is unavailable or reports an unexpected layout (the caller then omits
+/// the line).
+fn read_smp_stats(cpu_fd: u8, buf: &mut [u8]) -> Option<SmpStats> {
+    let n = syscall::sys_ob_query_smp_stats(cpu_fd, buf).ok()?;
+    if n < size_of::<SmpStats>() {
+        return None;
+    }
+    let s = unsafe { core::ptr::read_unaligned(buf.as_ptr() as *const SmpStats) };
+    if s.version != SMP_STATS_VERSION {
+        return None;
+    }
+    Some(s)
+}
+
 /// Cooperative refresh wait. Polls stdin (non-blocking: the kernel reports it
 /// readable only when a byte is queued) and yields the CPU between polls, so a
 /// waiting neotop never busy-spins. Returns early on a key, or once the real
@@ -487,6 +521,7 @@ pub extern "C" fn _start() -> ! {
     let cpu_fd = syscall::ob_open_cpu_info().ok();
 
     let mut cpu_buf = [0u8; CPU_BUF_LEN];
+    let mut smp_buf = [0u8; SMP_BUF_LEN];
     let mut proc_buf = [0u8; PROC_BUF_LEN];
     let mut history = logic::CpuHistory::new();
 
@@ -497,6 +532,7 @@ pub extern "C" fn _start() -> ! {
     loop {
         // Wall-clock reference for this frame, in timer intervals.
         let frame_wall = cpu_fd.and_then(|cfd| read_wall_tick(cfd, &mut cpu_buf));
+        let smp = cpu_fd.and_then(|cfd| read_smp_stats(cfd, &mut smp_buf));
         let wall_delta = match (prev_wall, frame_wall) {
             (Some(p), Some(c)) if c >= p => c - p,
             _ => 0,
@@ -517,7 +553,7 @@ pub extern "C" fn _start() -> ! {
                             n_cpu += 1;
                         }
                     }
-                    render_frame(&view, &history, wall_delta, frames > 0);
+                    render_frame(&view, &history, wall_delta, frames > 0, smp);
                 } else {
                     clear_and_unavailable(frames > 0);
                 }

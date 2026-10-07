@@ -48,6 +48,8 @@ pub enum ObInfoClass {
     ThreadStats = 25,
     /// Phase 15-A: coherent process+thread inspection snapshot (read-only).
     ProcessSnapshot = 26,
+    /// Work-stealing / SMP balancing counters (global, read-only). Fase 3 M3.2.
+    SmpStats = 27,
     ServiceState = 29,
     ServiceConfig = 30,
     ServiceStatus = 31,
@@ -250,6 +252,12 @@ impl ObProcessInfo {
 /// Query per-CPU stats via an fd opened on `\Global\Info\CpuInfo`.
 pub fn sys_ob_query_cpu_stats(fd: u8, buf: &mut [u8]) -> Result<usize, i64> {
     sys_ob_query_info(fd, ObInfoClass::CpuStats, buf)
+}
+
+/// Query the global work-stealing counters via an fd opened on
+/// `\Global\Info\CpuInfo` (same key as `CpuStats`). Writes one [`SmpStats`].
+pub fn sys_ob_query_smp_stats(fd: u8, buf: &mut [u8]) -> Result<usize, i64> {
+    sys_ob_query_info(fd, ObInfoClass::SmpStats, buf)
 }
 
 /// Query the global thread snapshot via an fd opened on `\Global\Info\Threads`.
