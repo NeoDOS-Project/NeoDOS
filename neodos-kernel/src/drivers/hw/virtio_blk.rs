@@ -9,10 +9,34 @@ use core::sync::atomic::{fence, Ordering};
 use crate::drivers::block::BlockDevice;
 use crate::irp::{self, IrpId, IrpOp};
 use crate::memory;
-use crate::virtio::{self, BLK_T_IN, BLK_T_OUT, BLK_T_FLUSH, BLK_ACCEPTED_FEATURES, BLK_F_BLK_SIZE, BLK_F_FLUSH};
-use crate::virtio::transport::VirtioTransport;
-use crate::virtio::vring::{SplitVring, VRING_DESC_F_NEXT, VRING_DESC_F_WRITE};
+use crate::drivers::virtio::transport::VirtioTransport;
+use crate::drivers::virtio::vring::{SplitVring, VRING_DESC_F_NEXT, VRING_DESC_F_WRITE};
 use crate::log::LogSubsys;
+
+// ── VirtIO block feature bits / request types ───────────────────────
+// Moved here from `drivers/virtio/mod.rs` so the virtio module stays a
+// pure bus/transport layer.
+pub const BLK_F_SIZE_MAX: u32 = 1 << 1;
+pub const BLK_F_SEG_MAX: u32 = 1 << 2;
+pub const BLK_F_BLK_SIZE: u32 = 1 << 6;
+pub const BLK_F_FLUSH: u32 = 1 << 14;
+pub const BLK_F_DISCARD: u32 = 1 << 13;
+
+pub const BLK_ACCEPTED_FEATURES: u32 = BLK_F_SIZE_MAX | BLK_F_SEG_MAX
+    | BLK_F_BLK_SIZE | BLK_F_FLUSH | 0; // VIRTIO_F_VERSION_1 handled by transport
+
+pub const BLK_T_IN: u32 = 0;
+pub const BLK_T_OUT: u32 = 1;
+pub const BLK_T_FLUSH: u32 = 4;
+
+/// Block request/response struct (ABI stable).
+#[derive(Debug, Clone, Copy)]
+#[repr(C, packed)]
+pub struct VirtioBlkReq {
+    pub type_: u32,
+    pub reserved: u32,
+    pub sector: u64,
+}
 
 const PAGE_SIZE_4K: u64 = 4096;
 const SECTOR_SIZE: u32 = 512;
@@ -145,8 +169,8 @@ impl VirtIoBlk {
 
         // Write request header
         unsafe {
-            let req = self.dma_phys as *mut virtio::VirtioBlkReq;
-            req.write_volatile(virtio::VirtioBlkReq { type_, reserved: 0, sector: abs_lba });
+            let req = self.dma_phys as *mut VirtioBlkReq;
+            req.write_volatile(VirtioBlkReq { type_, reserved: 0, sector: abs_lba });
         }
 
         // Write data (for writes)
@@ -294,14 +318,14 @@ pub fn register_tests() {
     use crate::test_eq;
 
     test_case!("virtio_pci_constants", {
-        test_eq!(crate::virtio::transport::VIRTIO_VENDOR, 0x1AF4);
+        test_eq!(crate::drivers::virtio::transport::VIRTIO_VENDOR, 0x1AF4);
         // QUEUE_SIZE must match QEMU's default queue num for virtio-blk
         test_eq!(QUEUE_SIZE, 256);
     });
 
     test_case!("virtio_virtqueue_layout", {
-        test_eq!(core::mem::size_of::<virtio::VirtioBlkReq>(), 16);
-        test_eq!(core::mem::size_of::<crate::virtio::vring::VringDesc>(), 16);
+        test_eq!(core::mem::size_of::<VirtioBlkReq>(), 16);
+        test_eq!(core::mem::size_of::<crate::drivers::virtio::vring::VringDesc>(), 16);
     });
 
     test_case!("virtio_blk_request_size", {

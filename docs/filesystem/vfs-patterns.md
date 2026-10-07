@@ -162,7 +162,7 @@ crate::globals::with_vfs(|vfs| {
 })
 ```
 
-**Real example from codebase** ([`neodos-kernel/src/drivers/boot_loader/mod.rs`](../../neodos-kernel/src/drivers/boot_loader/mod.rs)):
+**Real example from codebase** ([`neodos-kernel/src/drivers/nem/management/boot_loader/mod.rs`](../../neodos-kernel/src/drivers/nem/management/boot_loader/mod.rs)):
 
 ```rust
 fn read_nem_file(path: &str) -> Result<Vec<u8>, &'static str> {
@@ -337,7 +337,7 @@ pub trait FileSystem: Send {
 **Current implementations**:
 
 - [`NeoDosFsV2`](../../neodos-kernel/src/fs/neodos_v2.rs) - NeoDOS native filesystem (NE2, NeoFS v2)
-- [`Fat32Driver`](../../neodos-kernel/src/drivers/fat32.rs) - FAT32 (ESP boot partition)
+- [`Fat32Driver`](../../neodos-kernel/src/fs/fat32.rs) - FAT32 (ESP boot partition)
 - `Iso9660Driver` - ISO 9660 (CD-ROM) — planned; no implementation yet
 
 ---
@@ -442,7 +442,7 @@ let result = crate::globals::with_vfs(|vfs| {
 
 ### 2. Driver Loader - Reading .nem Files
 
-[`neodos-kernel/src/drivers/boot_loader/mod.rs` line ~274](../../neodos-kernel/src/drivers/boot_loader/mod.rs#L274)
+[`neodos-kernel/src/drivers/nem/management/boot_loader/mod.rs` line ~274](../../neodos-kernel/src/drivers/nem/management/boot_loader/mod.rs#L274)
 
 ```rust
 fn read_nem_file(path: &str) -> Result<Vec<u8>, &'static str> {

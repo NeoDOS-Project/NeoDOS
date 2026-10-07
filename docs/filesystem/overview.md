@@ -166,7 +166,7 @@ GPT parsing identifies `PART_TYPE_ESP` and `PART_TYPE_NEODOS` GUIDs.
 
 ## FAT32
 
-Source: `src/drivers/fat32.rs`. ESP partition mounted on `A:` for UEFI boot
+Source: `src/fs/fat32.rs`. ESP partition mounted on `A:` for UEFI boot
 compatibility. Uses the same IoStack layer for block I/O. Supports long filenames.
 
 ## FSCK

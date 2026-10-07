@@ -19,6 +19,48 @@
   A work-stealing overflow counter (`RUNQUEUE_OVERFLOW`) is reported in the boot
   diagnostics. `docs/scheduler/scheduler.md` updated.
 
+- **Network: loopback interface (`127.0.0.0/8`) + local routing (#484/#528).**
+  Synthetic `MacAddr::loopback()` (`02:00:00:00:00:01`),
+  `Route::{Loopback,OnLink,ViaGateway,Unreachable}` with `nic_route()`, and
+  `net/loopback.rs` (`\Device\Loopback`, TX queue + `loopback_pump()` outside
+  `NIC_REGISTRY`). UDP/ICMP/TCP send paths route `127/8` through the loopback
+  queue without NIC/ARP; `icmp_ping` returns a real RTT. Loopback appears as an
+  appended read-only entry in `NicInfo` and in the `ipconfig` "Loopback"
+  section. Kernel tests: route, UDP e2e, ping 127/8, TCP segment, 0-NIC.
+  `docs/networking/stack.md` updated.
+
+- **Network: per-interface statistics + DHCP options/domain (#373/#532/#533).**
+  New `ObInfoClass::NetStats = 28`: per-NIC-slot + loopback RX/TX
+  packets/bytes/errors, in `NicInfo` enumeration order;
+  `net.nxl::net_iface_stats` and `ipconfig` render per-adapter counters. `dhcpd`
+  parses the PRL plus options 58/59/15/28/26/42 with a NAK counter; the Registry
+  stores `T1Renew`/`T2Rebind`/`Domain`/`Broadcast`/`NtpServer[3]`/`MTU`;
+  `ipconfig` shows domain and renew/rebind datetimes (IDS 1034-1036 en/es/ca).
+  `docs/kernel/objects.md` and `docs/networking/userland.md` updated.
+
+- **Network: `ipconfig` arguments, CIDR + divergence warnings (#531/#534).**
+  `ipconfig` accepts arguments and a compact per-interface view with `/24`-style
+  CIDR, warns when configuration diverges, and retries ping-loopback.
+
+- **Network: DHCP renewal supervisor T1/T2 + DORA restart (#316/#535).**
+  Lease-driven renewal supervisor with periodic REQUEST retry (ARP race) and a
+  full DORA restart on failure.
+
+- **Network: e1000 multi-instance, probe all NICs (#536/#537).**
+  The e1000 NEM driver probes and drives multiple instances (all NICs) instead of
+  only the first; a NIC with no Registry entry reports a no-config source rather
+  than static.
+
+- **Network: per-NIC DHCP + applier, `SocketBindNic` (#538).**
+  Addresses are per NIC (no cross-slot propagation); per-NIC DORA and supervision
+  feed a configuration applier. New `ObSetInfoClass::SocketBindNic = 29` pins a
+  socket to a NIC for send-interface selection (u32 LE nic id); send honors the
+  bound NIC.
+
+- **Network: TCP data path — tick/flush, ACKs, FIN + e2e test (#486/#539).**
+  TCP data transfer with tick-driven flush, ACK handling and FIN/orderly close,
+  covered by an end-to-end loopback test.
+
 ### Changed
 
 - **#18 / VFS-2.2: trait-based FSCK (`FsckTrait`).** Filesystem integrity
@@ -31,6 +73,17 @@
   shared `fs/crc32.rs`. `FsckStats.repaired` reports the count of fixed issues
   instead of a boolean. Both filesystems are reachable from Ring 3 through
   `ObInfoClass::FsckStatus` / `ObSetInfoClass::FsckRepair` and `fsck.nxe`.
+
+- **#540: reorganize `neodos-kernel/src/drivers` by responsibility.** The
+  directory now separates the driver framework from hardware and storage:
+  `hw/` (pci, ata, ahci, nvme, virtio_blk, ps2, rtc), `storage/` (block, gpt,
+  manager), `virtio/` (bus/transport, moved in from `src/virtio/`), and
+  `nem/{loader,runtime,management}/`. VirtIO block-specific ABI moved from
+  `virtio/mod.rs` to `hw/virtio_blk.rs`. FAT32 — a `FileSystem` — moved to
+  `src/fs/fat32.rs` with its FSCK in `src/fs/fsck/fat32.rs`; the FS-agnostic
+  `FsckTrait` now lives in `src/fs/fsck/`. Historical `crate::drivers::<name>`
+  paths keep resolving via re-exports in `src/drivers/mod.rs`. No behavior
+  change; `check-deps-baseline.txt` refreshed for the moved paths.
 
 ### Fixed
 
@@ -62,6 +115,14 @@
   before packaging them. Added the `ob_set_datetime_rtc_write_acks` kernel
   regression guard. See
   `docs/investigation/issue-491-ntpd-clock-set-denied.md`.
+
+- **#530: e1000 NEM link state + `ipconfig` lease info.** The NEM bridge had no
+  link-query slot, so `driver_link_up()` was dead code and the registry stayed
+  link-down despite working traffic; the e1000 RX poll path now republishes link
+  state via `hst_set_network_link_state` (throttled, one `STATUS.LU` read per 512
+  polls). Added the `LeaseObtained` contract and APIPA check; `ipconfig` shows the
+  DHCP server, an APIPA mark (`169.254/16`) and lease obtained/expiry dates
+  (IDS 1030-1033 en/es/ca).
 
 ## v0.51.4 — 2026-10-06
 

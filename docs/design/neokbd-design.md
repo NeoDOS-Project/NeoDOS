@@ -35,7 +35,7 @@ PS/2 IRQ (IDT handler)
 | `drivers/ps2kbd/layouts/KBDUS.klc` | Layout US (inglés) | ~100 |
 | `drivers/ps2kbd/layouts/KBDSP.klc` | Layout SP (español) | ~100 |
 | `neodos-kernel/src/arch/x64/idt.rs:698-756` | IRQ handler: lee scancode, check Ctrl+Alt+Del, Alt+F#, push EVENT_KEYBOARD_INPUT | 58 |
-| `neodos-kernel/src/drivers/nem/hst.rs:78-82` | `hst_push_input_byte()`: capability check → input::push_byte | 4 |
+| `neodos-kernel/src/drivers/nem/loader/hst.rs:78-82` | `hst_push_input_byte()`: capability check → input::push_byte | 4 |
 | `neodos-kernel/src/eventbus/mod.rs` | `EVENT_KEYBOARD_INPUT=1`, `EVENT_KEYB_LAYOUT=9` | 548 |
 | `neodos-kernel/src/input/manager.rs` | `InputManager`: 4 VT queues, dispatch | 78 |
 | `neodos-kernel/src/input/vt.rs` | `VtInputQueue`: ring buffer 4096 bytes, lock-free SPSC | 66 |
@@ -45,7 +45,7 @@ PS/2 IRQ (IDT handler)
 | `neodos-kernel/src/syscall/mod.rs:231` | `KEYBOARD_LAYOUT: AtomicU8 = 1` (default Spanish) | 1 |
 | `neodos-kernel/src/object/types.rs` | `ObInfoClass::KeyboardLayout=14`, `ObSetInfoClass::KeyboardLayout=5` | definiciones |
 | `neodos-kernel/src/main.rs:246-248` | Crea `\Global\Info\Keyboard` (ObType::Key, native_id=9) | 3 |
-| `neodos-kernel/src/drivers/boot_loader/mod.rs:165-172` | Registra PS2KBD para EVENT_KEYBOARD_INPUT + EVENT_KEYB_LAYOUT | 8 |
+| `neodos-kernel/src/drivers/nem/management/boot_loader/mod.rs:165-172` | Registra PS2KBD para EVENT_KEYBOARD_INPUT + EVENT_KEYB_LAYOUT | 8 |
 | `libconsole-nxl/src/main.rs` | `read_byte()` → `sys_read(0)` → devuelve byte | 60 |
 | `libneodos/src/console.rs` | `read_byte()` via NXL export table | 20 |
 | `userbin/neoshell/src/shell.rs` | `readline()` → `console::read_byte()` → build line | ~200 |
@@ -193,7 +193,7 @@ KeyboardDevice = 22,
 | `src/syscall/mod.rs` | Eliminar `KEYBOARD_LAYOUT: AtomicU8` (reemplazado por NeoKBD) |
 | `src/eventbus/mod.rs` | Añadir `EVENT_KEYDOWN = 27`, `EVENT_KEYUP = 28`, `EVENT_KEY_CHAR = 29`, `EVENT_KBD_MODIFIER = 30`, `EVENT_KBD_REPEAT = 31` |
 | `src/main.rs` | Añadir PHASE 3.875: `kbd::kbd_init()` (después de input init, antes de driver loader) |
-| `src/drivers/boot_loader/mod.rs:165-172` | Mantener registro de PS2KBD para EVENT_KEYBOARD_INPUT (NeoKBD será handler adicional o reemplazo) |
+| `src/drivers/nem/management/boot_loader/mod.rs:165-172` | Mantener registro de PS2KBD para EVENT_KEYBOARD_INPUT (NeoKBD será handler adicional o reemplazo) |
 | `src/cm/mod.rs` | Añadir defaults Registry: `cm_ensure_default_values()` crear `\Registry\Machine\System\Keyboard\*` |
 | `drivers/ps2kbd/src/lib.rs` | **Simplificar**: eliminar layout tables, dead keys, UTF-8 encode. Mantener solo modifier tracking + scancode→event. Emitir eventos estructurados via nueva HST. |
 | `libneodos/src/keyboard.rs` (nuevo) | Wrappers: `kbd_get_layout()`, `kbd_set_layout()`, `kbd_list_layouts()`, `kbd_get_repeat()`, `kbd_set_repeat()`, `kbd_get_state()`, `kbd_set_leds()` |
