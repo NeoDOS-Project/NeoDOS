@@ -339,7 +339,8 @@ fn icmp_ping_loopback(dest_ip: crate::net::types::Ipv4Addr) -> Option<u64> {
     crate::net::loopback::loopback_send(&frame).ok()?;
     crate::net::loopback::loopback_pump();
     if LAST_PING_REPLY.load(Ordering::Acquire) == id as u64 {
-        Some(0)
+        // Non-zero: the RAX 36 ABI (and ping.nxe) treat 0 as failure.
+        Some(1)
     } else {
         None
     }

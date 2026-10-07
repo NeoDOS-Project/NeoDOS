@@ -32,6 +32,19 @@ fn cmd_passed() {
 }
 
 #[inline(never)]
+fn test_ping_loopback() -> bool {
+    // 127.0.0.1 as big-endian u32 (RAX 36 ABI). Loopback needs no NIC.
+    let rtt = syscall::sys_icmp_ping(0x7F000001);
+    if rtt > 0 {
+        write_str(b"[ping-lo] reply 127.0.0.1 PASS\r\n");
+        true
+    } else {
+        write_str(b"[ping-lo] 127.0.0.1 timeout FAIL\r\n");
+        false
+    }
+}
+
+#[inline(never)]
 fn test_cd() -> bool {
     let mut buf = [0u8; 2];
     buf[0] = 0x41; // A
@@ -118,6 +131,7 @@ pub extern "C" fn _start() -> ! {
     if test_cd() { passed += 1; } else { failed += 1; cmd_passed(); }
     if test_md_rd() { passed += 1; } else { failed += 1; }
     if test_del() { passed += 1; } else { failed += 1; }
+    if test_ping_loopback() { passed += 1; } else { failed += 1; }
 
     write_str(tr_id!(IDS_HEADER).as_bytes());
     if failed == 0 {
