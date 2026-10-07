@@ -44,7 +44,7 @@ PS/2 IRQ (IDT handler)
 | `neodos-kernel/src/syscall/ob.rs:1921-1935` | `ob_set_info(KeyboardLayout)`: escribe KEYBOARD_LAYOUT, push EVENT_KEYB_LAYOUT | 15 |
 | `neodos-kernel/src/syscall/mod.rs:231` | `KEYBOARD_LAYOUT: AtomicU8 = 1` (default Spanish) | 1 |
 | `neodos-kernel/src/object/types.rs` | `ObInfoClass::KeyboardLayout=14`, `ObSetInfoClass::KeyboardLayout=5` | definiciones |
-| `neodos-kernel/src/main.rs:246-248` | Crea `\Global\Info\Keyboard` (ObType::Key, native_id=9) | 3 |
+| `neodos-kernel/src/boot/mod.rs:246-248` | Crea `\Global\Info\Keyboard` (ObType::Key, native_id=9) | 3 |
 | `neodos-kernel/src/drivers/nem/management/boot_loader/mod.rs:165-172` | Registra PS2KBD para EVENT_KEYBOARD_INPUT + EVENT_KEYB_LAYOUT | 8 |
 | `libconsole-nxl/src/main.rs` | `read_byte()` → `sys_read(0)` → devuelve byte | 60 |
 | `libneodos/src/console.rs` | `read_byte()` via NXL export table | 20 |

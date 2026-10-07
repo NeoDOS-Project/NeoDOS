@@ -577,7 +577,7 @@ cleanup as `DisplayFreeBuffer`: unmap, free frames, release the VT
 | `neodos-kernel/src/input/vt.rs` | `VtMode` definition |
 | `neodos-kernel/src/input/manager.rs` | Per-VT mode + owner, present gating helpers |
 | `neodos-kernel/src/arch/x64/paging.rs` | Map display frames into the mmap region as user pages |
-| `neodos-kernel/src/main.rs` | `mod display;` + `display::init(fb_info)` at Phase 3.86 |
+| `neodos-kernel/src/boot/mod.rs` | `mod display;` + `display::init(fb_info)` at Phase 3.86 |
 | `libneodos/src/lib.rs` / export | Register the display module/export entry |
 | `docs/kernel/objects.md` | Display ObType, namespace, info classes |
 | `docs/kernel/syscalls.md` | Document classes 43, 52–54 |

@@ -45,7 +45,7 @@ pub struct BootInfo {
 
 ## Kernel Boot Phases
 
-Sequence from `src/main.rs` `rust_start()`:
+Sequence from `src/boot/mod.rs` `init()`:
 
 | Phase | Description | Key Code |
 | ------- | ------------- | ---------- |

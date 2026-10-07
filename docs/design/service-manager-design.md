@@ -260,7 +260,7 @@ pub fn sys_ob_service(
 | `src/syscall/mod.rs` | Add `MAX_VALID = 77`. Add SSDT entry for `sys_ob_service` at RAX 77. Update `validate_abi()`. |
 | `src/syscall/ob.rs` | Add `handler_ob_service()`. Add case arms in `handler_ob_query_info` for classes 29-31. Add case arms in `handler_ob_set_info` for classes 33-36. |
 | `src/syscall/permission.rs` | Add `service_start/stop/set_config` permission entries. Service operations require admin token. |
-| `src/globals.rs` | Add `SERVICE_MANAGER: Mutex<ServiceManager>` global. |
+| `src/infra/globals.rs` | Add `SERVICE_MANAGER: Mutex<ServiceManager>` global. |
 | `src/main.rs` | Call `init_service_manager()` in Phase 3.882 (after Registry init). Call `sm_start_auto_services()` in Phase 4 (after NeoInit spawn). |
 | `userbin/neoinit/src/main.rs` | Remove `spawn_service()` / `AutoStartServices` logic. Delegate to kernel Service Manager. Add `sm_register_service()` call for each entry in Registry. |
 | `libneodos/src/syscall.rs` | Add `SERVICE_CONTROL_START(0)`..`SET_CONFIG(4)` constants. Add `sys_ob_service()` wrapper. Add `ObInfoClass::ServiceState(29)` etc. Add `ObSetInfoClass::ServiceStart(33)` etc. |
@@ -475,7 +475,7 @@ Convert all services to NEM drivers running in Ring 3 isolation slots.
 | **Syscall dispatch** (`src/syscall/mod.rs`) | Add RAX 77 `sys_ob_service` to SSDT, update `MAX_VALID`, update `validate_abi()` |
 | **Syscall handlers** (`src/syscall/ob.rs`) | New `handler_ob_service()`, extend `handler_ob_query_info` and `handler_ob_set_info` |
 | **Syscall permissions** (`src/syscall/permission.rs`) | Admin-only flag for service operations |
-| **Globals** (`src/globals.rs`) | New `SERVICE_MANAGER` global |
+| **Globals** (`src/infra/globals.rs`) | New `SERVICE_MANAGER` global |
 | **Boot** (`src/main.rs`) | Phase 3.882 init, Phase 4 auto-start |
 | **Scheduler** (no change, but service code calls `sm_spawn_process()` → `sys_ob_create` internally) | Uses existing process creation |
 | **Process Management** (`src/scheduler/mod.rs`) | Add `process_by_pid()` public helper (needed by Sm to get process handle/token) |
@@ -697,10 +697,10 @@ pub fn handler_ob_service(fd: u64, control: u32, buf: u64, buf_len: u64) -> u64
 
 ### Step 2: Create Service Manager skeleton
 
-**Files:** `src/services/mod.rs`, `src/services/manager.rs`, `src/globals.rs`
+**Files:** `src/services/mod.rs`, `src/services/manager.rs`, `src/infra/globals.rs`
 
 - Define `ServiceManager` struct with `services: Vec<Service>`
-- Declare `SERVICE_MANAGER` global in `src/globals.rs`
+- Declare `SERVICE_MANAGER` global in `src/infra/globals.rs`
 - Implement `sm_init()`: creates empty manager, creates `\Service\` in Ob namespace
 - Wire call to `sm_init()` in `src/main.rs` Phase 3.882
 

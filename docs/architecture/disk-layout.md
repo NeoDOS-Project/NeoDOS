@@ -154,13 +154,13 @@ exhaustivo:
 
 | Ruta | Consumidor |
 | --- | --- |
-| `C:\Programs\neoshell.nxe` | `neodos-kernel/src/main.rs`, `neodos-kernel/src/cm/init.rs`, libneodos |
-| `C:\Programs\neoinit.nxe` | `neodos-kernel/src/main.rs` |
+| `C:\Programs\neoshell.nxe` | `neodos-kernel/src/boot/mod.rs`, `neodos-kernel/src/cm/init.rs`, libneodos |
+| `C:\Programs\neoinit.nxe` | `neodos-kernel/src/boot/mod.rs` |
 | `C:\Programs` (PATH/recursos) | `userbin/neoshell/src/shell.rs`, `userbin/neoshell/src/completion.rs`, `userbin/corehelp/src/main.rs`, `libneodos/src/res.rs` |
 | `C:\System\Registry\*.hiv` | `neodos-kernel/src/cm/init.rs` |
-| `C:\System\Libraries\*.nxl` | `neodos-kernel/src/main.rs`, `libneodos/src/console.rs` |
+| `C:\System\Libraries\*.nxl` | `neodos-kernel/src/boot/mod.rs`, `libneodos/src/console.rs` |
 | `C:\System\Drivers\` | `docs/architecture/overview.md`, libneodos, boot_loader |
-| `C:\System\Keyboard\` | `neodos-kernel/src/main.rs` |
+| `C:\System\Keyboard\` | `neodos-kernel/src/boot/mod.rs` |
 | `C:\System\Locale\` | `libneodos/src/i18n.rs` |
 | `C:\System\Tools\dhcpd.nxe`, `netapplier.nxe` | `neodos-kernel` (servicios) |
 | `C:\Logs\WDT_*.dmp` | `neodos-kernel` |

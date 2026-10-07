@@ -1,5 +1,7 @@
+pub mod allocator;
 pub mod buddy;
 pub mod layout;
+pub mod slab;
 
 use core::mem::size_of;
 use spin::Mutex;

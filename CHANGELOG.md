@@ -94,6 +94,15 @@
   `crate::kbd`, `crate::power`, `crate::font`) kept resolving via re-exports
   in `main.rs`; `check-deps-baseline.txt` refreshed. No behavior change.
 
+- **#542 / P2: group root infrastructure and extract `boot/`.** Cross-cutting
+  singletons (`cpu`, `handle`, `work_queue`, `globals`, `lock_order`, `trace`,
+  `invariants`, `panic_classification`, `abi_freeze`, `boot_benchmark`, `elf`,
+  `nxl`, `usermode`) moved to `src/infra/`; `slab.rs` and `allocator.rs` moved
+  to `src/memory/`. The ~785-line `rust_start` boot sequence moved from
+  `main.rs` to `src/boot/mod.rs::init()`, leaving `main.rs` as a thin
+  entrypoint. Historical `crate::<name>` paths kept via re-exports. No behavior
+  change.
+
 ### Fixed
 
 - **Scheduler snapshot self-deadlock (BSP freeze before `[PROC_SNAPSHOT]`).**

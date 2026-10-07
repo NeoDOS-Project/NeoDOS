@@ -298,7 +298,7 @@ These extend the existing class tables in `src/syscall/ob/`.
 | `src/syscall/mod.rs` | Update `MAX_VALID` and `ASSIGNED` arrays |
 | `src/syscall/ob/` | Add dispatch for new info classes 32–34 and 37–42 in Power Manager handle |
 | `src/eventbus/mod.rs` | Add new event types 19–26 |
-| `src/abi_freeze.rs` | Update frozen checks for new event types |
+| `src/infra/abi_freeze.rs` | Update frozen checks for new event types |
 | `main.rs` | Add PHASE 3.883 for Power Manager init (after Service Manager) |
 | `libneodos/src/syscall.rs` | Add `sys_reboot()`, `power_get_active_plan()`, `power_set_active_plan()`, `power_shutdown()` wrappers |
 | `userbin/neoshell/` | Add built-in `REBOOT`, update `POWEROFF` to use Power Manager |
@@ -647,7 +647,7 @@ pub extern "C" fn poweroff() -> !;  // Updated to try ACPI S5 first
 
 ### Step 5: Event Bus + ABI freeze (0.5 day)
 
-**Files:** `src/eventbus/mod.rs`, `src/abi_freeze.rs`
+**Files:** `src/eventbus/mod.rs`, `src/infra/abi_freeze.rs`
 
 1. Add event types 19–26 to `eventbus/mod.rs`
 2. Update frozen type checks in `abi_freeze.rs`: verify new types not in 0–15 range

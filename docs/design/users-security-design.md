@@ -855,7 +855,7 @@ pub fn token_set_integrity_level(fd: i64, level: IntegrityLevel) -> Result<(), i
 | `src/cm/mod.rs` | Add user profile hive, SAM persistence | M |
 | `src/scheduler/mod.rs` | Token-based spawn, session tracking, integrity inheritance | M |
 | `src/syscall/permission.rs` | Add SE_* privilege enforcement to admin-only syscalls | S |
-| `src/globals.rs` | Add SESSION_MANAGER global | S |
+| `src/infra/globals.rs` | Add SESSION_MANAGER global | S |
 | `src/main.rs` | Init SESSION_MANAGER, default SAM creation | S |
 | `libneodos/src/syscall.rs` | Add wrappers for session/user/token operations | M |
 | `userbin/neologon/` | New: login binary | M |
@@ -901,7 +901,7 @@ pub fn token_set_integrity_level(fd: i64, level: IntegrityLevel) -> Result<(), i
 | 2.2 | `src/syscall/ob.rs` | Handler for `ObInfoClass::SessionInfo` (24) |
 | 2.3 | `src/syscall/ob.rs` | Handler for `ObSetInfoClass::SessionLock/Logoff` (28-29) |
 | 2.4 | `src/syscall/ob.rs` | Handler for `ObSetInfoClass::ChangePassword` (31) |
-| 2.5 | `src/globals.rs` | Add `SESSION_MANAGER: Mutex<SessionManager>` |
+| 2.5 | `src/infra/globals.rs` | Add `SESSION_MANAGER: Mutex<SessionManager>` |
 | 2.6 | `libneodos/src/syscall.rs` | Add session/CRUD wrappers |
 | 2.7 | `userbin/neologon/` | New binary: login prompt, SAM authentication, session creation |
 | 2.8 | `userbin/neoinit/` | Spawn neologon instead of shell directly |

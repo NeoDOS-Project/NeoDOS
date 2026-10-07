@@ -91,7 +91,7 @@ critical regions (kernel_image, kernel_heap) are non-overlapping.
 
 ## Kernel Slab Allocator
 
-Source: `src/slab.rs`. 9 power-of-2 size classes (`CACHE_SIZES = [8, 16, 32, 64, 128, 256, 512, 1024, 2048]`):
+Source: `src/memory/slab.rs`. 9 power-of-2 size classes (`CACHE_SIZES = [8, 16, 32, 64, 128, 256, 512, 1024, 2048]`):
 
 | Class | Size   |
 |-------|--------|

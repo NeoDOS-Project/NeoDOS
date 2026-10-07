@@ -19,7 +19,7 @@ let result = crate::globals::with_vfs(|vfs| {
 });
 ```
 
-**Location**: [`neodos-kernel/src/globals.rs`](../../neodos-kernel/src/globals.rs)
+**Location**: [`neodos-kernel/src/infra/globals.rs`](../../neodos-kernel/src/infra/globals.rs)
 
 **Definition**:
 
@@ -471,7 +471,7 @@ crate::globals::with_vfs(|vfs| {
 
 ### 4. Boot Benchmark - Reading BOOT.CFG
 
-[`neodos-kernel/src/boot_benchmark.rs` line ~364](../../neodos-kernel/src/boot_benchmark.rs#L364)
+[`neodos-kernel/src/infra/boot_benchmark.rs` line ~364](../../neodos-kernel/src/infra/boot_benchmark.rs#L364)
 
 ```rust
 match crate::globals::VFS.lock().open_file(path) {

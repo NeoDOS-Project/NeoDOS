@@ -90,7 +90,7 @@ sp = ks_top & !0xF; stack[-1]=0x202; stack[-2]=0x08; stack[-3]=entry; for j in 4
 - **D2 (CRITICAL SMP) `src/arch/x64/smp.rs:348` `alloc_idt_page`** 4 KiB zerado, `limit 4095`, sin copiar `IDT:498`. `IPI 0xF0` en AP → #GP → triple fault. Solo BSP operativo.
 - **D3 `neodos-kernel/kernel.ld:9` `.rodata*` dentro de `.text`** — datos RX, viola W^X.
 - **D4 `src/scheduler/mod.rs:47` sin guard page `NO_PRESENT`** — canary no atrapa overflow grande sobre `RIP/CS`.
-- **D5 `src/slab.rs:413` magic `0x534C4142`** colisión con `linked_list_allocator` header.
+- **D5 `src/memory/slab.rs:413` magic `0x534C4142`** colisión con `linked_list_allocator` header.
 - **D6 `src/hal/raw/cpu.rs:180` `raw_set_gs` con `println!` bajo `asm` + `IF=0`** — deadlock potencial.
 
 ---
