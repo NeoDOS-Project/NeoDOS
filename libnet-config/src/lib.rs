@@ -40,6 +40,8 @@ pub const VALUE_DHCP_BOUND: &str = "DHCPBound";
 pub const VALUE_DHCP_SERVER: &str = "DHCPServer";
 /// `LeaseTime` — lease duration in seconds.
 pub const VALUE_LEASE_TIME: &str = "LeaseTime";
+/// `LeaseObtained` — Unix seconds when the lease was granted (0 = unknown).
+pub const VALUE_LEASE_OBTAINED: &str = "LeaseObtained";
 
 /// `/24` (`255.255.255.0`), used when `SubnetMask` is absent or 0.
 ///
@@ -60,6 +62,8 @@ pub struct NetConfig {
     pub dhcp_bound: bool,
     pub dhcp_server: u32,
     pub lease_time: u32,
+    /// Unix seconds when the current lease was granted (0 = unknown).
+    pub lease_obtained: u32,
 }
 
 impl Default for NetConfig {
@@ -73,6 +77,7 @@ impl Default for NetConfig {
             dhcp_bound: false,
             dhcp_server: 0,
             lease_time: 0,
+            lease_obtained: 0,
         }
     }
 }
@@ -146,6 +151,11 @@ pub fn format_ip(ip: u32, buf: &mut [u8]) -> usize {
     pos
 }
 
+/// True when `ip` (big-endian u32) is in the APIPA range 169.254.0.0/16.
+pub fn is_apipa(ip: u32) -> bool {
+    ip & 0xFFFF_0000 == 0xA9FE_0000
+}
+
 /// Build the Registry path for interface `iface` into `buf` (no NUL).
 pub fn build_interface_path(iface: u32, buf: &mut [u8]) -> usize {
     let prefix = REG_NET_PREFIX.as_bytes();
@@ -177,8 +187,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parse_ip_valid_and_invalid() {
-        assert_eq!(parse_ip("10.0.1.1"), Some(0x0A00_0101));
+    fn parse_ip_valid_and_invalid() {        assert_eq!(parse_ip("10.0.1.1"), Some(0x0A00_0101));
         assert_eq!(parse_ip("255.255.255.0"), Some(0xFFFF_FF00));
         assert_eq!(parse_ip("0.0.0.0"), Some(0));
         assert_eq!(parse_ip("10.0.1"), None);
@@ -248,6 +257,16 @@ mod tests {
         assert_eq!(VALUE_DHCP_BOUND, "DHCPBound");
         assert_eq!(VALUE_DHCP_SERVER, "DHCPServer");
         assert_eq!(VALUE_LEASE_TIME, "LeaseTime");
+        assert_eq!(VALUE_LEASE_OBTAINED, "LeaseObtained");
+    }
+
+    #[test]
+    fn apipa_range_detection() {
+        assert!(is_apipa(0xA9FE_0101)); // 169.254.1.1
+        assert!(is_apipa(0xA9FE_FFFF));
+        assert!(!is_apipa(0x0A00_0105)); // 10.0.1.5
+        assert!(!is_apipa(0x7F00_0001)); // 127.0.0.1
+        assert!(!is_apipa(0));
     }
 
     #[test]

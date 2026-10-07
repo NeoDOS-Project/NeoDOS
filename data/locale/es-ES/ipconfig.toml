@@ -32,6 +32,10 @@ IDS_STATS_TX = 1026
 IDS_STATS_RX_BYTES = 1027
 IDS_STATS_TX_BYTES = 1028
 IDS_LOOPBACK = 1029
+IDS_DHCP_SERVER = 1030
+IDS_AUTOCONFIG = 1031
+IDS_LEASE_OBTAINED = 1032
+IDS_LEASE_EXPIRES = 1033
 
 [strings]
 IDS_HEADER = "Configuración IP de NeoDOS"
@@ -63,3 +67,7 @@ IDS_STATS_TX = "    Paquetes enviados . . . : "
 IDS_STATS_RX_BYTES = "    Bytes recibidos . . . . : "
 IDS_STATS_TX_BYTES = "    Bytes enviados . . . . .: "
 IDS_LOOPBACK = "Adaptador loopback"
+IDS_DHCP_SERVER = "    Servidor DHCP . . . . . : "
+IDS_AUTOCONFIG = "Autoconfigurada"
+IDS_LEASE_OBTAINED = "    Concesión obtenida . . : "
+IDS_LEASE_EXPIRES = "    Expira . . . . . . . . : "

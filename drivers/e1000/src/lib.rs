@@ -230,6 +230,8 @@ static RX_CUR: AtomicU32 = AtomicU32::new(0);
 static TX_CUR: AtomicU32 = AtomicU32::new(0);
 /// Set once the controller/link is actually ready to carry traffic.
 static LINK_READY: AtomicU8 = AtomicU8::new(0);
+/// Poll counter for throttled link-state publication (#529).
+static LINK_POLL_COUNT: AtomicU32 = AtomicU32::new(0);
 
 // Static DMA buffers (4K-aligned for descriptor rings)
 #[repr(align(4096))]
@@ -401,6 +403,16 @@ unsafe extern "C" fn e1000_send(device_id: u32, buf: *const u8, len: u32) -> i32
 
 unsafe extern "C" fn e1000_poll(device_id: u32, buf: *mut u8, out_len: *mut u32) -> i32 {
     let _ = device_id;
+
+    // Publish link state (throttled, #529): the NEM bridge has no link-query
+    // slot, so the kernel registry only learns STATUS.LU from here. One MMIO
+    // read every 512 polls is negligible on this path.
+    if LINK_POLL_COUNT.fetch_add(1, Ordering::Relaxed) % 512 == 0 {
+        let hw = read_reg(REG_STATUS) & STATUS_LINK_UP != 0;
+        let ready = LINK_READY.load(Ordering::Acquire) != 0;
+        unsafe { hst_set_network_link_state((hw || ready) as u32); }
+    }
+
     let rx_cur = RX_CUR.load(Ordering::Relaxed) as usize % NUM_RX_DESC;
 
     let rx_descs = core::slice::from_raw_parts_mut(

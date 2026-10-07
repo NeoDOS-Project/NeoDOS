@@ -79,6 +79,7 @@ pub fn load_fd(fd: u8) -> NetConfig {
         dhcp_bound: read_dword(fd, VALUE_DHCP_BOUND).unwrap_or(0) != 0,
         dhcp_server: read_dword(fd, VALUE_DHCP_SERVER).unwrap_or(0),
         lease_time: read_dword(fd, VALUE_LEASE_TIME).unwrap_or(0),
+        lease_obtained: read_dword(fd, VALUE_LEASE_OBTAINED).unwrap_or(0),
     }
 }
 
@@ -94,6 +95,7 @@ pub fn store_fd(fd: u8, cfg: &NetConfig) {
     write_dword(fd, VALUE_DHCP_BOUND, cfg.dhcp_bound as u32);
     write_dword(fd, VALUE_DHCP_SERVER, cfg.dhcp_server);
     write_dword(fd, VALUE_LEASE_TIME, cfg.lease_time);
+    write_dword(fd, VALUE_LEASE_OBTAINED, cfg.lease_obtained);
 }
 
 /// Write the full interface configuration and flush it to disk.
@@ -118,6 +120,7 @@ pub fn publish_lease(iface: u32, cfg: &NetConfig) -> Result<(), i64> {
     write_dword(fd, VALUE_DNS2, cfg.dns[1]);
     write_dword(fd, VALUE_DNS3, cfg.dns[2]);
     write_dword(fd, VALUE_LEASE_TIME, cfg.lease_time);
+    write_dword(fd, VALUE_LEASE_OBTAINED, cfg.lease_obtained);
     write_dword(fd, VALUE_DHCP_BOUND, cfg.dhcp_bound as u32);
     if cfg.dhcp_server != 0 {
         write_dword(fd, VALUE_DHCP_SERVER, cfg.dhcp_server);
