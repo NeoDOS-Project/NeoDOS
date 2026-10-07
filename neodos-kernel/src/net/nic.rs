@@ -335,18 +335,10 @@ pub fn nic_get_ip(nic_id: u32) -> Option<Ipv4Addr> {
 }
 
 pub fn nic_set_ip(nic_id: u32, ip: Ipv4Addr) {
-    let mut send_gratuitous = false;
-    {
-        let mut reg = NIC_REGISTRY.lock();
-        reg.set_ip(nic_id, ip);
-        // Propagate to all NICs (multiple drivers may share same hardware)
-        for i in 0..MAX_NICS {
-            if i != nic_id as usize && reg.get(i as u32).is_some() {
-                reg.set_ip(i as u32, ip);
-            }
-        }
-        send_gratuitous = !ip.is_unspecified();
-    }
+    // No cross-slot propagation: each NIC owns its address (multi-NIC).
+    // Registry-per-interface + per-iface apply are the source of truth.
+    let send_gratuitous = !ip.is_unspecified();
+    NIC_REGISTRY.lock().set_ip(nic_id, ip);
     if send_gratuitous {
         crate::net::arp::send_gratuitous_arp(nic_id);
     }
@@ -357,13 +349,7 @@ pub fn nic_get_mask(nic_id: u32) -> Option<Ipv4Addr> {
 }
 
 pub fn nic_set_mask(nic_id: u32, mask: Ipv4Addr) {
-    let mut reg = NIC_REGISTRY.lock();
-    reg.set_mask(nic_id, mask);
-    for i in 0..MAX_NICS {
-        if i != nic_id as usize && reg.get(i as u32).is_some() {
-            reg.set_mask(i as u32, mask);
-        }
-    }
+    NIC_REGISTRY.lock().set_mask(nic_id, mask);
 }
 
 pub fn nic_get_gateway(nic_id: u32) -> Option<Ipv4Addr> {
@@ -371,14 +357,7 @@ pub fn nic_get_gateway(nic_id: u32) -> Option<Ipv4Addr> {
 }
 
 pub fn nic_set_gateway(nic_id: u32, gateway: Ipv4Addr) {
-    let mut reg = NIC_REGISTRY.lock();
-    reg.set_gateway(nic_id, gateway);
-    // Propagate to all NICs (multiple drivers may share the same hardware).
-    for i in 0..MAX_NICS {
-        if i != nic_id as usize && reg.get(i as u32).is_some() {
-            reg.set_gateway(i as u32, gateway);
-        }
-    }
+    NIC_REGISTRY.lock().set_gateway(nic_id, gateway);
 }
 
 /// Resolve the IPv4 next hop for `dest_ip` on the default NIC (see
