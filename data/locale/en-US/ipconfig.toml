@@ -39,6 +39,11 @@ IDS_LEASE_EXPIRES = 1033
 IDS_DOMAIN = 1034
 IDS_RENEW = 1035
 IDS_REBIND = 1036
+IDS_USAGE = 1037
+IDS_USAGE_OPTS = 1038
+IDS_MISMATCH = 1039
+IDS_GW_WARN = 1040
+IDS_LEASE_EXPIRED = 1041
 
 [strings]
 IDS_HEADER = "NeoDOS IP Configuration"
@@ -77,3 +82,8 @@ IDS_LEASE_EXPIRES = "    Lease Expires . . . . .: "
 IDS_DOMAIN = "    DNS Suffix . . . . . . : "
 IDS_RENEW = "    Renew (T1) . . . . . . : "
 IDS_REBIND = "    Rebind (T2) . . . . . : "
+IDS_USAGE = "Usage: IPCONFIG [/ALL | /?]"
+IDS_USAGE_OPTS = "  /ALL full detail per adapter,  /? this help"
+IDS_MISMATCH = "    Registry/NIC mismatch . : "
+IDS_GW_WARN = "    WARNING: gateway off-subnet"
+IDS_LEASE_EXPIRED = "    Lease Expired . . . . . : "

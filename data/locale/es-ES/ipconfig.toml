@@ -39,6 +39,11 @@ IDS_LEASE_EXPIRES = 1033
 IDS_DOMAIN = 1034
 IDS_RENEW = 1035
 IDS_REBIND = 1036
+IDS_USAGE = 1037
+IDS_USAGE_OPTS = 1038
+IDS_MISMATCH = 1039
+IDS_GW_WARN = 1040
+IDS_LEASE_EXPIRED = 1041
 
 [strings]
 IDS_HEADER = "Configuración IP de NeoDOS"
@@ -77,3 +82,8 @@ IDS_LEASE_EXPIRES = "    Expira . . . . . . . . : "
 IDS_DOMAIN = "    Sufijo DNS . . . . . . : "
 IDS_RENEW = "    Renovación (T1) . . . . : "
 IDS_REBIND = "    Revinculación (T2) . . : "
+IDS_USAGE = "Uso: IPCONFIG [/ALL | /?]"
+IDS_USAGE_OPTS = "  /ALL detalle completo,  /? esta ayuda"
+IDS_MISMATCH = "    Registro/NIC difieren . : "
+IDS_GW_WARN = "    AVISO: puerta fuera de subred"
+IDS_LEASE_EXPIRED = "    Concesión expirada . . : "

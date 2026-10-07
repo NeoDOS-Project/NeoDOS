@@ -66,6 +66,11 @@ const IDS_LEASE_EXPIRES: u32 = 1033;
 const IDS_DOMAIN: u32 = 1034;
 const IDS_RENEW: u32 = 1035;
 const IDS_REBIND: u32 = 1036;
+const IDS_USAGE: u32 = 1037;
+const IDS_USAGE_OPTS: u32 = 1038;
+const IDS_MISMATCH: u32 = 1039;
+const IDS_GW_WARN: u32 = 1040;
+const IDS_LEASE_EXPIRED: u32 = 1041;
 
 /// Sentinel nic_id of the loopback `NicInfo` entry (see
 /// `net::loopback::LOOPBACK_NIC_ID`). Never a real `NicRegistry` slot.
@@ -171,6 +176,48 @@ fn write_04(v: u16) {
     write_str(&b);
 }
 
+fn write_ip_text(ip: u32) {
+    let mut b = [0u8; 16];
+    let n = config::format_ip(ip, &mut b);
+    write_str(&b[..n]);
+}
+
+fn print_usage() {
+    write_str(b"\r\n");
+    write_label(IDS_USAGE);
+    write_str(b"\r\n");
+    write_label(IDS_USAGE_OPTS);
+    write_str(b"\r\n");
+}
+
+fn print_compact(info: &libnet::NetIfaceInfo, cfg: &config::NetConfig) {
+    if info.nic_id == LOOPBACK_NIC_ID {
+        write_label(IDS_LOOPBACK);
+    } else {
+        write_label(IDS_ETHERNET);
+        write_str(b" ");
+        let mut ib = [0u8; 4];
+        let il = fmt_u32(info.nic_id, &mut ib);
+        write_str(&ib[..il]);
+    }
+    write_str(b": ");
+    write_ip_text(u32::from_be_bytes(info.ip));
+    write_str(b"/");
+    let mask = if info.nic_id == LOOPBACK_NIC_ID {
+        LOOPBACK_MASK_BE
+    } else if cfg.mask != 0 {
+        cfg.mask
+    } else {
+        config::DEFAULT_MASK
+    };
+    write_ip_text(mask);
+    if info.nic_id != LOOPBACK_NIC_ID && cfg.gateway != 0 {
+        write_str(b" gw ");
+        write_ip_text(cfg.gateway);
+    }
+    write_str(b"\r\n");
+}
+
 /// Write Unix seconds as `DD/MM/YYYY HH:MM:SS` (UTC).
 fn write_datetime(secs: u32) {
     let Some(dt) = libntp::unix_secs_to_utc(secs as i64) else { return };
@@ -233,9 +280,24 @@ fn print_iface(iface_idx: u32, info: &libnet::NetIfaceInfo, cfg: &NetConfig) {
     write_ip_label(IDS_SUBNET_MASK, if mask != 0 { mask } else { config::DEFAULT_MASK });
     write_ip_label(IDS_GATEWAY, gw);
     if cfg.dhcp_server != 0 { write_ip_label(IDS_DHCP_SERVER, cfg.dhcp_server); }
-    if dns1 != 0 { write_ip_label(IDS_DNS, dns1); }
-    if dns2 != 0 { write_ip_label(IDS_DNS, dns2); }
-    if dns3 != 0 { write_ip_label(IDS_DNS, dns3); }
+    write_ip_label(IDS_DNS, dns1);
+    write_ip_label(IDS_DNS, dns2);
+    write_ip_label(IDS_DNS, dns3);
+
+    // Registry-vs-runtime divergence (Registry `cfg` vs NIC `info`).
+    let nic_ip = u32::from_be_bytes(info.ip);
+    if cfg.ip != 0 && nic_ip != 0 && cfg.ip != nic_ip {
+        write_label(IDS_MISMATCH);
+        write_str(b"Registry: ");
+        write_ip_text(cfg.ip);
+        write_str(b" / NIC: ");
+        write_ip_text(nic_ip);
+        write_str(b"\r\n");
+    }
+    if gw != 0 && ip_u32 != 0 && !cfg.gateway_on_subnet() {
+        write_label(IDS_GW_WARN);
+        write_str(b"\r\n");
+    }
     write_str(b"\r\n");
 
     write_label(IDS_DHCP_ENABLED);
@@ -253,8 +315,14 @@ fn print_iface(iface_idx: u32, info: &libnet::NetIfaceInfo, cfg: &NetConfig) {
         write_label(IDS_LEASE_OBTAINED);
         write_datetime(cfg.lease_obtained);
         if cfg.lease_time > 0 {
-            write_label(IDS_LEASE_EXPIRES);
-            write_datetime(cfg.lease_obtained.saturating_add(cfg.lease_time));
+            let exp = cfg.lease_obtained.saturating_add(cfg.lease_time);
+            let now = config::now_unix();
+            if now != 0 && exp < now {
+                write_label(IDS_LEASE_EXPIRED);
+            } else {
+                write_label(IDS_LEASE_EXPIRES);
+            }
+            write_datetime(exp);
         }
         if cfg.t1_renew != 0 {
             write_label(IDS_RENEW);
@@ -313,6 +381,24 @@ pub extern "C" fn _start() -> ! {
     write_label(IDS_HEADER);
     write_str(b"\r\n\r\n");
 
+    let raw = libneodos::args::read_args();
+    let args = libneodos::args::trim_ascii(&raw);
+    let arg_str = core::str::from_utf8(args).unwrap_or("");
+    let first = arg_str.split_ascii_whitespace().next().unwrap_or("");
+    let cmd = first
+        .strip_prefix('/')
+        .or_else(|| first.strip_prefix('-'))
+        .unwrap_or(first);
+    let mode_all = if cmd.is_empty() {
+        false
+    } else if cmd.eq_ignore_ascii_case("ALL") {
+        true
+    } else {
+        // "/?", "help" and anything unknown print usage (exit 0).
+        print_usage();
+        syscall::sys_exit(0);
+    };
+
     write_label(IDS_HOSTNAME);
     let mut hn_buf = [0u8; 64];
     match syscall::sys_get_hostname(&mut hn_buf) {
@@ -325,15 +411,6 @@ pub extern "C" fn _start() -> ! {
         }
     }
     write_str(b"\r\n\r\n");
-
-    let cfg = match config::load(0) {
-        Some(cfg) => cfg,
-        None => {
-            write_label(IDS_NO_IFACES);
-            write_str(b"\r\n");
-            syscall::sys_exit(0);
-        }
-    };
 
     let count = libnet::iface_count();
     if count == 0 {
@@ -353,13 +430,20 @@ pub extern "C" fn _start() -> ! {
             name: [0u8; 16],
             description: [0u8; 48],
         };
-        if libnet::iface_info(i, &mut info) == 0 {
+        if libnet::iface_info(i, &mut info) != 0 {
+            continue;
+        }
+        // Per-interface Registry config (loopback has no key: defaults).
+        let cfg = config::load(i).unwrap_or_default();
+        if mode_all {
             if info.nic_id == LOOPBACK_NIC_ID {
                 print_loopback(&info);
             } else {
                 print_iface(i, &info, &cfg);
             }
             print_stats(i);
+        } else {
+            print_compact(&info, &cfg);
         }
     }
 

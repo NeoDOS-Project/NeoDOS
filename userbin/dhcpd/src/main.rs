@@ -699,7 +699,7 @@ fn publish_apipa() {
     cfg.dhcp_server = 0;
     cfg.dhcp_bound = true;
     cfg.lease_time = 0;
-    cfg.lease_obtained = lease_now_unix();
+    cfg.lease_obtained = config::now_unix();
     cfg.t1_renew = 0;
     cfg.t2_rebind = 0;
     cfg.domain = [0; 64];
@@ -707,36 +707,6 @@ fn publish_apipa() {
     cfg.ntp = [0; 3];
     cfg.mtu = 0;
     let _ = config::publish_lease(0, &cfg);
-}
-
-/// Current time as Unix seconds for the `LeaseObtained` stamp (0 = unknown).
-fn lease_now_unix() -> u32 {
-    use libneodos::syscall::{DateTime, ObInfoClass};
-    let fd = match syscall::sys_ob_open("\\Global\\Info\\DateTime", 1) {
-        Ok(fd) => fd,
-        Err(_) => return 0,
-    };
-    let mut dt = DateTime {
-        second: 0, minute: 0, hour: 0,
-        day: 0, month: 0, year: 0, valid: 0,
-    };
-    let sz = core::mem::size_of::<DateTime>();
-    let buf = unsafe {
-        core::slice::from_raw_parts_mut(&mut dt as *mut DateTime as *mut u8, sz)
-    };
-    let n = syscall::sys_ob_query_info(fd, ObInfoClass::DateTime, buf);
-    let _ = syscall::sys_close(fd);
-    if n.ok().unwrap_or(0) < sz || dt.valid == 0 {
-        return 0;
-    }
-    let utc = libntp::UtcDateTime {
-        second: dt.second, minute: dt.minute, hour: dt.hour,
-        day: dt.day, month: dt.month, year: dt.year,
-    };
-    if !libntp::is_valid_datetime(&utc) {
-        return 0;
-    }
-    libntp::utc_to_unix_secs(&utc).clamp(0, u32::MAX as i64) as u32
 }
 
 #[no_mangle]
@@ -883,7 +853,7 @@ pub extern "C" fn _start() -> ! {
         cfg.lease_time = client.lease_time;
         cfg.dhcp_server = client.server_ip;
         cfg.dhcp_bound = true;
-        cfg.lease_obtained = lease_now_unix();
+        cfg.lease_obtained = config::now_unix();
         cfg.t1_renew = client.t1;
         cfg.t2_rebind = client.t2;
         cfg.domain = client.domain;
