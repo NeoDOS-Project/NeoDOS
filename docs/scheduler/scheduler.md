@@ -1,55 +1,58 @@
 # NeoDOS Scheduler
 
-Source: `src/scheduler/mod.rs`, `src/arch/x64/cpu_local.rs`. Priority-based
-preemptive scheduler with 4 levels, per-CPU run queues, global priority scan,
-work stealing, aging, and round-robin within each level.
+Source: `src/scheduler/schedule.rs`, `src/scheduler/mod.rs`,
+`src/arch/x64/cpu_local.rs`. Priority-based preemptive scheduler with 4 levels,
+per-CPU O(1) priority run queues (bitmap-selected), work stealing, aging, and
+round-robin within each level; a global priority scan remains the fallback.
 
 ---
 
 ## Architecture Overview
 
-The scheduler uses a **two-tier** decision mechanism:
+The scheduler uses a **multi-tier** decision mechanism:
 
 | Tier | Component | Purpose |
 |------|-----------|---------|
-| 1    | **Per-CPU Run Queue** | Async notification: new threads, remote wakeups, SMP IPI |
-| 2    | **Global Priority Scan** | Fair round-robin selection across all Ready threads |
-| 3    | **Idle fallback** | Select TID 1 (PRIORITY_IDLE) when no Ready thread exists |
+| 1    | **Per-CPU priority run queue** | O(1) bitmap-selected dispatch of the highest-priority Ready thread |
+| 2    | **Work stealing** | Drain a remote CPU's queue when the local queue is empty |
+| 3    | **Global priority scan** | Fallback fair round-robin selection across all Ready threads |
+| 4    | **Idle fallback** | Select this CPU's idle thread when no Ready thread exists |
 
 ```text
-Thread wakes / created / unblocked
+Thread wakes / created / unblocked / timeslice expiry
         |
         v
-  [Run Queue]  ← only for notification/IPC (not for time-slice re-enqueue)
+  enqueue into the owning CPU's priority sub-queue (dedup)
         |
         v
   schedule() called (timer IRQ, explicit yield, wakeup)
         |
         v
-  try_dequeue_local()  → fast path if notification pending
+  try_dequeue_local()  → O(1) bitmap pick, highest priority first
         |
         v  (empty)
-  try_work_steal()     → remote CPU queue
+  try_work_steal()     → remote CPU priority queue
         |
         v  (empty)
-  GLOBAL PRIORITY SCAN → fairness by priority + round-robin
+  GLOBAL PRIORITY SCAN → fallback fairness by priority + round-robin
         |
         v  (no Ready threads)
-   Idle fallback → TID 1 (idle thread, PRIORITY_IDLE)
+   Idle fallback → this CPU's idle thread (PRIORITY_IDLE)
 ```
 
-### Key invariant: the run queue is NOT a scheduling cache
+### Key invariant: the run queue is the fast dispatch path
 
-The per-CPU run queue is used **only** for:
+The per-CPU priority run queue is the primary selection mechanism
+(`try_dequeue_local`). Each CPU owns four priority sub-queues (64 entries each,
+256 total) indexed by an `active_bitmap`; `pop()` picks the highest-priority
+non-empty sub-queue in O(1) via `trailing_zeros`. Every entry is deduplicated
+(`contains()`), and a thread re-homed to another CPU is removed from its old
+queue.
 
-- Notification of new threads (`add_ring3_process`, `add_thread_to_process`)
-- Remote wakeups (`wake_waiters`, `wake_blocked_on_magic` → IPI to target CPU)
-- SMP work stealing (`try_work_steal` → `steal_from_cpu_run_queue`)
-
-It is **not** used for re-enqueuing threads after time-slice expiry. After a
-thread transitions `Running → Ready` in `on_timer_tick()`, it is found by the
-global priority scan, not by the run queue. This prevents the run queue from
-bypassing the fairness guarantees of the scan.
+To preserve fairness, a popped candidate whose priority is lower than the global
+`highest_ready_priority()` (an O(CPUs) bitmap scan over all CPUs) is returned to
+the queue and selection falls through to the global priority scan instead of
+starving a higher-priority Ready thread (#382).
 
 ---
 
@@ -122,10 +125,11 @@ pub const IDLE_TIME_SLICE: u16 = 10;   // idle thread: brief CPU then yield
 ### `schedule()`
 
 1. Increment `schedule_count` (for idle boost backstop)
-2. **Run queue**: `try_dequeue_local()` → if a TID is pending notification
-3. **Work stealing**: `try_work_steal()` → steal from remote CPU queues
-4. **Global scan**: iterate priority levels HIGH → IDLE, round-robin within level
-5. **Fallback**: find TID 1 (idle, PRIORITY_IDLE) if nothing else is Ready → panic if idle terminated
+2. **Run queue**: `try_dequeue_local()` → O(1) bitmap pick from this CPU's
+   priority sub-queues, gated by `highest_ready_priority()` (#382)
+3. **Work stealing**: `try_work_steal()` → steal from a remote CPU priority queue
+4. **Global scan** (fallback): iterate priority levels HIGH → IDLE, round-robin within level
+5. **Fallback**: dispatch this CPU's idle thread (`dispatch_idle`); panic only if no idle is available
 
 The global scan iterates **all** TIDs (including boot/kernel TIDs), checking `state == Ready`
 at each priority level. The idle thread (TID 1) has PRIORITY_IDLE and is naturally
@@ -149,8 +153,10 @@ Ready threads at the same priority.
    - On expiry: emit `trace_sched_state!`, set `needs_resched`
 3. Every `AGING_INTERVAL_TICKS` (500): run aging check
 
-The expired thread transitions to Ready but is **not** re-enqueued in the run
-queue. The next `schedule()` call finds it via the global priority scan.
+The expired thread transitions to Ready and is **re-enqueued** into the owning
+CPU's priority run queue (`k.cpu` is re-homed to the running CPU first), so the
+next `schedule()` picks it up on the fast path. Kernel/idle threads and threads
+inside a preemption-disabled section keep the historical behaviour.
 
 ### #338: Ring-0 interruption must not publish a Ready dispatch frame
 
@@ -257,17 +263,22 @@ resolved counters (there is no independent process counter to drift).
 
 ```rust
 pub struct CpuRunQueue {
-    pub entries: [u32; 64],  // TIDs in ring buffer
-    pub head_idx: u16,       // dequeue position
-    pub tail_idx: u16,       // enqueue position
-    pub count: u16,          // number of entries
+    pub active_bitmap: AtomicU8,       // bit p set while sub-queue p is non-empty
+    pub count: u16,                    // total entries across all four levels
+    pub queues: [PrioritySubQueue; 4], // one ring buffer per priority level
 }
+// PrioritySubQueue: entries: [u32; RUNQUEUE_PRIO_CAP] (64), head_idx, tail_idx, count
 ```
 
-- `push(tid)` → enqueue at tail, returns false if full (64 entries max)
-- `pop() -> Option<u32>` → dequeue from head
+- `push_priority(tid, prio)` → enqueue at `prio`; if that sub-queue is full it
+  degrades to a *lower* level (never higher) so a Ready thread is never silently
+  dropped. Returns false only when all four sub-queues are full.
+- `pop() -> Option<u32>` → O(1): read `active_bitmap`, take
+  `trailing_zeros()` (lowest index = highest priority) and dequeue from its head.
 
-When a thread is enqueued on a remote CPU, `IPI_RESCHEDULE` (vector 0xF0) is sent.
+`read_active_bitmap(cpu)` reads a CPU's bitmap with **no spinlock**; it backs the
+O(CPUs) `highest_ready_priority()` guard. When a thread is enqueued on a remote
+CPU, `IPI_RESCHEDULE` (vector 0xF0) is sent.
 
 ### When threads enter the run queue
 
@@ -278,7 +289,7 @@ When a thread is enqueued on a remote CPU, `IPI_RESCHEDULE` (vector 0xF0) is sen
 | `wake_waiters` | Yes | Unblocked thread, may be on remote CPU |
 | `wake_blocked_on_magic` | Yes | KWait unblock, may be on remote CPU |
 | `spawn_kthread` | **No** | Kernel threads found by global scan |
-| `on_timer_tick` (expiry) | **No** | Found by global scan, not a notification |
+| `on_timer_tick` (expiry) | Yes | Re-enqueued into the owning CPU's level |
 
 ---
 
@@ -368,8 +379,9 @@ follow this same pattern.
 
 ## Aging
 
-Every 500 ticks, all Ready threads with `tid > 0` are scanned. Threads that have
-been Ready for ≥ 5000 ticks get their priority boosted by one level (up to HIGH).
+Every 500 ticks, all Ready non-idle threads are scanned. Threads that have been
+Ready for ≥ 5000 ticks get their priority boosted by one level (up to HIGH); the
+boosted thread is removed from its run queue and re-enqueued at the new level.
 This prevents low-priority starved threads from being permanently ignored.
 
 ---

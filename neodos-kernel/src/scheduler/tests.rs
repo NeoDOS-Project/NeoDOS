@@ -2263,27 +2263,24 @@ pub fn register_tests() {
             k.cpu = 1;
             Scheduler::enqueue_to_cpu_run_queue(k);
         }
-        // Fill thief CPU0 with 60 dummy TIDs (no Kthread backing, just queue entries)
-        // Use raw queue API to avoid needing Kthreads; validate is not used for these dummies
-        // Instead fill with 60 entries that are not part of scheduler, then attempt steal
-        // To keep validation valid, we fill with fake tids that are NOT in scheduler table
-        // but we will clear afterwards. For this test we instead fill thief via direct push
-        // of valid tids? Simpler: fill thief with 60 copies of a valid TID2 duplicate check
-        // will prevent duplicates, so we directly manipulate queue without scheduler threads:
+        // Fill thief CPU0 to capacity: RUNQUEUE_PRIO_CAP entries in each of the
+        // 4 priority sub-queues. (Previously 60 = 4×15 matched the old
+        // RUNQUEUE_PRIO_CAP=15; with CAP=64 the queue is only full at 4×64=256.)
         unsafe {
             let rq0 = crate::arch::x64::cpu_local::cpu_run_queue_mut(0);
-            // Ensure empty then fill with distinct dummy tids 1000..1059
+            let cap = crate::arch::x64::cpu_local::RUNQUEUE_PRIO_CAP;
+            let total = (cap * 4) as u32;
             rq0.clear();
-            for i in 0..60u32 {
-                let prio = (i / 15) as u8;
+            for i in 0..total {
+                let prio = (i as usize / cap) as u8;
                 rq0.push_priority(1000 + i, prio);
             }
-            test_eq!(rq0.len(), 60);
+            test_eq!(rq0.len(), total as u16);
             test_eq!(crate::arch::x64::cpu_local::cpu_run_queue_mut(1).len(), 1);
             let stolen = crate::arch::x64::cpu_local::steal_from_cpu_run_queue(1, rq0);
             // Destination full → stolen == 0, victim retains entry, no loss, push-back
             test_eq!(stolen, 0);
-            test_eq!(rq0.len(), 60);
+            test_eq!(rq0.len(), total as u16);
             test_eq!(crate::arch::x64::cpu_local::cpu_run_queue_mut(1).len(), 1);
             test_true!(crate::arch::x64::cpu_local::cpu_run_queue_mut(1).contains(2));
             // Cleanup

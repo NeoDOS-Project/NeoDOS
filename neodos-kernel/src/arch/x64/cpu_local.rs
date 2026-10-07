@@ -207,8 +207,13 @@ impl CpuRunQueue {
         if self.queues[p].count == 0 {
             self.active_bitmap.fetch_and(!(1 << p), Ordering::Release);
         }
-        debug_assert!(self.count > 0, "CpuRunQueue underflow");
-        self.count = self.count.saturating_sub(1);
+        // INVARIANT: count > 0 whenever a pop succeeds. If this panics in
+        // debug, there is a missing enqueue_to_cpu_run_queue call somewhere.
+        debug_assert!(self.count > 0,
+            "CpuRunQueue::pop underflow: count already 0 before decrement (tid={})", tid);
+        // Sound: the assert above guarantees count > 0; in release builds the
+        // subtract cannot wrap because we returned None on count==0 above.
+        self.count -= 1;
         Some(tid)
     }
 
@@ -265,8 +270,10 @@ impl CpuRunQueue {
                 if q.count == 0 {
                     self.active_bitmap.fetch_and(!(1 << p), Ordering::Release);
                 }
-                debug_assert!(self.count > 0, "CpuRunQueue underflow");
-                self.count = self.count.saturating_sub(1);
+                // INVARIANT: count > 0 whenever a remove succeeds.
+                debug_assert!(self.count > 0,
+                    "CpuRunQueue::remove underflow: count already 0 (tid={})", tid);
+                self.count -= 1;
                 return true;
             }
         }
@@ -346,23 +353,23 @@ impl PerCpuSlabCache {
 /// 0x015: need_resched    (bool)
 /// 0x016: current_irql (u8)
 /// 0x017: _pad0           (u8)
-/// 0x018: run_queue       (CpuRunQueue, 264 bytes)
-/// 0x120: slab_caches     ([PerCpuSlabCache; 9], 9 × 288 bytes)
-/// 0xB40: interrupt_count (u64)
-/// 0xB48: context_switch_count (u64)
-/// 0xB50: timer_tick_count (u64)
-/// 0xB58: exit_rsp        (u64)
-/// 0xB60: exit_rip        (u64)
-/// 0xB68: exit_rbx        (u64)
-/// 0xB70: exit_r12        (u64)
-/// 0xB78: exit_r13        (u64)
-/// 0xB80: exit_r14        (u64)
-/// 0xB88: exit_r15        (u64)
-/// 0xB90: exit_rbp        (u64)
-/// 0xB98: exit_now        (bool)
+/// 0x018: run_queue       (CpuRunQueue, 1064 bytes)
+/// 0x440: slab_caches     ([PerCpuSlabCache; 9], 9 × 288 bytes)
+/// 0xE60: interrupt_count (u64)
+/// 0xE68: context_switch_count (u64)
+/// 0xE70: timer_tick_count (u64)
+/// 0xE78: exit_rsp        (u64)
+/// 0xE80: exit_rip        (u64)
+/// 0xE88: exit_rbx        (u64)
+/// 0xE90: exit_r12        (u64)
+/// 0xE98: exit_r13        (u64)
+/// 0xEA0: exit_r14        (u64)
+/// 0xEA8: exit_r15        (u64)
+/// 0xEB0: exit_rbp        (u64)
+/// 0xEB8: exit_now        (bool)
 /// ```
 ///
-/// Total data: ~2969 bytes. Tail padding to 4096 via `align(4096)`.
+/// Total data: ~3770 bytes. Tail padding to 4096 via `align(4096)`.
 ///
 /// # Safety
 /// Fields are accessed via raw GS-segment reads in the hot path.
@@ -390,25 +397,25 @@ pub struct Kprcb {
     _pad0: u8,                                // 0x017
 
     // ── Offset 0x018: Per-CPU run queue ──
-    pub run_queue: CpuRunQueue,                // 0x018 (1024+ bytes)
+    pub run_queue: CpuRunQueue,                // 0x018 (1064 bytes)
 
-    // ── Offset 0x418: Per-CPU slab caches ──
-    pub slab_caches: [PerCpuSlabCache; NUM_SLAB_CACHES],  // 9 × ~40 bytes
+    // ── Offset 0x440: Per-CPU slab caches ──
+    pub slab_caches: [PerCpuSlabCache; NUM_SLAB_CACHES],  // 9 × 288 bytes
 
-    // ── Offset 0x600+: Statistics ──
-    pub interrupt_count: u64,                  // 0x600
-    pub context_switch_count: u64,             // 0x608
-    pub timer_tick_count: u64,                 // 0x610
+    // ── Offset 0xE60+: Statistics ──
+    pub interrupt_count: u64,                  // 0xE60
+    pub context_switch_count: u64,             // 0xE68
+    pub timer_tick_count: u64,                 // 0xE70
 
-    // ── Offset 0x618: Exit trampoline (per-CPU) ──
-    pub exit_rsp: u64,                         // 0x618
-    pub exit_rip: u64,                         // 0x620
-    pub exit_rbx: u64,                         // 0x628
-    pub exit_r12: u64,                         // 0x630
-    pub exit_r13: u64,                         // 0x638
-    pub exit_r14: u64,                         // 0x640
-    pub exit_r15: u64,                         // 0x648
-    pub exit_rbp: u64,                         // 0x650
+    // ── Offset 0xE78: Exit trampoline (per-CPU) ──
+    pub exit_rsp: u64,                         // 0xE78
+    pub exit_rip: u64,                         // 0xE80
+    pub exit_rbx: u64,                         // 0xE88
+    pub exit_r12: u64,                         // 0xE90
+    pub exit_r13: u64,                         // 0xE98
+    pub exit_r14: u64,                         // 0xEA0
+    pub exit_r15: u64,                         // 0xEA8
+    pub exit_rbp: u64,                         // 0xEB0
     pub exit_now: bool,
 }
 
@@ -944,18 +951,28 @@ pub unsafe fn steal_from_cpu_run_queue(from_cpu: usize, to_queue: &mut CpuRunQue
 
 /// Remove a specific TID from a CPU's run queue.
 /// Returns true if the TID was found and removed, false otherwise.
-/// SMP-safe: takes per-CPU runqueue lock. No-op if KPRCB not initialized.
+/// IRQ-safe: disables interrupts for the duration of the lock so that a timer
+/// firing on this CPU cannot re-enter enqueue/remove and deadlock.
 pub unsafe fn remove_from_cpu_run_queue(cpu: usize, tid: u32) -> bool {
     let need_skip = unsafe { cpu >= MAX_CPUS || KPRCB_PAGES[cpu] == 0 };
     if need_skip {
         return false;
     }
-    let _guard = RUNQUEUE_LOCKS[cpu].lock();
-    let rq = cpu_run_queue_mut(cpu);
-    rq.remove(tid)
+    x86_64::instructions::interrupts::without_interrupts(|| {
+        let _guard = RUNQUEUE_LOCKS[cpu].lock();
+        let rq = unsafe { cpu_run_queue_mut(cpu) };
+        rq.remove(tid)
+    })
 }
 
-/// Execute closure with target CPU's runqueue locked (SMP-safe).
+/// Execute closure with target CPU's runqueue locked (SMP-safe, IRQ-safe).
+///
+/// # IRQ safety
+/// Disables interrupts around the lock acquisition. Without this mask, a timer
+/// interrupt firing on the same CPU while the scheduler already holds
+/// `RUNQUEUE_LOCKS[cpu]` (e.g. via `enqueue_to_cpu_run_queue`) would try to
+/// re-acquire the same lock inside the timer handler → deadlock.
+///
 /// If KPRCB not initialized for that CPU, calls closure with a dummy empty queue.
 pub fn with_runqueue<F, R>(cpu: usize, f: F) -> R
 where
@@ -966,11 +983,13 @@ where
         let mut dummy = CpuRunQueue::new();
         return f(&mut dummy);
     }
-    let _guard = RUNQUEUE_LOCKS[cpu].lock();
-    unsafe {
-        let rq = cpu_run_queue_mut(cpu);
-        f(rq)
-    }
+    x86_64::instructions::interrupts::without_interrupts(|| {
+        let _guard = RUNQUEUE_LOCKS[cpu].lock();
+        unsafe {
+            let rq = cpu_run_queue_mut(cpu);
+            f(rq)
+        }
+    })
 }
 
 /// Execute closure with current CPU's runqueue locked (SMP-safe).
@@ -1135,8 +1154,10 @@ pub fn register_cpu_local_tests() {
         crate::test_eq!(OFFSET_CURRENT_THREAD, 0x008u32);
         crate::test_eq!(OFFSET_NEED_RESCHED, 0x015u32);
         crate::test_eq!(OFFSET_CURRENT_IRQL, 0x016u32);
-        crate::test_eq!(OFFSET_EXIT_RSP, 0xB58u32);
-        crate::test_eq!(OFFSET_EXIT_NOW, 0xB98u32);
+        crate::test_eq!(OFFSET_RUN_QUEUE, 0x018u32);
+        crate::test_eq!(OFFSET_SLAB_CACHES, 0x440u32);
+        crate::test_eq!(OFFSET_EXIT_RSP, 0xE78u32);
+        crate::test_eq!(OFFSET_EXIT_NOW, 0xEB8u32);
         // F-01 audit regression: `this_cpu_set_current_pid` must write exactly
         // 4 bytes at OFFSET_CURRENT_PID. A u64 store spilled into
         // idle/need_resched/current_irql (0x014..0x017), clearing them on every

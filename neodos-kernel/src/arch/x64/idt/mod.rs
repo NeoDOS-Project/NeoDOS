@@ -123,11 +123,11 @@ core::arch::global_asm!(
     "jnz 1f",
     // Read per-CPU exit_now from KPRCB via GS segment
     "xor rax, rax",
-    "mov al, gs:[0xB98]",                  // OFFSET_EXIT_NOW in KPRCB
+    "mov al, gs:[{exit_now_off}]",         // OFFSET_EXIT_NOW in KPRCB
     "test al, al",
     "jz 4f",
     // Clear exit_now and jump to exit_to_kernel
-    "mov byte ptr gs:[0xB98], 0",          // OFFSET_EXIT_NOW
+    "mov byte ptr gs:[{exit_now_off}], 0", // OFFSET_EXIT_NOW
     ".extern exit_to_kernel",
     "jmp exit_to_kernel",
     // Non-last thread exit: check if thread was terminated
@@ -149,11 +149,11 @@ core::arch::global_asm!(
     "1:",
     // Check per-CPU NEED_RESCHED via GS segment (offset 0x015 in KPRCB)
     "xor rax, rax",
-    "mov al, gs:[0x015]",                  // OFFSET_NEED_RESCHED in KPRCB
+    "mov al, gs:[{need_resched_off}]",     // OFFSET_NEED_RESCHED in KPRCB
     "test al, al",
     "jz 2f",
     // Clear per-CPU NEED_RESCHED
-    "mov byte ptr gs:[0x015], 0",          // OFFSET_NEED_RESCHED
+    "mov byte ptr gs:[{need_resched_off}], 0", // OFFSET_NEED_RESCHED
     // Also clear the global NEED_RESCHED (backward compat) and do work
     "call clear_need_resched",
     "test al, al",
@@ -191,7 +191,11 @@ core::arch::global_asm!(
     "pop r15",
     "pop rbp",
 
-    "iretq"
+    "iretq",
+    // Tie the GS offsets to the Rust constants so a KPRCB layout change can
+    // never silently desynchronise the asm from OFFSET_*.
+    exit_now_off = const crate::arch::x64::cpu_local::OFFSET_EXIT_NOW,
+    need_resched_off = const crate::arch::x64::cpu_local::OFFSET_NEED_RESCHED,
 );
 
 extern "C" {
