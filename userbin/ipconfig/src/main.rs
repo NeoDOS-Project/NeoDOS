@@ -210,7 +210,14 @@ fn print_compact(info: &libnet::NetIfaceInfo, cfg: &config::NetConfig) {
     } else {
         config::DEFAULT_MASK
     };
-    write_ip_text(mask);
+    match config::mask_to_prefix(mask) {
+        Some(prefix) => {
+            let mut pb = [0u8; 3];
+            let n = fmt_u32(prefix as u32, &mut pb);
+            write_str(&pb[..n]);
+        }
+        None => write_ip_text(mask),
+    }
     if info.nic_id != LOOPBACK_NIC_ID && cfg.gateway != 0 {
         write_str(b" gw ");
         write_ip_text(cfg.gateway);
