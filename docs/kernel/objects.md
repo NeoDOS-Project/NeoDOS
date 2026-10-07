@@ -203,6 +203,7 @@ Supports the following info classes:
 | 24 | CpuStats | Per-CPU snapshot `[StatsHeader][CpuStatsEntry]` — `\Global\Info\CpuInfo` |
 | 25 | ThreadStats | All-thread snapshot `[StatsHeader][ThreadStatsEntry]` — `\Global\Info\Threads` |
 | 26 | ProcessSnapshot | Coherent process+thread snapshot `[ProcSnapshotHeader][ProcessInfoRaw][ThreadInfoRaw]` — `\Global\Info\Processes` |
+| 27 | SmpStats | Global work-stealing counters `SmpStats` (24 bytes) — `\Global\Info\CpuInfo` (Fase 3 M3.2) |
 | 29 | ServiceState | Service state (state+pid+uptime) |
 | 30 | ServiceConfig | Service configuration (start type, restart policy, max failures) |
 | 31 | ServiceStatus | Comprehensive status (state+pid+exit count+exit code+failures+uptime) |
@@ -270,6 +271,25 @@ Semantics:
   assumed equal.
 - Online CPUs are currently `0..cpu_count()`: NeoDOS brings APs online
   sequentially and does not support CPU hot-remove.
+
+#### SmpStats (27) — `\Global\Info\CpuInfo`
+
+Fase 3 M3.2. Global work-stealing counters, read from the scheduler's atomics
+(`smp::STEAL_ATTEMPTS`, `smp::STEAL_SUCCESS`). Fixed single struct: no header,
+no array.
+
+`SmpStats` (24 bytes, `repr(C)`):
+
+| Field | Type | Source |
+| ------- | ---- | ------ |
+| `version` | u32 | Layout version (currently 1) |
+| `_pad` | u32 | Alignment |
+| `steal_attempts` | u64 | `smp::STEAL_ATTEMPTS` — every `try_work_steal` call |
+| `steal_success` | u64 | `smp::STEAL_SUCCESS` — threads actually migrated |
+
+The syscall returns 24 (the struct size); a smaller buffer is rejected with
+`-Inval` (no partial write). `neotop` renders `Work-steal: <success>/<attempts>`
+under the process/thread counts.
 
 #### ThreadStats (25) — `\Global\Info\Threads`
 

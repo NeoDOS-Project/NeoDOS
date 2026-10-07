@@ -2,7 +2,30 @@
 use crate::scheduler::types::{Kthread, BOOT_TID, PRIORITY_COUNT, TIME_SLICES, ThreadState};
 use crate::scheduler::Scheduler;
 
+/// Counts how many times `enqueue_to_cpu_run_queue` failed because the target
+/// sub-queue was full. Surfaced in the boot `[STEAL] ... rq_overflow=N` line
+/// (intended for a future `ObInfoClass` stats query) so operators can detect
+/// queue saturation in production.
+///
+/// A non-zero value means at least one thread had to fall back to the global
+/// priority scan (`schedule_with_handoff` step 3) to be dispatched. That path
+/// is correct but slower; sustained overflow indicates the queue capacity
+/// (`RUNQUEUE_PRIO_CAP`) needs to be increased.
+pub static RUNQUEUE_OVERFLOW: core::sync::atomic::AtomicU64 =
+    core::sync::atomic::AtomicU64::new(0);
+
 impl Scheduler {
+    /// Enqueue `k` onto its assigned CPU's per-priority run queue.
+    ///
+    /// # Overflow recovery
+    /// If the target priority sub-queue is full, the push is refused and
+    /// `RUNQUEUE_OVERFLOW` is incremented. The thread **stays** in state
+    /// `Ready` inside `self.kthreads`, so the global priority scan (step 3
+    /// of `schedule_with_handoff`) will still find and dispatch it.  This is
+    /// the explicit documented recovery path: the fast O(1) queue miss falls
+    /// back to the O(N) scan, which is correct but slower.
+    ///
+    /// Persistent overflow → increase `RUNQUEUE_PRIO_CAP`.
     pub fn enqueue_to_cpu_run_queue(k: &Kthread) {
         if k.tid == BOOT_TID || k.is_idle {
             return;
@@ -10,24 +33,41 @@ impl Scheduler {
         let cpu = k.cpu as usize;
         if cpu >= crate::arch::x64::cpu_local::MAX_CPUS { return; }
         let my_cpu = unsafe { crate::arch::x64::cpu_local::this_cpu_id() } as usize;
-        // SMP-safe: lock target queue for check+push
+
+        // IRQ-safe lock: `with_runqueue` disables interrupts before acquiring
+        // the spinlock, preventing a timer-handler re-entry deadlock.
         let already_queued = crate::arch::x64::cpu_local::with_runqueue(cpu, |rq| {
             if rq.contains(k.tid) {
-                true
+                true // duplicate – idempotent enqueue
             } else {
-                rq.push(k.tid);
+                let pushed = rq.push_priority(k.tid, k.priority);
+                if !pushed {
+                    // Sub-queue full: increment overflow counter and log.
+                    // Recovery: the global scan in schedule_with_handoff will
+                    // still find this thread via kthreads (state == Ready) and
+                    // dispatch it. This is the explicit fallback.
+                    RUNQUEUE_OVERFLOW.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+                    crate::serial_println!(
+                        "[SMPSCHED_WARN] CpuRunQueue FULL cpu={} tid={} prio={} overflow_total={}",
+                        cpu, k.tid, k.priority,
+                        RUNQUEUE_OVERFLOW.load(core::sync::atomic::Ordering::Relaxed),
+                    );
+                }
                 false
             }
         });
+
         if already_queued {
-            return; // already in runqueue — avoid duplicate
+            return;
         }
+
         #[cfg(feature = "forensic")]
         if k.pid >= 4 {
             let rq_len = crate::arch::x64::cpu_local::with_runqueue(cpu, |rq| rq.len());
             crate::serial_println!("[SMPSCHED] ENQUEUE_OK pid={} tid={} cpu_target={} rq_len={}", k.pid, k.tid, cpu, rq_len);
         }
-        // Send IPI_RESCHEDULE to the target CPU if it's a different CPU
+
+        // Send IPI_RESCHEDULE to the target CPU if it's a different CPU.
         #[cfg(feature = "forensic")]
         if cpu != my_cpu && k.pid >= 4 {
             crate::serial_println!("[SMPSCHED] WAKE_NOTIFY from_cpu={} target_cpu={} pid={} tid={} action=IPI_RESCHEDULE", my_cpu, cpu, k.pid, k.tid);
@@ -35,6 +75,7 @@ impl Scheduler {
             #[cfg(feature = "forensic")]
             crate::serial_println!("[SMPSCHED] WAKE_NOTIFY from_cpu={} target_cpu={} pid={} tid={} action=same_cpu_no_ipi", my_cpu, cpu, k.pid, k.tid);
         }
+
         if cpu != my_cpu {
             unsafe {
                 let kprcb = crate::arch::x64::cpu_local::kprcb_page(cpu);
@@ -88,7 +129,7 @@ impl Scheduler {
 
     /// Try to dequeue the next thread from the current CPU's local run queue.
     /// Returns the TID if found, or None if the queue is empty.
-    /// SMP-safe: locks current CPU's queue.
+    /// IRQ-safe: `with_this_runqueue` disables interrupts before locking.
     pub(crate) fn try_dequeue_local() -> Option<u32> {
         crate::arch::x64::cpu_local::with_this_runqueue(|rq| rq.pop())
     }

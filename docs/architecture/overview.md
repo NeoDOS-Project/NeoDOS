@@ -40,13 +40,13 @@ NeoDOS Kernel (x86_64-unknown-none)
    - I/O APIC: detect from MADT, disable PIC, route ISA IRQs 0/1/4/12 (PHASE 2.91)
    - enable interrupts (STI)
    - custom page tables (4 GiB identity map + user window + demand-paging heap/mmap split)
-   - heap/mmap demand-paging split (PHASE 3.0): 16×2 MB huge pages → 4 KB PTEs
+   - heap/mmap demand-paging split (PHASE 6 / PHASE 3): 16×2 MB huge pages → 4 KB PTEs
    - TEB page mapping at 0x7000 USER_ACCESSIBLE for SEH (PHASE 6.1)
    - PCIe ECAM init: read MCFG → map MMIO as UC- → activate ECAM (PIO fallback) (PHASE 2.3)
    - ATA boot stub (BootAta) + AHCI probe + NVMe probe + VirtIO probe (PHASE 3)
-   - Page Cache init (128×4 KB = 512 KB, hash + LRU) + GPT scan → IoStacks for NeoDOS + ESP (PHASE 3.4)
-   - NeoDOS FS mount on `\Device\NeoDosVolume0` → C: (PHASE 3.4b)
-   - FAT32 ESP mount on `\Device\EspVolume0` → A: (PHASE 3.4c)
+   - Page Cache init (128×4 KB = 512 KB, hash + LRU) + GPT scan → IoStacks for NeoDOS + ESP (PHASE 3)
+   - NeoDOS FS mount on `\Device\NeoDosVolume0` → C: (PHASE 3)
+   - FAT32 ESP mount on `\Device\EspVolume0` → A: (PHASE 3)
    - Input Manager init (VT subsystem, A4.4)
    - Keyboard Manager init (PHASE 3.875): NeoKBD loads layouts, creates \Device\Keyboard
    - Driver Isolation Layer (PHASE 3.80, X4): 16×1 MB slots @ 0x30000000
@@ -60,9 +60,9 @@ NeoDOS Kernel (x86_64-unknown-none)
    - Service Manager init (PHASE 3.882): load service definitions from Registry, create \Service\ namespace, resolve dependencies
    - Power Manager runtime init (PHASE 3.883): load plans and policies from Registry
    - ABI validation + ABI freeze check (PHASE 3.9)
-   - Kernel self-tests (805 tests) + netpump kernel-thread spawn + benchmarks (PHASE 4)
+   - Kernel self-tests (825 tests) + netpump kernel-thread spawn + benchmarks (PHASE 4)
    - Auto-start services (PHASE 4): start System/Auto services in dependency order
-   - Ring 3 shell via NeoInit PID 1 (neoshell.nxe, 754 kernel tests + user commands)
+   - Ring 3 shell via NeoInit PID 1 (neoshell.nxe, 825 kernel tests + user commands)
 ```
 
 ## Disco único GPT
@@ -198,7 +198,7 @@ Unified object manager system for creating, tracking, referencing, and enumerati
 | **Integration** | | Processes, drivers, pipes, timers, semaphores, sections auto-register on creation and auto-unregister on destruction. Mount points register via `vfs_mount()` during boot |
 | **CLI** | | `KOBJ` via Ring 3 `kobj.nxe` (ob_enum RAX=44) — lists all namespace objects |
 
-The Ob registry is populated at boot by driver loading and at runtime by process/pipe/timer/semaphore/section creation. Objects are automatically removed when their lifecycle ends (process exit, driver unload, pipe close, timer/semaphore free). Directory entries for `\Device`, `\DosDevices`, `\Global`, `\Driver`, `\FileSystem`, `\Ob`, `\Registry`, `\Process` are created at boot via `init_object_namespace()`. MountPoints for `C:` (NeoDOS FS) and `A:` (FAT32 ESP) are registered during PHASE 3.6.
+The Ob registry is populated at boot by driver loading and at runtime by process/pipe/timer/semaphore/section creation. Objects are automatically removed when their lifecycle ends (process exit, driver unload, pipe close, timer/semaphore free). Directory entries for `\Device`, `\DosDevices`, `\Global`, `\Driver`, `\FileSystem`, `\Ob`, `\Registry`, `\Process` are created at boot via `init_object_namespace()`. MountPoints for `C:` (NeoDOS FS) and `A:` (FAT32 ESP) are registered during PHASE 3.
 
 ---
 
@@ -552,7 +552,7 @@ Beyond the NEM driver framework, the kernel includes integrated hardware drivers
 
 ### 11. Test Coverage
 
-The kernel testing framework includes **805 tests** (200+ test_case! macros) with suites dedicated to the driver architecture:
+The kernel testing framework includes **825 tests** (200+ test_case! macros) with suites dedicated to the driver architecture:
 
 | Suite | Tests | Description |
 | ------- | ------- | ------------- |
@@ -584,7 +584,7 @@ The kernel testing framework includes **805 tests** (200+ test_case! macros) wit
 | Security | 23 | NT6 Security: SID format, Token (groups/privileges/session_id), ACL allow/deny, SeAccessCheck, admin bypass, SAM database (parse/serialize, 64 entries) |
 | URN | 15 | NT5.5 Unified Resource Namespace: parse schemes, resolve file/device, Ob frontend (OB-025) |
 
-Tests run automatically at boot. The kernel runs 805 tests (200+ test_case! registrations). After boot, NeoInit spawns its user-mode test binaries when enabled via the registry (`userbin/neoinit/src/main.rs`), including the network test `C:\System\Tools\dhcptest.nxe`. Additional boot stress testing via `scripts/stress_boot.sh`.
+Tests run automatically at boot. The kernel runs 825 tests (200+ test_case! registrations). After boot, NeoInit spawns its user-mode test binaries when enabled via the registry (`userbin/neoinit/src/main.rs`), including the network test `C:\System\Tools\dhcptest.nxe`. Additional boot stress testing via `scripts/stress_boot.sh`.
 
 ---
 

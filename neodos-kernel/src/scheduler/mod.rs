@@ -446,13 +446,7 @@ pub fn sched_dump() {
             &*((kprcb + crate::arch::x64::cpu_local::OFFSET_RUN_QUEUE as u64)
                 as *const crate::arch::x64::cpu_local::CpuRunQueue)
         };
-        let cap = rq.entries.len();
-        let mut v = alloc::vec::Vec::new();
-        let mut idx = rq.head_idx as usize;
-        for _ in 0..rq.count {
-            v.push(rq.entries[idx % cap]);
-            idx += 1;
-        }
+        let v = rq.entries_vec();
         crate::serial_println!("[SCHED_DUMP] cpu={} runqueue_tids={:?} count={}", cpu, v, rq.count);
         drop(guard);
     }

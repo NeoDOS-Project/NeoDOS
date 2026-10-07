@@ -71,6 +71,21 @@ pub struct ObThreadInfo {
 /// Version of the stats snapshot layout (bump on incompatible change).
 pub const STATS_VERSION: u32 = 1;
 
+/// Version of the `SmpStats` layout (bump on incompatible change).
+pub const SMP_STATS_VERSION: u32 = 1;
+
+/// Global work-stealing / SMP balancing counters. `steal_attempts` counts every
+/// `try_work_steal` call; `steal_success` counts threads actually migrated.
+/// 24 bytes.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct SmpStats {
+    pub version: u32,
+    pub _pad: u32,
+    pub steal_attempts: u64,
+    pub steal_success: u64,
+}
+
 /// Common header for `CpuStats` / `ThreadStats` snapshots. 16 bytes.
 #[repr(C)]
 #[derive(Clone, Copy)]

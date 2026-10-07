@@ -16,16 +16,17 @@
 //! | 0x015  | 1    | need_resched          |
 //! | 0x016  | 1    | current_irql          |
 //! | 0x017  | 1    | _pad0                 |
-//! | 0x018  | 32   | run_queue (CpuRunQueue) |
-//! | 0x038  | 288  | slab_caches[9] (PerCpuSlabCache) |
-//! | 0x158  | 8    | interrupt_count       |
-//! | 0x160  | 8    | context_switch_count  |
-//! | 0x168  | 8    | timer_tick_count      |
-//! | 0x170  | 64   | exit context (RSP, RIP, RBX, R12-R15, RBP) |
-//! | 0x1B0  | 1    | exit_now              |
-//! | 0x1B1  | 1    | _pad1                 |
+//! | 0x018  | 1064 | run_queue (CpuRunQueue) |
+//! | 0x440  | 2592 | slab_caches[9] (PerCpuSlabCache) |
+//! | 0xE60  | 8    | interrupt_count       |
+//! | 0xE68  | 8    | context_switch_count  |
+//! | 0xE70  | 8    | timer_tick_count      |
+//! | 0xE78  | 64   | exit context (RSP, RIP, RBX, R12-R15, RBP) |
+//! | 0xEB8  | 1    | exit_now              |
+//! | 0xEB9  | 1    | _pad1                 |
 //! | ...    | ...  | (remaining bytes)     |
 
+use core::sync::atomic::{AtomicU8, Ordering};
 use crate::scheduler::Kthread;
 
 // ── Constants ────────────────────────────────────────────────────────────
@@ -49,33 +50,35 @@ pub const SLAB_BATCH_SIZE: usize = 32;
 use spin::Mutex;
 pub(crate) static RUNQUEUE_LOCKS: [Mutex<()>; MAX_CPUS] = [const { Mutex::new(()) }; MAX_CPUS];
 
-/// Simple per-CPU run queue: ring buffer of TIDs.
-/// No locks needed for single-CPU, but SMP cross-CPU access now uses RUNQUEUE_LOCKS.
+pub const RUNQUEUE_PRIO_CAP: usize = 64;
+
+/// Priority sub-queue within a CpuRunQueue.
 #[repr(C)]
-pub struct CpuRunQueue {
-    /// Ring buffer of TIDs.
-    pub entries: [u32; 64],
+pub struct PrioritySubQueue {
+    pub entries: [u32; RUNQUEUE_PRIO_CAP],
     pub head_idx: u16,
     pub tail_idx: u16,
     pub count: u16,
+    pub _pad: u16,
 }
 
-impl CpuRunQueue {
+impl PrioritySubQueue {
     pub const fn new() -> Self {
-        CpuRunQueue {
-            entries: [0u32; 64],
+        Self {
+            entries: [0u32; RUNQUEUE_PRIO_CAP],
             head_idx: 0,
             tail_idx: 0,
             count: 0,
+            _pad: 0,
         }
     }
 
     #[inline]
     pub fn push(&mut self, tid: u32) -> bool {
-        if self.count as usize >= self.entries.len() {
+        if (self.count as usize) >= RUNQUEUE_PRIO_CAP {
             return false;
         }
-        self.entries[(self.tail_idx as usize) % self.entries.len()] = tid;
+        self.entries[(self.tail_idx as usize) % RUNQUEUE_PRIO_CAP] = tid;
         self.tail_idx = self.tail_idx.wrapping_add(1);
         self.count += 1;
         true
@@ -86,21 +89,19 @@ impl CpuRunQueue {
         if self.count == 0 {
             return None;
         }
-        let tid = self.entries[(self.head_idx as usize) % self.entries.len()];
+        let tid = self.entries[(self.head_idx as usize) % RUNQUEUE_PRIO_CAP];
         self.head_idx = self.head_idx.wrapping_add(1);
         self.count -= 1;
         Some(tid)
     }
 
     #[inline]
-    pub fn is_empty(&self) -> bool {
-        self.count == 0
-    }
-
-    pub fn clear(&mut self) {
-        self.head_idx = 0;
-        self.tail_idx = 0;
-        self.count = 0;
+    pub fn peek(&self) -> Option<u32> {
+        if self.count == 0 {
+            None
+        } else {
+            Some(self.entries[(self.head_idx as usize) % RUNQUEUE_PRIO_CAP])
+        }
     }
 
     #[inline]
@@ -108,7 +109,7 @@ impl CpuRunQueue {
         if self.count == 0 {
             return false;
         }
-        let cap = self.entries.len();
+        let cap = RUNQUEUE_PRIO_CAP;
         let mut idx = (self.head_idx as usize) % cap;
         for _ in 0..self.count {
             if self.entries[idx] == tid {
@@ -119,26 +120,20 @@ impl CpuRunQueue {
         false
     }
 
-    /// Remove the first occurrence of `tid` from the ring buffer.
-    /// Returns true if found and removed, false if not present.
-    /// O(n) scan — acceptable for the 64-entry ring buffer.
     #[inline]
     pub fn remove(&mut self, tid: u32) -> bool {
         if self.count == 0 {
             return false;
         }
-        // Collect all elements in order (head → tail).
-        let cap = self.entries.len();
-        let mut buf = [0u32; 64];
+        let cap = RUNQUEUE_PRIO_CAP;
+        let mut buf = [0u32; RUNQUEUE_PRIO_CAP];
         let mut idx = (self.head_idx as usize) % cap;
         for i in 0..self.count as usize {
             buf[i] = self.entries[idx];
             idx = (idx + 1) % cap;
         }
-        // Find and remove the target.
         let pos = buf[..self.count as usize].iter().position(|&t| t == tid);
         if let Some(p) = pos {
-            // Compact: shift [p+1 .. count) left by one.
             for i in p..self.count as usize - 1 {
                 buf[i] = buf[i + 1];
             }
@@ -153,20 +148,159 @@ impl CpuRunQueue {
             false
         }
     }
+}
+
+/// Per-CPU O(1) Priority RunQueue: 4 priority levels with bitmap indexing.
+#[repr(C)]
+pub struct CpuRunQueue {
+    pub active_bitmap: AtomicU8,
+    pub _pad0: u8,
+    pub count: u16,
+    pub _pad1: u32,
+    pub queues: [PrioritySubQueue; 4],
+}
+
+impl CpuRunQueue {
+    pub const fn new() -> Self {
+        CpuRunQueue {
+            active_bitmap: AtomicU8::new(0),
+            _pad0: 0,
+            count: 0,
+            _pad1: 0,
+            queues: [
+                PrioritySubQueue::new(),
+                PrioritySubQueue::new(),
+                PrioritySubQueue::new(),
+                PrioritySubQueue::new(),
+            ],
+        }
+    }
+
+    #[inline]
+    pub fn push_priority(&mut self, tid: u32, prio: u8) -> bool {
+        let p = (prio as usize).min(3);
+        if self.queues[p].push(tid) {
+            self.active_bitmap.fetch_or(1 << p, Ordering::Release);
+            self.count += 1;
+            true
+        } else {
+            false
+        }
+    }
+
+    #[inline]
+    pub fn push(&mut self, tid: u32) -> bool {
+        self.push_priority(tid, crate::scheduler::types::PRIORITY_NORMAL)
+    }
+
+    #[inline]
+    pub fn pop(&mut self) -> Option<u32> {
+        let bm = self.active_bitmap.load(Ordering::Acquire);
+        if self.count == 0 || bm == 0 {
+            return None;
+        }
+        let p = bm.trailing_zeros() as usize;
+        if p >= 4 {
+            return None;
+        }
+        let tid = self.queues[p].pop()?;
+        if self.queues[p].count == 0 {
+            self.active_bitmap.fetch_and(!(1 << p), Ordering::Release);
+        }
+        // INVARIANT: count > 0 whenever a pop succeeds. If this panics in
+        // debug, there is a missing enqueue_to_cpu_run_queue call somewhere.
+        debug_assert!(self.count > 0,
+            "CpuRunQueue::pop underflow: count already 0 before decrement (tid={})", tid);
+        // Sound: the assert above guarantees count > 0; in release builds the
+        // subtract cannot wrap because we returned None on count==0 above.
+        self.count -= 1;
+        Some(tid)
+    }
+
+    #[inline]
+    pub fn peek_highest(&self) -> Option<u32> {
+        let bm = self.active_bitmap.load(Ordering::Acquire);
+        if self.count == 0 || bm == 0 {
+            None
+        } else {
+            let p = bm.trailing_zeros() as usize;
+            if p < 4 {
+                self.queues[p].peek()
+            } else {
+                None
+            }
+        }
+    }
+
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.count == 0
+    }
+
+    pub fn clear(&mut self) {
+        self.active_bitmap.store(0, Ordering::Release);
+        self.count = 0;
+        for q in self.queues.iter_mut() {
+            q.head_idx = 0;
+            q.tail_idx = 0;
+            q.count = 0;
+        }
+    }
+
+    #[inline]
+    pub fn contains(&self, tid: u32) -> bool {
+        if self.count == 0 {
+            return false;
+        }
+        for q in self.queues.iter() {
+            if q.contains(tid) {
+                return true;
+            }
+        }
+        false
+    }
+
+    #[inline]
+    pub fn remove(&mut self, tid: u32) -> bool {
+        if self.count == 0 {
+            return false;
+        }
+        for (p, q) in self.queues.iter_mut().enumerate() {
+            if q.remove(tid) {
+                if q.count == 0 {
+                    self.active_bitmap.fetch_and(!(1 << p), Ordering::Release);
+                }
+                // INVARIANT: count > 0 whenever a remove succeeds.
+                debug_assert!(self.count > 0,
+                    "CpuRunQueue::remove underflow: count already 0 (tid={})", tid);
+                self.count -= 1;
+                return true;
+            }
+        }
+        false
+    }
 
     #[inline]
     pub fn len(&self) -> u16 {
         self.count
     }
 
-    /// Peek at the front without removing.
     #[inline]
     pub fn peek(&self) -> Option<u32> {
-        if self.count == 0 {
-            None
-        } else {
-            Some(self.entries[(self.head_idx as usize) % self.entries.len()])
+        self.peek_highest()
+    }
+
+    pub fn entries_vec(&self) -> alloc::vec::Vec<u32> {
+        let mut v = alloc::vec::Vec::new();
+        for q in self.queues.iter() {
+            let cap = RUNQUEUE_PRIO_CAP;
+            let mut idx = (q.head_idx as usize) % cap;
+            for _ in 0..q.count {
+                v.push(q.entries[idx]);
+                idx = (idx + 1) % cap;
+            }
         }
+        v
     }
 }
 
@@ -219,23 +353,23 @@ impl PerCpuSlabCache {
 /// 0x015: need_resched    (bool)
 /// 0x016: current_irql (u8)
 /// 0x017: _pad0           (u8)
-/// 0x018: run_queue       (CpuRunQueue, 264 bytes)
-/// 0x120: slab_caches     ([PerCpuSlabCache; 9], 9 × 288 bytes)
-/// 0xB40: interrupt_count (u64)
-/// 0xB48: context_switch_count (u64)
-/// 0xB50: timer_tick_count (u64)
-/// 0xB58: exit_rsp        (u64)
-/// 0xB60: exit_rip        (u64)
-/// 0xB68: exit_rbx        (u64)
-/// 0xB70: exit_r12        (u64)
-/// 0xB78: exit_r13        (u64)
-/// 0xB80: exit_r14        (u64)
-/// 0xB88: exit_r15        (u64)
-/// 0xB90: exit_rbp        (u64)
-/// 0xB98: exit_now        (bool)
+/// 0x018: run_queue       (CpuRunQueue, 1064 bytes)
+/// 0x440: slab_caches     ([PerCpuSlabCache; 9], 9 × 288 bytes)
+/// 0xE60: interrupt_count (u64)
+/// 0xE68: context_switch_count (u64)
+/// 0xE70: timer_tick_count (u64)
+/// 0xE78: exit_rsp        (u64)
+/// 0xE80: exit_rip        (u64)
+/// 0xE88: exit_rbx        (u64)
+/// 0xE90: exit_r12        (u64)
+/// 0xE98: exit_r13        (u64)
+/// 0xEA0: exit_r14        (u64)
+/// 0xEA8: exit_r15        (u64)
+/// 0xEB0: exit_rbp        (u64)
+/// 0xEB8: exit_now        (bool)
 /// ```
 ///
-/// Total data: ~2969 bytes. Tail padding to 4096 via `align(4096)`.
+/// Total data: ~3770 bytes. Tail padding to 4096 via `align(4096)`.
 ///
 /// # Safety
 /// Fields are accessed via raw GS-segment reads in the hot path.
@@ -263,25 +397,25 @@ pub struct Kprcb {
     _pad0: u8,                                // 0x017
 
     // ── Offset 0x018: Per-CPU run queue ──
-    pub run_queue: CpuRunQueue,                // 0x018 (1024+ bytes)
+    pub run_queue: CpuRunQueue,                // 0x018 (1064 bytes)
 
-    // ── Offset 0x418: Per-CPU slab caches ──
-    pub slab_caches: [PerCpuSlabCache; NUM_SLAB_CACHES],  // 9 × ~40 bytes
+    // ── Offset 0x440: Per-CPU slab caches ──
+    pub slab_caches: [PerCpuSlabCache; NUM_SLAB_CACHES],  // 9 × 288 bytes
 
-    // ── Offset 0x600+: Statistics ──
-    pub interrupt_count: u64,                  // 0x600
-    pub context_switch_count: u64,             // 0x608
-    pub timer_tick_count: u64,                 // 0x610
+    // ── Offset 0xE60+: Statistics ──
+    pub interrupt_count: u64,                  // 0xE60
+    pub context_switch_count: u64,             // 0xE68
+    pub timer_tick_count: u64,                 // 0xE70
 
-    // ── Offset 0x618: Exit trampoline (per-CPU) ──
-    pub exit_rsp: u64,                         // 0x618
-    pub exit_rip: u64,                         // 0x620
-    pub exit_rbx: u64,                         // 0x628
-    pub exit_r12: u64,                         // 0x630
-    pub exit_r13: u64,                         // 0x638
-    pub exit_r14: u64,                         // 0x640
-    pub exit_r15: u64,                         // 0x648
-    pub exit_rbp: u64,                         // 0x650
+    // ── Offset 0xE78: Exit trampoline (per-CPU) ──
+    pub exit_rsp: u64,                         // 0xE78
+    pub exit_rip: u64,                         // 0xE80
+    pub exit_rbx: u64,                         // 0xE88
+    pub exit_r12: u64,                         // 0xE90
+    pub exit_r13: u64,                         // 0xE98
+    pub exit_r14: u64,                         // 0xEA0
+    pub exit_r15: u64,                         // 0xEA8
+    pub exit_rbp: u64,                         // 0xEB0
     pub exit_now: bool,
 }
 
@@ -474,19 +608,29 @@ pub const OFFSET_IDLE: u32 = 0x014;
 pub const OFFSET_NEED_RESCHED: u32 = 0x015;
 pub const OFFSET_CURRENT_IRQL: u32 = 0x016;
 pub const OFFSET_RUN_QUEUE: u32 = 0x018;
-pub const OFFSET_SLAB_CACHES: u32 = 0x120;
-pub const OFFSET_INTERRUPT_COUNT: u32 = 0xB40;
-pub const OFFSET_CONTEXT_SWITCH_COUNT: u32 = 0xB48;
-pub const OFFSET_TIMER_TICK_COUNT: u32 = 0xB50;
-pub const OFFSET_EXIT_RSP: u32 = 0xB58;
-pub const OFFSET_EXIT_RIP: u32 = 0xB60;
-pub const OFFSET_EXIT_RBX: u32 = 0xB68;
-pub const OFFSET_EXIT_R12: u32 = 0xB70;
-pub const OFFSET_EXIT_R13: u32 = 0xB78;
-pub const OFFSET_EXIT_R14: u32 = 0xB80;
-pub const OFFSET_EXIT_R15: u32 = 0xB88;
-pub const OFFSET_EXIT_RBP: u32 = 0xB90;
-pub const OFFSET_EXIT_NOW: u32 = 0xB98;
+pub const OFFSET_SLAB_CACHES: u32 = 0x440;
+pub const OFFSET_INTERRUPT_COUNT: u32 = 0xE60;
+pub const OFFSET_CONTEXT_SWITCH_COUNT: u32 = 0xE68;
+pub const OFFSET_TIMER_TICK_COUNT: u32 = 0xE70;
+pub const OFFSET_EXIT_RSP: u32 = 0xE78;
+pub const OFFSET_EXIT_RIP: u32 = 0xE80;
+pub const OFFSET_EXIT_RBX: u32 = 0xE88;
+pub const OFFSET_EXIT_R12: u32 = 0xE90;
+pub const OFFSET_EXIT_R13: u32 = 0xE98;
+pub const OFFSET_EXIT_R14: u32 = 0xEA0;
+pub const OFFSET_EXIT_R15: u32 = 0xEA8;
+pub const OFFSET_EXIT_RBP: u32 = 0xEB0;
+pub const OFFSET_EXIT_NOW: u32 = 0xEB8;
+
+/// Lockless read of a CPU's active priority bitmap. Requires ZERO spinlocks.
+#[inline(always)]
+pub fn read_active_bitmap(cpu: usize) -> u8 {
+    if cpu >= MAX_CPUS { return 0; }
+    let addr = unsafe { KPRCB_PAGES[cpu] };
+    if addr == 0 { return 0; }
+    let rq_ptr = (addr + OFFSET_RUN_QUEUE as u64) as *const CpuRunQueue;
+    unsafe { (*rq_ptr).active_bitmap.load(Ordering::Acquire) }
+}
 
 // ── High-level per-CPU accessors ─────────────────────────────────────────
 
@@ -807,18 +951,28 @@ pub unsafe fn steal_from_cpu_run_queue(from_cpu: usize, to_queue: &mut CpuRunQue
 
 /// Remove a specific TID from a CPU's run queue.
 /// Returns true if the TID was found and removed, false otherwise.
-/// SMP-safe: takes per-CPU runqueue lock. No-op if KPRCB not initialized.
+/// IRQ-safe: disables interrupts for the duration of the lock so that a timer
+/// firing on this CPU cannot re-enter enqueue/remove and deadlock.
 pub unsafe fn remove_from_cpu_run_queue(cpu: usize, tid: u32) -> bool {
     let need_skip = unsafe { cpu >= MAX_CPUS || KPRCB_PAGES[cpu] == 0 };
     if need_skip {
         return false;
     }
-    let _guard = RUNQUEUE_LOCKS[cpu].lock();
-    let rq = cpu_run_queue_mut(cpu);
-    rq.remove(tid)
+    x86_64::instructions::interrupts::without_interrupts(|| {
+        let _guard = RUNQUEUE_LOCKS[cpu].lock();
+        let rq = unsafe { cpu_run_queue_mut(cpu) };
+        rq.remove(tid)
+    })
 }
 
-/// Execute closure with target CPU's runqueue locked (SMP-safe).
+/// Execute closure with target CPU's runqueue locked (SMP-safe, IRQ-safe).
+///
+/// # IRQ safety
+/// Disables interrupts around the lock acquisition. Without this mask, a timer
+/// interrupt firing on the same CPU while the scheduler already holds
+/// `RUNQUEUE_LOCKS[cpu]` (e.g. via `enqueue_to_cpu_run_queue`) would try to
+/// re-acquire the same lock inside the timer handler → deadlock.
+///
 /// If KPRCB not initialized for that CPU, calls closure with a dummy empty queue.
 pub fn with_runqueue<F, R>(cpu: usize, f: F) -> R
 where
@@ -829,11 +983,13 @@ where
         let mut dummy = CpuRunQueue::new();
         return f(&mut dummy);
     }
-    let _guard = RUNQUEUE_LOCKS[cpu].lock();
-    unsafe {
-        let rq = cpu_run_queue_mut(cpu);
-        f(rq)
-    }
+    x86_64::instructions::interrupts::without_interrupts(|| {
+        let _guard = RUNQUEUE_LOCKS[cpu].lock();
+        unsafe {
+            let rq = cpu_run_queue_mut(cpu);
+            f(rq)
+        }
+    })
 }
 
 /// Execute closure with current CPU's runqueue locked (SMP-safe).
@@ -998,8 +1154,10 @@ pub fn register_cpu_local_tests() {
         crate::test_eq!(OFFSET_CURRENT_THREAD, 0x008u32);
         crate::test_eq!(OFFSET_NEED_RESCHED, 0x015u32);
         crate::test_eq!(OFFSET_CURRENT_IRQL, 0x016u32);
-        crate::test_eq!(OFFSET_EXIT_RSP, 0xB58u32);
-        crate::test_eq!(OFFSET_EXIT_NOW, 0xB98u32);
+        crate::test_eq!(OFFSET_RUN_QUEUE, 0x018u32);
+        crate::test_eq!(OFFSET_SLAB_CACHES, 0x440u32);
+        crate::test_eq!(OFFSET_EXIT_RSP, 0xE78u32);
+        crate::test_eq!(OFFSET_EXIT_NOW, 0xEB8u32);
         // F-01 audit regression: `this_cpu_set_current_pid` must write exactly
         // 4 bytes at OFFSET_CURRENT_PID. A u64 store spilled into
         // idle/need_resched/current_irql (0x014..0x017), clearing them on every

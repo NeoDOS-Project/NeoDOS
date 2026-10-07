@@ -655,10 +655,11 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
         debug_assert!(!leak, "SCHED_TEST_MODE leaked");
         // Phase 4/5: steal/schedule counters (normal runtime should have non-zero schedule, zero steal before normal load)
         crate::serial_println!(
-            "[STEAL] attempts={} success={} schedule_calls={} SCHED_TEST_MODE={}",
+            "[STEAL] attempts={} success={} schedule_calls={} rq_overflow={} SCHED_TEST_MODE={}",
             crate::scheduler::smp::STEAL_ATTEMPTS.load(core::sync::atomic::Ordering::Relaxed),
             crate::scheduler::smp::STEAL_SUCCESS.load(core::sync::atomic::Ordering::Relaxed),
             crate::scheduler::schedule::SCHEDULE_CALLS.load(core::sync::atomic::Ordering::Relaxed),
+            crate::scheduler::queue::RUNQUEUE_OVERFLOW.load(core::sync::atomic::Ordering::Relaxed),
             leak
         );
         // Per-CPU diagnostics

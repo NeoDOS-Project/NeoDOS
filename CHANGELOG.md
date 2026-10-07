@@ -4,7 +4,29 @@
 
 ## Unreleased
 
+### Added
+
+- **Scheduler: per-CPU O(1) priority runqueues (`feat/per-cpu-scheduler`).**
+  The dispatch fast path no longer performs a global linear scan of all Ready
+  threads. Each CPU owns a 4-level priority runqueue (`src/arch/x64/cpu_local.rs`)
+  whose `active_bitmap` selects the highest-priority non-empty sub-queue in O(1)
+  via `trailing_zeros` (4 × 64 = 256 entries). Enqueue degrades to a lower level
+  if a sub-queue is full so a Ready thread is never silently dropped, and entries
+  are deduplicated. `read_active_bitmap` is lock-free; the O(CPUs)
+  `highest_ready_priority()` guard prevents the fast path from bypassing a
+  higher-priority Ready thread (#382). Aging now re-enqueues the boosted thread
+  into its owning CPU's queue. The global priority scan remains the fallback.
+  A work-stealing overflow counter (`RUNQUEUE_OVERFLOW`) is reported in the boot
+  diagnostics. `docs/scheduler/scheduler.md` updated.
+
 ### Fixed
+
+- **Scheduler snapshot self-deadlock (BSP freeze before `[PROC_SNAPSHOT]`).**
+  `kernel_snapshot_into()` acquired the global `SCHEDULER` spinlock with
+  interrupts enabled; a same-CPU timer IRQ then re-entered the non-reentrant
+  mutex and self-deadlocked, intermittently hanging the BSP before the shell
+  started. The lock is now acquired inside `without_interrupts` for its whole
+  hold time. Verified across 8/8 SMP2 boots.
 
 - **#501: NeoInit was left `SUSP` at the bootstrap hand-off; NeoShell never
   started.** `wait_for_process` marked the hand-off target's state via

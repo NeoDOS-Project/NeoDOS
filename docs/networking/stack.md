@@ -141,7 +141,7 @@ Instead:
 The e1000 is polled, not interrupt-driven: RX is drained by `network_poll_all()`
 from the Ring-0 `netpump` worker and from the `sys_yield` syscall path. (`netd`
 is now the Ring 3 network service — see `userland.md` — not the RX pump.)
-#339 established that this
+Issue #339 established that this
 polling (not driver link/ring bring-up) is the relevant variable for the first
 DHCP `DISCOVER`.
 
