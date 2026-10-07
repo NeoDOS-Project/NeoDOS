@@ -42,6 +42,20 @@ pub const VALUE_DHCP_SERVER: &str = "DHCPServer";
 pub const VALUE_LEASE_TIME: &str = "LeaseTime";
 /// `LeaseObtained` — Unix seconds when the lease was granted (0 = unknown).
 pub const VALUE_LEASE_OBTAINED: &str = "LeaseObtained";
+/// `T1Renew` — renewal time (option 58) in seconds (0 = unset).
+pub const VALUE_T1_RENEW: &str = "T1Renew";
+/// `T2Rebind` — rebind time (option 59) in seconds (0 = unset).
+pub const VALUE_T2_REBIND: &str = "T2Rebind";
+/// `Domain` — connection-specific DNS suffix (option 15, REG_SZ).
+pub const VALUE_DOMAIN: &str = "Domain";
+/// `Broadcast` — subnet broadcast address (option 28, 0 = unset).
+pub const VALUE_BROADCAST: &str = "Broadcast";
+/// `NtpServer` — NTP servers (option 42, 0 = unset).
+pub const VALUE_NTP1: &str = "NtpServer";
+pub const VALUE_NTP2: &str = "NtpServer2";
+pub const VALUE_NTP3: &str = "NtpServer3";
+/// `MTU` — interface MTU (option 26, 0 = unset).
+pub const VALUE_MTU: &str = "MTU";
 
 /// `/24` (`255.255.255.0`), used when `SubnetMask` is absent or 0.
 ///
@@ -64,7 +78,22 @@ pub struct NetConfig {
     pub lease_time: u32,
     /// Unix seconds when the current lease was granted (0 = unknown).
     pub lease_obtained: u32,
+    /// Renewal (T1, option 58) and rebind (T2, option 59) times in seconds
+    /// relative to `lease_obtained` (0 = server did not send; #316 defaults).
+    pub t1_renew: u32,
+    pub t2_rebind: u32,
+    /// Connection-specific DNS suffix (option 15), NUL-padded.
+    pub domain: [u8; 64],
+    /// Subnet broadcast address (option 28, 0 = unset).
+    pub broadcast: u32,
+    /// NTP servers (option 42, 0 = unset slot).
+    pub ntp: [u32; 3],
+    /// Interface MTU (option 26, 0 = unset).
+    pub mtu: u32,
 }
+
+/// Maximum bytes kept from the DHCP domain option (option 15).
+pub const DOMAIN_MAX: usize = 63;
 
 impl Default for NetConfig {
     fn default() -> Self {
@@ -78,6 +107,12 @@ impl Default for NetConfig {
             dhcp_server: 0,
             lease_time: 0,
             lease_obtained: 0,
+            t1_renew: 0,
+            t2_rebind: 0,
+            domain: [0; 64],
+            broadcast: 0,
+            ntp: [0; 3],
+            mtu: 0,
         }
     }
 }
@@ -152,6 +187,11 @@ pub fn format_ip(ip: u32, buf: &mut [u8]) -> usize {
 }
 
 /// True when `ip` (big-endian u32) is in the APIPA range 169.254.0.0/16.
+/// Length of the NUL-terminated domain suffix in `domain`.
+pub fn domain_len(domain: &[u8; 64]) -> usize {
+    domain.iter().position(|&b| b == 0).unwrap_or(64)
+}
+
 pub fn is_apipa(ip: u32) -> bool {
     ip & 0xFFFF_0000 == 0xA9FE_0000
 }
@@ -258,6 +298,12 @@ mod tests {
         assert_eq!(VALUE_DHCP_SERVER, "DHCPServer");
         assert_eq!(VALUE_LEASE_TIME, "LeaseTime");
         assert_eq!(VALUE_LEASE_OBTAINED, "LeaseObtained");
+        assert_eq!(VALUE_T1_RENEW, "T1Renew");
+        assert_eq!(VALUE_T2_REBIND, "T2Rebind");
+        assert_eq!(VALUE_DOMAIN, "Domain");
+        assert_eq!(VALUE_BROADCAST, "Broadcast");
+        assert_eq!(VALUE_NTP1, "NtpServer");
+        assert_eq!(VALUE_MTU, "MTU");
     }
 
     #[test]

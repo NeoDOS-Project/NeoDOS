@@ -44,7 +44,13 @@ const DHCP_OPTION_SUBNET_MASK: u8 = 1;
 const DHCP_OPTION_ROUTER: u8 = 3;
 #[allow(dead_code)]
 const DHCP_OPTION_DNS: u8 = 6;
+const DHCP_OPTION_DOMAIN: u8 = 15;
+const DHCP_OPTION_MTU: u8 = 26;
+const DHCP_OPTION_BROADCAST: u8 = 28;
+const DHCP_OPTION_NTP: u8 = 42;
 const DHCP_OPTION_LEASE_TIME: u8 = 51;
+const DHCP_OPTION_T1: u8 = 58;
+const DHCP_OPTION_T2: u8 = 59;
 const DHCP_OPTION_DHCP_MSG_TYPE: u8 = 53;
 const DHCP_OPTION_SERVER_ID: u8 = 54;
 const DHCP_OPTION_REQUEST_LIST: u8 = 55;
@@ -100,6 +106,14 @@ struct DhcpClient {
     dns: [u32; MAX_DHCP_DNS],
     dns_count: usize,
     lease_time: u32,
+    t1: u32,
+    t2: u32,
+    domain: [u8; 64],
+    broadcast: u32,
+    ntp: [u32; MAX_DHCP_NTP],
+    ntp_count: usize,
+    mtu: u32,
+    nak_count: u32,
     renew_interval: u64,
     ticks_in_state: u64,
     retry_count: u8,
@@ -221,11 +235,17 @@ fn build_dhcp_packet(
 
     // Parameter request list
     buf[opt] = DHCP_OPTION_REQUEST_LIST; opt += 1;
-    buf[opt] = 4; opt += 1;
+    buf[opt] = 10; opt += 1;
     buf[opt] = 1; opt += 1;   // subnet mask
     buf[opt] = 3; opt += 1;   // router
     buf[opt] = 6; opt += 1;   // dns
+    buf[opt] = 15; opt += 1;  // domain name
+    buf[opt] = 26; opt += 1;  // interface MTU
+    buf[opt] = 28; opt += 1;  // broadcast
+    buf[opt] = 42; opt += 1;  // NTP servers
     buf[opt] = 51; opt += 1;  // lease time
+    buf[opt] = 58; opt += 1;  // T1 renew
+    buf[opt] = 59; opt += 1;  // T2 rebind
 
     // Server identifier (for REQUEST)
     if server_ip != 0 {
@@ -254,6 +274,9 @@ fn dhcp_payload_length() -> usize {
 
 // ── DHCP option parsing ──
 
+/// Maximum NTP servers taken from DHCP option 42.
+const MAX_DHCP_NTP: usize = 3;
+
 struct DhcpOptions {
     msg_type: u8,
     server_id: u32,
@@ -262,6 +285,13 @@ struct DhcpOptions {
     dns: [u32; MAX_DHCP_DNS],
     dns_count: usize,
     lease_time: u32,
+    t1: u32,
+    t2: u32,
+    domain: [u8; 64],
+    broadcast: u32,
+    ntp: [u32; MAX_DHCP_NTP],
+    ntp_count: usize,
+    mtu: u32,
 }
 
 fn parse_dhcp_options(data: &[u8]) -> Option<DhcpOptions> {
@@ -279,6 +309,13 @@ fn parse_dhcp_options(data: &[u8]) -> Option<DhcpOptions> {
     let mut dns = [0u32; MAX_DHCP_DNS];
     let mut dns_count = 0usize;
     let mut lease_time = 86400u32;
+    let mut t1 = 0u32;
+    let mut t2 = 0u32;
+    let mut domain = [0u8; 64];
+    let mut broadcast = 0u32;
+    let mut ntp = [0u32; MAX_DHCP_NTP];
+    let mut ntp_count = 0usize;
+    let mut mtu = 0u32;
 
     let mut i = 0;
     while i < options.len() {
@@ -332,6 +369,60 @@ fn parse_dhcp_options(data: &[u8]) -> Option<DhcpOptions> {
                 dns_count = n;
                 i += opt_len + 2;
             }
+            DHCP_OPTION_T1 => {
+                if i + 5 < options.len() {
+                    t1 = u32::from_be_bytes([
+                        options[i + 2], options[i + 3], options[i + 4], options[i + 5],
+                    ]);
+                }
+                i += 6;
+            }
+            DHCP_OPTION_T2 => {
+                if i + 5 < options.len() {
+                    t2 = u32::from_be_bytes([
+                        options[i + 2], options[i + 3], options[i + 4], options[i + 5],
+                    ]);
+                }
+                i += 6;
+            }
+            DHCP_OPTION_DOMAIN => {
+                // Option 15 is a plain domain string (not label-encoded).
+                let opt_len = options.get(i + 1).copied().unwrap_or(0) as usize;
+                let end = (i + 2 + opt_len).min(options.len());
+                let src = &options[i + 2..end.max(i + 2)];
+                let n = src.len().min(63);
+                domain[..n].copy_from_slice(&src[..n]);
+                i += opt_len + 2;
+            }
+            DHCP_OPTION_BROADCAST => {
+                if i + 5 < options.len() {
+                    broadcast = u32::from_be_bytes([
+                        options[i + 2], options[i + 3], options[i + 4], options[i + 5],
+                    ]);
+                }
+                i += 6;
+            }
+            DHCP_OPTION_MTU => {
+                if i + 3 < options.len() {
+                    mtu = u16::from_be_bytes([options[i + 2], options[i + 3]]) as u32;
+                }
+                let opt_len = options.get(i + 1).copied().unwrap_or(0) as usize;
+                i += opt_len + 2;
+            }
+            DHCP_OPTION_NTP => {
+                let opt_len = options.get(i + 1).copied().unwrap_or(0) as usize;
+                let mut n = 0usize;
+                let mut j = i + 2;
+                while n < MAX_DHCP_NTP && j + 4 <= i + 2 + opt_len && j + 4 <= options.len() {
+                    ntp[n] = u32::from_be_bytes([
+                        options[j], options[j + 1], options[j + 2], options[j + 3],
+                    ]);
+                    n += 1;
+                    j += 4;
+                }
+                ntp_count = n;
+                i += opt_len + 2;
+            }
             DHCP_OPTION_LEASE_TIME => {
                 if i + 5 < options.len() {
                     lease_time = u32::from_be_bytes([
@@ -357,6 +448,13 @@ fn parse_dhcp_options(data: &[u8]) -> Option<DhcpOptions> {
         dns,
         dns_count,
         lease_time,
+        t1,
+        t2,
+        domain,
+        broadcast,
+        ntp,
+        ntp_count,
+        mtu,
     })
 }
 
@@ -376,6 +474,14 @@ impl DhcpClient {
             dns: [0; MAX_DHCP_DNS],
             dns_count: 0,
             lease_time: 86400,
+            t1: 0,
+            t2: 0,
+            domain: [0; 64],
+            broadcast: 0,
+            ntp: [0; MAX_DHCP_NTP],
+            ntp_count: 0,
+            mtu: 0,
+            nak_count: 0,
             renew_interval: 43200,
             ticks_in_state: 0,
             retry_count: 0,
@@ -513,6 +619,7 @@ impl DhcpClient {
                         if opts.gateway != 0 { self.gateway = opts.gateway; }
                         if opts.dns_count > 0 { self.dns = opts.dns; self.dns_count = opts.dns_count; }
                         self.lease_time = opts.lease_time;
+                        self.copy_extra_options(&opts);
                         self.renew_interval = (opts.lease_time as u64 / LEASE_RENEW_DIVISOR).max(60);
                         return Some(self.offered_ip);
                     }
@@ -526,11 +633,15 @@ impl DhcpClient {
                     if opts.gateway != 0 { self.gateway = opts.gateway; }
                     if opts.dns_count > 0 { self.dns = opts.dns; self.dns_count = opts.dns_count; }
                     self.lease_time = opts.lease_time;
+                    self.copy_extra_options(&opts);
                     self.renew_interval = (opts.lease_time as u64 / LEASE_RENEW_DIVISOR).max(60);
                     return Some(ip);
                 }
                 DHCP_NAK => {
-                    write_str(b"\r\n[dhcpd] NAK received\r\n");
+                    self.nak_count += 1;
+                    write_str(b"\r\n[dhcpd] NAK received (count=");
+                    write_dec_u32(self.nak_count);
+                    write_str(b")\r\n");
                     self.state = DhcpState::Init;
                     return Some(0xFFFFFFFF);
                 }
@@ -538,6 +649,17 @@ impl DhcpClient {
             }
         }
         None
+    }
+
+    /// Copy the #532 extra options (T1/T2/domain/broadcast/NTP/MTU).
+    fn copy_extra_options(&mut self, opts: &DhcpOptions) {
+        self.t1 = opts.t1;
+        self.t2 = opts.t2;
+        self.domain = opts.domain;
+        self.broadcast = opts.broadcast;
+        self.ntp = opts.ntp;
+        self.ntp_count = opts.ntp_count;
+        self.mtu = opts.mtu;
     }
 
     #[allow(dead_code)]
@@ -578,6 +700,12 @@ fn publish_apipa() {
     cfg.dhcp_bound = true;
     cfg.lease_time = 0;
     cfg.lease_obtained = lease_now_unix();
+    cfg.t1_renew = 0;
+    cfg.t2_rebind = 0;
+    cfg.domain = [0; 64];
+    cfg.broadcast = 0;
+    cfg.ntp = [0; 3];
+    cfg.mtu = 0;
     let _ = config::publish_lease(0, &cfg);
 }
 
@@ -729,7 +857,15 @@ pub extern "C" fn _start() -> ! {
         write_ip(client.gateway);
         write_str(b" lease=");
         write_dec_u32(client.lease_time);
-        write_str(b"s\r\n");
+        write_str(b"s t1=");
+        write_dec_u32(client.t1);
+        write_str(b"s t2=");
+        write_dec_u32(client.t2);
+        write_str(b"s mtu=");
+        write_dec_u32(client.mtu);
+        write_str(b" bcast=");
+        write_ip(client.broadcast);
+        write_str(b"\r\n");
 
         // Publish the lease through the shared config backend. The `netapplier`
         // service is the one that applies it to the NIC (single applier; see
@@ -748,6 +884,12 @@ pub extern "C" fn _start() -> ! {
         cfg.dhcp_server = client.server_ip;
         cfg.dhcp_bound = true;
         cfg.lease_obtained = lease_now_unix();
+        cfg.t1_renew = client.t1;
+        cfg.t2_rebind = client.t2;
+        cfg.domain = client.domain;
+        cfg.broadcast = client.broadcast;
+        cfg.ntp = client.ntp;
+        cfg.mtu = client.mtu;
         let _ = config::publish_lease(0, &cfg);
 
         write_str(b"");

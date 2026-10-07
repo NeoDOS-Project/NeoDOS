@@ -36,6 +36,9 @@ IDS_DHCP_SERVER = 1030
 IDS_AUTOCONFIG = 1031
 IDS_LEASE_OBTAINED = 1032
 IDS_LEASE_EXPIRES = 1033
+IDS_DOMAIN = 1034
+IDS_RENEW = 1035
+IDS_REBIND = 1036
 
 [strings]
 IDS_HEADER = "Configuración IP de NeoDOS"
@@ -71,3 +74,6 @@ IDS_DHCP_SERVER = "    Servidor DHCP . . . . . : "
 IDS_AUTOCONFIG = "Autoconfigurada"
 IDS_LEASE_OBTAINED = "    Concesión obtenida . . : "
 IDS_LEASE_EXPIRES = "    Expira . . . . . . . . : "
+IDS_DOMAIN = "    Sufijo DNS . . . . . . : "
+IDS_RENEW = "    Renovación (T1) . . . . : "
+IDS_REBIND = "    Revinculación (T2) . . : "

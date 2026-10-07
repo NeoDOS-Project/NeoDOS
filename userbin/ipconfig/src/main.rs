@@ -63,6 +63,9 @@ const IDS_DHCP_SERVER: u32 = 1030;
 const IDS_AUTOCONFIG: u32 = 1031;
 const IDS_LEASE_OBTAINED: u32 = 1032;
 const IDS_LEASE_EXPIRES: u32 = 1033;
+const IDS_DOMAIN: u32 = 1034;
+const IDS_RENEW: u32 = 1035;
+const IDS_REBIND: u32 = 1036;
 
 /// Sentinel nic_id of the loopback `NicInfo` entry (see
 /// `net::loopback::LOOPBACK_NIC_ID`). Never a real `NicRegistry` slot.
@@ -253,6 +256,20 @@ fn print_iface(iface_idx: u32, info: &libnet::NetIfaceInfo, cfg: &NetConfig) {
             write_label(IDS_LEASE_EXPIRES);
             write_datetime(cfg.lease_obtained.saturating_add(cfg.lease_time));
         }
+        if cfg.t1_renew != 0 {
+            write_label(IDS_RENEW);
+            write_datetime(cfg.lease_obtained.saturating_add(cfg.t1_renew));
+        }
+        if cfg.t2_rebind != 0 {
+            write_label(IDS_REBIND);
+            write_datetime(cfg.lease_obtained.saturating_add(cfg.t2_rebind));
+        }
+    }
+    let dlen = config::domain_len(&cfg.domain);
+    if dlen > 0 {
+        write_label(IDS_DOMAIN);
+        write_str(&cfg.domain[..dlen]);
+        write_str(b"\r\n");
     }
 
     if cfg.dhcp_bound {
