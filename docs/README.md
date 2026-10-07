@@ -175,7 +175,8 @@
 | Document | Description |
 |----------|-------------|
 | [History](reference/history.md) | Project history |
-| [Audit Report](reference/audit-report.md) | Previous architecture audit |
+| [System Audit (2026-10-07)](reference/system-audit-2026-10-07.md) | Auditoría integral SO: madurez, riesgos, docs vs código |
+| [Audit Report](reference/audit-report.md) | Auditoría separación de repos (histórica; migración ejecutada) |
 | [Glossary](reference/glossary.md) | Terminology and acronyms |
 | [Boot Audit — NeoShell](boot_audit_neoshell.md) | Boot/NeoShell audit |
 | [Scheduler Audit](scheduler_audit.md) | Scheduler P0 audit — runqueue invariants |
