@@ -160,7 +160,9 @@ fn query_nic_info(buf: &mut [u8]) -> i64 {
 }
 
 pub extern "C" fn net_iface_count() -> u32 {
-    let mut buf = [0u8; 84];
+    // Room for MAX_NICS (4) + loopback (#484): smaller buffers truncate the
+    // enumeration and hide trailing entries.
+    let mut buf = [0u8; 512];
     let r = query_nic_info(&mut buf);
     if r < 0 { return 0; }
     (r as usize / 84) as u32
@@ -169,7 +171,8 @@ pub extern "C" fn net_iface_count() -> u32 {
 #[no_mangle]
 pub unsafe extern "C" fn net_iface_info(idx: u32, info: *mut NetIfaceInfo) -> i32 {
     if info.is_null() { return -1; }
-    let mut buf = [0u8; 256];
+    // Room for MAX_NICS (4) + loopback (#484).
+    let mut buf = [0u8; 512];
     let r = query_nic_info(&mut buf);
     if r < 0 { return -1; }
     let entry_sz = core::mem::size_of::<NetIfaceInfo>();
@@ -329,7 +332,8 @@ pub extern "C" fn net_set_gateway(iface: u32, gw: u32) -> i32 {
 pub extern "C" fn net_get_ip(iface: u32) -> u32 {
     // The kernel NicInfo entry is `size_of::<NetIfaceInfo>()` (84) bytes; a
     // smaller buffer makes the query return 0 entries. See #321.
-    let mut buf = [0u8; 256];
+    // Sized for MAX_NICS (4) + loopback (#484).
+    let mut buf = [0u8; 512];
     let r = query_nic_info(&mut buf);
     if r < 0 { return 0; }
     let entry = core::mem::size_of::<NetIfaceInfo>();
