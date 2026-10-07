@@ -9,6 +9,7 @@ pub mod socket;
 pub mod nic;
 pub mod dns;
 pub mod counters;
+pub mod loopback;
 mod tests;
 
 use crate::log::LogSubsys;
@@ -40,6 +41,9 @@ pub fn init_networking() {
     }
 
     crate::object::namespace::ob_create_directory("\\Device\\Nic").unwrap_or(());
+
+    // Loopback (#484): virtual interface outside NicRegistry.
+    loopback::init_loopback();
 
     // NICs are registered by NEM drivers (e.g. e1000.nem) via hst_register_network_device
     let nic_count = crate::net::nic::nic_count();
@@ -319,6 +323,9 @@ pub fn network_poll_all() {
         }
     });
     drop(registry);
+    // Drain loopback outside the NIC_REGISTRY lock: replies re-enter through
+    // LoopbackInterface::send_packet and must not deadlock (#484).
+    loopback::loopback_pump();
     crate::scheduler::preempt_enable();
 }
 

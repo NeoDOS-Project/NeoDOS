@@ -380,6 +380,35 @@ pub fn nic_next_hop(dest_ip: Ipv4Addr) -> Option<Ipv4Addr> {
     NIC_REGISTRY.lock().next_hop_ip(dest_ip)
 }
 
+/// Local routing decision for `dest_ip` (#484).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Route {
+    /// 127.0.0.0/8: delivered via the loopback queue, no NIC, no ARP.
+    Loopback,
+    /// On-link (or broadcast): next hop is the destination itself.
+    OnLink(Ipv4Addr),
+    /// Off-link with a configured gateway.
+    ViaGateway(Ipv4Addr),
+    /// Off-link without a gateway, or no NIC registered.
+    Unreachable,
+}
+
+/// Classify `dest_ip` without sending anything. Loopback and broadcast are
+/// resolved without touching `NIC_REGISTRY`, so this works with 0 NICs.
+pub fn nic_route(dest_ip: Ipv4Addr) -> Route {
+    if dest_ip.is_loopback() {
+        return Route::Loopback;
+    }
+    if dest_ip.is_broadcast() {
+        return Route::OnLink(dest_ip);
+    }
+    match NIC_REGISTRY.lock().next_hop_ip(dest_ip) {
+        Some(nh) if nh == dest_ip => Route::OnLink(nh),
+        Some(gw) => Route::ViaGateway(gw),
+        None => Route::Unreachable,
+    }
+}
+
 pub fn nic_default_id() -> Option<u32> {
     NIC_REGISTRY.lock().default_nic_id()
 }
