@@ -205,7 +205,7 @@ pub fn socket_connect(id: u32, remote: SocketAddrV4) -> bool {
 }
 
 pub fn socket_send(id: u32, data: &[u8]) -> Result<usize, ()> {
-    let (local, remote) = {
+    let (local, remote, bound_nic) = {
         let mut mgr = SOCKET_MANAGER.lock();
         let socket = match mgr.get_socket_mut(id) {
             Some(s) => s,
@@ -220,11 +220,11 @@ pub fn socket_send(id: u32, data: &[u8]) -> Result<usize, ()> {
             }
             return Err(());
         }
-        (socket.local, socket.remote)
+        (socket.local, socket.remote, socket.nic_id)
     };
     // Drop SOCKET_MANAGER lock before transmitting to avoid lock inversion
     // with NIC_REGISTRY (incoming path locks NIC_REGISTRY then SOCKET_MANAGER).
-    socket_send_udp_raw(local, remote, data)
+    socket_send_udp_raw_on(local, remote, data, bound_nic)
 }
 
 pub fn socket_recv(id: u32, buf: &mut [u8]) -> Result<usize, ()> {
@@ -281,6 +281,24 @@ pub fn socket_set_remote(id: u32, remote: SocketAddrV4) {
     }
 }
 
+/// Pin a socket to a NIC for send-interface selection (#536 follow-up).
+/// Returns false when the socket does not exist or the NIC is not registered.
+pub fn socket_set_nic(id: u32, nic_id: u32) -> bool {
+    // Validate against registered NICs (loopback is not a registry NIC).
+    {
+        let mut reg = crate::net::nic::NIC_REGISTRY.lock();
+        if reg.get(nic_id).is_none() {
+            return false;
+        }
+    }
+    if let Some(s) = SOCKET_MANAGER.lock().get_socket_mut(id) {
+        s.nic_id = Some(nic_id);
+        true
+    } else {
+        false
+    }
+}
+
 pub fn socket_set_tcp_conn(id: u32, tcp_id: u32) {
     if let Some(socket) = SOCKET_MANAGER.lock().get_socket_mut(id) {
         socket.tcp_conn_id = Some(tcp_id);
@@ -315,12 +333,24 @@ pub fn socket_set_local(id: u32, local: SocketAddrV4) {
 /// Caller must NOT hold SOCKET_MANAGER lock (lock order: SOCKET_MANAGER → NIC_REGISTRY
 /// conflicts with incoming path NIC_REGISTRY → SOCKET_MANAGER).
 pub fn socket_send_udp_raw(local: SocketAddrV4, remote: SocketAddrV4, data: &[u8]) -> Result<usize, ()> {
+    socket_send_udp_raw_on(local, remote, data, None)
+}
+
+/// UDP send on an explicit NIC (#536 follow-up). `nic` overrides the default
+/// NIC for interface/MAC selection only; next-hop/ARP stay default-based
+/// (full bound-NIC routing is #317).
+pub fn socket_send_udp_raw_on(
+    local: SocketAddrV4,
+    remote: SocketAddrV4,
+    data: &[u8],
+    nic: Option<u32>,
+) -> Result<usize, ()> {
     // Loopback (#484): 127.0.0.0/8 never touches a NIC or ARP, works with
     // 0 NICs and leaves the default route untouched.
     if remote.ip.is_loopback() {
         return socket_send_udp_loopback(local, remote, data);
     }
-    let nic_id = nic_default_id().ok_or(())?;
+    let nic_id = nic.or_else(nic_default_id).ok_or(())?;
 
     let src_mac = {
         let mut registry = NIC_REGISTRY.lock();

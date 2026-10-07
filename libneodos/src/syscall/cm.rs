@@ -23,6 +23,13 @@ pub fn sys_cm_open_key(path: &str) -> Result<u8, i64> {
     ret(r).map(|v| v as u8)
 }
 
+/// sys_cm_create_key: create subkey `name` under open key `fd`
+/// via ob_set_info(RegistryCreateKey = 23). Ok if it already exists
+/// (the kernel answers Exist, which we also accept).
+pub fn sys_cm_create_key(fd: u8, name: &str) -> Result<(), i64> {
+    super::ob::sys_ob_set_info(fd, super::ob::ObSetInfoClass::RegistryCreateKey, name.as_bytes())
+}
+
 /// sys_cm_query_value (RAX=69): query a value on a registry key by fd.
 /// buf receives: [type: u32 LE, data_len: u32 LE, data...]
 /// Returns total_size (8 + data_len) regardless of buf capacity.

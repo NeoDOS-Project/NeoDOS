@@ -27,6 +27,36 @@ pub use libnet_config::*;
 
 use crate::NetIfaceInfo;
 
+/// Ensure the Registry key for interface `iface` exists, creating
+/// `Interfaces\<iface>` under the Network key when missing.
+pub fn ensure_interface(iface: u32) -> Result<(), i64> {
+    if open_interface(iface).is_ok() {
+        return Ok(());
+    }
+    let parent = "\\Registry\\Machine\\System\\CurrentControlSet\\Services\\Network\\Interfaces";
+    let pfd = syscall::sys_cm_open_key(parent)?;
+    let mut num = [b'0'; 10];
+    let mut n = 0usize;
+    let mut v = iface;
+    loop {
+        num[n] = b'0' + (v % 10) as u8;
+        n += 1;
+        v /= 10;
+        if v == 0 { break; }
+    }
+    let mut name = [0u8; 10];
+    for j in 0..n {
+        name[j] = num[n - 1 - j];
+    }
+    let s = core::str::from_utf8(&name[..n]).map_err(|_| -1i64)?;
+    // Exist is fine: the key is there either way afterwards.
+    let _ = syscall::sys_cm_create_key(pfd, s);
+    let _ = syscall::sys_close(pfd);
+    open_interface(iface).map(|fd| {
+        let _ = syscall::sys_close(fd);
+    })
+}
+
 /// Open the Registry key for interface `iface`.
 pub fn open_interface(iface: u32) -> Result<u8, i64> {
     let mut buf = [0u8; 128];
