@@ -55,6 +55,10 @@ const IDS_NO: u32 = 1022;
 const IDS_ERR_NXL: u32 = 1023;
 const IDS_NO_IFACES: u32 = 1024;
 const IDS_LOOPBACK: u32 = 1029;
+const IDS_DHCP_SERVER: u32 = 1030;
+const IDS_AUTOCONFIG: u32 = 1031;
+const IDS_LEASE_OBTAINED: u32 = 1032;
+const IDS_LEASE_EXPIRES: u32 = 1033;
 
 /// Sentinel nic_id of the loopback `NicInfo` entry (see
 /// `net::loopback::LOOPBACK_NIC_ID`). Never a real `NicRegistry` slot.
@@ -119,6 +123,36 @@ fn write_padded_str(buf: &[u8]) {
     if end > 0 { write_str(&buf[..end]); }
 }
 
+fn write_02(v: u8) {
+    write_str(&[b'0' + (v / 10).min(9), b'0' + (v % 10)]);
+}
+
+fn write_04(v: u16) {
+    let mut b = [b'0'; 4];
+    b[0] += ((v / 1000) % 10) as u8;
+    b[1] += ((v / 100) % 10) as u8;
+    b[2] += ((v / 10) % 10) as u8;
+    b[3] += (v % 10) as u8;
+    write_str(&b);
+}
+
+/// Write Unix seconds as `DD/MM/YYYY HH:MM:SS` (UTC).
+fn write_datetime(secs: u32) {
+    let Some(dt) = libntp::unix_secs_to_utc(secs as i64) else { return };
+    write_02(dt.day);
+    write_str(b"/");
+    write_02(dt.month);
+    write_str(b"/");
+    write_04(2000 + dt.year as u16);
+    write_str(b" ");
+    write_02(dt.hour);
+    write_str(b":");
+    write_02(dt.minute);
+    write_str(b":");
+    write_02(dt.second);
+    write_str(b"\r\n");
+}
+
 fn print_iface(iface_idx: u32, info: &libnet::NetIfaceInfo, cfg: &NetConfig) {
     let _ = iface_idx;
     write_str(b"\r\n");
@@ -163,6 +197,7 @@ fn print_iface(iface_idx: u32, info: &libnet::NetIfaceInfo, cfg: &NetConfig) {
     write_ip_label(IDS_IPV4, ip_u32);
     write_ip_label(IDS_SUBNET_MASK, if mask != 0 { mask } else { config::DEFAULT_MASK });
     write_ip_label(IDS_GATEWAY, gw);
+    if cfg.dhcp_server != 0 { write_ip_label(IDS_DHCP_SERVER, cfg.dhcp_server); }
     if dns1 != 0 { write_ip_label(IDS_DNS, dns1); }
     if dns2 != 0 { write_ip_label(IDS_DNS, dns2); }
     if dns3 != 0 { write_ip_label(IDS_DNS, dns3); }
@@ -173,10 +208,20 @@ fn print_iface(iface_idx: u32, info: &libnet::NetIfaceInfo, cfg: &NetConfig) {
     write_str(b"\r\n");
 
     write_label(IDS_CONFIG_SOURCE);
-    if cfg.dhcp_bound { write_label(IDS_DHCP); }
+    if config::is_apipa(ip_u32) { write_label(IDS_AUTOCONFIG); }
+    else if cfg.dhcp_bound { write_label(IDS_DHCP); }
     else if ip_u32 != 0 { write_label(IDS_STATIC); }
     else { write_label(IDS_NONE); }
     write_str(b"\r\n");
+
+    if cfg.lease_obtained != 0 {
+        write_label(IDS_LEASE_OBTAINED);
+        write_datetime(cfg.lease_obtained);
+        if cfg.lease_time > 0 {
+            write_label(IDS_LEASE_EXPIRES);
+            write_datetime(cfg.lease_obtained.saturating_add(cfg.lease_time));
+        }
+    }
 
     if cfg.dhcp_bound {
         let lease = cfg.lease_time;
