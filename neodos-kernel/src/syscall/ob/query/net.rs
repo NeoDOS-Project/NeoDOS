@@ -190,7 +190,32 @@ pub(super) fn dispatch(
                     );
                 }
             }
-            (count * entry_size) as u64
+            // Loopback (#484): appended after the physical NICs when the
+            // caller buffer has room. The sentinel nic_id keeps it read-only.
+            let mut total = count;
+            if total < max_entries {
+                let (lb_id, lb_mac, lb_ip, lb_link, lb_name, lb_desc) =
+                    crate::net::loopback::nic_info_entry();
+                let raw = NicInfoRaw {
+                    nic_id: lb_id,
+                    mac: lb_mac,
+                    ip: lb_ip,
+                    link_up: lb_link,
+                    vendor_id: 0,
+                    device_id: 0,
+                    name: lb_name,
+                    description: lb_desc,
+                };
+                unsafe {
+                    core::ptr::copy_nonoverlapping(
+                        &raw as *const NicInfoRaw as *const u8,
+                        (buf_ptr as *mut u8).add(total * entry_size),
+                        entry_size,
+                    );
+                }
+                total += 1;
+            }
+            (total * entry_size) as u64
         }
         // ── RegistryKey (21): query key metadata (subkey count, value count) ──
         _ if info_class == ObInfoClass::Hostname as u32 => {

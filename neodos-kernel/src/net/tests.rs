@@ -714,4 +714,15 @@ pub fn register_net_tests() {
         ));
         test_eq!(super::loopback::loopback_pending(), 0);
     });
+
+    test_case!("net_loopback_nic_info_entry", {
+        let (id, mac, ip, link, name, desc) = super::loopback::nic_info_entry();
+        // Sentinel id: never a real NicRegistry slot (read-only by construction).
+        test_eq!(id, super::loopback::LOOPBACK_NIC_ID);
+        test_eq!(mac, super::types::MacAddr::loopback().0);
+        test_eq!(ip, super::types::Ipv4Addr::localhost().0);
+        test_eq!(link, 1);
+        test_eq!(&name[..8], b"loopback");
+        test_eq!(&desc[..18], b"Loopback Interface");
+    });
 }

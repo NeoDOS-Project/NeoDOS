@@ -82,6 +82,28 @@ pub fn loopback_pump() {
     }
 }
 
+/// NicInfo payload for the loopback interface (#484): `(nic_id, mac, ip,
+/// link_up, name, description)`.
+///
+/// `nic_id` is the `LOOPBACK_NIC_ID` sentinel (`u32::MAX`), which can never
+/// address a real `NicRegistry` slot: the mutating paths (`nic_set_ip`, ...)
+/// reject it by range check, so exposing loopback in `NicInfo` enumeration is
+/// read-only by construction.
+pub fn nic_info_entry() -> (u32, [u8; 6], [u8; 4], u8, [u8; 16], [u8; 48]) {
+    let mut name = [0u8; 16];
+    name[..8].copy_from_slice(b"loopback");
+    let mut desc = [0u8; 48];
+    desc[..18].copy_from_slice(b"Loopback Interface");
+    (
+        LOOPBACK_NIC_ID,
+        MacAddr::loopback().0,
+        Ipv4Addr::localhost().0,
+        1,
+        name,
+        desc,
+    )
+}
+
 /// Expose loopback in the Ob namespace (`\Device\Loopback`). No new syscalls,
 /// no ABI change: sockets keep using `ObType::Socket`.
 pub fn init_loopback() {

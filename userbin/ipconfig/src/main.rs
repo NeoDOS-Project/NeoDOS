@@ -54,6 +54,14 @@ const IDS_YES: u32 = 1021;
 const IDS_NO: u32 = 1022;
 const IDS_ERR_NXL: u32 = 1023;
 const IDS_NO_IFACES: u32 = 1024;
+const IDS_LOOPBACK: u32 = 1029;
+
+/// Sentinel nic_id of the loopback `NicInfo` entry (see
+/// `net::loopback::LOOPBACK_NIC_ID`). Never a real `NicRegistry` slot.
+const LOOPBACK_NIC_ID: u32 = 0xFFFF_FFFF;
+
+/// Fixed 255.0.0.0 as big-endian u32 for `config::format_ip`.
+const LOOPBACK_MASK_BE: u32 = 0xFF00_0000;
 
 fn write_str(s: &[u8]) { let _ = syscall::sys_write(1, s); }
 
@@ -180,6 +188,28 @@ fn print_iface(iface_idx: u32, info: &libnet::NetIfaceInfo, cfg: &NetConfig) {
     write_str(b"\r\n");
 }
 
+fn print_loopback(info: &libnet::NetIfaceInfo) {
+    write_str(b"\r\n");
+    write_label(IDS_LOOPBACK);
+    write_str(b":\r\n\r\n");
+
+    write_label(IDS_DESCRIPTION);
+    write_padded_str(&info.description);
+    write_str(b"\r\n");
+
+    write_label(IDS_LINK_STATUS);
+    write_label(IDS_UP);
+    write_str(b"\r\n\r\n");
+
+    write_label(IDS_MAC);
+    write_mac(&info.mac);
+
+    let ip_u32 = u32::from_be_bytes(info.ip);
+    write_ip_label(IDS_IPV4, ip_u32);
+    write_ip_label(IDS_SUBNET_MASK, LOOPBACK_MASK_BE);
+    write_str(b"\r\n");
+}
+
 #[no_mangle]
 pub extern "C" fn _start() -> ! {
     i18n::i18n_init();
@@ -230,7 +260,11 @@ pub extern "C" fn _start() -> ! {
             description: [0u8; 48],
         };
         if libnet::iface_info(i, &mut info) == 0 {
-            print_iface(i, &info, &cfg);
+            if info.nic_id == LOOPBACK_NIC_ID {
+                print_loopback(&info);
+            } else {
+                print_iface(i, &info, &cfg);
+            }
         }
     }
 

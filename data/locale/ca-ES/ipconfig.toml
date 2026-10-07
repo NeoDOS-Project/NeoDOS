@@ -31,6 +31,7 @@ IDS_STATS_RX = 1025
 IDS_STATS_TX = 1026
 IDS_STATS_RX_BYTES = 1027
 IDS_STATS_TX_BYTES = 1028
+IDS_LOOPBACK = 1029
 
 [strings]
 IDS_HEADER = "Configuració IP de NeoDOS"
@@ -61,3 +62,4 @@ IDS_STATS_RX = "    Paquets rebuts . . . . .: "
 IDS_STATS_TX = "    Paquets enviats . . . . : "
 IDS_STATS_RX_BYTES = "    Bytes rebuts . . . . . .: "
 IDS_STATS_TX_BYTES = "    Bytes enviats . . . . . : "
+IDS_LOOPBACK = "Adaptador loopback"
