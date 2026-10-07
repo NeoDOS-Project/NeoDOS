@@ -44,6 +44,16 @@ pub enum TcpState {
 
 Connection lifecycle: `build_tcp_segment()`, `send_tcp_segment()`, `tcp_send_syn_ack()`, `tcp_handle_ack()`. Send/recv buffers use a 16 KB sliding window.
 
+Data path (#486): `tcp_send()` buffers; `tcp_tick()` (from `net_tick`) flushes
+up to MSS per connection, tracks `send_base`/`send_next`, advances the window
+on ACKs, retransmits on a 200 ms TSC-based RTO (8 retries max), and drives
+FIN (`fin_pending` when closing with unsent data). Incoming data is stored in
+the connection buffer, ACKed, and wakes `SocketRead` waiters; incoming FINs
+park in CloseWait. `tcp_dispatch()` never holds `SOCKET_MANAGER` across
+protocol actions (nested locks deadlocked SYN handling). Covered by the
+`net_tcp_loopback_e2e` test (handshake + both directions + orderly close over
+loopback, no NIC). Off-subnet TCP still limited by next-hop/MAC scope (#315).
+
 ## ObType Integration
 
 `ObType::Socket` = 18. Sockets are Ob objects managed through the standard handle/namespace system.
