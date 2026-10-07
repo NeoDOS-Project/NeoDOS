@@ -24,6 +24,8 @@
   drivers/hw/ahci.rs: imports 'boot_benchmark::elapsed_ms' which contains forbidden dep(s): boot_benchmark
   drivers/hw/virtio_blk.rs: imports 'boot_benchmark::VIRTIO_COMMANDS' which contains forbidden dep(s): boot_benchmark
   fs/neodos_io.rs: imports 'buffer::page_cache::PageCache' which contains forbidden dep(s): buffer
+  fs/vfs/partition.rs: imports 'drivers::gpt' which contains forbidden dep(s): drivers/gpt
+  fs/vfs/partition.rs: imports 'drivers::gpt::{self, MAX_NEODOS_PARTITIONS}' which contains forbidden dep(s): drivers/gpt
   irp/mod.rs: imports 'syscall::set_need_resched' which contains forbidden dep(s): syscall
   irp/mod.rs: imports 'work_queue::WORK_QUEUE' which contains forbidden dep(s): work_queue
   interrupts/msi.rs: imports 'drivers::driver_runtime' which contains forbidden dep(s): drivers
@@ -47,8 +49,6 @@
   syscall/resched.rs: imports 'invariants::is_in_timer_irq' which contains forbidden dep(s): invariants
   scheduler/wake.rs: imports 'input::manager::clear_foreground_pid' which contains forbidden dep(s): input
   apc/mod.rs: imports 'syscall::set_need_resched' which contains forbidden dep(s): syscall
-  vfs/partition.rs: imports 'drivers::gpt' which contains forbidden dep(s): drivers/gpt
-  vfs/partition.rs: imports 'drivers::gpt::{self, MAX_NEODOS_PARTITIONS}' which contains forbidden dep(s): drivers/gpt
   security/mod.rs: imports 'syscall::SYSCALL_PERMISSIONS' which contains forbidden dep(s): syscall
   security/mod.rs: imports 'syscall::SyscallError::Perm' which contains forbidden dep(s): syscall
   security/mod.rs: imports 'syscall::check_syscall_permission' which contains forbidden dep(s): syscall
@@ -66,6 +66,18 @@
   kwait/mod.rs: imports 'syscall::set_need_resched' which contains forbidden dep(s): syscall
   input/manager.rs: imports 'syscall::interrupt_foreground_work' which contains forbidden dep(s): syscall
   input/manager.rs: imports 'work_queue::WORK_QUEUE' which contains forbidden dep(s): work_queue
+  input/kbd/config.rs: imports 'cm::cm_query_value' which contains forbidden dep(s): cm
+  input/kbd/config.rs: imports 'cm::cm_set_value' which contains forbidden dep(s): cm
+  input/kbd/config.rs: imports 'cm::hive::REG_DWORD' which contains forbidden dep(s): cm
+  input/kbd/config.rs: imports 'cm::hive::REG_SZ' which contains forbidden dep(s): cm
+  input/kbd/config.rs: imports 'security::token::Token::new_admin' which contains forbidden dep(s): security
+  input/kbd/layout.rs: imports 'fs::vfs::MODE_FILE' which contains forbidden dep(s): fs, vfs
+  input/kbd/layout.rs: imports 'globals::with_vfs' which contains forbidden dep(s): globals
+  input/kbd/event.rs: imports 'syscall::set_need_resched' which contains forbidden dep(s): syscall
+  input/kbd/hotkey.rs: imports 'interrupts::ioapic::dump_irq_routing' which contains forbidden dep(s): interrupts
+  input/kbd/mod.rs: imports 'drivers::ps2::set_leds' which contains forbidden dep(s): drivers
+  input/kbd/mod.rs: imports 'syscall::set_need_resched' which contains forbidden dep(s): syscall
+  input/kbd/mod.rs: imports 'syscall::wake_blocked_readers' which contains forbidden dep(s): syscall
   net/dns.rs: imports 'cm::api::cm_open_key' which contains forbidden dep(s): cm
   net/dns.rs: imports 'cm::api::cm_query_value' which contains forbidden dep(s): cm
   net/dns.rs: imports 'cm::hive::types::REG_DWORD' which contains forbidden dep(s): cm
@@ -75,13 +87,6 @@
   net/tcp.rs: imports 'boot_benchmark::get_tsc_khz' which contains forbidden dep(s): boot_benchmark
   net/tcp.rs: imports 'boot_benchmark::rdtsc' which contains forbidden dep(s): boot_benchmark
   cm/timezone.rs: imports 'drivers::rtc_bridge::DateTime' which contains forbidden dep(s): drivers
-  kbd/config.rs: imports 'security::token::Token::new_admin' which contains forbidden dep(s): security
-  kbd/layout.rs: imports 'fs::vfs::MODE_FILE' which contains forbidden dep(s): fs, vfs
-  kbd/event.rs: imports 'syscall::set_need_resched' which contains forbidden dep(s): syscall
-  kbd/hotkey.rs: imports 'interrupts::ioapic::dump_irq_routing' which contains forbidden dep(s): interrupts
-  kbd/mod.rs: imports 'drivers::ps2::set_leds' which contains forbidden dep(s): drivers
-  kbd/mod.rs: imports 'syscall::set_need_resched' which contains forbidden dep(s): syscall
-  kbd/mod.rs: imports 'syscall::wake_blocked_readers' which contains forbidden dep(s): syscall
   cpu.rs: imports 'boot_benchmark::get_tsc_khz' which contains forbidden dep(s): boot_benchmark
   cpu.rs: imports 'timers' which contains forbidden dep(s): timers
   abi_freeze.rs: imports 'drivers::caps' which contains forbidden dep(s): drivers

@@ -1,5 +1,6 @@
 //! NEM dynamic driver framework: loader, certification runtime and management.
 
+pub mod format;
 pub mod loader;
 pub mod management;
 pub mod runtime;

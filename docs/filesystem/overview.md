@@ -132,12 +132,12 @@ then walks each component with `.` and `..` resolution, traversing mount points.
 
 ### Mount Manager
 
-Source: `src/vfs/mount.rs`. Creates ObObject entries for mounted filesystems
+Source: `src/fs/vfs/mount.rs`. Creates ObObject entries for mounted filesystems
 and `\DosDevices\` symlinks for drive letters in the Object Manager namespace.
 
 ## IoStack
 
-Source: `src/vfs/io.rs`, `src/vfs/partition.rs`. Unified block I/O abstraction.
+Source: `src/fs/vfs/io.rs`, `src/fs/vfs/partition.rs`. Unified block I/O abstraction.
 
 ```rust
 pub struct IoStack {

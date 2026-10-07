@@ -85,6 +85,15 @@
   paths keep resolving via re-exports in `src/drivers/mod.rs`. No behavior
   change; `check-deps-baseline.txt` refreshed for the moved paths.
 
+- **#541 / P1: consolidate top-level kernel modules.** VFS moved from
+  `src/vfs/` into `src/fs/vfs/` (one home with the `FileSystem` trait); the
+  NEM *format* parser moved from `src/nem/` to `src/drivers/nem/format.rs`
+  (disambiguated from the `drivers/nem` framework); `kbd/` → `input/kbd/`;
+  `power/` → `services/power/`; `graphics.rs` + `font.rs` →
+  `graphics/{mod,font}.rs`. Historical paths (`crate::vfs`, `crate::nem`,
+  `crate::kbd`, `crate::power`, `crate::font`) kept resolving via re-exports
+  in `main.rs`; `check-deps-baseline.txt` refreshed. No behavior change.
+
 ### Fixed
 
 - **Scheduler snapshot self-deadlock (BSP freeze before `[PROC_SNAPSHOT]`).**

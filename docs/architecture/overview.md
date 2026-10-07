@@ -192,7 +192,7 @@ Unified object manager system for creating, tracking, referencing, and enumerati
 | **ObType** | `src/object/types.rs` | Enum (u32): Unknown(0), Process(1), Driver(2), Device(3), Pipe(4), EventBus(5), BlockDevice(6), Filesystem(7), MemoryRegion(8), Symlink(9), MountPoint(10), Directory(11), Key(12), Event(13), Semaphore(14), Timer(15), Thread(16), Section(17), Socket(18), Service(20), PowerManager(21), KeyboardDevice(22) |
 | **Namespace** | `src/object/namespace.rs` | Hierarchical `\`-rooted tree with `DirectoryObject` nodes, `BTreeMap`-backed children, case-insensitive keys. Standard dirs: `\Device`, `\DosDevices`, `\Global`, `\Driver`, `\FileSystem`, `\Ob`, `\Registry`, `\Process` |
 | **Symlinks** | `src/object/namespace.rs` | `SymlinkEntry` in namespace nodes, max 10 hop resolution with loop detection |
-| **Mount points** | `src/vfs/mount.rs` | `MountManager` with `MountPoint` struct, `FilesystemType` enum, DosDevices symlink creation, global `MOUNT_MANAGER` |
+| **Mount points** | `src/fs/vfs/mount.rs` | `MountManager` with `MountPoint` struct, `FilesystemType` enum, DosDevices symlink creation, global `MOUNT_MANAGER` |
 | **Public API** | `src/object/mod.rs` | `ob_create_object()`, `ob_destroy_object()`, `ob_lookup()`, `ob_open_object(id)`, `ob_close_object(id)`, `ob_reference()`, `ob_dereference()`, `ob_count()`, `ob_enum_snapshot()`, `ob_open_path(path, token, access)` |
 | **Namespace API** | `src/object/namespace.rs` | `ob_insert_object()`/`ob_remove_object()`, `ob_lookup_path()`, `ob_create_directory()`, `ob_enumerate_namespace()`, `ob_insert_symlink()`, `ob_find_path_by_id()`, `normalize_path()`, `ob_insert_object_auto()`/`ob_remove_object_auto()` |
 | **Integration** | | Processes, drivers, pipes, timers, semaphores, sections auto-register on creation and auto-unregister on destruction. Mount points register via `vfs_mount()` during boot |
@@ -290,7 +290,7 @@ struct Event {
 
 ---
 
-### 3. NEM v3 — Driver Format (`src/nem/mod.rs`)
+### 3. NEM v3 — Driver Format (`src/drivers/nem/format.rs`)
 
 NeoDOS Driver Format v3. 80-byte header + sections (text, rodata, data, bss) + relocation table + symbol table + string table.
 
@@ -539,7 +539,7 @@ Beyond the NEM driver framework, the kernel includes integrated hardware drivers
 | GPT | `drivers/storage/gpt.rs` | GUID partition table parser |
 | FAT32 | `drivers/fat32.rs` | ESP partition, absolute LBAs |
 | RTC | `drivers/rtc_bridge.rs` + `drivers/rtc/` (NEM) | CMOS RTC via NEM driver |
-| ACPI | `src/power/acpi.rs` + `drivers/acpi/` (NEM) | RSDP/XSDT, poweroff via PM1a |
+| ACPI | `src/services/power/acpi.rs` + `drivers/acpi/` (NEM) | RSDP/XSDT, poweroff via PM1a |
 | NVMe | `drivers/nvme.rs` | NVMe probe + read/write sectors |
 | Storage Manager | `drivers/storage_manager.rs` | Unifies NVMe / AHCI / ATA (boot stub) |
 | Block Device | `drivers/storage/block.rs` | Trait + block device manager |
@@ -601,8 +601,8 @@ Tests run automatically at boot. The kernel runs 825 tests (200+ test_case! regi
 
 - **apc**: `src/apc/mod.rs` — Asynchronous Procedure Call engine. Per-thread kernel/user APC queues (max 64 each). Kernel APCs dispatched at PASSIVE_LEVEL on syscall return. User APCs dispatched one-at-a-time before IRETQ to Ring 3. Used for IRP completion delivery (DIRQL→DPC→APC flow) and deferred callback execution.
 - **object**: `src/object/` — Object Manager (Ob). Unified object tracking with reference counting, type identification (ObType = 22 variants), Hierarchical object namespace with Directory entries, case-insensitive path lookup, symlinks, and security descriptors. Objects auto-register for lifecycle via `ObOperations::on_destroy`. `KOBJ` via Ring 3 `kobj.nxe` lists all live objects.
-- **kbd**: `src/kbd/` — Keyboard Manager (NeoKBD): layout engine, Unicode composition, dead key compose, hotkey dispatch, auto-repeat, Registry-backed config, `ObType::KeyboardDevice(22)`, `\Device\Keyboard` namespace object
-- **power**: `src/power/` — Power Manager subsystem: `PowerManager` struct with 3 power plans (Balanced/Performance/PowerSaver), `PowerPlan`/`PowerPolicies`/`CpuPolicy`/`PowerAction` data structures, Registry-backed plan persistence, `coordinator::shutdown()`/`reboot()` for power lifecycle, plus ACPI HAL layer (RSDP discovery, RSDT/XSDT parsing, FADT extraction, S5 sleep, reset register)
+- **kbd**: `src/input/kbd/` — Keyboard Manager (NeoKBD): layout engine, Unicode composition, dead key compose, hotkey dispatch, auto-repeat, Registry-backed config, `ObType::KeyboardDevice(22)`, `\Device\Keyboard` namespace object
+- **power**: `src/services/power/` — Power Manager subsystem: `PowerManager` struct with 3 power plans (Balanced/Performance/PowerSaver), `PowerPlan`/`PowerPolicies`/`CpuPolicy`/`PowerAction` data structures, Registry-backed plan persistence, `coordinator::shutdown()`/`reboot()` for power lifecycle, plus ACPI HAL layer (RSDP discovery, RSDT/XSDT parsing, FADT extraction, S5 sleep, reset register)
 - **arch/x64**: GDT, IDT, PIC, paging (4-level, 2 MB huge pages + 4 KB demand-paging), interrupt handlers (timer IRQ0, keyboard IRQ1, syscall INT 0x80)
 - **drivers**: ATA (PIO boot stub + NEM v3 standalone DMA driver), AHCI, PS/2 keyboard, USB HID, PCI NEM driver (bus scan + Event Bus service), device event infrastructure
 - **buffer**: `buffer/page_cache.rs` — page cache (`CACHE_SIZE = 128` slots, 512 KB; hash map O(1) + LRU for file data I/O, dirty write-back with `flush_batch()`, timer-driven via `NEED_PAGE_CACHE_FLUSH`)

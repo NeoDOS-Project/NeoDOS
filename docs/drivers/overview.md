@@ -24,11 +24,11 @@ resolving through re-exports in `src/drivers/mod.rs`.
 
 ## NEM v2/v3 Format
 
-Source: `src/nem/mod.rs`, `src/drivers/nem/loader/v3loader.rs`.
+Source: `src/drivers/nem/format.rs`, `src/drivers/nem/loader/v3loader.rs`.
 
 ### NEM v3 Header (80 bytes)
 
-Source: `neodos-kernel/src/nem/mod.rs`. `#[repr(C)]` struct with implicit alignment padding.
+Source: `neodos-kernel/src/drivers/nem/format.rs`. `#[repr(C)]` struct with implicit alignment padding.
 
 | Offset | Size | Field         | Description                            |
 |--------|------|---------------|----------------------------------------|

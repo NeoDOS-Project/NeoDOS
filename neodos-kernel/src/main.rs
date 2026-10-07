@@ -32,11 +32,14 @@ pub mod scheduler;
 mod drivers;
 mod buffer;
 mod fs;
-mod vfs;
+// VFS now lives under `fs/vfs`; keep the historical `crate::vfs` path.
+pub use fs::vfs;
 mod input;
 mod graphics;
-mod font;
-mod nem;
+// Font now lives under `graphics/font`; keep the historical `crate::font`.
+pub use graphics::font;
+// NEM format parser now lives under `drivers/nem/format`; keep `crate::nem`.
+pub use drivers::nem::format as nem;
 mod elf;
 mod handle;
 mod eventbus;
@@ -62,13 +65,15 @@ mod crash;
 mod security;
 mod exception;  // A3.4 SEH + Exception Dispatcher
 mod urn;
-pub mod power;
+// Power Manager now lives under `services/power`; keep `crate::power`.
+pub use services::power;
 mod object;
 mod kwait;
 mod net;
 mod cm;
 mod services;
-mod kbd;
+// Keyboard now lives under `input/kbd`; keep the historical `crate::kbd`.
+pub use input::kbd;
 mod stress_spawn; // #345 Phase 2 diagnostic spawn-storm harness
 mod abi_freeze;
 mod i18n_tests;

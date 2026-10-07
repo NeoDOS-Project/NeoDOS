@@ -1,5 +1,9 @@
 #![allow(dead_code)]
 
+pub mod io;
+pub mod mount;
+pub mod partition;
+
 use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::vec::Vec;

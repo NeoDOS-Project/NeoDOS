@@ -23,6 +23,7 @@ use crate::{test_case, test_eq, test_true};
 pub mod manager;
 pub mod lifecycle;
 pub mod registry;
+pub mod power;
 
 pub use manager::{ServiceState, ServiceStartType, ServiceRestartPolicy, SmError, ServiceConfig, Service, ServiceManager, SERVICE_MANAGER};
 pub use registry::{sm_init, sm_start_auto_services, sm_mark_neoinit_running};
