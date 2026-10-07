@@ -14,6 +14,7 @@ test = false
 libneodos = { path = "../libneodos" }
 libdns = { path = "../libdns" }
 libnet-config = { path = "../libnet-config" }
+libntp = { path = "../libntp" }
 
 [profile.release]
 panic = "abort"

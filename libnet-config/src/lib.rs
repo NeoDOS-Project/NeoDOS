@@ -187,6 +187,16 @@ pub fn format_ip(ip: u32, buf: &mut [u8]) -> usize {
 }
 
 /// True when `ip` (big-endian u32) is in the APIPA range 169.254.0.0/16.
+/// Prefix length of a contiguous subnet mask (`None` if not contiguous).
+pub fn mask_to_prefix(mask: u32) -> Option<u8> {
+    let prefix = mask.leading_ones();
+    if prefix == 0 {
+        return if mask == 0 { Some(0) } else { None };
+    }
+    let expected = if prefix >= 32 { 0xFFFF_FFFF } else { !0u32 << (32 - prefix) };
+    if mask == expected { Some(prefix as u8) } else { None }
+}
+
 /// Length of the NUL-terminated domain suffix in `domain`.
 pub fn domain_len(domain: &[u8; 64]) -> usize {
     domain.iter().position(|&b| b == 0).unwrap_or(64)
@@ -304,6 +314,16 @@ mod tests {
         assert_eq!(VALUE_BROADCAST, "Broadcast");
         assert_eq!(VALUE_NTP1, "NtpServer");
         assert_eq!(VALUE_MTU, "MTU");
+    }
+
+    #[test]
+    fn mask_prefix_lengths() {
+        assert_eq!(mask_to_prefix(0xFFFF_FF00), Some(24));
+        assert_eq!(mask_to_prefix(0xFFFF_0000), Some(16));
+        assert_eq!(mask_to_prefix(0xFF00_0000), Some(8));
+        assert_eq!(mask_to_prefix(0xFFFF_FFFF), Some(32));
+        assert_eq!(mask_to_prefix(0), Some(0));
+        assert_eq!(mask_to_prefix(0xFF00_FF00), None);
     }
 
     #[test]

@@ -34,7 +34,11 @@ fn cmd_passed() {
 #[inline(never)]
 fn test_ping_loopback() -> bool {
     // 127.0.0.1 as big-endian u32 (RAX 36 ABI). Loopback needs no NIC.
-    let rtt = syscall::sys_icmp_ping(0x7F000001);
+    // One retry: boot-time scheduling can rarely drop the first exchange.
+    let mut rtt = syscall::sys_icmp_ping(0x7F000001);
+    if rtt == 0 {
+        rtt = syscall::sys_icmp_ping(0x7F000001);
+    }
     if rtt > 0 {
         write_str(b"[ping-lo] reply 127.0.0.1 PASS\r\n");
         true

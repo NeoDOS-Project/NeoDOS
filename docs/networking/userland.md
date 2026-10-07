@@ -402,9 +402,15 @@ verdad (sin segunda fuente).
 ### 3.1 ipconfig.nxe
 
 ```text
-IPCONFIG [/ALL]
+IPCONFIG [/ALL | /?]
 
-  /ALL   Muestra información detallada de todas las interfaces
+  (sin args)   Una línea por adaptador: IP/máscara (+ gateway)
+  /ALL         Detalle completo: descripción, driver, PCI, enlace, MAC, IP,
+               máscara (efectiva), gateway, DHCP server, DNS x3 (incl. vacíos),
+               DHCP Origen/APIPA, concesión obtenida/expira/renovación,
+               dominio, RX/TX stats, aviso de divergencia Registro-vs-NIC y
+               aviso de gateway fuera de subred
+  /?           Esta ayuda (también ante flag desconocido, salida 0)
 ```
 
 **Código (esquema):**

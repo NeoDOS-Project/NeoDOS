@@ -8,7 +8,6 @@ version = "0.1.0"
 dependencies = [
  "libneodos",
  "libnet",
- "libntp",
 ]
 
 [[package]]
@@ -29,6 +28,7 @@ dependencies = [
  "libdns",
  "libneodos",
  "libnet-config",
+ "libntp",
 ]
 
 [[package]]

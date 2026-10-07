@@ -11,7 +11,6 @@ test = false
 [dependencies]
 libneodos = { path = "../../libneodos" }
 libnet = { path = "../../libnet" }
-libntp = { path = "../../libntp" }
 
 [profile.release]
 panic = "abort"

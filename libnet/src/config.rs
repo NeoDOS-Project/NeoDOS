@@ -78,6 +78,38 @@ pub fn write_string(key_fd: u8, name: &str, val: &[u8]) {
     let _ = syscall::sys_cm_set_value(key_fd, name, syscall::REG_SZ, val);
 }
 
+/// Current time as Unix seconds (0 = unknown).
+///
+/// Shared by `dhcpd` (lease stamps) and `ipconfig` (expiry checks).
+pub fn now_unix() -> u32 {
+    use libneodos::syscall::{DateTime, ObInfoClass};
+    let fd = match syscall::sys_ob_open("\\Global\\Info\\DateTime", 1) {
+        Ok(fd) => fd,
+        Err(_) => return 0,
+    };
+    let mut dt = DateTime {
+        second: 0, minute: 0, hour: 0,
+        day: 0, month: 0, year: 0, valid: 0,
+    };
+    let sz = core::mem::size_of::<DateTime>();
+    let buf = unsafe {
+        core::slice::from_raw_parts_mut(&mut dt as *mut DateTime as *mut u8, sz)
+    };
+    let n = syscall::sys_ob_query_info(fd, ObInfoClass::DateTime, buf);
+    let _ = syscall::sys_close(fd);
+    if n.ok().unwrap_or(0) < sz || dt.valid == 0 {
+        return 0;
+    }
+    let utc = libntp::UtcDateTime {
+        second: dt.second, minute: dt.minute, hour: dt.hour,
+        day: dt.day, month: dt.month, year: dt.year,
+    };
+    if !libntp::is_valid_datetime(&utc) {
+        return 0;
+    }
+    libntp::utc_to_unix_secs(&utc).clamp(0, u32::MAX as i64) as u32
+}
+
 /// Load the full interface configuration from the Registry.
 ///
 /// Returns `None` when the interface key cannot be opened.
