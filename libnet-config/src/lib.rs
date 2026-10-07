@@ -197,6 +197,30 @@ pub fn mask_to_prefix(mask: u32) -> Option<u8> {
     if mask == expected { Some(prefix as u8) } else { None }
 }
 
+/// Seconds after `obtained` when the client must start unicast renewal (T1).
+/// Server T1 wins; RFC 2131 default is half the lease. Zero lease = infinite.
+pub fn renew_at(lease_time: u32, t1: u32) -> u64 {
+    if lease_time == 0 {
+        return u64::MAX;
+    }
+    if t1 != 0 {
+        return t1 as u64;
+    }
+    lease_time as u64 / 2
+}
+
+/// Seconds after `obtained` when the client must start broadcast rebind (T2).
+/// Server T2 wins; RFC 2131 default is 7/8 of the lease. Zero lease = infinite.
+pub fn rebind_at(lease_time: u32, t2: u32) -> u64 {
+    if lease_time == 0 {
+        return u64::MAX;
+    }
+    if t2 != 0 {
+        return t2 as u64;
+    }
+    lease_time as u64 * 7 / 8
+}
+
 /// Length of the NUL-terminated domain suffix in `domain`.
 pub fn domain_len(domain: &[u8; 64]) -> usize {
     domain.iter().position(|&b| b == 0).unwrap_or(64)
@@ -314,6 +338,19 @@ mod tests {
         assert_eq!(VALUE_BROADCAST, "Broadcast");
         assert_eq!(VALUE_NTP1, "NtpServer");
         assert_eq!(VALUE_MTU, "MTU");
+    }
+
+    #[test]
+    fn renewal_schedule_defaults() {
+        // 4000s lease like the VBox NAT server: T1 = 2000s, T2 = 3500s.
+        assert_eq!(renew_at(4000, 0), 2000);
+        assert_eq!(rebind_at(4000, 0), 3500);
+        // Explicit server T1/T2 win.
+        assert_eq!(renew_at(4000, 1800), 1800);
+        assert_eq!(rebind_at(4000, 3600), 3600);
+        // Zero lease = infinite: never renew.
+        assert_eq!(renew_at(0, 0), u64::MAX);
+        assert_eq!(rebind_at(0, 0), u64::MAX);
     }
 
     #[test]
