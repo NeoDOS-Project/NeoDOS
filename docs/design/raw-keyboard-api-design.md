@@ -239,8 +239,8 @@ VT in cooked mode.
 
 | Path | Change |
 |------|--------|
-| `neodos-kernel/src/kbd/mod.rs` | Emit `KeyEvent`, E0 handling |
-| `neodos-kernel/src/kbd/event.rs` | Route events to the active VT ring |
+| `neodos-kernel/src/input/kbd/mod.rs` | Emit `KeyEvent`, E0 handling |
+| `neodos-kernel/src/input/kbd/event.rs` | Route events to the active VT ring |
 | `neodos-kernel/src/input/vt.rs` | `KeyEventRing`, `KeyEvent` |
 | `neodos-kernel/src/input/manager.rs` | Per-VT ring + raw flag + wake |
 | `neodos-kernel/src/object/types.rs` | New info/set classes |

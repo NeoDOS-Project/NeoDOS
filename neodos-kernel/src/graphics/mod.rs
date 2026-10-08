@@ -1,4 +1,6 @@
-// src/graphics.rs
+// src/graphics/mod.rs
+
+pub mod font;
 
 #[derive(Clone, Copy)]
 #[repr(C)]

@@ -132,5 +132,5 @@ Unloaded → Loaded → Initialized → Registered → Bound → Active
 - [overview.md](overview.md) — Driver architecture, isolation, capabilities
 - [architecture.md](../architecture/overview.md) — Boot flow, NEM loading (PHASE 3.85)
 - [HAL ABI](../kernel/hal.md) — Hardware abstraction layer
-- `neodos-kernel/src/nem/mod.rs` — NEM parser source
+- `neodos-kernel/src/drivers/nem/format.rs` — NEM parser source
 - `neodos-kernel/src/drivers/nem/loader/v3loader.rs` — NEM v3 loader
