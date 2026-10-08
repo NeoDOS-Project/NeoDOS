@@ -48,6 +48,11 @@ pub struct NeoDosFsV2 {
     /// LBAs de los nodos de free list actualmente persistidos (cabeza en
     /// `sb.freelist_lba`). Se liberan antes de reescribir la free list.
     freelist_chain: Vec<u64>,
+    /// Bloques de B-tree y extents de datos reemplazados por COW y aún no
+    /// reclamados. Solo pueden liberarse cuando no hay snapshots (que podrían
+    /// referenciar árboles/datos antiguos); si los hay, se retienen hasta
+    /// `snapshot_purge`.
+    cow_garbage: Vec<(u64, u32)>,
 }
 
 impl BTreeIO for NeoDosFsV2 {
@@ -154,6 +159,7 @@ impl NeoDosFsV2 {
             next_inode: 1,
             snapshot_table,
             freelist_chain: Vec::new(),
+            cow_garbage: Vec::new(),
         };
 
         // Recuperar la free list: si el superblock apunta a una cadena
@@ -301,6 +307,48 @@ impl NeoDosFsV2 {
         }
     }
 
+    /// LBAs de todos los nodos alcanzables desde `root` (B-tree de un directorio).
+    fn tree_lbas(&self, root: u64) -> Vec<u64> {
+        let mut v = Vec::new();
+        BTree::walk_lbas(self, root, &mut |lba| v.push(lba));
+        v
+    }
+
+    /// Registrar como basura COW los nodos que estaban reachables desde el
+    /// árbol antiguo (`before`) y ya no lo están desde `new_root`.
+    fn note_cow_garbage(&mut self, before: &[u64], new_root: u64) {
+        if before.is_empty() {
+            return;
+        }
+        let mut after = self.tree_lbas(new_root);
+        after.sort_unstable();
+        for &lba in before {
+            if lba == 0 || lba == new_root {
+                continue;
+            }
+            if after.binary_search(&lba).is_err() {
+                self.cow_garbage.push((lba, 1));
+            }
+        }
+    }
+
+    /// Reclamar la basura COW. Solo es seguro con la tabla de snapshots vacía:
+    /// con snapshots presentes un nodo reemplazado puede seguir siendo
+    /// alcanzable desde una raíz antigua, así que se retiene hasta PURGE.
+    fn reclaim_cow_garbage(&mut self) {
+        if self.snapshot_table.snapshot_count() > 0 {
+            return;
+        }
+        let garbage = core::mem::take(&mut self.cow_garbage);
+        for (lba, len) in garbage {
+            // Los bloques 0 (superblock) y 1 (raíz inicial) están reservados:
+            // no se reintroducen en la free list.
+            if lba >= 2 && len > 0 {
+                self.freelist.free(lba, len);
+            }
+        }
+    }
+
     /// Reconstruir la free list recorriendo el árbol de directorios y marcando
     /// como usados los nodos B-tree, los extents de datos, y los bloques 0/1.
     fn recover_freelist(&mut self) {
@@ -368,6 +416,8 @@ impl NeoDosFsV2 {
         // La tabla de snapshots se persiste antes que la free list: así el
         // bloque que ocupa queda excluido de la lista serializada.
         self.save_snapshot_table();
+        // Reclamar nodos COW reemplazados (solo si no hay snapshots).
+        self.reclaim_cow_garbage();
         // Persistir la free list: actualiza `sb.freelist_lba`.
         self.save_freelist();
         self.sb.num_used = self.sb.num_blocks.saturating_sub(self.freelist.total_free());
@@ -441,9 +491,17 @@ impl FileSystem for NeoDosFsV2 {
         drop(pc);
         drop(_ord_pc);
 
+        // Los extents antiguos del archivo quedan reemplazados por los nuevos
+        // bloques COW; se reclamarán cuando no haya snapshots.
+        if entry.extent_lba != 0 && entry.extent_count > 0 {
+            self.cow_garbage.push((entry.extent_lba, entry.extent_count));
+        }
+
+        let before = self.tree_lbas(btree_root);
         let new_root = BTree::insert(self, btree_root, &new_entry.name, &{
             let mut tmp = [0u8; DIRENTRY_SIZE]; new_entry.serialize(&mut tmp); tmp.to_vec()
         }).ok_or(VfsError::IOError)?;
+        self.note_cow_garbage(&before, new_root);
 
         if btree_root == self.sb.root_btree_lba { self.sb.root_btree_lba = new_root; }
         // Update parent directory's cache entry if its root changed
@@ -494,9 +552,11 @@ impl FileSystem for NeoDosFsV2 {
         entry.extent_lba = subdir_root;
         entry.created = crate::hal::get_ticks(); entry.modified = entry.created;
 
+        let before = self.tree_lbas(btree_root);
         let new_root = BTree::insert(self, btree_root, name.as_bytes(), &{
             let mut tmp = [0u8; DIRENTRY_SIZE]; entry.serialize(&mut tmp); tmp.to_vec()
         }).ok_or(VfsError::IOError)?;
+        self.note_cow_garbage(&before, new_root);
 
         if dir_inode == 0 { self.sb.root_btree_lba = new_root; }
         self.update_inode_root(dir_inode, new_root);
@@ -508,9 +568,11 @@ impl FileSystem for NeoDosFsV2 {
     fn create(&mut self, dir_inode: u32, name: &str) -> Result<VfsNode, VfsError> {
         let btree_root = self.inode_cache.get(dir_inode as usize).and_then(|x| x.as_ref()).map(|x| x.0).ok_or(VfsError::NotFound)?;
         let entry = DirEntryV2::new_file(name);
+        let before = self.tree_lbas(btree_root);
         let new_root = BTree::insert(self, btree_root, name.as_bytes(), &{
             let mut tmp = [0u8; DIRENTRY_SIZE]; entry.serialize(&mut tmp); tmp.to_vec()
         }).ok_or(VfsError::IOError)?;
+        self.note_cow_garbage(&before, new_root);
         if dir_inode == 0 { self.sb.root_btree_lba = new_root; }
         self.update_inode_root(dir_inode, new_root);
         self.save_sb().map_err(|_| VfsError::IOError)?;
@@ -527,7 +589,9 @@ impl FileSystem for NeoDosFsV2 {
     fn remove_file(&mut self, dir_inode: u32, name: &str) -> Result<(), VfsError> {
         let btree_root = self.inode_cache.get(dir_inode as usize).and_then(|x| x.as_ref()).map(|x| x.0).ok_or(VfsError::NotFound)?;
         if let Some(e) = dir_lookup(self, btree_root, name) { file_free_extents(&e, &mut self.freelist); }
+        let before = self.tree_lbas(btree_root);
         let nr = BTree::delete(self, btree_root, name.as_bytes()).ok_or(VfsError::IOError)?;
+        self.note_cow_garbage(&before, nr.unwrap_or(0));
         if let Some(r) = nr {
             if dir_inode == 0 { self.sb.root_btree_lba = r; }
             self.update_inode_root(dir_inode, r);
@@ -544,7 +608,9 @@ impl FileSystem for NeoDosFsV2 {
             }
             file_free_extents(&e, &mut self.freelist);
         }
+        let before = self.tree_lbas(btree_root);
         let nr = BTree::delete(self, btree_root, name.as_bytes()).ok_or(VfsError::IOError)?;
+        self.note_cow_garbage(&before, nr.unwrap_or(0));
         if let Some(r) = nr {
             if dir_inode == 0 { self.sb.root_btree_lba = r; }
             self.update_inode_root(dir_inode, r);
@@ -556,12 +622,14 @@ impl FileSystem for NeoDosFsV2 {
         let btree_root = self.inode_cache.get(dir_inode as usize).and_then(|x| x.as_ref()).map(|x| x.0).ok_or(VfsError::NotFound)?;
         let entry = dir_lookup(self, btree_root, old).ok_or(VfsError::NotFound)?;
         let entry_clone = entry.clone();
+        let before = self.tree_lbas(btree_root);
         let ad = BTree::delete(self, btree_root, old.as_bytes()).ok_or(VfsError::IOError)?;
         let ad = ad.unwrap_or(btree_root);
         let mut renamed = entry_clone; renamed.name = new.as_bytes().to_vec();
         let nr = BTree::insert(self, ad, new.as_bytes(), &{
             let mut tmp = [0u8; DIRENTRY_SIZE]; renamed.serialize(&mut tmp); tmp.to_vec()
         }).ok_or(VfsError::IOError)?;
+        self.note_cow_garbage(&before, nr);
         if dir_inode == 0 { self.sb.root_btree_lba = nr; }
         self.update_inode_root(dir_inode, nr);
         self.save_sb().map_err(|_| VfsError::IOError)
@@ -861,6 +929,67 @@ pub fn register_neodos_v2_tests() {
         let fs3 = NeoDosFsV2::new(IoStack::new(dev_id)).unwrap();
         crate::test_eq!(fs3.sb.snapshot_table_lba, 0);
         crate::test_eq!(fs3.snapshot_table.snapshot_count(), 0);
+
+        let _ = crate::globals::BLOCK_DEVICES.lock().force_remove(dev_id);
+    });
+
+    crate::test_case!("neofs_v2_cow_reclaims_garbage", {
+        let sectors = alloc::vec![[0u8; 512]; 4096];
+        let dev_id = crate::fs::fsck::register_test_device(sectors);
+        let io = IoStack::new(dev_id);
+        mkfs_ne2(&io, 512, "TEST").unwrap();
+
+        let mut fs = NeoDosFsV2::new(io).unwrap();
+        fs.create(0, "A.TXT").unwrap();
+        let inode = fs.lookup(0, "A.TXT").unwrap().inode;
+        let data = alloc::vec![0xABu8; 4096 * 10];
+
+        // Primera escritura + save (set_volume_label) que dispara la reclamación.
+        fs.write(inode, 0, &data).unwrap();
+        fs.set_volume_label("T").unwrap();
+        let f1 = fs.freelist.total_free();
+
+        // Reescribir el mismo tamaño debe ser neto cero: se allocan nuevos
+        // bloques/extents y se reclaman los antiguos.
+        for _ in 0..5 {
+            fs.write(inode, 0, &data).unwrap();
+            fs.set_volume_label("T").unwrap();
+        }
+        let f2 = fs.freelist.total_free();
+        crate::test_eq!(f1, f2);
+        crate::test_true!(fs.freelist.is_valid(512));
+        crate::test_eq!(fs.snapshot_table.snapshot_count(), 0);
+
+        let _ = crate::globals::BLOCK_DEVICES.lock().force_remove(dev_id);
+    });
+
+    crate::test_case!("neofs_v2_cow_garbage_gated_by_snapshots", {
+        let sectors = alloc::vec![[0u8; 512]; 4096];
+        let dev_id = crate::fs::fsck::register_test_device(sectors);
+        let io = IoStack::new(dev_id);
+        mkfs_ne2(&io, 512, "TEST").unwrap();
+
+        let mut fs = NeoDosFsV2::new(io).unwrap();
+        fs.create(0, "A.TXT").unwrap();
+        let inode = fs.lookup(0, "A.TXT").unwrap().inode;
+        let data = alloc::vec![0xCDu8; 4096 * 10];
+        fs.write(inode, 0, &data).unwrap();
+        let _snap = fs.snapshot_create().unwrap();
+
+        // Con un snapshot presente los bloques reemplazados NO se liberan.
+        let f_before = fs.freelist.total_free();
+        for _ in 0..3 {
+            fs.write(inode, 0, &data).unwrap();
+            fs.set_volume_label("T").unwrap();
+        }
+        let f_after = fs.freelist.total_free();
+        crate::test_true!(f_after < f_before);
+
+        // PURGE vacía la tabla y permite reclamar lo retenido.
+        fs.snapshot_purge().unwrap();
+        let f_purged = fs.freelist.total_free();
+        crate::test_true!(f_purged > f_after);
+        crate::test_true!(fs.freelist.is_valid(512));
 
         let _ = crate::globals::BLOCK_DEVICES.lock().force_remove(dev_id);
     });

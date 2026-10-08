@@ -6,6 +6,14 @@
 
 ### Added
 
+- **Filesystem: NeoFS v2 COW reclamation (#553).** B-tree node blocks and file
+  data extents replaced by copy-on-write are now tracked as garbage and
+  returned to the free list on `save_sb`. Reclamation is only performed when
+  the snapshot table is empty (a snapshot may still reference old roots/data);
+  with snapshots present the garbage is retained and released by
+  `snapshot_purge`. Tests: `neofs_v2_cow_reclaims_garbage` and
+  `neofs_v2_cow_garbage_gated_by_snapshots`.
+
 - **Memory/FS: device-scoped page cache (`#552`).** `CacheSlot` now records the
   owning device (`dev_tag`) and every lookup validates it, so two block devices
   whose LBA ranges overlap no longer return each other's cached pages. The tag
