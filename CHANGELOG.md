@@ -169,13 +169,18 @@
 
 ### Fixed
 
-- **Filesystem: disable unsafe NeoFS v2 COW reclamation (#563).** Reclaiming
-  COW-replaced blocks is not safe until subdirectory B-tree root changes are
-  persisted to the parent `DirEntry` (#563): the parent kept pointing at the
-  replaced root, so freeing it corrupted `C:` on the second boot (the parent
-  ended up pointing at a free-list node). `reclaim_cow_garbage` now only drops
-  the in-memory list; replaced blocks leak as before #553 until #563 is fixed.
-  The `neofs_v2_cow_*` reclamation tests were removed accordingly.
+- **Filesystem: persist subdirectory B-tree root changes to the parent, and
+  re-enable COW reclamation (#563, #553).** `NeoDosFsV2` now tracks each
+  directory's parent inode and, when a directory's B-tree root changes,
+  re-inserts its `DirEntry` (`extent_lba = new_root`) into the parent tree,
+  propagating up to the root (`propagate_dir_root`). Previously the parent kept
+  pointing at the replaced root, so subdirectory changes were not persisted and
+  freeing the replaced block corrupted `C:` on the second boot. With this fixed,
+  COW reclamation (#553) is safe and re-enabled (`reclaim_cow_garbage` frees
+  replaced blocks when the snapshot table is empty). Tests:
+  `neofs_v2_subdir_persists_across_remount` plus the restored
+  `neofs_v2_cow_reclaims_garbage` / `neofs_v2_cow_garbage_gated_by_snapshots`.
+  Verified across two consecutive boots on the same image (853/853 each).
 
 - **Scheduler snapshot self-deadlock (BSP freeze before `[PROC_SNAPSHOT]`).**
   `kernel_snapshot_into()` acquired the global `SCHEDULER` spinlock with
