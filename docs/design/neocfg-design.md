@@ -293,8 +293,8 @@ Sin dependencias externas. Implementable inmediatamente con la API Ob existente.
 tr!("keyboard.current"):      tr!("keyboard.layout.sp")
 
 tr!("keyboard.available"):
-  1. tr!("keyboard.layout.us")      0 — US
-  2. tr!("keyboard.layout.sp")      1 — Spanish  [*]
+  1. tr!("keyboard.layout.us")      "us" — US
+  2. tr!("keyboard.layout.sp")      "es" — Spanish  [*]
 
 tr!("keyboard.actions"):
   1. tr!("keyboard.change")
@@ -302,20 +302,23 @@ tr!("keyboard.actions"):
 [Esc] tr!("neocfg.back")
 ```
 
-**Implementación** (vía Ob API existente, mismo patrón que `userbin/keyb/`):
+**Implementación** (vía Ob API existente, mismo patrón que `userbin/keyb/`).
+El layout se identifica por **nombre** (string NUL-terminado, p. ej. `"us"`,
+`"es"`), no por índice numérico:
 
 ```rust
-fn get_layout() -> u8 {
+fn get_layout() -> String {
     let fd = sys_ob_open("\\Global\\Info\\Keyboard", ob_access::READ)?;
-    let mut buf = [0u8; 1];
-    sys_ob_query_info(fd, ObInfoClass::KeyboardLayout, &mut buf)?;
+    let mut buf = [0u8; 64];
+    let n = sys_ob_query_info(fd, ObInfoClass::KeyboardLayout, &mut buf)?;
     sys_close(fd)?;
-    buf[0]
+    let end = buf[..n].iter().position(|&b| b == 0).unwrap_or(n);
+    String::from_utf8_lossy(&buf[..end]).into_owned()
 }
 
-fn set_layout(layout: u8) {
-    let fd = sys_ob_open("\\Global\\Info\\Keyboard", ob_access::WRITE)?;
-    sys_ob_set_info(fd, ObSetInfoClass::KeyboardLayout, &[layout])?;
+fn set_layout(layout: &str) {
+    let fd = sys_ob_open("\\Global\\Info\\Keyboard", ob_access::READ)?;
+    sys_ob_set_info(fd, ObSetInfoClass::KeyboardLayout, layout.as_bytes())?;
     sys_close(fd)?;
 }
 ```
@@ -660,8 +663,8 @@ pub fn i18n_reload_all();
 | # | Test | Expected |
 | --- | --- | --- |
 | 8 | Keyboard muestra layout actual | Coincide con `ob_query_info(KeyboardLayout)` |
-| 9 | Seleccionar "US" → layout cambia a US | `ob_query_info(KeyboardLayout)` retorna 0 |
-| 10 | Seleccionar "Spanish" → layout cambia a Spanish | `ob_query_info(KeyboardLayout)` retorna 1 |
+| 9 | Seleccionar "US" → layout cambia a US | `ob_query_info(KeyboardLayout)` retorna `"us"` |
+| 10 | Seleccionar "Spanish" → layout cambia a Spanish | `ob_query_info(KeyboardLayout)` retorna `"es"` |
 | 11 | Keyboard no modifica nada excepto `ob_set_info(KeyboardLayout)` | Solo se invoca la clase 5 |
 
 ### 7.4 Tests del módulo About (invariante: los datos de versión son consistentes)
