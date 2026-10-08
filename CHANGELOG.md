@@ -6,6 +6,14 @@
 
 ### Added
 
+- **Memory/FS: device-scoped page cache (`#552`).** `CacheSlot` now records the
+  owning device (`dev_tag`) and every lookup validates it, so two block devices
+  whose LBA ranges overlap no longer return each other's cached pages. The tag
+  is threaded through `IoStack` and the NeoFS file I/O path, and a new
+  `PageCache::invalidate_device()` drops the pages of a device whose index is
+  reused after removal. `register_test_device` now uses it instead of clearing
+  the whole cache.
+
 - **Filesystem: NeoFS v2 snapshot table persistence (#554).** The snapshot
   table is now serialized to a type-4 node on every `save_sb` and its LBA stored
   in `SuperblockNE2::snapshot_table_lba`; the previous block is returned to the

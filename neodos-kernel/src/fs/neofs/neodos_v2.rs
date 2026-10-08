@@ -423,7 +423,7 @@ impl FileSystem for NeoDosFsV2 {
         // Translate partition-relative block LBA to absolute sector LBA for page cache
         let mut adj_entry = entry.clone();
         adj_entry.extent_lba = abs_lba;
-        file_read(&adj_entry, offset, buf, &mut *pc, dev).map_err(|_| VfsError::IOError)
+        file_read(&adj_entry, offset, buf, &mut *pc, self.io_stack.device_id as u64, dev).map_err(|_| VfsError::IOError)
     }
 
     fn write(&mut self, inode: u32, offset: u64, buf: &[u8]) -> Result<usize, VfsError> {
@@ -435,7 +435,7 @@ impl FileSystem for NeoDosFsV2 {
         let mut bdevs = crate::globals::BLOCK_DEVICES.lock();
         let dev = bdevs.get(self.io_stack.device_id).ok_or(VfsError::IOError)?;
         let part_base = self.io_stack.translate_lba(0);
-        let new_entry = file_write(&entry, offset, buf, &mut self.freelist, &mut *pc, dev, part_base).map_err(|_| VfsError::IOError)?;
+        let new_entry = file_write(&entry, offset, buf, &mut self.freelist, &mut *pc, self.io_stack.device_id as u64, dev, part_base).map_err(|_| VfsError::IOError)?;
         drop(bdevs);
         drop(_ord_bd);
         drop(pc);
