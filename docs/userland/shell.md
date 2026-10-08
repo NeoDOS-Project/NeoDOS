@@ -113,7 +113,7 @@ Built-in commands (CWD, SET, EXIT, CALL) are not pipeable and produce an error i
 
 ## userbin/.NXE Binaries
 
-All 42 user-mode binaries, each a standalone `.NXE` ELF file in `userbin/<name>/`:
+All 43 user-mode binaries, each a standalone `.NXE` ELF file in `userbin/<name>/`:
 
 | Binary | Category | Description |
 | -------- | ---------- | ------------- |
@@ -135,6 +135,7 @@ All 42 user-mode binaries, each a standalone `.NXE` ELF file in `userbin/<name>/
 | neoedit | editor | Text editor |
 | neopkg | package | Package manager |
 | netcfg | network | Network configuration |
+| neocfg | admin | Control panel (TUI): system info, keyboard, power/locale — modular, UI-agnostic core (`libneocfg`) |
 | dhcp | network | DHCP client |
 | cpuinfo | system | CPU information display |
 | datetime | system | Date/time display and set |

@@ -1,0 +1,63 @@
+[meta]
+app = "neocfg"
+language = "es-ES"
+
+[ids]
+NEOCFG_TITLE = 1001
+NEOCFG_EXIT = 1002
+NEOCFG_BACK = 1003
+NEOCFG_SELECT_HINT = 1004
+MODULE_SYSTEM_NAME = 1005
+MODULE_SYSTEM_DESC = 1006
+MODULE_POWER_NAME = 1007
+MODULE_POWER_DESC = 1008
+MODULE_LOCALE_NAME = 1009
+MODULE_LOCALE_DESC = 1010
+MODULE_KEYBOARD_NAME = 1011
+MODULE_KEYBOARD_DESC = 1012
+MODULE_ABOUT_NAME = 1013
+MODULE_ABOUT_DESC = 1014
+MODULE_PENDING = 1015
+POWER_NOT_AVAILABLE = 1016
+LOCALE_NOT_AVAILABLE = 1017
+PRESS_KEY = 1018
+NEOCFG_YES = 1019
+NEOCFG_NO = 1020
+ABOUT_TITLE = 1021
+ABOUT_NEODOS = 1022
+ABOUT_ABI = 1023
+ABOUT_ARCH = 1024
+ABOUT_NEOFS = 1025
+ABOUT_LIBNEODOS = 1026
+ABOUT_BUILD = 1027
+ABOUT_UNAVAILABLE = 1028
+
+[strings]
+NEOCFG_TITLE = "NeoCfg - Panel de Control"
+NEOCFG_EXIT = "Salir"
+NEOCFG_BACK = "Volver"
+NEOCFG_SELECT_HINT = "Seleccione una opcion (1-5), Q para salir"
+MODULE_SYSTEM_NAME = "Sistema"
+MODULE_SYSTEM_DESC = "Ver informacion del sistema"
+MODULE_POWER_NAME = "Energia"
+MODULE_POWER_DESC = "Gestionar planes de energia"
+MODULE_LOCALE_NAME = "Idioma"
+MODULE_LOCALE_DESC = "Configurar el idioma del sistema"
+MODULE_KEYBOARD_NAME = "Teclado"
+MODULE_KEYBOARD_DESC = "Cambiar la distribucion del teclado"
+MODULE_ABOUT_NAME = "Acerca de"
+MODULE_ABOUT_DESC = "Informacion de version del sistema"
+MODULE_PENDING = "Este modulo aun no esta implementado."
+POWER_NOT_AVAILABLE = "El Gestor de Energia no esta disponible en este sistema."
+LOCALE_NOT_AVAILABLE = "La internacionalizacion no esta disponible en este sistema."
+PRESS_KEY = "Pulse una tecla para volver..."
+NEOCFG_YES = "Si"
+NEOCFG_NO = "No"
+ABOUT_TITLE = "Acerca de NeoDOS"
+ABOUT_NEODOS = "Version"
+ABOUT_ABI = "ABI de syscalls"
+ABOUT_ARCH = "Arquitectura"
+ABOUT_NEOFS = "Sistema de archivos"
+ABOUT_LIBNEODOS = "ABI de libneodos"
+ABOUT_BUILD = "Fecha de compilacion"
+ABOUT_UNAVAILABLE = "La informacion de version no esta disponible."

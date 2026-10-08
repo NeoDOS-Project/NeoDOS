@@ -293,8 +293,8 @@ Sin dependencias externas. Implementable inmediatamente con la API Ob existente.
 tr!("keyboard.current"):      tr!("keyboard.layout.sp")
 
 tr!("keyboard.available"):
-  1. tr!("keyboard.layout.us")      0 — US
-  2. tr!("keyboard.layout.sp")      1 — Spanish  [*]
+  1. tr!("keyboard.layout.us")      "us" — US
+  2. tr!("keyboard.layout.sp")      "es" — Spanish  [*]
 
 tr!("keyboard.actions"):
   1. tr!("keyboard.change")
@@ -302,20 +302,23 @@ tr!("keyboard.actions"):
 [Esc] tr!("neocfg.back")
 ```
 
-**Implementación** (vía Ob API existente, mismo patrón que `userbin/keyb/`):
+**Implementación** (vía Ob API existente, mismo patrón que `userbin/keyb/`).
+El layout se identifica por **nombre** (string NUL-terminado, p. ej. `"us"`,
+`"es"`), no por índice numérico:
 
 ```rust
-fn get_layout() -> u8 {
+fn get_layout() -> String {
     let fd = sys_ob_open("\\Global\\Info\\Keyboard", ob_access::READ)?;
-    let mut buf = [0u8; 1];
-    sys_ob_query_info(fd, ObInfoClass::KeyboardLayout, &mut buf)?;
+    let mut buf = [0u8; 64];
+    let n = sys_ob_query_info(fd, ObInfoClass::KeyboardLayout, &mut buf)?;
     sys_close(fd)?;
-    buf[0]
+    let end = buf[..n].iter().position(|&b| b == 0).unwrap_or(n);
+    String::from_utf8_lossy(&buf[..end]).into_owned()
 }
 
-fn set_layout(layout: u8) {
-    let fd = sys_ob_open("\\Global\\Info\\Keyboard", ob_access::WRITE)?;
-    sys_ob_set_info(fd, ObSetInfoClass::KeyboardLayout, &[layout])?;
+fn set_layout(layout: &str) {
+    let fd = sys_ob_open("\\Global\\Info\\Keyboard", ob_access::READ)?;
+    sys_ob_set_info(fd, ObSetInfoClass::KeyboardLayout, layout.as_bytes())?;
     sys_close(fd)?;
 }
 ```
@@ -343,6 +346,10 @@ tr!("about.build"):           2026-07-11
 - Version → `ob_open("\Global\Info\Version")` + `ob_query_info(Version=8)` → string del kernel
 - Valores fijos compilados: Syscall ABI (v8), arch, NeoFS version
 - `libneodos::export::ABI_VERSION` (v7) para la NXL ABI table de libneodos
+
+> **Nota:** el kernel no expone una *fecha de compilación* por el namespace Ob,
+> así que la fila "Build date" se omite hasta que exista esa fuente. La versión
+> del kernel ya incluye `git <rev>`.
 
 ### 3.11 Nuevos tipos/structs
 
@@ -660,8 +667,8 @@ pub fn i18n_reload_all();
 | # | Test | Expected |
 | --- | --- | --- |
 | 8 | Keyboard muestra layout actual | Coincide con `ob_query_info(KeyboardLayout)` |
-| 9 | Seleccionar "US" → layout cambia a US | `ob_query_info(KeyboardLayout)` retorna 0 |
-| 10 | Seleccionar "Spanish" → layout cambia a Spanish | `ob_query_info(KeyboardLayout)` retorna 1 |
+| 9 | Seleccionar "US" → layout cambia a US | `ob_query_info(KeyboardLayout)` retorna `"us"` |
+| 10 | Seleccionar "Spanish" → layout cambia a Spanish | `ob_query_info(KeyboardLayout)` retorna `"es"` |
 | 11 | Keyboard no modifica nada excepto `ob_set_info(KeyboardLayout)` | Solo se invoca la clase 5 |
 
 ### 7.4 Tests del módulo About (invariante: los datos de versión son consistentes)
@@ -986,9 +993,11 @@ Reglas:
 de neocfg. Requisitos de diseño:
 
 - **API pública estable y autocontenida**: construir una pantalla y obtener una
-  acción no requiere conocer neocfg ni nada del kernel más allá de
-  `libneodos::console`/`io`. Dependencia permitida: `libneodos` (entrada/salida).
-  Prohibido: depender de `libneocfg`, de Ob, del Registry o de cualquier app.
+  acción no requiere conocer neocfg ni nada del kernel. Todo el I/O pasa por el
+  trait `libneotui::Console` (`write_str` / `read_byte` / `try_read_byte` /
+  `clear`); el binario aporta un backend sobre `libneodos::console`, y los tests
+  aportan un mock. **Dependencia prohibida**: `libneocfg`, Ob, el Registry o
+  cualquier app (y, para poder testear en host, tampoco `libneodos` directo).
 - **Modelo propio**: `Screen`/`Widget`/`Key`/`Action` de `libneotui` son suyos; el
   `View`/`Intent` de `libneocfg` es otro nivel (adapta uno a otro en el binario).
 - **Consumidores previstos**: `neocfg` hoy; y en el futuro cualquier herramienta
@@ -1031,6 +1040,13 @@ pub enum Intent {
 
 ### A.4 Seams
 
+> **Implementación (nota).** El runtime i18n ya implementado en NeoDOS usa
+> **IDs numéricos** (`libneodos::i18n::i18n_get_id(u32)` + `tr_id!`), no claves
+> string. El seam `Translator` se adapta a ese modelo: los módulos emiten
+> `u32` y la UI los resuelve. Los catálogos viven en
+> `data/locale/{en-US,es-ES,ca-ES}/neocfg.toml` (compilados a `.nlt` con `nltc`)
+> y las constantes se espejan en `libneocfg/src/i18n_keys.rs`.
+
 ```rust
 /// Presentación: renderiza una `View` y devuelve la `Intent` del usuario.
 /// Contempla `Tick` no bloqueante para progreso/animación.
@@ -1039,13 +1055,15 @@ pub trait CfgUi {
     fn tick(&mut self) {}
 }
 
-/// Traducción: resuelve una clave i18n. La TUI usa libneodos; los tests, identidad.
-pub trait Translator { fn tr(&self, key: &'static str) -> &str; }
+/// Traducción: resuelve un id i18n numérico. La TUI usa libneodos; los tests,
+/// identidad. Los módulos nunca formatean: emiten ids.
+pub trait Translator { fn tr(&self, id: u32) -> &str; }
 
 /// Datos/efectos: TODO el acceso al sistema pasa por aquí.
 /// Devuelve `None` en las capacidades opcionales aún no implementadas (Power/Locale).
 pub trait CfgPlatform {
     fn version(&self) -> Result<VersionInfo, CfgError>;
+    fn about(&self) -> Result<AboutInfo, CfgError>;   // identidad/versiones (About)
     fn memory(&self) -> Result<MemInfo, CfgError>;
     fn cpu(&self) -> Result<CpuInfo, CfgError>;
     fn drives(&self) -> Result<Vec<DriveInfo>, CfgError>;
@@ -1140,7 +1158,7 @@ Keyboard, stubs de Power/Locale y todos los textos vía claves.
 | Elemento | Cambio |
 | --- | --- |
 | `libneocfg/` | **NUEVO** crate de lógica (raíz del repo, como `libnet`). |
-| `libneotui/` | **NUEVO** toolkit TUI **reusable** (raíz del repo); dep. `libneodos`. |
+| `libneotui/` | **NUEVO** toolkit TUI **reusable** (raíz del repo); sin deps, I/O vía su trait `Console`. |
 | `userbin/neocfg/` | Binario glue; deps `libneodos` + `libneocfg` + `libneotui`. |
 | `neodev/src/image.rs` | Añadir `'neocfg'` a la lista de binarios (igual que `netcfg`). |
 | `libneogui/` + binario GUI | Futuro: nueva UI, **sin tocar `libneocfg` ni `libneotui`**. |
