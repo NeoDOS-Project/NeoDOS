@@ -278,6 +278,29 @@ impl NeoDosFsV2 {
         self.freelist_chain = chain;
     }
 
+    /// Persistir la tabla de snapshots (nodo tipo 4, una sola página) y
+    /// actualizar `sb.snapshot_table_lba`. La tabla vacía se representa con
+    /// `snapshot_table_lba = 0` (no ocupa bloque).
+    fn save_snapshot_table(&mut self) {
+        let old = self.sb.snapshot_table_lba;
+        if old != 0 {
+            self.freelist.free(old, 1);
+            self.sb.snapshot_table_lba = 0;
+        }
+        if self.snapshot_table.snapshot_count() == 0 {
+            return;
+        }
+        let lba = match self.freelist.alloc(1) {
+            Some((lba, _)) => lba,
+            None => return,
+        };
+        let mut buf = [0u8; NODE_SIZE];
+        self.snapshot_table.serialize(&mut buf);
+        if self.write_block_raw(lba, &buf) {
+            self.sb.snapshot_table_lba = lba;
+        }
+    }
+
     /// Reconstruir la free list recorriendo el árbol de directorios y marcando
     /// como usados los nodos B-tree, los extents de datos, y los bloques 0/1.
     fn recover_freelist(&mut self) {
@@ -342,7 +365,10 @@ impl NeoDosFsV2 {
     fn save_sb(&mut self) -> Result<(), ()> {
         self.sb.root_version = self.sb.root_version.wrapping_add(1);
         self.sb.root_timestamp = crate::hal::get_ticks();
-        // Persistir la free list primero: actualiza `sb.freelist_lba`.
+        // La tabla de snapshots se persiste antes que la free list: así el
+        // bloque que ocupa queda excluido de la lista serializada.
+        self.save_snapshot_table();
+        // Persistir la free list: actualiza `sb.freelist_lba`.
         self.save_freelist();
         self.sb.num_used = self.sb.num_blocks.saturating_sub(self.freelist.total_free());
         self.sb.num_free = self.freelist.total_free();
@@ -794,6 +820,47 @@ pub fn register_neodos_v2_tests() {
         crate::test_eq!(fs2.sb.freelist_lba, head);
         crate::test_eq!(fs2.freelist.region_count(), regions_after);
         crate::test_eq!(fs2.freelist.total_free(), free_after);
+
+        let _ = crate::globals::BLOCK_DEVICES.lock().force_remove(dev_id);
+    });
+
+    crate::test_case!("neofs_v2_snapshot_survives_remount", {
+        let sectors = alloc::vec![[0u8; 512]; 2048];
+        let dev_id = crate::fs::fsck::register_test_device(sectors);
+        let io = IoStack::new(dev_id);
+        let num_blocks = 256u64;
+        mkfs_ne2(&io, num_blocks, "TEST").unwrap();
+
+        // Sin snapshots la tabla no ocupa bloque.
+        let mut fs = NeoDosFsV2::new(io).unwrap();
+        crate::test_eq!(fs.sb.snapshot_table_lba, 0);
+        fs.create(0, "A.TXT").unwrap();
+
+        // Crear un snapshot lo persiste (nodo tipo 4) en un bloque propio.
+        let id = fs.snapshot_create().unwrap();
+        let snap_lba = fs.sb.snapshot_table_lba;
+        crate::test_true!(snap_lba > 0);
+        crate::test_true!(fs.freelist.is_valid(num_blocks));
+        drop(fs);
+
+        // Remontar: la tabla se recupera del disco.
+        let mut fs2 = NeoDosFsV2::new(IoStack::new(dev_id)).unwrap();
+        crate::test_eq!(fs2.sb.snapshot_table_lba, snap_lba);
+        crate::test_eq!(fs2.snapshot_table.snapshot_count(), 1);
+        let entries = fs2.snapshot_table.list();
+        crate::test_eq!(entries.len(), 1);
+        crate::test_eq!(entries[0].0, id);
+        crate::test_true!(fs2.snapshot_restore(id).is_ok());
+
+        // PURGE vacía la tabla y libera su bloque.
+        fs2.snapshot_purge().unwrap();
+        crate::test_eq!(fs2.sb.snapshot_table_lba, 0);
+        crate::test_true!(fs2.freelist.is_valid(num_blocks));
+        drop(fs2);
+
+        let fs3 = NeoDosFsV2::new(IoStack::new(dev_id)).unwrap();
+        crate::test_eq!(fs3.sb.snapshot_table_lba, 0);
+        crate::test_eq!(fs3.snapshot_table.snapshot_count(), 0);
 
         let _ = crate::globals::BLOCK_DEVICES.lock().force_remove(dev_id);
     });

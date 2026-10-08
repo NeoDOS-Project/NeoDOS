@@ -6,6 +6,14 @@
 
 ### Added
 
+- **Filesystem: NeoFS v2 snapshot table persistence (#554).** The snapshot
+  table is now serialized to a type-4 node on every `save_sb` and its LBA stored
+  in `SuperblockNE2::snapshot_table_lba`; the previous block is returned to the
+  free list and the empty table is represented by `snapshot_table_lba = 0`. On
+  mount the table is loaded, so `SNAPSHOT CREATE/RESTORE/LIST/PURGE` survive a
+  reboot. Test: `neofs_v2_snapshot_survives_remount`.
+  `docs/filesystem/neofs-v2.md` updated.
+
 - **Filesystem: NeoFS v2 free list persistence, best-fit allocation and mount
   recovery (#15).** The free list is now written to disk as a chain of type-3
   nodes whose head LBA lives in `SuperblockNE2::freelist_lba`; every
