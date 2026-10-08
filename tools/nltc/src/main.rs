@@ -359,6 +359,314 @@ fn generate_rust_constants(source: &NltSource) -> Result<String, String> {
     Ok(out)
 }
 
+// ── Bindings verification + frozen IDs + keymap (#572/#573/#578) ──────
+
+/// Deterministic catalog id map: explicit `[ids]`, else nltc's default
+/// assignment (sorted string/plural names from 1001).
+fn catalog_id_map(source: &NltSource) -> BTreeMap<String, u32> {
+    if !source.ids.is_empty() {
+        return source.ids.clone();
+    }
+    let mut names: Vec<&String> = source.strings.keys().collect();
+    names.extend(source.plural.keys());
+    names.sort();
+    let mut out = BTreeMap::new();
+    let mut id = 1001u32;
+    for n in names {
+        out.insert(n.clone(), id);
+        id += 1;
+    }
+    out
+}
+
+/// Parse `[pub] const NAME: u32 = N;` declarations from Rust source.
+///
+/// Intentionally a lightweight line parser (no full Rust front-end): it only
+/// understands decimal `u32` constants, which is what translation id files use.
+fn parse_rust_u32_consts(text: &str) -> BTreeMap<String, u32> {
+    let mut out = BTreeMap::new();
+    for raw in text.lines() {
+        let line = raw.trim();
+        let line = line.strip_prefix("pub ").unwrap_or(line);
+        let Some(rest) = line.strip_prefix("const ") else {
+            continue;
+        };
+        let Some((name, rest)) = rest.split_once(':') else {
+            continue;
+        };
+        let Some(rest) = rest.trim_start().strip_prefix("u32") else {
+            continue;
+        };
+        let Some(rest) = rest.trim_start().strip_prefix('=') else {
+            continue;
+        };
+        let value = rest.trim().trim_end_matches(';').trim().replace('_', "");
+        if let Ok(n) = value.parse::<u32>() {
+            out.insert(name.trim().to_string(), n);
+        }
+    }
+    out
+}
+
+/// `--verify-bindings <rust.rs> <catalog.toml>` (#572).
+///
+/// Fails when the Rust id constants and the catalog disagree. Extra Rust
+/// constants (not in the catalog) are reported as warnings, since a source file
+/// may legitimately hold unrelated `u32` constants.
+fn cmd_verify_bindings(rust: &Path, catalog: &Path) {
+    let text = match std::fs::read_to_string(rust) {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("ERROR: cannot read '{}': {e}", rust.display());
+            std::process::exit(2);
+        }
+    };
+    let source = match read_source(catalog) {
+        Ok(s) => s,
+        Err(_) => std::process::exit(2),
+    };
+    let catalog_ids = catalog_id_map(&source);
+    let rust_ids = parse_rust_u32_consts(&text);
+
+    let mut problems = 0usize;
+    // Direction 1 (errors): every id constant referenced in code must exist in
+    // the catalog with the same value. Candidate constants are those named
+    // `IDS_*` (the project convention) or already present in the catalog, so
+    // unrelated `u32` tuning constants are ignored.
+    for (name, id) in &rust_ids {
+        if !(name.starts_with("IDS_") || catalog_ids.contains_key(name)) {
+            continue;
+        }
+        match catalog_ids.get(name) {
+            Some(c) if c == id => {}
+            Some(c) => {
+                eprintln!("MISMATCH {name}: rust={id} catalog={c}");
+                problems += 1;
+            }
+            None => {
+                eprintln!("MISSING  {name} (rust id {id}) not found in catalog {}", catalog.display());
+                problems += 1;
+            }
+        }
+    }
+    // Direction 2 (warnings): catalog keys not referenced from this file are
+    // allowed (usage text may be unused or resolved elsewhere).
+    for (name, id) in &catalog_ids {
+        if !rust_ids.contains_key(name) {
+            eprintln!(
+                "UNUSED   {name} (catalog id {id}) has no matching constant in {} (warning)",
+                rust.display()
+            );
+        }
+    }
+
+    if problems == 0 {
+        println!(
+            "OK  {} bindings cover {} ({} rust keys, {} catalog keys)",
+            rust.display(),
+            catalog.display(),
+            rust_ids.len(),
+            catalog_ids.len()
+        );
+    } else {
+        eprintln!("FAILED: {problems} problem(s)");
+        std::process::exit(1);
+    }
+}
+
+/// `--require-ids <toml>` (#573): fail when a shipping catalog omits `[ids]`.
+fn cmd_require_ids(input: &Path) {
+    let source = match read_source(input) {
+        Ok(s) => s,
+        Err(_) => std::process::exit(2),
+    };
+    if let Err(e) = validate_source(&source) {
+        eprintln!("FAILED {}: {e}", input.display());
+        std::process::exit(1);
+    }
+    if source.ids.is_empty() {
+        eprintln!(
+            "FAILED {}: [ids] is required — entry ids are a stable ABI and must not be auto-assigned",
+            input.display()
+        );
+        std::process::exit(1);
+    }
+    println!(
+        "OK  {} has frozen [ids] ({} keys)",
+        input.display(),
+        source.ids.len()
+    );
+}
+
+/// `--generate-keymap <locale-dir> [out.rs]` (#578): emit a sorted
+/// `("<app>.<NAME>", id)` table for compile-time `tr!` resolution.
+fn cmd_generate_keymap(locale_dir: &Path, output: Option<&Path>) {
+    let mut files: Vec<PathBuf> = match std::fs::read_dir(locale_dir) {
+        Ok(it) => it
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.is_file() && p.extension().and_then(|x| x.to_str()) == Some("toml"))
+            .collect(),
+        Err(e) => {
+            eprintln!("ERROR: cannot read '{}': {e}", locale_dir.display());
+            std::process::exit(2);
+        }
+    };
+    files.sort();
+
+    let mut entries: Vec<(String, u32)> = Vec::new();
+    for path in files {
+        let source = match read_source(&path) {
+            Ok(s) => s,
+            Err(_) => std::process::exit(2),
+        };
+        let app = source.meta.app.clone();
+        for (name, id) in catalog_id_map(&source) {
+            entries.push((format!("{app}.{name}"), id));
+        }
+    }
+    entries.sort();
+    entries.dedup();
+
+    for w in entries.windows(2) {
+        if w[0].0 == w[1].0 && w[0].1 != w[1].1 {
+            eprintln!(
+                "ERROR: key '{}' maps to conflicting ids {} and {}",
+                w[0].0, w[0].1, w[1].1
+            );
+            std::process::exit(1);
+        }
+    }
+
+    let mut code = String::new();
+    code.push_str("// Auto-generated by nltc --generate-keymap. Do not edit.\n");
+    code.push_str("// Symbolic string keys (\"<app>.<NAME>\") -> numeric i18n ids.\n\n");
+    code.push_str("#![allow(dead_code)]\n\n");
+    code.push_str("/// Sorted key -> id table (binary-searchable).\n");
+    code.push_str("pub static NLT_KEYMAP: &[(&str, u32)] = &[\n");
+    for (k, id) in &entries {
+        code.push_str(&format!("    (\"{k}\", {id}),\n"));
+    }
+    code.push_str("];\n");
+
+    match output {
+        Some(p) => match std::fs::write(p, &code) {
+            Ok(_) => eprintln!(
+                "OK  keymap ({} keys) written to '{}'",
+                entries.len(),
+                p.display()
+            ),
+            Err(e) => {
+                eprintln!("ERROR: cannot write '{}': {e}", p.display());
+                std::process::exit(1);
+            }
+        },
+        None => print!("{code}"),
+    }
+}
+
+/// `--check-coverage <locale-dir> [base-lang]` (#572): every locale must define
+/// the same keys (and ids) as the base locale for each app.
+fn cmd_check_coverage(locale_dir: &Path, base_lang: &str) -> i32 {
+    let mut locale_dirs: Vec<PathBuf> = match std::fs::read_dir(locale_dir) {
+        Ok(it) => it
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.is_dir())
+            .collect(),
+        Err(e) => {
+            eprintln!("ERROR: cannot read '{}': {e}", locale_dir.display());
+            return 2;
+        }
+    };
+    locale_dirs.sort();
+
+    // locale -> app -> (name -> id)
+    let mut all: BTreeMap<String, BTreeMap<String, BTreeMap<String, u32>>> = BTreeMap::new();
+    for dir in &locale_dirs {
+        let lang = match dir.file_name().and_then(|n| n.to_str()) {
+            Some(l) => l.to_string(),
+            None => continue,
+        };
+        let mut apps = BTreeMap::new();
+        let entries = match std::fs::read_dir(dir) {
+            Ok(it) => it,
+            Err(_) => continue,
+        };
+        for path in entries.filter_map(|e| e.ok().map(|e| e.path())) {
+            if path.extension().and_then(|x| x.to_str()) != Some("toml") {
+                continue;
+            }
+            match read_source(&path) {
+                Ok(s) => {
+                    apps.insert(s.meta.app.clone(), catalog_id_map(&s));
+                }
+                Err(_) => return 2,
+            }
+        }
+        all.insert(lang, apps);
+    }
+
+    let base_name = if all.contains_key(base_lang) {
+        base_lang.to_string()
+    } else {
+        match all.keys().next() {
+            Some(k) => k.clone(),
+            None => {
+                eprintln!("ERROR: no locale directories under '{}'", locale_dir.display());
+                return 2;
+            }
+        }
+    };
+
+    let mut issues = 0usize;
+    let base = all.get(&base_name).cloned().unwrap_or_default();
+    for (lang, apps) in &all {
+        if *lang == base_name {
+            continue;
+        }
+        for (app, base_ids) in &base {
+            match apps.get(app) {
+                None => {
+                    eprintln!("MISSING APP  {lang}: '{app}.toml' not found (base '{base_name}')");
+                    issues += 1;
+                }
+                Some(ids) => {
+                    for (name, id) in base_ids {
+                        match ids.get(name) {
+                            Some(l) if l == id => {}
+                            Some(l) => {
+                                eprintln!("ID DRIFT     {lang}/{app}: {name} base={id} {lang}={l}");
+                                issues += 1;
+                            }
+                            None => {
+                                eprintln!("MISSING KEY  {lang}/{app}: {name} (id {id})");
+                                issues += 1;
+                            }
+                        }
+                    }
+                    for name in ids.keys() {
+                        if !base_ids.contains_key(name) {
+                            eprintln!("EXTRA KEY    {lang}/{app}: {name} not in base");
+                            issues += 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if issues == 0 {
+        println!(
+            "OK  coverage: {} locales, base '{base_name}', {} apps",
+            all.len(),
+            base.len()
+        );
+        0
+    } else {
+        eprintln!("FAILED: {issues} coverage issue(s)");
+        1
+    }
+}
+
 // ── TOML scaffold ─────────────────────────────────────────────────────
 
 fn generate_toml(app: &str, language: &str) -> String {
@@ -407,6 +715,10 @@ fn print_usage() {
     eprintln!("  nltc --app-id <app-name>");
     eprintln!("  nltc --info <file.nlt>");
     eprintln!("  nltc --verify <file.nlt> [hex-pubkey]");
+    eprintln!("  nltc --verify-bindings <rust.rs> <catalog.toml>");
+    eprintln!("  nltc --require-ids <input.toml>");
+    eprintln!("  nltc --check-coverage <locale-dir> [base-lang]");
+    eprintln!("  nltc --generate-keymap <locale-dir> [out.rs]");
     eprintln!("  nltc --generate-all <locale-dir>");
     eprintln!();
     eprintln!("Options:");
@@ -811,6 +1123,22 @@ fn main() {
         "--app-id" => cmd_app_id(&args[2]),
         "--info" => cmd_info(Path::new(&args[2])),
         "--verify" => cmd_verify(Path::new(&args[2]), args.get(3).map(|s| s.as_str())),
+        "--verify-bindings" => {
+            if args.len() < 4 {
+                eprintln!("Usage: nltc --verify-bindings <rust.rs> <catalog.toml>");
+                std::process::exit(1);
+            }
+            cmd_verify_bindings(Path::new(&args[2]), Path::new(&args[3]));
+        }
+        "--require-ids" => cmd_require_ids(Path::new(&args[2])),
+        "--check-coverage" => {
+            let base = args.get(3).map(|s| s.as_str()).unwrap_or("en-US");
+            std::process::exit(cmd_check_coverage(Path::new(&args[2]), base));
+        }
+        "--generate-keymap" => {
+            let output = args.get(3).map(Path::new);
+            cmd_generate_keymap(Path::new(&args[2]), output);
+        }
         "--generate-all" => {
             let opts = options_from_args(&args, 3);
             cmd_generate_all(Path::new(&args[2]), &opts);
@@ -832,5 +1160,60 @@ fn main() {
             let opts = options_from_args(&args, opts_start);
             cmd_compile(input, &output, &opts);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_pub_and_private_u32_consts() {
+        let src = "const IDS_A: u32 = 1001;\n\
+                   pub const IDS_B: u32 = 1_002;\n\
+                   pub const NAME: &str = \"x\";\n\
+                   const OTHER: u64 = 5;\n";
+        let m = parse_rust_u32_consts(src);
+        assert_eq!(m.get("IDS_A"), Some(&1001));
+        assert_eq!(m.get("IDS_B"), Some(&1002));
+        assert!(!m.contains_key("NAME"));
+        assert!(!m.contains_key("OTHER"));
+    }
+
+    #[test]
+    fn catalog_id_map_falls_back_to_sorted_assignment() {
+        let src = NltSource {
+            meta: NltMeta {
+                app: "x".into(),
+                language: "en-US".into(),
+            },
+            ids: BTreeMap::new(),
+            strings: [
+                ("B".to_string(), "b".to_string()),
+                ("A".to_string(), "a".to_string()),
+            ]
+            .into_iter()
+            .collect(),
+            plural: BTreeMap::new(),
+            region: None,
+        };
+        let m = catalog_id_map(&src);
+        assert_eq!(m.get("A"), Some(&1001));
+        assert_eq!(m.get("B"), Some(&1002));
+    }
+
+    #[test]
+    fn explicit_ids_win_over_auto_assignment() {
+        let src = NltSource {
+            meta: NltMeta {
+                app: "x".into(),
+                language: "en-US".into(),
+            },
+            ids: [("A".to_string(), 7u32)].into_iter().collect(),
+            strings: [("A".to_string(), "a".to_string())].into_iter().collect(),
+            plural: BTreeMap::new(),
+            region: None,
+        };
+        assert_eq!(catalog_id_map(&src).get("A"), Some(&7));
     }
 }

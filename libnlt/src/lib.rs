@@ -23,6 +23,7 @@
 
 pub mod bidi;
 pub mod format;
+pub mod keys;
 pub mod lang;
 pub mod lzss;
 pub mod plural;

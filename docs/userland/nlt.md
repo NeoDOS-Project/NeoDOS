@@ -152,20 +152,44 @@ pub fn i18n_language() -> &'static str;          // "es-ES"
 pub fn i18n_active_locale() -> &'static str;
 pub fn i18n_set_language(tag: &str);             // change + reload
 pub fn i18n_is_rtl() -> bool;
-pub fn i18n_load(app: &str) -> Result<(), ()>;   // NLTv2/v3
-pub fn i18n_get_id(id: u32) -> &'static str;     // "?" on miss
+pub fn i18n_load(app: &str) -> Result<(), LoadError>;   // NLTv2/v3 (#576)
+pub fn locale_chain(tag: &str) -> ([&str; 4], usize);   // negotiation (#580)
+pub fn i18n_get_id(id: u32) -> &'static str;     // "#<id>" marker on miss (#574)
 pub fn i18n_try_get_id(id: u32) -> Option<&'static str>;
+/// Compile-time symbolic key ("<app>.<NAME>") resolution (#578).
+pub const fn key_id(key: &str) -> u32;           // unknown key = compile error
+pub fn try_key_id(key: &str) -> Option<u32>;     // runtime lookup
 pub fn i18n_plural(id: u32, n: u64) -> &'static str;
+pub fn i18n_plural_format(id: u32, n: u64, args: &[&str]) -> &'static str; // (#579)
 pub fn i18n_format(id: u32, args: &[&str]) -> &'static str;
+pub fn i18n_format_into<'a>(id: u32, args: &[&str], out: &'a mut [u8]) -> &'a str; // (#575)
 pub fn i18n_format_str(tmpl: &str, args: &[&str]) -> &'static str;
+pub fn i18n_format_str_into<'a>(tmpl: &str, args: &[&str], out: &'a mut [u8]) -> &'a str; // (#575)
 pub fn i18n_region() -> Option<Region<'static>>;
+pub fn i18n_format_number(value: i64, out: &mut [u8]) -> &str;                 // (#579)
+pub fn i18n_format_currency(minor_units: i64, out: &mut [u8]) -> &str;         // (#579)
+pub fn i18n_format_date(y: i32, m: u8, d: u8, long: bool, out: &mut [u8]) -> &str; // (#579)
+pub fn i18n_format_time(h: u8, m: u8, s: u8, out: &mut [u8]) -> &str;          // (#579)
 pub fn i18n_reorder_visual(input: &str, out: &mut [u8]) -> usize;
-pub fn i18n_available_locales() -> &'static str;
+pub fn i18n_locale_count() -> usize;             // structured locales (#577)
+pub fn i18n_locale_at(index: usize) -> Option<&'static str>;
+pub fn i18n_rescan_locales();                    // force re-scan (#577)
+pub fn i18n_available_locales() -> &'static str; // compat ("a;b;c")
 pub fn i18n_unload(app: &str);
 pub fn i18n_reload_all();
-pub fn i18n_load_from_package() -> Result<(), ()>;
+pub fn i18n_load_from_package() -> Result<(), LoadError>;
+pub fn i18n_capacity() -> (usize, usize);        // (max_tables, max_bytes) (#576)
 pub fn i18n_verify_signature(data: &[u8], pk: &[u8;32]) -> bool; // feature
+
+/// UI-agnostic translation seam (#581).
+pub trait Translator { fn tr(&self, id: u32) -> &str; }
+pub struct I18nTranslator;      // runtime-backed
+pub struct I18nKeyTranslator;   // symbolic-key helper
 ```
+
+Cargo features: `i18n-signatures` (verify Ed25519) and
+`i18n-require-signed` (implies the former; **rejects** unsigned/rejected tables —
+for hardened images, #582).
 
 ### Macros
 
@@ -173,23 +197,47 @@ pub fn i18n_verify_signature(data: &[u8], pk: &[u8;32]) -> bool; // feature
 tr_id!(IDS_OK)              // → i18n_get_id(IDS_OK)
 tr_fmt!(IDS_DATE, &[&day])  // → i18n_format(IDS_DATE, &[&day])
 plural_id!(IDS_FILES, n)    // → i18n_plural(IDS_FILES, n)
+
+// String-key form (preferred when the keymap is present): the key is resolved
+// at compile time, so a typo/missing key is a build error.
+tr!("ver.IDS_OK")                 // → i18n_get_id(key_id("ver.IDS_OK"))
+tr_key_fmt!("ver.IDS_DATE", &[&day])
+tr_plural!("ver.IDS_FILES", n)
 ```
 
 ---
 
 ## 5. Constants in Code
 
-Generate once from the TOML and commit, or keep them in sync manually:
+Two authoring styles:
 
-```bash
-nltc --generate-rust neoshell.toml src/ids.rs
-```
+1. **Symbolic string keys (preferred).** The compiler emits a global keymap
+   (`libneodos/src/i18n_keymap.rs`) with `"<app>.<NAME>" → id`; `tr!` resolves it
+   at compile time.
 
-```rust
-mod ids;
-use ids::*;
-write_str(tr_id!(IDS_OK).as_bytes());
-```
+   ```rust
+   use libneodos::tr;
+   write_str(tr!("ver.IDS_OK").as_bytes());
+   ```
+
+   Regenerate after catalog changes:
+
+   ```bash
+   nltc --generate-keymap data/locale/en-US libneodos/src/i18n_keymap.rs
+   scripts/check-i18n.sh      # fails on drift / missing / mismatched keys
+   ```
+
+2. **Numeric constants.** Generate once from the TOML and commit:
+
+   ```bash
+   nltc --generate-rust neoshell.toml src/ids.rs
+   ```
+
+   ```rust
+   mod ids;
+   use ids::*;
+   write_str(tr_id!(IDS_OK).as_bytes());
+   ```
 
 ---
 
@@ -262,7 +310,11 @@ See `nltc --list-langs`. IDs `0x8000+` are CRC32-derived for unknown tags.
 | 8   | neokey   | 35   | netcfg     |
 | 9   | neomem   | 36   | ipconfig   |
 
-See `libnlt/src/lang.rs` for the full table. Unknown apps get `0x8000+`.
+See `libnlt/src/lang.rs` for the full table. Unknown apps get a stable
+CRC32-derived id (`0x8000 | (crc32(name) & 0x7FFF)`), so adding a known app is
+optional and purely for readability. The table is shared by `nltc` and the
+runtime (`libnlt`), and unit tests assert known ids are unique and stay below
+`0x8000` (#583).
 
 ---
 
@@ -303,9 +355,12 @@ live in the NLT system and be translated to:
 
 ## 13. Adding a Key
 
-1. Add the entry to `[ids]` and `[strings]` in all locale sources.
+1. Add an explicit entry to `[ids]` and the matching value to `[strings]` in
+   **all** locale sources (entry ids are a stable ABI — never auto-assigned).
 2. Recompile: `nltc --generate-all data/locale/{locale}`.
-3. Declare `const IDS_NEW: u32 = N;` and use `tr_id!(IDS_NEW)`.
+3. Regenerate the keymap: `nltc --generate-keymap data/locale/en-US libneodos/src/i18n_keymap.rs`.
+4. Use the key: `tr!("myapp.IDS_NEW")`, or `tr_id!(IDS_NEW)` with a numeric const.
+5. `scripts/check-i18n.sh` must pass (coverage, frozen ids, bindings, keymap).
 
 ---
 
