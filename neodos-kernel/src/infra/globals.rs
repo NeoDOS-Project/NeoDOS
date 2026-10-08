@@ -156,15 +156,13 @@ pub fn flush_cache_if_needed() {
             let _ord_pc = crate::lock_order::Guard::new(crate::lock_order::PAGE_CACHE);
             let _ord_bd = crate::lock_order::Guard::new(crate::lock_order::BLOCK_DEVICES);
             let mut bdev_lock = BLOCK_DEVICES.lock();
-            for i in 0..crate::drivers::block::MAX_BLOCK_DEVICES {
-                if let Some(dev) = bdev_lock.get(i) {
-                    // Flush only this device's dirty pages (per-device cache tag).
-                    let batch_size = core::cmp::min(pc_lock.dirty_count(), 8);
-                    if batch_size > 0 {
-                        let _ = pc_lock.flush_batch(i as u64, dev, batch_size);
-                    }
+            bdev_lock.for_each_present(|i, dev| {
+                // Flush only this device's dirty pages (per-device cache tag).
+                let batch_size = core::cmp::min(pc_lock.dirty_count(), 8);
+                if batch_size > 0 {
+                    let _ = pc_lock.flush_batch(i as u64, dev, batch_size);
                 }
-            }
+            });
         }
         crate::scheduler::preempt_enable();
         let current = crate::hal::get_ticks();

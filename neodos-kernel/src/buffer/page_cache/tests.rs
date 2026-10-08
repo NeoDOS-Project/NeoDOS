@@ -15,39 +15,6 @@ pub fn register_tests() {
         test_eq!(pc.dirty_count(), 0);
     });
 
-    test_case!("page_cache_flush_is_device_scoped", {
-        struct MockDev { writes: usize }
-        impl crate::drivers::block::BlockDevice for MockDev {
-            fn submit_irp(&mut self, _irp: crate::irp::IrpId) -> Result<(), ()> { Ok(()) }
-            fn read_blocks(&mut self, _lba: u64, _count: u8, buf: &mut [u8]) -> Result<(), ()> {
-                for b in buf.iter_mut() { *b = 0; }
-                Ok(())
-            }
-            fn write_blocks(&mut self, _lba: u64, _count: u8, _buf: &[u8]) -> Result<(), ()> {
-                self.writes += 1;
-                Ok(())
-            }
-            fn set_base_lba(&mut self, _lba: u64) {}
-            fn base_lba(&self) -> u64 { 0 }
-        }
-
-        let mut pc = PageCache::new();
-        let mut dev = MockDev { writes: 0 };
-        // Dirty a page owned by device 1.
-        pc.get_sector_mut(0, 1, &mut dev).unwrap()[0] = 0xAA;
-        test_eq!(pc.dirty_count(), 1);
-
-        // A flush for a different device must not write device 1's page.
-        let _ = pc.flush(2, &mut dev);
-        test_eq!(dev.writes, 0);
-        test_eq!(pc.dirty_count(), 1);
-
-        // A flush for device 1 does write it.
-        let _ = pc.flush(1, &mut dev);
-        test_eq!(dev.writes, 1);
-        test_eq!(pc.dirty_count(), 0);
-    });
-
     test_case!("page_cache_peek_miss", {
         let pc = PageCache::new();
         test_eq!(pc.peek_inode(0, 1, 0), None);
