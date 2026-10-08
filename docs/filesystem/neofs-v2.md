@@ -146,6 +146,12 @@ Offset  Size  Campo            Descripción
 
 Caben ~255 entradas por nodo. Máximo 64 snapshots (anillo circular).
 
+La tabla **se persiste en disco** como un único nodo tipo 4: `save_sb` la
+serializa, guarda su LBA en `snapshot_table_lba` y libera el bloque anterior, de
+modo que los snapshots sobreviven a un remontaje/reinicio. La tabla vacía se
+representa con `snapshot_table_lba = 0` (no ocupa bloque). Al montar se carga si
+el puntero es distinto de cero.
+
 ---
 
 ## 3. Operaciones del Sistema de Archivos
