@@ -699,6 +699,13 @@ impl FileSystem for NeoDosFsV2 {
         Ok(entries.len())
     }
 
+    fn snapshot_delete(&mut self, id: u64) -> Result<(), VfsError> {
+        if !self.snapshot_table.delete(id) {
+            return Err(VfsError::NotFound);
+        }
+        self.save_sb().map_err(|_| VfsError::IOError)
+    }
+
     fn snapshot_purge(&mut self) -> Result<(), VfsError> {
         self.snapshot_table.purge();
         self.save_sb().map_err(|_| VfsError::IOError)
@@ -1064,6 +1071,36 @@ pub fn register_neodos_v2_tests() {
         let mut n = 0usize;
         while fs2.readdir(0, n).unwrap().is_some() { n += 1; }
         crate::test_eq!(n, 60);
+
+        let _ = crate::globals::BLOCK_DEVICES.lock().force_remove(dev_id);
+    });
+
+    crate::test_case!("neofs_v2_snapshot_delete_persists", {
+        let sectors = alloc::vec![[0u8; 512]; 2048];
+        let dev_id = crate::fs::fsck::register_test_device(sectors);
+        let io = IoStack::new(dev_id);
+        mkfs_ne2(&io, 256, "TEST").unwrap();
+
+        let mut fs = NeoDosFsV2::new(io).unwrap();
+        let id0 = fs.snapshot_create().unwrap();
+        let id1 = fs.snapshot_create().unwrap();
+        let id2 = fs.snapshot_create().unwrap();
+        crate::test_eq!(fs.snapshot_table.snapshot_count(), 3);
+
+        // Borrar el intermedio; los demás siguen.
+        crate::test_true!(fs.snapshot_delete(id1).is_ok());
+        crate::test_true!(fs.snapshot_delete(id1).is_err());
+        crate::test_eq!(fs.snapshot_table.snapshot_count(), 2);
+        drop(fs);
+
+        // Remontar: el borrado persiste y las generaciones no se reutilizan.
+        let mut fs2 = NeoDosFsV2::new(IoStack::new(dev_id)).unwrap();
+        crate::test_eq!(fs2.snapshot_table.snapshot_count(), 2);
+        crate::test_true!(fs2.snapshot_restore(id1).is_err());
+        crate::test_true!(fs2.snapshot_restore(id0).is_ok());
+        crate::test_true!(fs2.snapshot_restore(id2).is_ok());
+        let id3 = fs2.snapshot_create().unwrap();
+        crate::test_true!(id3 > id2);
 
         let _ = crate::globals::BLOCK_DEVICES.lock().force_remove(dev_id);
     });

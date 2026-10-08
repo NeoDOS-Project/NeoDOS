@@ -29,6 +29,7 @@ const SNAPSHOT_OP_CREATE: u32 = 0;
 const SNAPSHOT_OP_RESTORE: u32 = 1;
 const SNAPSHOT_OP_LIST: u32 = 2;
 const SNAPSHOT_OP_PURGE: u32 = 3;
+const SNAPSHOT_OP_DELETE: u32 = 4;
 
 const SERVICE_CONTROL_START: u32 = 0;
 const SERVICE_CONTROL_STOP: u32 = 1;
@@ -67,6 +68,22 @@ pub(super) fn handler_ob_snapshot(regs: super::Registers) -> u64 {
             let snapshot_id = unsafe { core::ptr::read_volatile(buf_ptr as *const u64) };
             let result = crate::globals::with_vfs(|vfs| {
                 vfs.snapshot_restore(drive_idx, snapshot_id)
+            });
+            match result {
+                Ok(()) => 0,
+                Err(_) => err_to_u64(SyscallError::Io),
+            }
+        }
+        SNAPSHOT_OP_DELETE => {
+            if buf_ptr == 0 || buf_size < 8 {
+                return err_to_u64(SyscallError::Inval);
+            }
+            if !is_user_ptr_valid(buf_ptr, 8) {
+                return err_to_u64(SyscallError::Fault);
+            }
+            let snapshot_id = unsafe { core::ptr::read_volatile(buf_ptr as *const u64) };
+            let result = crate::globals::with_vfs(|vfs| {
+                vfs.snapshot_delete(drive_idx, snapshot_id)
             });
             match result {
                 Ok(()) => 0,

@@ -525,6 +525,18 @@ pub fn register_syscall_table_tests() {
         }
     });
 
+    test_case!("syscall_ob_snapshot_delete", {
+        if crate::globals::VFS.try_lock().is_none() { return Ok(()); }
+        let drive_c = crate::fs::vfs::Vfs::drive_index('C').unwrap();
+        let id = crate::globals::with_vfs(|vfs| vfs.snapshot_create(drive_c)).unwrap();
+        // Borrar el snapshot recién creado.
+        test_true!(crate::globals::with_vfs(|vfs| vfs.snapshot_delete(drive_c, id)).is_ok());
+        // Borrarlo otra vez falla.
+        test_true!(crate::globals::with_vfs(|vfs| vfs.snapshot_delete(drive_c, id)).is_err());
+        // Restaurarlo también falla.
+        test_true!(crate::globals::with_vfs(|vfs| vfs.snapshot_restore(drive_c, id)).is_err());
+    });
+
     test_case!("syscall_ob_snapshot_purge", {
         if crate::globals::VFS.try_lock().is_none() { return Ok(()); }
         let drive_c = crate::fs::vfs::Vfs::drive_index('C').unwrap();

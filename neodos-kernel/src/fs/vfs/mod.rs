@@ -97,6 +97,10 @@ pub trait FileSystem: Send {
         Err(VfsError::NotImplemented)
     }
 
+    fn snapshot_delete(&mut self, _id: u64) -> Result<(), VfsError> {
+        Err(VfsError::NotImplemented)
+    }
+
     fn snapshot_purge(&mut self) -> Result<(), VfsError> {
         Err(VfsError::NotImplemented)
     }
@@ -437,6 +441,11 @@ impl Vfs {
     pub fn snapshot_list(&mut self, drive_idx: usize, buf: &mut [u8]) -> Result<usize, VfsError> {
         let fs = self.drives[drive_idx].as_mut().ok_or(VfsError::NotFound)?;
         fs.snapshot_list(buf)
+    }
+
+    pub fn snapshot_delete(&mut self, drive_idx: usize, id: u64) -> Result<(), VfsError> {
+        let fs = self.drives[drive_idx].as_mut().ok_or(VfsError::NotFound)?;
+        fs.snapshot_delete(id)
     }
 
     pub fn snapshot_purge(&mut self, drive_idx: usize) -> Result<(), VfsError> {
