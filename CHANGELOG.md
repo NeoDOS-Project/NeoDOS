@@ -103,6 +103,15 @@
   entrypoint. Historical `crate::<name>` paths kept via re-exports. No behavior
   change.
 
+- **#544 / P4: split monolithic test files; module-layout rule.** Test
+  monoliths became directories: `scheduler/tests.rs` (2 670 lines) →
+  `scheduler/tests/{scheduling,regressions,mmap,threads,misc}.rs`;
+  `net/tests.rs` → `net/tests/{net,dns,socket}.rs`; `syscall/tests.rs` →
+  `syscall/tests/{table,sync,path}.rs`; the inline tests of `services/mod.rs`
+  moved to `services/tests.rs`. Test count and names unchanged (837).
+  `AGENTS.md` gains rule 12 (one directory = one subsystem, downward
+  dependencies, `mod.rs`, re-exports during migration).
+
 ### Fixed
 
 - **Scheduler snapshot self-deadlock (BSP freeze before `[PROC_SNAPSHOT]`).**

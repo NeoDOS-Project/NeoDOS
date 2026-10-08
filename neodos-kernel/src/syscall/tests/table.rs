@@ -1,8 +1,10 @@
+#![allow(unused_imports)]
 //! Syscall tests — SSDT validation, permission checks, Ob create/query/set/enum,
 //! and A4.6 integration tests.
 
-use super::{SYSCALL_TABLE, SYSCALL_PERMISSIONS, check_syscall_permission,
+use super::super::{SYSCALL_TABLE, SYSCALL_PERMISSIONS, check_syscall_permission,
            syscall_dispatch, err_to_u64, SyscallError};
+
 
 pub fn register_syscall_table_tests() {
     use crate::test_case;
@@ -432,7 +434,7 @@ pub fn register_syscall_table_tests() {
             (ObError::TableFull, SyscallError::NoMem),
         ];
         for (ob_err, expected_syscall) in &mappings {
-            let result = super::ob_err_to_syscall(*ob_err);
+            let result = super::super::ob_err_to_syscall(*ob_err);
             test_eq!(result as i64, *expected_syscall as i64);
         }
     });
@@ -567,180 +569,3 @@ pub fn register_syscall_table_tests() {
     });
 }
 
-pub fn register_sync_tests() {
-    use crate::test_case;
-    use crate::test_eq;
-    use crate::test_true;
-
-    test_case!("need_resched_init_false", {
-        super::NEED_RESCHED.store(false, core::sync::atomic::Ordering::SeqCst);
-        test_eq!(super::NEED_RESCHED.load(core::sync::atomic::Ordering::SeqCst), false);
-    });
-
-    test_case!("need_resched_set", {
-        super::NEED_RESCHED.store(false, core::sync::atomic::Ordering::SeqCst);
-        super::set_need_resched();
-        test_eq!(super::NEED_RESCHED.load(core::sync::atomic::Ordering::SeqCst), true);
-    });
-
-    test_case!("need_resched_clear", {
-        super::NEED_RESCHED.store(true, core::sync::atomic::Ordering::SeqCst);
-        let prev = super::clear_need_resched();
-        test_eq!(prev, true);
-        test_eq!(super::NEED_RESCHED.load(core::sync::atomic::Ordering::SeqCst), false);
-    });
-
-    test_case!("need_resched_clear_returns_prev", {
-        super::NEED_RESCHED.store(false, core::sync::atomic::Ordering::SeqCst);
-        let prev = super::clear_need_resched();
-        test_eq!(prev, false);
-    });
-
-    // ── Syscall stress ──
-
-    test_case!("stress_syscall_rapid_getpid", {
-        for _ in 0..200 {
-            let pid = crate::hal::without_interrupts(|| {
-                crate::scheduler::current_scheduler().lock().current_pid()
-            });
-            test_true!(pid < 1000);
-        }
-    });
-
-    test_case!("stress_syscall_invalid_numbers", {
-        let expected = super::err_to_u64(super::SyscallError::NoSys);
-        for num in &[100u64, 255, 0xFFFFFFFF] {
-            let result = super::syscall_dispatch(*num, 0, 0, 0, 0, 0);
-            test_eq!(result, expected);
-        }
-    });
-
-    test_case!("stress_syscall_ptr_validation", {
-        let kernel_addr: u64 = 0x4000000;
-        let valid = super::is_user_ptr_valid(kernel_addr, 10);
-        test_eq!(valid, false);
-        let valid2 = super::is_user_ptr_valid(kernel_addr, 1);
-        test_eq!(valid2, false);
-        let user_addr: u64 = 0x400000;
-        let valid3 = super::is_user_ptr_valid(user_addr, 10);
-        test_eq!(valid3, true);
-    });
-
-    // ── AUDIT-36: neoinit_shell_spawn_smoke — spawn infrastructure ──
-
-    test_case!("neoinit_shell_spawn_smoke", {
-        let ob_path = "\\Global\\FileSystem\\C:\\Programs\\neoshell.nxe";
-        test_true!(ob_path.len() > 20);
-        test_eq!(&ob_path[..19], "\\Global\\FileSystem\\");
-        test_true!(ob_path.contains("neoshell.nxe"));
-    });
-
-    test_case!("neoinit_shell_entry_check", {
-        let vaddr: u64 = 0x420000;
-        let offset: u64 = 0x420000;
-        test_true!(vaddr <= offset);
-        test_true!(offset < vaddr + 0x10000);
-    });
-}
-
-// ── DOS path canonicalization tests (cd/chdir resolution) ──────────────
-//
-// `normalize_dos_path` is the single canonicalizer used by the VFS path
-// resolver behind `SET_CWD`. These tests pin down the drive-aware `.` / `..`
-// semantics that NeoShell's `cd` relies on, including the root boundary.
-
-pub fn register_path_tests() {
-    use crate::test_case;
-    use crate::test_eq;
-    use crate::test_true;
-    use alloc::string::String;
-
-    test_case!("path_norm_root", {
-        test_eq!(super::normalize_dos_path("C:\\"), String::from("C:\\"));
-        test_eq!(super::normalize_dos_path("C:"), String::from("C:\\"));
-        test_eq!(super::normalize_dos_path("C:\\\\"), String::from("C:\\"));
-    });
-
-    test_case!("path_norm_child_and_current", {
-        test_eq!(super::normalize_dos_path("C:\\System"), String::from("C:\\System"));
-        test_eq!(super::normalize_dos_path("C:\\System\\Tools"), String::from("C:\\System\\Tools"));
-        test_eq!(super::normalize_dos_path("C:\\System\\."), String::from("C:\\System"));
-        test_eq!(super::normalize_dos_path("C:\\System\\.\\Tools"), String::from("C:\\System\\Tools"));
-        test_eq!(super::normalize_dos_path("C:\\System\\Tools\\"), String::from("C:\\System\\Tools"));
-    });
-
-    test_case!("path_norm_parent", {
-        test_eq!(super::normalize_dos_path("C:\\System\\Tools\\.."), String::from("C:\\System"));
-        test_eq!(super::normalize_dos_path("C:\\System\\Tools\\..\\.."), String::from("C:\\"));
-        test_eq!(super::normalize_dos_path("C:\\System\\..\\System"), String::from("C:\\System"));
-    });
-
-    test_case!("path_norm_root_boundary", {
-        // `..` above the drive root must clamp to the root, never `C:\..` or `C:`.
-        test_eq!(super::normalize_dos_path("C:\\.."), String::from("C:\\"));
-        test_eq!(super::normalize_dos_path("C:\\..\\.."), String::from("C:\\"));
-        test_eq!(super::normalize_dos_path("C:\\System\\Tools\\..\\..\\.."), String::from("C:\\"));
-        test_eq!(super::normalize_dos_path(".."), String::from("\\"));
-        test_eq!(super::normalize_dos_path("\\.."), String::from("\\"));
-    });
-
-    test_case!("path_norm_drive_and_separators", {
-        // Lowercase drive is upper-cased, forward slashes accepted, and a
-        // missing separator after `:` is normalized to `\`.
-        test_eq!(super::normalize_dos_path("c:\\System"), String::from("C:\\System"));
-        test_eq!(super::normalize_dos_path("C:/System/Tools"), String::from("C:\\System\\Tools"));
-        test_eq!(super::normalize_dos_path("C:System\\Tools"), String::from("C:\\System\\Tools"));
-        test_eq!(super::normalize_dos_path("/System"), String::from("\\System"));
-    });
-
-    // ── End-to-end resolution against the live VFS ─────────────────────
-    // Absolute paths are independent of the caller's cwd, so these are
-    // deterministic regardless of where the test runner lives.
-
-    test_case!("chdir_resolve_absolute", {
-        if crate::globals::VFS.try_lock().is_none() { return Ok(()); }
-        let root = super::resolve_chdir_target(String::from("C:\\"));
-        test_true!(root.is_ok());
-        if let Ok((drive, path)) = root {
-            test_eq!(drive, 2u8);
-            test_eq!(path, String::from("\\"));
-        }
-        let system = super::resolve_chdir_target(String::from("C:\\System"));
-        test_true!(system.is_ok());
-        if let Ok((_, path)) = system {
-            test_eq!(path, String::from("\\System"));
-        }
-    });
-
-    test_case!("chdir_resolve_canonical", {
-        if crate::globals::VFS.try_lock().is_none() { return Ok(()); }
-        let up = super::resolve_chdir_target(String::from("C:\\System\\Tools\\..\\.."));
-        test_true!(up.is_ok());
-        if let Ok((_, path)) = up {
-            test_eq!(path, String::from("\\"));
-        }
-        let dot = super::resolve_chdir_target(String::from("C:\\System\\.\\Tools"));
-        test_true!(dot.is_ok());
-        if let Ok((_, path)) = dot {
-            test_eq!(path, String::from("\\System\\Tools"));
-        }
-        let clamp = super::resolve_chdir_target(String::from("C:\\System\\Tools\\..\\..\\.."));
-        test_true!(clamp.is_ok());
-        if let Ok((_, path)) = clamp {
-            test_eq!(path, String::from("\\"));
-        }
-    });
-
-    test_case!("chdir_resolve_nonexistent_does_not_commit", {
-        if crate::globals::VFS.try_lock().is_none() { return Ok(()); }
-        let missing = super::resolve_chdir_target(String::from("C:\\NoSuchDirXYZ_42"));
-        test_true!(missing.is_err());
-    });
-
-    test_case!("chdir_resolve_file_is_not_a_directory", {
-        if crate::globals::VFS.try_lock().is_none() { return Ok(()); }
-        // A regular file must be rejected even though it exists.
-        let file = super::resolve_chdir_target(String::from("C:\\Programs\\neoinit.nxe"));
-        test_true!(file.is_err());
-    });
-}
