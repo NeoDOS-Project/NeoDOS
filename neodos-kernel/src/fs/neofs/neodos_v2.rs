@@ -308,21 +308,17 @@ impl NeoDosFsV2 {
     }
 
 
-    /// Reclamar la basura COW. Solo es seguro con la tabla de snapshots vacía:
-    /// con snapshots presentes un nodo reemplazado puede seguir siendo
-    /// alcanzable desde una raíz antigua, así que se retiene hasta PURGE.
+    /// Descartar la basura COW.
+    ///
+    /// **No se libera**: un subdirectorio cambia la raíz de su B-tree por COW,
+    /// pero su `DirEntry.extent_lba` en el directorio padre no se actualiza
+    /// (bug preexistente de enlace padre-hijo), así que bloques reemplazados
+    /// pueden seguir siendo alcanzables tras un remontaje. Liberarlos corrompe
+    /// el FS (el padre acabaría apuntando a un bloque reutilizado). Se descarta
+    /// solo de memoria para acotarla; los bloques quedan filtrados (como antes
+    /// de #553) hasta que se arregle el enlace padre-hijo.
     fn reclaim_cow_garbage(&mut self) {
-        if self.snapshot_table.snapshot_count() > 0 {
-            return;
-        }
-        let garbage = core::mem::take(&mut self.cow_garbage);
-        for (lba, len) in garbage {
-            // Los bloques 0 (superblock) y 1 (raíz inicial) están reservados:
-            // no se reintroducen en la free list.
-            if lba >= 2 && len > 0 {
-                self.freelist.free(lba, len);
-            }
-        }
+        self.cow_garbage.clear();
     }
 
     /// Reconstruir la free list recorriendo el árbol de directorios y marcando
@@ -909,64 +905,4 @@ pub fn register_neodos_v2_tests() {
         let _ = crate::globals::BLOCK_DEVICES.lock().force_remove(dev_id);
     });
 
-    crate::test_case!("neofs_v2_cow_reclaims_garbage", {
-        let sectors = alloc::vec![[0u8; 512]; 4096];
-        let dev_id = crate::fs::fsck::register_test_device(sectors);
-        let io = IoStack::new(dev_id);
-        mkfs_ne2(&io, 512, "TEST").unwrap();
-
-        let mut fs = NeoDosFsV2::new(io).unwrap();
-        fs.create(0, "A.TXT").unwrap();
-        let inode = fs.lookup(0, "A.TXT").unwrap().inode;
-        let data = alloc::vec![0xABu8; 4096 * 10];
-
-        // Primera escritura + save (set_volume_label) que dispara la reclamación.
-        fs.write(inode, 0, &data).unwrap();
-        fs.set_volume_label("T").unwrap();
-        let f1 = fs.freelist.total_free();
-
-        // Reescribir el mismo tamaño debe ser neto cero: se allocan nuevos
-        // bloques/extents y se reclaman los antiguos.
-        for _ in 0..5 {
-            fs.write(inode, 0, &data).unwrap();
-            fs.set_volume_label("T").unwrap();
-        }
-        let f2 = fs.freelist.total_free();
-        crate::test_eq!(f1, f2);
-        crate::test_true!(fs.freelist.is_valid(512));
-        crate::test_eq!(fs.snapshot_table.snapshot_count(), 0);
-
-        let _ = crate::globals::BLOCK_DEVICES.lock().force_remove(dev_id);
-    });
-
-    crate::test_case!("neofs_v2_cow_garbage_gated_by_snapshots", {
-        let sectors = alloc::vec![[0u8; 512]; 4096];
-        let dev_id = crate::fs::fsck::register_test_device(sectors);
-        let io = IoStack::new(dev_id);
-        mkfs_ne2(&io, 512, "TEST").unwrap();
-
-        let mut fs = NeoDosFsV2::new(io).unwrap();
-        fs.create(0, "A.TXT").unwrap();
-        let inode = fs.lookup(0, "A.TXT").unwrap().inode;
-        let data = alloc::vec![0xCDu8; 4096 * 10];
-        fs.write(inode, 0, &data).unwrap();
-        let _snap = fs.snapshot_create().unwrap();
-
-        // Con un snapshot presente los bloques reemplazados NO se liberan.
-        let f_before = fs.freelist.total_free();
-        for _ in 0..3 {
-            fs.write(inode, 0, &data).unwrap();
-            fs.set_volume_label("T").unwrap();
-        }
-        let f_after = fs.freelist.total_free();
-        crate::test_true!(f_after < f_before);
-
-        // PURGE vacía la tabla y permite reclamar lo retenido.
-        fs.snapshot_purge().unwrap();
-        let f_purged = fs.freelist.total_free();
-        crate::test_true!(f_purged > f_after);
-        crate::test_true!(fs.freelist.is_valid(512));
-
-        let _ = crate::globals::BLOCK_DEVICES.lock().force_remove(dev_id);
-    });
 }
