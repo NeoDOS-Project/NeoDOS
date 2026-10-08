@@ -71,7 +71,7 @@ Sin partición MSR ni Recovery.
 El límite de ~28 entradas por directorio **no viene del runtime**, sino del generador
 de imágenes:
 
-- **Runtime:** `neodos-kernel/src/fs/btree.rs` implementa un B-tree persistente con
+- **Runtime:** `neodos-kernel/src/fs/neofs/btree/` implementa un B-tree persistente con
   `NodeType::Internal`/`Leaf`, `split_node()` y `split_internal()`. Tests
   `btree_forced_split` y `btree_stress_insert_500` cubren el caso multi-hoja.
 - **Builder:** `neodev/src/image.rs::make_btree_leaf()` emite **una sola hoja** y hace

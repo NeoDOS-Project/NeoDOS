@@ -112,6 +112,11 @@
   `AGENTS.md` gains rule 12 (one directory = one subsystem, downward
   dependencies, `mod.rs`, re-exports during migration).
 
+- **#543 / P3: group NeoFS v2 under `fs/neofs/`.** `neodos_v2`, `neodos_dir`,
+  `neodos_io`, `btree`, `freelist` and `snapshot` moved from `fs/` into
+  `fs/neofs/`; `crate::fs::<name>` paths kept via re-exports in `fs/mod.rs`.
+  `drivers/` deliberately untouched. No behavior change.
+
 ### Fixed
 
 - **Scheduler snapshot self-deadlock (BSP freeze before `[PROC_SNAPSHOT]`).**

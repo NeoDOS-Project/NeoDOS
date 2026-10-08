@@ -9,7 +9,7 @@ layer), FAT32 (ESP compat), IoStack (unified block I/O), and cache layers.
 
 NeoFS v2 (NE2) is the only native filesystem format supported by NeoDOS.
 
-Source: `src/fs/neodos_v2.rs`. Native on-disk format for NeoDOS partitions.
+Source: `src/fs/neofs/neodos_v2.rs`. Native on-disk format for NeoDOS partitions.
 All multi-byte integers are little-endian.
 
 ### Superblock v2
@@ -48,12 +48,12 @@ Located at LBA 0, exactly 512 bytes. Magic value: `0x0032454E` ("NE2\0").
 
 | File | Purpose |
 | ------ | --------- |
-| `src/fs/neodos_v2.rs` | NeoFS v2 implementation (`FileSystem` trait) |
-| `src/fs/neodos_dir.rs` | B-tree directory operations (`DirEntryV2`) |
-| `src/fs/neodos_io.rs` | Extent-based read/write + inline data |
-| `src/fs/btree.rs` | Generic persistent B-tree with COW |
-| `src/fs/freelist.rs` | Free block allocator |
-| `src/fs/snapshot.rs` | Snapshot table |
+| `src/fs/neofs/neodos_v2.rs` | NeoFS v2 implementation (`FileSystem` trait) |
+| `src/fs/neofs/neodos_dir.rs` | B-tree directory operations (`DirEntryV2`) |
+| `src/fs/neofs/neodos_io.rs` | Extent-based read/write + inline data |
+| `src/fs/neofs/btree/` | Generic persistent B-tree with COW |
+| `src/fs/neofs/freelist.rs` | Free block allocator |
+| `src/fs/neofs/snapshot.rs` | Snapshot table |
 | `src/fs/fsck/` | Trait-based integrity checkers (`FsckTrait`) |
 
 ### Permission Flags

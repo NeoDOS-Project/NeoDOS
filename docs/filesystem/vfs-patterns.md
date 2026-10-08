@@ -336,7 +336,7 @@ pub trait FileSystem: Send {
 
 **Current implementations**:
 
-- [`NeoDosFsV2`](../../neodos-kernel/src/fs/neodos_v2.rs) - NeoDOS native filesystem (NE2, NeoFS v2)
+- [`NeoDosFsV2`](../../neodos-kernel/src/fs/neofs/neodos_v2.rs) - NeoDOS native filesystem (NE2, NeoFS v2)
 - [`Fat32Driver`](../../neodos-kernel/src/fs/fat32.rs) - FAT32 (ESP boot partition)
 - `Iso9660Driver` - ISO 9660 (CD-ROM) — planned; no implementation yet
 
