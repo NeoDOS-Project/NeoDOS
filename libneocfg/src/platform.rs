@@ -65,6 +65,23 @@ pub struct ServiceInfo {
     pub running: bool,
 }
 
+/// Static identity/version data for the About screen.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AboutInfo {
+    /// NeoDOS / kernel version string (from `\Global\Info\Version`).
+    pub neodos_version: String,
+    /// Syscall ABI revision (e.g. 8).
+    pub syscall_abi: u32,
+    /// Target architecture (e.g. `"x86_64"`).
+    pub arch: String,
+    /// On-disk filesystem format (e.g. `"NE2 v2"`).
+    pub neofs: String,
+    /// `libneodos` NXL ABI revision (e.g. 7).
+    pub libneodos_abi: u32,
+    /// Build date, when the platform exposes one.
+    pub build_date: Option<String>,
+}
+
 /// Power plan (mirrors the Power Manager's plan index).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PowerPlan {
@@ -111,6 +128,8 @@ pub trait LocaleOps {
 /// Everything NeoCfg needs from the host system.
 pub trait CfgPlatform {
     fn version(&self) -> Result<VersionInfo, CfgError>;
+    /// Static identity/version data for the About screen.
+    fn about(&self) -> Result<AboutInfo, CfgError>;
     fn memory(&self) -> Result<MemInfo, CfgError>;
     fn cpu(&self) -> Result<CpuInfo, CfgError>;
     fn drives(&self) -> Result<Vec<DriveInfo>, CfgError>;

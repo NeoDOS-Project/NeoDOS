@@ -23,6 +23,14 @@ LOCALE_NOT_AVAILABLE = 1017
 PRESS_KEY = 1018
 NEOCFG_YES = 1019
 NEOCFG_NO = 1020
+ABOUT_TITLE = 1021
+ABOUT_NEODOS = 1022
+ABOUT_ABI = 1023
+ABOUT_ARCH = 1024
+ABOUT_NEOFS = 1025
+ABOUT_LIBNEODOS = 1026
+ABOUT_BUILD = 1027
+ABOUT_UNAVAILABLE = 1028
 
 [strings]
 NEOCFG_TITLE = "NeoCfg - Control Panel"
@@ -45,3 +53,11 @@ LOCALE_NOT_AVAILABLE = "Internationalization is not available on this system."
 PRESS_KEY = "Press any key to return..."
 NEOCFG_YES = "Yes"
 NEOCFG_NO = "No"
+ABOUT_TITLE = "About NeoDOS"
+ABOUT_NEODOS = "Version"
+ABOUT_ABI = "Syscall ABI"
+ABOUT_ARCH = "Architecture"
+ABOUT_NEOFS = "Filesystem"
+ABOUT_LIBNEODOS = "libneodos ABI"
+ABOUT_BUILD = "Build date"
+ABOUT_UNAVAILABLE = "Version information is not available."

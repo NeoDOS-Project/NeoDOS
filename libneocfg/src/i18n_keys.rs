@@ -34,3 +34,13 @@ pub const LOCALE_NOT_AVAILABLE: u32 = 1017;
 pub const PRESS_KEY: u32 = 1018;
 pub const NEOCFG_YES: u32 = 1019;
 pub const NEOCFG_NO: u32 = 1020;
+
+// ── About module ───────────────────────────────────────────────────────
+pub const ABOUT_TITLE: u32 = 1021;
+pub const ABOUT_NEODOS: u32 = 1022;
+pub const ABOUT_ABI: u32 = 1023;
+pub const ABOUT_ARCH: u32 = 1024;
+pub const ABOUT_NEOFS: u32 = 1025;
+pub const ABOUT_LIBNEODOS: u32 = 1026;
+pub const ABOUT_BUILD: u32 = 1027;
+pub const ABOUT_UNAVAILABLE: u32 = 1028;

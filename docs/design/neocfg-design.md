@@ -347,6 +347,10 @@ tr!("about.build"):           2026-07-11
 - Valores fijos compilados: Syscall ABI (v8), arch, NeoFS version
 - `libneodos::export::ABI_VERSION` (v7) para la NXL ABI table de libneodos
 
+> **Nota:** el kernel no expone una *fecha de compilación* por el namespace Ob,
+> así que la fila "Build date" se omite hasta que exista esa fuente. La versión
+> del kernel ya incluye `git <rev>`.
+
 ### 3.11 Nuevos tipos/structs
 
 **En `userbin/neocfg/src/lib.rs`:**
@@ -1059,6 +1063,7 @@ pub trait Translator { fn tr(&self, id: u32) -> &str; }
 /// Devuelve `None` en las capacidades opcionales aún no implementadas (Power/Locale).
 pub trait CfgPlatform {
     fn version(&self) -> Result<VersionInfo, CfgError>;
+    fn about(&self) -> Result<AboutInfo, CfgError>;   // identidad/versiones (About)
     fn memory(&self) -> Result<MemInfo, CfgError>;
     fn cpu(&self) -> Result<CpuInfo, CfgError>;
     fn drives(&self) -> Result<Vec<DriveInfo>, CfgError>;

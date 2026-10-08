@@ -2,7 +2,7 @@
 
 use crate::i18n_keys as k;
 use crate::mocks::{MockPlatform, MockTranslator, MockUi};
-use crate::model::{Intent, Text, View};
+use crate::model::{FieldValue, Intent, Text, View};
 use crate::platform::{CfgPlatform, PowerPlan};
 use crate::{App, MODULES};
 
@@ -171,11 +171,61 @@ fn about_is_reachable_by_activate_after_navigation() {
         let mut app = App::new(MODULES, &tr, &mut ui);
         app.run(&platform).unwrap();
     }
-    // views: Menu, Menu, Menu, Menu, Menu, About(message), Menu
+    // views: Menu x5, About(detail), Menu
     match &ui.views[5] {
-        View::Message { title, .. } => assert_eq!(*title, Text::Key(k::MODULE_ABOUT_NAME)),
-        other => panic!("expected About message, got {other:?}"),
+        View::Detail { title, .. } => assert_eq!(*title, Text::Key(k::ABOUT_TITLE)),
+        other => panic!("expected About detail, got {other:?}"),
     }
+}
+
+#[test]
+fn about_shows_version_arch_and_neofs() {
+    let tr = MockTranslator::new();
+    let mut ui = MockUi::new(vec![Intent::Select(4), Intent::Char('x')]);
+    let platform = MockPlatform::default();
+    {
+        let mut app = App::new(MODULES, &tr, &mut ui);
+        app.run(&platform).unwrap();
+    }
+
+    let fields = match &ui.views[1] {
+        View::Detail { title, fields, .. } => {
+            assert_eq!(*title, Text::Key(k::ABOUT_TITLE));
+            fields
+        }
+        other => panic!("expected About detail, got {other:?}"),
+    };
+
+    let text_of = |key: u32| -> &str {
+        fields
+            .iter()
+            .find(|f| f.label == Text::Key(key))
+            .and_then(|f| match &f.value {
+                FieldValue::Text(Text::Owned(v)) => Some(v.as_str()),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("missing field {key}"))
+    };
+
+    assert!(text_of(k::ABOUT_NEODOS).contains("v0."));
+    assert_eq!(text_of(k::ABOUT_ARCH), "x86_64");
+    assert!(text_of(k::ABOUT_NEOFS).contains("NE2"));
+    assert!(text_of(k::ABOUT_ABI).contains('8'));
+    assert!(text_of(k::ABOUT_LIBNEODOS).contains('7'));
+}
+
+#[test]
+fn about_is_read_only() {
+    // About must not mutate platform state: a second view is identical.
+    let platform = MockPlatform::default();
+    let session = {
+        let m = MODULES[4];
+        assert_eq!(m.id(), crate::ModuleId::About);
+        m.create()
+    };
+    let first = session.view(&platform);
+    let second = session.view(&platform);
+    assert_eq!(first, second);
 }
 
 #[test]

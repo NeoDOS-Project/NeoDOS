@@ -9,7 +9,7 @@ use core::cell::{Cell, RefCell};
 use crate::i18n::Translator;
 use crate::model::{Intent, View};
 use crate::platform::{
-    CfgError, CfgPlatform, CpuInfo, DriveInfo, LocaleOps, MemInfo, PowerOps, PowerPlan,
+    AboutInfo, CfgError, CfgPlatform, CpuInfo, DriveInfo, LocaleOps, MemInfo, PowerOps, PowerPlan,
     ServiceInfo, VersionInfo,
 };
 use crate::ui::CfgUi;
@@ -128,6 +128,7 @@ impl LocaleOps for MockLocale {
 /// In-memory [`CfgPlatform`] with sensible defaults.
 pub struct MockPlatform {
     pub version: String,
+    pub about_info: AboutInfo,
     pub mem: MemInfo,
     pub cpu: CpuInfo,
     pub drives: Vec<DriveInfo>,
@@ -144,6 +145,14 @@ impl Default for MockPlatform {
     fn default() -> Self {
         MockPlatform {
             version: "NeoDOS v0.0.0".to_owned(),
+            about_info: AboutInfo {
+                neodos_version: "NeoDOS Kernel v0.0.0 (mock)".to_owned(),
+                syscall_abi: 8,
+                arch: "x86_64".to_owned(),
+                neofs: "NE2 v2".to_owned(),
+                libneodos_abi: 7,
+                build_date: None,
+            },
             mem: MemInfo {
                 total_kib: 1024 * 1024,
                 used_kib: 256 * 1024,
@@ -201,6 +210,10 @@ impl CfgPlatform for MockPlatform {
 
     fn memory(&self) -> Result<MemInfo, CfgError> {
         Ok(self.mem.clone())
+    }
+
+    fn about(&self) -> Result<AboutInfo, CfgError> {
+        Ok(self.about_info.clone())
     }
 
     fn cpu(&self) -> Result<CpuInfo, CfgError> {

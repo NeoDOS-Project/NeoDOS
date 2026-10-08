@@ -7,13 +7,20 @@ use alloc::{string::String, vec::Vec};
 use core::mem::size_of;
 
 use libneocfg::{
-    CfgError, CfgPlatform, CpuInfo, DriveInfo, LocaleOps, MemInfo, PowerOps, ServiceInfo,
+    AboutInfo, CfgError, CfgPlatform, CpuInfo, DriveInfo, LocaleOps, MemInfo, PowerOps, ServiceInfo,
     VersionInfo,
 };
 use libneodos::i18n;
 use libneodos::syscall::{
     self, ob_access, MemInfo as SysMemInfo, ObEnumEntry, ObInfoClass, ObSetInfoClass,
 };
+
+/// Syscall ABI revision (`docs/kernel/syscalls.md`).
+const SYSCALL_ABI: u32 = 8;
+/// Target architecture.
+const ARCH: &str = "x86_64";
+/// On-disk filesystem format (`docs/filesystem/neofs-v2.md`).
+const NEOFS_VERSION: &str = "NE2 v2";
 
 /// An 8-byte-aligned byte buffer for structured `ob_query_info` results.
 #[repr(C, align(8))]
@@ -72,6 +79,19 @@ impl CfgPlatform for NeodosPlatform {
         let n = n.min(buf.len());
         Ok(VersionInfo {
             version: String::from_utf8_lossy(trim(&buf[..n])).into_owned(),
+        })
+    }
+
+    fn about(&self) -> Result<AboutInfo, CfgError> {
+        Ok(AboutInfo {
+            neodos_version: self.version()?.version,
+            syscall_abi: SYSCALL_ABI,
+            arch: String::from(ARCH),
+            neofs: String::from(NEOFS_VERSION),
+            libneodos_abi: libneodos::export::ABI_VERSION,
+            // The kernel does not expose a build date through the Ob namespace;
+            // the row is omitted until one exists.
+            build_date: None,
         })
     }
 
