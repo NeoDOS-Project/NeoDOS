@@ -169,6 +169,14 @@
 
 ### Fixed
 
+- **Filesystem: disable unsafe NeoFS v2 COW reclamation (#563).** Reclaiming
+  COW-replaced blocks is not safe until subdirectory B-tree root changes are
+  persisted to the parent `DirEntry` (#563): the parent kept pointing at the
+  replaced root, so freeing it corrupted `C:` on the second boot (the parent
+  ended up pointing at a free-list node). `reclaim_cow_garbage` now only drops
+  the in-memory list; replaced blocks leak as before #553 until #563 is fixed.
+  The `neofs_v2_cow_*` reclamation tests were removed accordingly.
+
 - **Scheduler snapshot self-deadlock (BSP freeze before `[PROC_SNAPSHOT]`).**
   `kernel_snapshot_into()` acquired the global `SCHEDULER` spinlock with
   interrupts enabled; a same-CPU timer IRQ then re-entered the non-reentrant
