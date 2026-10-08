@@ -277,7 +277,7 @@ mod tests {
             "coreren", "coredel", "corecls", "tree", "dhcpd", "netcfg",
             "ipconfig", "cpuinfo", "stresscmd", "cmdtest", "shtest", "nxlocale",
             "nxres", "nxverify", "hostname", "keyb", "nslookup", "ping",
-            "dhcptest", "ntpd", "netd", "netapplier",
+            "dhcptest", "ntpd", "netd", "netapplier", "neocfg",
         ];
         let mut ids: Vec<u32> = KNOWN.iter().map(|a| app_to_id(a)).collect();
         ids.sort_unstable();
