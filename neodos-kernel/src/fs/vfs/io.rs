@@ -94,7 +94,7 @@ impl IoStack {
             let _ord_bd = crate::lock_order::Guard::new(crate::lock_order::BLOCK_DEVICES);
             let mut bdevs_lock = crate::globals::BLOCK_DEVICES.lock();
             if let Some(dev) = bdevs_lock.get(self.device_id) {
-                if let Ok(sector) = cache_lock.get_sector(abs_lba as u32, dev) {
+                if let Ok(sector) = cache_lock.get_sector(abs_lba as u32, self.device_id as u64, dev) {
                     buf[..512].copy_from_slice(sector);
                     return Ok(());
                 }
@@ -121,7 +121,7 @@ impl IoStack {
             let _ord_bd = crate::lock_order::Guard::new(crate::lock_order::BLOCK_DEVICES);
             let mut bdevs_lock = crate::globals::BLOCK_DEVICES.lock();
             if let Some(dev) = bdevs_lock.get(self.device_id) {
-                if let Ok(sector) = cache_lock.get_sector_mut(abs_lba as u32, dev) {
+                if let Ok(sector) = cache_lock.get_sector_mut(abs_lba as u32, self.device_id as u64, dev) {
                     sector.copy_from_slice(&buf[..512]);
                     crate::globals::NEED_CACHE_FLUSH.store(true, core::sync::atomic::Ordering::Relaxed);
                     return Ok(());

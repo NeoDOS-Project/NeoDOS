@@ -16,6 +16,7 @@ pub fn file_read(
     offset: u64,
     buf: &mut [u8],
     cache: &mut PageCache,
+    dev_tag: u64,
     dev: &mut dyn BlockDevice,
 ) -> Result<usize, ()> {
     if entry.inline_len > 0 {
@@ -46,7 +47,7 @@ pub fn file_read(
 
     while bytes_read < buf.len() && block < total_blocks {
         let lba = start_lba + block as u64 * 8;
-        let data = cache.read_page(0, 0, block, lba, dev)?;
+        let data = cache.read_page(0, 0, block, lba, dev_tag, dev)?;
         let to_copy = (BLOCK_SIZE - block_offset)
             .min(buf.len() - bytes_read)
             .min((entry.size - offset - bytes_read as u64) as usize);
@@ -66,6 +67,7 @@ pub fn file_write(
     data: &[u8],
     freelist: &mut FreeList,
     cache: &mut PageCache,
+    dev_tag: u64,
     dev: &mut dyn BlockDevice,
     partition_base_sector: u64,
 ) -> Result<DirEntryV2, ()> {
@@ -110,7 +112,7 @@ pub fn file_write(
         && (offset > 0 || (offset as usize + data.len()) < new_size);
     let old = if need_preserve {
         let mut buf = alloc::vec![0u8; new_entry.size as usize];
-        let _ = file_read(entry, 0, &mut buf, cache, dev);
+        let _ = file_read(entry, 0, &mut buf, cache, dev_tag, dev);
         Some(buf)
     } else {
         None
@@ -119,7 +121,7 @@ pub fn file_write(
     // Escribir datos bloque por bloque
     for block_idx in 0..total_blocks {
         let sector_lba = start_sector + block_idx as u64 * 8;
-        let page = cache.get_page_mut(0, 0, block_idx, sector_lba, dev)?;
+        let page = cache.get_page_mut(0, 0, block_idx, sector_lba, dev_tag, dev)?;
         let block_start = block_idx as usize * BLOCK_SIZE;
         let to_write = core::cmp::min(BLOCK_SIZE, new_size - block_start);
         if to_write == 0 {
@@ -161,7 +163,7 @@ pub fn file_write(
         let mut full = alloc::vec![0u8; new_size];
         let mut ck_entry = new_entry.clone();
         ck_entry.extent_lba = start_sector;
-        let _ = file_read(&ck_entry, 0, &mut full, cache, dev);
+        let _ = file_read(&ck_entry, 0, &mut full, cache, dev_tag, dev);
         new_entry.checksum = crc32(&full);
         ck_entry.extent_lba = start_block;
     }
