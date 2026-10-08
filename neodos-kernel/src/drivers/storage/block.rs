@@ -99,6 +99,15 @@ impl BlockDeviceManager {
         self.count
     }
 
+    /// Visit every present block device together with its index.
+    pub fn for_each_present(&mut self, mut f: impl FnMut(usize, &mut dyn BlockDevice)) {
+        for i in 0..MAX_BLOCK_DEVICES {
+            if let Some(Some(dev)) = self.devices.get_mut(i) {
+                f(i, &mut **dev);
+            }
+        }
+    }
+
     /// Find a registered device by name. Returns its index.
     pub fn find_by_name(&self, name: &str) -> Option<usize> {
         for i in 0..MAX_BLOCK_DEVICES {
