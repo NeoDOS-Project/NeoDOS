@@ -307,30 +307,6 @@ impl NeoDosFsV2 {
         }
     }
 
-    /// LBAs de todos los nodos alcanzables desde `root` (B-tree de un directorio).
-    fn tree_lbas(&self, root: u64) -> Vec<u64> {
-        let mut v = Vec::new();
-        BTree::walk_lbas(self, root, &mut |lba| v.push(lba));
-        v
-    }
-
-    /// Registrar como basura COW los nodos que estaban reachables desde el
-    /// árbol antiguo (`before`) y ya no lo están desde `new_root`.
-    fn note_cow_garbage(&mut self, before: &[u64], new_root: u64) {
-        if before.is_empty() {
-            return;
-        }
-        let mut after = self.tree_lbas(new_root);
-        after.sort_unstable();
-        for &lba in before {
-            if lba == 0 || lba == new_root {
-                continue;
-            }
-            if after.binary_search(&lba).is_err() {
-                self.cow_garbage.push((lba, 1));
-            }
-        }
-    }
 
     /// Reclamar la basura COW. Solo es seguro con la tabla de snapshots vacía:
     /// con snapshots presentes un nodo reemplazado puede seguir siendo
@@ -497,11 +473,11 @@ impl FileSystem for NeoDosFsV2 {
             self.cow_garbage.push((entry.extent_lba, entry.extent_count));
         }
 
-        let before = self.tree_lbas(btree_root);
-        let new_root = BTree::insert(self, btree_root, &new_entry.name, &{
+        let mut garbage = Vec::new();
+        let new_root = BTree::insert_tracked(self, btree_root, &new_entry.name, &{
             let mut tmp = [0u8; DIRENTRY_SIZE]; new_entry.serialize(&mut tmp); tmp.to_vec()
-        }).ok_or(VfsError::IOError)?;
-        self.note_cow_garbage(&before, new_root);
+        }, &mut garbage).ok_or(VfsError::IOError)?;
+        for lba in garbage { self.cow_garbage.push((lba, 1)); }
 
         if btree_root == self.sb.root_btree_lba { self.sb.root_btree_lba = new_root; }
         // Update parent directory's cache entry if its root changed
@@ -552,11 +528,11 @@ impl FileSystem for NeoDosFsV2 {
         entry.extent_lba = subdir_root;
         entry.created = crate::hal::get_ticks(); entry.modified = entry.created;
 
-        let before = self.tree_lbas(btree_root);
-        let new_root = BTree::insert(self, btree_root, name.as_bytes(), &{
+        let mut garbage = Vec::new();
+        let new_root = BTree::insert_tracked(self, btree_root, name.as_bytes(), &{
             let mut tmp = [0u8; DIRENTRY_SIZE]; entry.serialize(&mut tmp); tmp.to_vec()
-        }).ok_or(VfsError::IOError)?;
-        self.note_cow_garbage(&before, new_root);
+        }, &mut garbage).ok_or(VfsError::IOError)?;
+        for lba in garbage { self.cow_garbage.push((lba, 1)); }
 
         if dir_inode == 0 { self.sb.root_btree_lba = new_root; }
         self.update_inode_root(dir_inode, new_root);
@@ -568,11 +544,11 @@ impl FileSystem for NeoDosFsV2 {
     fn create(&mut self, dir_inode: u32, name: &str) -> Result<VfsNode, VfsError> {
         let btree_root = self.inode_cache.get(dir_inode as usize).and_then(|x| x.as_ref()).map(|x| x.0).ok_or(VfsError::NotFound)?;
         let entry = DirEntryV2::new_file(name);
-        let before = self.tree_lbas(btree_root);
-        let new_root = BTree::insert(self, btree_root, name.as_bytes(), &{
+        let mut garbage = Vec::new();
+        let new_root = BTree::insert_tracked(self, btree_root, name.as_bytes(), &{
             let mut tmp = [0u8; DIRENTRY_SIZE]; entry.serialize(&mut tmp); tmp.to_vec()
-        }).ok_or(VfsError::IOError)?;
-        self.note_cow_garbage(&before, new_root);
+        }, &mut garbage).ok_or(VfsError::IOError)?;
+        for lba in garbage { self.cow_garbage.push((lba, 1)); }
         if dir_inode == 0 { self.sb.root_btree_lba = new_root; }
         self.update_inode_root(dir_inode, new_root);
         self.save_sb().map_err(|_| VfsError::IOError)?;
@@ -589,9 +565,9 @@ impl FileSystem for NeoDosFsV2 {
     fn remove_file(&mut self, dir_inode: u32, name: &str) -> Result<(), VfsError> {
         let btree_root = self.inode_cache.get(dir_inode as usize).and_then(|x| x.as_ref()).map(|x| x.0).ok_or(VfsError::NotFound)?;
         if let Some(e) = dir_lookup(self, btree_root, name) { file_free_extents(&e, &mut self.freelist); }
-        let before = self.tree_lbas(btree_root);
-        let nr = BTree::delete(self, btree_root, name.as_bytes()).ok_or(VfsError::IOError)?;
-        self.note_cow_garbage(&before, nr.unwrap_or(0));
+        let mut garbage = Vec::new();
+        let nr = BTree::delete_tracked(self, btree_root, name.as_bytes(), &mut garbage).ok_or(VfsError::IOError)?;
+        for lba in garbage { self.cow_garbage.push((lba, 1)); }
         if let Some(r) = nr {
             if dir_inode == 0 { self.sb.root_btree_lba = r; }
             self.update_inode_root(dir_inode, r);
@@ -608,9 +584,9 @@ impl FileSystem for NeoDosFsV2 {
             }
             file_free_extents(&e, &mut self.freelist);
         }
-        let before = self.tree_lbas(btree_root);
-        let nr = BTree::delete(self, btree_root, name.as_bytes()).ok_or(VfsError::IOError)?;
-        self.note_cow_garbage(&before, nr.unwrap_or(0));
+        let mut garbage = Vec::new();
+        let nr = BTree::delete_tracked(self, btree_root, name.as_bytes(), &mut garbage).ok_or(VfsError::IOError)?;
+        for lba in garbage { self.cow_garbage.push((lba, 1)); }
         if let Some(r) = nr {
             if dir_inode == 0 { self.sb.root_btree_lba = r; }
             self.update_inode_root(dir_inode, r);
@@ -622,14 +598,14 @@ impl FileSystem for NeoDosFsV2 {
         let btree_root = self.inode_cache.get(dir_inode as usize).and_then(|x| x.as_ref()).map(|x| x.0).ok_or(VfsError::NotFound)?;
         let entry = dir_lookup(self, btree_root, old).ok_or(VfsError::NotFound)?;
         let entry_clone = entry.clone();
-        let before = self.tree_lbas(btree_root);
-        let ad = BTree::delete(self, btree_root, old.as_bytes()).ok_or(VfsError::IOError)?;
+        let mut garbage = Vec::new();
+        let ad = BTree::delete_tracked(self, btree_root, old.as_bytes(), &mut garbage).ok_or(VfsError::IOError)?;
         let ad = ad.unwrap_or(btree_root);
         let mut renamed = entry_clone; renamed.name = new.as_bytes().to_vec();
-        let nr = BTree::insert(self, ad, new.as_bytes(), &{
+        let nr = BTree::insert_tracked(self, ad, new.as_bytes(), &{
             let mut tmp = [0u8; DIRENTRY_SIZE]; renamed.serialize(&mut tmp); tmp.to_vec()
-        }).ok_or(VfsError::IOError)?;
-        self.note_cow_garbage(&before, nr);
+        }, &mut garbage).ok_or(VfsError::IOError)?;
+        for lba in garbage { self.cow_garbage.push((lba, 1)); }
         if dir_inode == 0 { self.sb.root_btree_lba = nr; }
         self.update_inode_root(dir_inode, nr);
         self.save_sb().map_err(|_| VfsError::IOError)
