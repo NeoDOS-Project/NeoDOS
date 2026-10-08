@@ -197,4 +197,42 @@ mod tests {
         assert_eq!(app_to_id("neolocale"), 7);
         assert!(app_to_id("made-up") & 0x8000 != 0);
     }
+
+    #[test]
+    fn known_app_ids_are_unique_and_low() {
+        // Keep in sync with the `match` in `app_to_id` (#583).
+        const KNOWN: &[&str] = &[
+            "neoshell", "neoinit", "corehelp", "coredir", "corecopy", "coretype",
+            "neolocale", "neokey", "neomem", "neotop", "kill", "ps", "label",
+            "fsck", "poweroff", "reboot", "datetime", "ver", "echo", "drives",
+            "pri", "cd", "colors", "progress", "vol", "corerd", "coremd",
+            "coreren", "coredel", "corecls", "tree", "dhcpd", "netcfg",
+            "ipconfig", "cpuinfo", "stresscmd", "cmdtest", "shtest", "nxlocale",
+            "nxres", "nxverify", "hostname", "keyb", "nslookup", "ping",
+            "dhcptest", "ntpd", "netd", "netapplier",
+        ];
+        let mut ids: Vec<u32> = KNOWN.iter().map(|a| app_to_id(a)).collect();
+        ids.sort_unstable();
+        let before = ids.len();
+        ids.dedup();
+        assert_eq!(before, ids.len(), "duplicate known app id");
+        for (app, id) in KNOWN.iter().zip(KNOWN.iter().map(|a| app_to_id(a))) {
+            assert!(id < 0x8000, "{app} id {id:#x} collides with the CRC range");
+        }
+    }
+
+    #[test]
+    fn app_id_is_case_insensitive_and_stable() {
+        assert_eq!(app_to_id("NeoCfg"), app_to_id("neocfg"));
+        assert_eq!(app_to_id("made-up"), app_to_id("MADE-UP"));
+    }
+
+    #[test]
+    fn known_langs_round_trip() {
+        for tag in ["en-US", "es-ES", "ca-ES", "fr-FR", "de-DE", "ja-JP", "ar-SA"] {
+            let id = lang_to_id(tag);
+            assert_eq!(id_to_lang(id), tag, "round-trip failed for {tag}");
+            assert!(!lang_name(id).is_empty());
+        }
+    }
 }

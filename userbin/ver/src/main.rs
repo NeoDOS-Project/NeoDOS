@@ -12,12 +12,9 @@ fn noop_test_runner(_tests: &[&dyn Fn()]) {
 use libneodos::i18n;
 use libneodos::syscall;
 use libneodos::syscall::ObInfoClass;
-use libneodos::tr_id;
+use libneodos::tr;
 
 const APP_NAME: &str = "ver";
-const IDS_USAGE: u32 = 1001;
-const IDS_USAGE_LINE2: u32 = 1002;
-const IDS_FALLBACK: u32 = 1003;
 
 fn write_str(s: &[u8]) {
     let _ = syscall::sys_write(1, s);
@@ -25,9 +22,9 @@ fn write_str(s: &[u8]) {
 
 fn print_help() {
     write_str(b"\r\n");
-    write_str(tr_id!(IDS_USAGE).as_bytes());
+    write_str(tr!("ver.IDS_USAGE").as_bytes());
     write_str(b"\r\n");
-    write_str(tr_id!(IDS_USAGE_LINE2).as_bytes());
+    write_str(tr!("ver.IDS_USAGE_LINE2").as_bytes());
     write_str(b"\r\n\r\n");
 }
 
@@ -56,7 +53,7 @@ pub extern "C" fn _start() -> ! {
         }
         _ => {
             write_str(b"\r\n");
-            write_str(tr_id!(IDS_FALLBACK).as_bytes());
+            write_str(tr!("ver.IDS_FALLBACK").as_bytes());
             write_str(b"\r\n\r\n");
         }
     }

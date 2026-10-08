@@ -19,6 +19,7 @@ pub mod seh;
 pub mod console;
 pub mod keyboard;
 pub mod i18n;
+pub mod i18n_keymap;
 pub mod res;
 pub mod service;
 // Re-export commonly used syscall helpers for convenience.

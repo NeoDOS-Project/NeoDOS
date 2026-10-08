@@ -155,6 +155,9 @@ pub fn i18n_is_rtl() -> bool;
 pub fn i18n_load(app: &str) -> Result<(), ()>;   // NLTv2/v3
 pub fn i18n_get_id(id: u32) -> &'static str;     // "?" on miss
 pub fn i18n_try_get_id(id: u32) -> Option<&'static str>;
+/// Compile-time symbolic key ("<app>.<NAME>") resolution (#578).
+pub const fn key_id(key: &str) -> u32;           // unknown key = compile error
+pub fn try_key_id(key: &str) -> Option<u32>;     // runtime lookup
 pub fn i18n_plural(id: u32, n: u64) -> &'static str;
 pub fn i18n_format(id: u32, args: &[&str]) -> &'static str;
 pub fn i18n_format_str(tmpl: &str, args: &[&str]) -> &'static str;
@@ -173,23 +176,47 @@ pub fn i18n_verify_signature(data: &[u8], pk: &[u8;32]) -> bool; // feature
 tr_id!(IDS_OK)              // → i18n_get_id(IDS_OK)
 tr_fmt!(IDS_DATE, &[&day])  // → i18n_format(IDS_DATE, &[&day])
 plural_id!(IDS_FILES, n)    // → i18n_plural(IDS_FILES, n)
+
+// String-key form (preferred when the keymap is present): the key is resolved
+// at compile time, so a typo/missing key is a build error.
+tr!("ver.IDS_OK")                 // → i18n_get_id(key_id("ver.IDS_OK"))
+tr_key_fmt!("ver.IDS_DATE", &[&day])
+tr_plural!("ver.IDS_FILES", n)
 ```
 
 ---
 
 ## 5. Constants in Code
 
-Generate once from the TOML and commit, or keep them in sync manually:
+Two authoring styles:
 
-```bash
-nltc --generate-rust neoshell.toml src/ids.rs
-```
+1. **Symbolic string keys (preferred).** The compiler emits a global keymap
+   (`libneodos/src/i18n_keymap.rs`) with `"<app>.<NAME>" → id`; `tr!` resolves it
+   at compile time.
 
-```rust
-mod ids;
-use ids::*;
-write_str(tr_id!(IDS_OK).as_bytes());
-```
+   ```rust
+   use libneodos::tr;
+   write_str(tr!("ver.IDS_OK").as_bytes());
+   ```
+
+   Regenerate after catalog changes:
+
+   ```bash
+   nltc --generate-keymap data/locale/en-US libneodos/src/i18n_keymap.rs
+   scripts/check-i18n.sh      # fails on drift / missing / mismatched keys
+   ```
+
+2. **Numeric constants.** Generate once from the TOML and commit:
+
+   ```bash
+   nltc --generate-rust neoshell.toml src/ids.rs
+   ```
+
+   ```rust
+   mod ids;
+   use ids::*;
+   write_str(tr_id!(IDS_OK).as_bytes());
+   ```
 
 ---
 
@@ -262,7 +289,11 @@ See `nltc --list-langs`. IDs `0x8000+` are CRC32-derived for unknown tags.
 | 8   | neokey   | 35   | netcfg     |
 | 9   | neomem   | 36   | ipconfig   |
 
-See `libnlt/src/lang.rs` for the full table. Unknown apps get `0x8000+`.
+See `libnlt/src/lang.rs` for the full table. Unknown apps get a stable
+CRC32-derived id (`0x8000 | (crc32(name) & 0x7FFF)`), so adding a known app is
+optional and purely for readability. The table is shared by `nltc` and the
+runtime (`libnlt`), and unit tests assert known ids are unique and stay below
+`0x8000` (#583).
 
 ---
 
@@ -303,9 +334,12 @@ live in the NLT system and be translated to:
 
 ## 13. Adding a Key
 
-1. Add the entry to `[ids]` and `[strings]` in all locale sources.
+1. Add an explicit entry to `[ids]` and the matching value to `[strings]` in
+   **all** locale sources (entry ids are a stable ABI — never auto-assigned).
 2. Recompile: `nltc --generate-all data/locale/{locale}`.
-3. Declare `const IDS_NEW: u32 = N;` and use `tr_id!(IDS_NEW)`.
+3. Regenerate the keymap: `nltc --generate-keymap data/locale/en-US libneodos/src/i18n_keymap.rs`.
+4. Use the key: `tr!("myapp.IDS_NEW")`, or `tr_id!(IDS_NEW)` with a numeric const.
+5. `scripts/check-i18n.sh` must pass (coverage, frozen ids, bindings, keymap).
 
 ---
 

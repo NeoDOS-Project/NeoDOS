@@ -333,6 +333,21 @@ pub fn i18n_get_id(id: u32) -> &'static str {
     i18n_try_get_id(id).unwrap_or("?")
 }
 
+// ── Symbolic key resolution (#578) ─────────────────────────────────────
+
+/// Resolve a symbolic key (`"<app>.<NAME>"`) to its numeric id.
+///
+/// `const`-evaluable: used by `tr!` inside a `const`, an unknown key is a
+/// **compile-time error**.
+pub const fn key_id(key: &str) -> u32 {
+    libnlt::keys::require(crate::i18n_keymap::NLT_KEYMAP, key)
+}
+
+/// Runtime variant of [`key_id`]; `None` for an unknown key.
+pub fn try_key_id(key: &str) -> Option<u32> {
+    libnlt::keys::find(crate::i18n_keymap::NLT_KEYMAP, key)
+}
+
 /// Look up a plural group and select the form for `n`.
 pub fn i18n_plural(id: u32, n: u64) -> &'static str {
     unsafe {
