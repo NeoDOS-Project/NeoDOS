@@ -241,6 +241,7 @@ pub fn register_tests() {
     crate::fs::freelist::register_freelist_tests();
     crate::fs::snapshot::register_snapshot_tests();
     crate::fs::neodos_dir::register_dir_tests();
+    crate::fs::neodos_v2::register_neodos_v2_tests();
     crate::fs::fsck::register_fsck_tests();
     crate::object::register_object_tests();
     crate::object::pipe::register_tests();

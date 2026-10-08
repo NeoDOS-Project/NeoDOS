@@ -6,6 +6,19 @@
 
 ### Added
 
+- **Filesystem: NeoFS v2 free list persistence, best-fit allocation and mount
+  recovery (#15).** The free list is now written to disk as a chain of type-3
+  nodes whose head LBA lives in `SuperblockNE2::freelist_lba`; every
+  `save_sb` re-serializes it and returns the previous chain blocks to the free
+  list so no space leaks. On mount the persisted list is loaded and validated,
+  and if it is missing, out of range or corrupted the list is reconstructed by
+  walking the directory B-tree (nodes, file extents and subdirectories).
+  Allocation is now **best-fit** (smallest region that fits, split when
+  larger). The B-tree COW allocator draws from this list. The superblock CRC32
+  now covers all 512 bytes (with the checksum field zeroed), protecting
+  `freelist_lba`. `neodos-kernel/src/fs/neofs/{freelist,neodos_v2,btree/tree}.rs`
+  and `docs/filesystem/neofs-v2.md` updated.
+
 - **Scheduler: per-CPU O(1) priority runqueues (`feat/per-cpu-scheduler`).**
   The dispatch fast path no longer performs a global linear scan of all Ready
   threads. Each CPU owns a 4-level priority runqueue (`src/arch/x64/cpu_local.rs`)

@@ -233,8 +233,14 @@ struct SuperblockNE2 {
 
 impl SuperblockNE2 {
     fn checksum(&self) -> u32 {
-        let raw = unsafe { core::slice::from_raw_parts(self as *const _ as *const u8, 72) };
-        crc32(raw)
+        // CRC32 de los 512 bytes del superblock con el propio campo de
+        // checksum (`reserved[0..4]`) a cero. Debe coincidir con
+        // `superblock_crc` en `fs/neofs/neodos_v2.rs`.
+        let raw = unsafe { core::slice::from_raw_parts(self as *const _ as *const u8, 512) };
+        let mut buf = [0u8; 512];
+        buf.copy_from_slice(raw);
+        buf[109..113].fill(0);
+        crc32(&buf)
     }
 }
 
