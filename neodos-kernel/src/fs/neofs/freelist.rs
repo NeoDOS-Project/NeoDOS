@@ -1,5 +1,7 @@
 //! Free list de regiones contiguas.
-//! Almacenada en nodos de 4KB (tipo 3). Alloc first-fit. Free mergea adyacentes.
+//! Almacenada en nodos de 4KB (tipo 3). Alloc best-fit. Free mergea adyacentes.
+//! Las regiones se serializan encadenadas mediante `next_lba` y su cabeza se
+//! guarda en `SuperblockNE2::freelist_lba` para recuperarlas al montar.
 
 #![allow(dead_code)]
 
@@ -36,13 +38,20 @@ impl FreeList {
         fl
     }
 
-    /// Alocar `count` bloques contiguos. First-fit. Devuelve (start_lba, length_real).
+    /// Alocar `count` bloques contiguos. Best-fit: elige la región libre más
+    /// pequeña que quepa, para minimizar la fragmentación. Divide la región
+    /// si es mayor que lo pedido. Devuelve (start_lba, length_real).
     pub fn alloc(&mut self, count: u32) -> Option<(u64, u32)> {
-        let mut best = None;
+        if count == 0 {
+            return None;
+        }
+        let mut best: Option<usize> = None;
         for (i, region) in self.regions.iter().enumerate() {
             if region.length >= count {
-                best = Some(i);
-                break;
+                match best {
+                    Some(b) if self.regions[b].length <= region.length => {}
+                    _ => best = Some(i),
+                }
             }
         }
         let i = best?;
@@ -117,6 +126,56 @@ impl FreeList {
     /// Número de regiones libres.
     pub fn region_count(&self) -> usize {
         self.regions.len()
+    }
+
+    /// Validar la lista: regiones no vacías, ordenadas, sin solapes y dentro
+    /// de los límites de la partición. Los bloques 0 (superblock) y 1 (raíz
+    /// inicial) nunca pueden aparecer como libres.
+    pub fn is_valid(&self, total_blocks: u64) -> bool {
+        let mut prev_end = 2u64;
+        for r in &self.regions {
+            if r.length == 0 || r.start_lba < prev_end {
+                return false;
+            }
+            match r.start_lba.checked_add(r.length as u64) {
+                Some(end) if end <= total_blocks => prev_end = end,
+                _ => return false,
+            }
+        }
+        true
+    }
+
+    /// Construir una free list a partir del conjunto ordenado de bloques
+    /// usados (complemento dentro de `[0, total_blocks)`). Usado por la
+    /// recuperación al montar cuando no hay free list persistida o es inválida.
+    pub fn from_used(used: &[u64], total_blocks: u64) -> Self {
+        let mut regions = Vec::new();
+        let mut block = 0u64;
+        let mut idx = 0usize;
+        while block < total_blocks {
+            while idx < used.len() && used[idx] < block {
+                idx += 1;
+            }
+            if idx < used.len() && used[idx] == block {
+                block += 1;
+                continue;
+            }
+            let start = block;
+            while block < total_blocks {
+                while idx < used.len() && used[idx] < block {
+                    idx += 1;
+                }
+                if idx < used.len() && used[idx] == block {
+                    break;
+                }
+                block += 1;
+            }
+            regions.push(FreeRegion {
+                start_lba: start,
+                length: (block - start) as u32,
+            });
+        }
+        FreeList { regions }
     }
 
     /// Serializar freelist al formato de nodo type 3.
@@ -250,5 +309,60 @@ pub fn register_freelist_tests() {
         let lba3 = fl.alloc_blocks(185).unwrap();
         crate::test_eq!(lba3, 65);
         crate::test_eq!(fl.total_free(), 0);
+    });
+
+    crate::test_case!("freelist_alloc_best_fit", {
+        // Best-fit debe escoger la región de 50 bloques (200) antes que la
+        // de 100 bloques (0), aun estando esta última primero.
+        let mut fl = FreeList::new();
+        fl.free(0, 100);
+        fl.free(200, 50);
+        let (lba, len) = fl.alloc(40).unwrap();
+        crate::test_eq!(lba, 200);
+        crate::test_eq!(len, 40);
+        // La región elegida sobrevive como 10 bloques en 240.
+        crate::test_eq!(fl.region_count(), 2);
+        crate::test_eq!(fl.regions[1].start_lba, 240);
+        crate::test_eq!(fl.regions[1].length, 10);
+    });
+
+    crate::test_case!("freelist_alloc_rejects_zero", {
+        let mut fl = FreeList::with_range(100, 100);
+        crate::test_true!(fl.alloc(0).is_none());
+        crate::test_eq!(fl.total_free(), 100);
+    });
+
+    crate::test_case!("freelist_is_valid", {
+        let mut fl = FreeList::new();
+        fl.free(2, 10);
+        fl.free(20, 5);
+        crate::test_true!(fl.is_valid(100));
+
+        let overlap = FreeList { regions: alloc::vec![
+            FreeRegion { start_lba: 2, length: 10 },
+            FreeRegion { start_lba: 5, length: 10 },
+        ] };
+        crate::test_false!(overlap.is_valid(100));
+
+        let out_of_bounds = FreeList { regions: alloc::vec![
+            FreeRegion { start_lba: 2, length: 200 },
+        ] };
+        crate::test_false!(out_of_bounds.is_valid(100));
+
+        let touches_superblock = FreeList { regions: alloc::vec![
+            FreeRegion { start_lba: 0, length: 4 },
+        ] };
+        crate::test_false!(touches_superblock.is_valid(100));
+    });
+
+    crate::test_case!("freelist_from_used_reconstruct", {
+        let used = [0u64, 1, 5, 6, 7];
+        let fl = FreeList::from_used(&used, 10);
+        crate::test_eq!(fl.region_count(), 2);
+        crate::test_eq!(fl.regions[0].start_lba, 2);
+        crate::test_eq!(fl.regions[0].length, 3);
+        crate::test_eq!(fl.regions[1].start_lba, 8);
+        crate::test_eq!(fl.regions[1].length, 2);
+        crate::test_true!(fl.is_valid(10));
     });
 }

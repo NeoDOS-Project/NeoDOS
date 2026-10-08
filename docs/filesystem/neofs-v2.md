@@ -53,14 +53,15 @@ Offset  Size  Campo            Descripción
 56      1     label_len        Longitud de la etiqueta del volumen (0-32)
 57      32    label            Etiqueta (hasta 32 caracteres UTF-8)
 89      4     flags            bit0=dirty, bit1=needs_fsck
-93      4     checksum_interval Frecuencia de verificación de checksums (0=desactivado)
-97      4     freelist_lba     LBA del primer nodo de freelist, 0 = usar bitmap implícito
-101     4     snapshot_count   Número de snapshots almacenados
-105     8     snapshot_table   LBA del nodo de tabla de snapshots
-113     399   reserved         0
+93      8     freelist_lba     LBA de la cabeza de la free list persistida (0 = recuperar al montar)
+101     8     snapshot_table_lba  LBA del nodo de tabla de snapshots (0 = vacía)
+109     403   reserved         checksum CRC32 del superblock en los primeros 4 bytes
 ```
 
 Total: 512 bytes.
+
+El checksum del superblock cubre los 512 bytes con el propio campo de
+checksum puesto a cero (así protege también `freelist_lba`).
 
 ### 2.3 B-tree Node (4KB)
 
@@ -120,6 +121,18 @@ Offset  Size  Campo            Descripción
 ```
 
 Caben ~340 regiones por nodo. Si se acaba el espacio, el nodo tiene `next_lba` al final (últimos 8 bytes del payload) apuntando a otro nodo freelist.
+
+La free list **se persiste en disco**: `save_sb` serializa las regiones en una
+cadena de nodos tipo 3 y guarda la LBA de la cabeza en `freelist_lba`. Los
+nodos de la cadena se liberan antes de reescribirla, de modo que no se filtra
+espacio. Al montar, si `freelist_lba != 0` la lista se carga y valida; si el
+puntero es 0, apunta fuera de rango o la lista es inválida, se **reconstruye**
+recorriendo el B-tree de directorios (nodos, extents de datos y subdirectorios)
+y marcando como libres los bloques no alcanzables.
+
+Asignación **best-fit**: se elige la región libre más pequeña que quepa y se
+divide si es mayor de lo pedido. `free()` fusiona con las regiones adyacentes
+izquierda/derecha.
 
 ### 2.7 Node Type 4 — Snapshot Table
 
@@ -377,6 +390,9 @@ neodos-kernel/src/
 | `neofs_v2_snapshot_restore` | Modificar, snapshot, modificar más, restaurar → datos del snapshot |
 | `neofs_v2_freelist_alloc_free` | Alocar bloque → usado. Liberar → libre |
 | `neofs_v2_freelist_merge_adjacent` | Liberar bloques adyacentes → una región |
+| `neofs_v2_freelist_survives_remount` | Free list persistida → remontar → misma lista y archivos |
+| `neofs_v2_freelist_recovers_without_persisted_list` | `freelist_lba=0` → reconstrucción desde el B-tree al montar |
+| `neofs_v2_freelist_multi_node_chain` | >340 regiones → cadena de varios nodos tipo 3 |
 | `neofs_v2_fsck_clean` | FS sin errores → fsck no reporta nada |
 | `neofs_v2_fsck_corrupt_btree` | Nodo B-tree corrupto → fsck lo detecta |
 | `neofs_v2_dir_10k_entries` | 10000 archivos en un directorio → DIR funciona |

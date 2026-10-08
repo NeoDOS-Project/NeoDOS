@@ -305,6 +305,26 @@ impl BTree {
         let node = match io.read_node(root_lba) { Some(n) => n, None => return };
         walk_recursive(&node, io, f);
     }
+
+    /// Visitar el LBA de cada nodo del árbol (raíz incluida, nodos internos
+    /// y hojas). Se usa para reconstruir la free list recorriendo qué bloques
+    /// de metadatos están realmente en uso.
+    pub fn walk_lbas(io: &impl BTreeIO, root_lba: u64, f: &mut impl FnMut(u64)) {
+        walk_lbas_recursive(io, root_lba, f);
+    }
+}
+
+fn walk_lbas_recursive(io: &impl BTreeIO, lba: u64, f: &mut impl FnMut(u64)) {
+    if lba == 0 { return; }
+    f(lba);
+    let node = match io.read_node(lba) { Some(n) => n, None => return };
+    if !node.is_leaf() {
+        for entry in &node.entries {
+            if let Some(child) = u64_from_value(&entry.value) {
+                walk_lbas_recursive(io, child, f);
+            }
+        }
+    }
 }
 
 fn walk_recursive(node: &BTreeNode, io: &impl BTreeIO, f: &mut impl FnMut(&BTreeEntry)) {
