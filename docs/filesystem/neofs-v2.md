@@ -195,6 +195,12 @@ un snapshot puede seguir referenciando árboles/datos antiguos; con snapshots
 presentes la basura se retiene hasta `SNAPSHOT PURGE`. Los bloques 0 y 1 están
 reservados y nunca se reutilizan.
 
+**Enlace padre-hijo:** cuando cambia la raíz del B-tree de un directorio, su
+`DirEntry.extent_lba` se actualiza en el árbol del directorio padre (COW) y el
+cambio se propaga hacia arriba hasta la raíz (`propagate_dir_root`). Sin esto,
+un subdirectorio resolvería a una raíz obsoleta tras un remontaje y reclamar el
+bloque antiguo corrompería el FS.
+
 ### 3.3 Crear archivo
 
 ```text

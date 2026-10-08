@@ -38,11 +38,21 @@ pub(super) struct SuperblockNE2 {
     reserved: [u8; 403],
 }
 
+/// Entrada del inode cache: raíz del B-tree del directorio (o del directorio
+/// padre para un fichero), su `DirEntry` tal como vive en el padre, y el inode
+/// del directorio padre (para propagar cambios de raíz hacia arriba).
+#[derive(Clone)]
+struct CachedInode {
+    root: u64,
+    entry: DirEntryV2,
+    parent: Option<u32>,
+}
+
 pub struct NeoDosFsV2 {
     sb: SuperblockNE2,
     freelist: FreeList,
     pub io_stack: IoStack,
-    inode_cache: Vec<Option<(u64, DirEntryV2)>>,
+    inode_cache: Vec<Option<CachedInode>>,
     next_inode: u32,
     pub snapshot_table: SnapshotTable,
     /// LBAs de los nodos de free list actualmente persistidos (cabeza en
@@ -132,7 +142,7 @@ impl NeoDosFsV2 {
 
         let mut inode_cache = Vec::new();
         let root_entry = DirEntryV2::new_dir("\\");
-        inode_cache.push(Some((sb.root_btree_lba, root_entry)));
+        inode_cache.push(Some(CachedInode { root: sb.root_btree_lba, entry: root_entry, parent: None }));
         let snapshot_table = if sb.snapshot_table_lba > 0 {
             let mut node_buf = [0u8; NODE_SIZE];
             let sector_lba = sb.snapshot_table_lba * 8;
@@ -308,17 +318,24 @@ impl NeoDosFsV2 {
     }
 
 
-    /// Descartar la basura COW.
+    /// Reclamar la basura COW. Solo es seguro con la tabla de snapshots vacía:
+    /// con snapshots presentes un nodo reemplazado puede seguir siendo
+    /// alcanzable desde una raíz antigua, así que se retiene hasta PURGE.
     ///
-    /// **No se libera**: un subdirectorio cambia la raíz de su B-tree por COW,
-    /// pero su `DirEntry.extent_lba` en el directorio padre no se actualiza
-    /// (bug preexistente de enlace padre-hijo), así que bloques reemplazados
-    /// pueden seguir siendo alcanzables tras un remontaje. Liberarlos corrompe
-    /// el FS (el padre acabaría apuntando a un bloque reutilizado). Se descarta
-    /// solo de memoria para acotarla; los bloques quedan filtrados (como antes
-    /// de #553) hasta que se arregle el enlace padre-hijo.
+    /// Es seguro ahora que `propagate_dir_root` actualiza el `DirEntry` del
+    /// padre al cambiar la raíz de un subdirectorio (#563).
     fn reclaim_cow_garbage(&mut self) {
-        self.cow_garbage.clear();
+        if self.snapshot_table.snapshot_count() > 0 {
+            return;
+        }
+        let garbage = core::mem::take(&mut self.cow_garbage);
+        for (lba, len) in garbage {
+            // Los bloques 0 (superblock) y 1 (raíz inicial) están reservados:
+            // no se reintroducen en la free list.
+            if lba >= 2 && len > 0 {
+                self.freelist.free(lba, len);
+            }
+        }
     }
 
     /// Reconstruir la free list recorriendo el árbol de directorios y marcando
@@ -361,11 +378,15 @@ impl NeoDosFsV2 {
         let i = self.next_inode; self.next_inode += 1; i
     }
 
-    fn cache(&mut self, btree_root: u64, entry: DirEntryV2) -> u32 {
+    /// Cachear una entrada. Para directorios, `root` es la raíz de su B-tree
+    /// (`entry.extent_lba`); para ficheros, `fallback_root` (raíz del directorio
+    /// padre). `parent` es el inode del directorio que la contiene.
+    fn cache(&mut self, parent: u32, entry: DirEntryV2, fallback_root: u64) -> u32 {
+        let root = if entry.is_dir() && entry.extent_lba > 0 { entry.extent_lba } else { fallback_root };
         if entry.is_dir() && entry.extent_lba > 0 {
             for i in 0..self.inode_cache.len() {
-                if let Some((_, cached)) = &self.inode_cache[i] {
-                    if cached.extent_lba == entry.extent_lba && cached.name == entry.name {
+                if let Some(c) = &self.inode_cache[i] {
+                    if c.root == root && c.entry.name == entry.name {
                         return i as u32;
                     }
                 }
@@ -373,13 +394,45 @@ impl NeoDosFsV2 {
         }
         let i = self.alloc_inum();
         if i as usize >= self.inode_cache.len() { self.inode_cache.resize(i as usize + 1, None); }
-        self.inode_cache[i as usize] = Some((btree_root, entry)); i
+        self.inode_cache[i as usize] = Some(CachedInode { root, entry, parent: Some(parent) });
+        i
     }
 
-    fn update_inode_root(&mut self, inode: u32, new_root: u64) {
-        if let Some(c) = self.inode_cache.get_mut(inode as usize).and_then(|x| x.as_mut()) {
-            c.0 = new_root;
+    /// Propagar un cambio de raíz de B-tree del directorio `inode` hacia arriba:
+    /// actualiza su `DirEntry.extent_lba` en el directorio padre, reinserta esa
+    /// entrada en el árbol del padre (COW) y continúa con el abuelo. Para la
+    /// raíz (inode 0) actualiza `sb.root_btree_lba`.
+    fn propagate_dir_root(&mut self, inode: u32, new_root: u64) {
+        if inode == 0 {
+            self.sb.root_btree_lba = new_root;
+            if let Some(c) = self.inode_cache.get_mut(0).and_then(|x| x.as_mut()) {
+                c.root = new_root;
+            }
+            return;
         }
+        let (name, mut entry, parent) = match self.inode_cache.get(inode as usize).and_then(|x| x.as_ref()) {
+            Some(c) => (c.entry.name.clone(), c.entry.clone(), c.parent),
+            None => return,
+        };
+        entry.extent_lba = new_root;
+        if let Some(c) = self.inode_cache.get_mut(inode as usize).and_then(|x| x.as_mut()) {
+            c.root = new_root;
+            c.entry.extent_lba = new_root;
+        }
+        let parent = match parent { Some(p) => p, None => return };
+        let parent_root = match self.inode_cache.get(parent as usize).and_then(|x| x.as_ref()) {
+            Some(c) => c.root,
+            None => return,
+        };
+        let mut garbage = Vec::new();
+        let mut tmp = [0u8; DIRENTRY_SIZE];
+        entry.serialize(&mut tmp);
+        let new_parent_root = match BTree::insert_tracked(self, parent_root, &name, &tmp.to_vec(), &mut garbage) {
+            Some(r) => r,
+            None => return,
+        };
+        for lba in garbage { self.cow_garbage.push((lba, 1)); }
+        self.propagate_dir_root(parent, new_parent_root);
     }
 
     fn save_sb(&mut self) -> Result<(), ()> {
@@ -434,7 +487,7 @@ fn invalidate_cache(io_stack: &IoStack, start_sector: u64, count: u64) {
 
 impl FileSystem for NeoDosFsV2 {
     fn read(&mut self, inode: u32, offset: u64, buf: &mut [u8]) -> Result<usize, VfsError> {
-        let (_, entry) = self.inode_cache.get(inode as usize).and_then(|x| x.as_ref()).ok_or(VfsError::NotFound)?;
+        let entry = self.inode_cache.get(inode as usize).and_then(|x| x.as_ref()).map(|c| c.entry.clone()).ok_or(VfsError::NotFound)?;
         let abs_lba = self.io_stack.translate_lba(entry.extent_lba * 8);
         // Lock order: PAGE_CACHE before BLOCK_DEVICES (#343).
         let _ord_pc = crate::lock_order::Guard::new(crate::lock_order::PAGE_CACHE);
@@ -449,7 +502,8 @@ impl FileSystem for NeoDosFsV2 {
     }
 
     fn write(&mut self, inode: u32, offset: u64, buf: &[u8]) -> Result<usize, VfsError> {
-        let (btree_root, entry) = self.inode_cache.get(inode as usize).and_then(|x| x.as_ref()).cloned().ok_or(VfsError::NotFound)?;
+        let (btree_root, entry, parent) = self.inode_cache.get(inode as usize).and_then(|x| x.as_ref())
+            .map(|c| (c.root, c.entry.clone(), c.parent)).ok_or(VfsError::NotFound)?;
         // Lock order: PAGE_CACHE before BLOCK_DEVICES (#343).
         let _ord_pc = crate::lock_order::Guard::new(crate::lock_order::PAGE_CACHE);
         let mut pc = crate::globals::PAGE_CACHE.lock();
@@ -475,47 +529,39 @@ impl FileSystem for NeoDosFsV2 {
         }, &mut garbage).ok_or(VfsError::IOError)?;
         for lba in garbage { self.cow_garbage.push((lba, 1)); }
 
-        if btree_root == self.sb.root_btree_lba { self.sb.root_btree_lba = new_root; }
-        // Update parent directory's cache entry if its root changed
-        for i in 0..self.inode_cache.len() {
-            if let Some(c) = &mut self.inode_cache[i] {
-                if c.0 == btree_root && c.1.is_dir() {
-                    c.0 = new_root;
-                }
-            }
+        if let Some(p) = parent { self.propagate_dir_root(p, new_root); }
+        if let Some(c) = self.inode_cache.get_mut(inode as usize).and_then(|x| x.as_mut()) {
+            c.root = new_root;
+            c.entry = new_entry;
         }
-        if let Some(c) = self.inode_cache.get_mut(inode as usize).and_then(|x| x.as_mut()) { *c = (new_root, new_entry); }
         Ok(buf.len())
     }
 
     fn lookup(&mut self, dir_inode: u32, name: &str) -> Result<VfsNode, VfsError> {
-        let cached = self.inode_cache.get(dir_inode as usize).and_then(|x| x.as_ref()).ok_or(VfsError::NotFound)?;
-        let btree_root = cached.0;
+        let btree_root = self.inode_cache.get(dir_inode as usize).and_then(|x| x.as_ref()).map(|c| c.root).ok_or(VfsError::NotFound)?;
         let entry = dir_lookup(self, btree_root, name).ok_or(VfsError::NotFound)?;
         let size = if entry.inline_len > 0 { entry.inline_len as u32 } else { entry.size as u32 };
         let mode = entry.mode;
-        let child_root = if entry.is_dir() && entry.extent_lba > 0 { entry.extent_lba } else { btree_root };
-        let inum = self.cache(child_root, entry);
+        let inum = self.cache(dir_inode, entry, btree_root);
         Ok(VfsNode { inode: inum, mode, size })
     }
 
     fn readdir(&mut self, dir_inode: u32, index: usize) -> Result<Option<DirEntry>, VfsError> {
-        let btree_root = self.inode_cache.get(dir_inode as usize).and_then(|x| x.as_ref()).map(|x| x.0).ok_or(VfsError::NotFound)?;
+        let btree_root = self.inode_cache.get(dir_inode as usize).and_then(|x| x.as_ref()).map(|c| c.root).ok_or(VfsError::NotFound)?;
         match dir_readdir(self, btree_root, index) {
             Some(e) => {
-                let child_root = if e.is_dir() && e.extent_lba > 0 { e.extent_lba } else { btree_root };
-                let inum = self.cache(child_root, e);
+                let inum = self.cache(dir_inode, e, btree_root);
                 let cached = self.inode_cache[inum as usize].as_ref().ok_or(VfsError::NotFound)?;
-                let dname = core::str::from_utf8(&cached.1.name).unwrap_or("?");
-                let size = if cached.1.inline_len > 0 { cached.1.inline_len as u32 } else { cached.1.size as u32 };
-                Ok(Some(DirEntry { name: dname.into(), node: VfsNode { inode: inum, mode: cached.1.mode, size } }))
+                let dname = core::str::from_utf8(&cached.entry.name).unwrap_or("?");
+                let size = if cached.entry.inline_len > 0 { cached.entry.inline_len as u32 } else { cached.entry.size as u32 };
+                Ok(Some(DirEntry { name: dname.into(), node: VfsNode { inode: inum, mode: cached.entry.mode, size } }))
             }
             None => Ok(None),
         }
     }
 
     fn mkdir(&mut self, dir_inode: u32, name: &str) -> Result<VfsNode, VfsError> {
-        let btree_root = self.inode_cache.get(dir_inode as usize).and_then(|x| x.as_ref()).map(|x| x.0).ok_or(VfsError::NotFound)?;
+        let btree_root = self.inode_cache.get(dir_inode as usize).and_then(|x| x.as_ref()).map(|c| c.root).ok_or(VfsError::NotFound)?;
         let empty = BTreeNode::new(NodeType::Leaf);
         let subdir_root = self.write_node(&empty);
         if subdir_root == 0 { return Err(VfsError::IOError); }
@@ -530,49 +576,44 @@ impl FileSystem for NeoDosFsV2 {
         }, &mut garbage).ok_or(VfsError::IOError)?;
         for lba in garbage { self.cow_garbage.push((lba, 1)); }
 
-        if dir_inode == 0 { self.sb.root_btree_lba = new_root; }
-        self.update_inode_root(dir_inode, new_root);
+        self.propagate_dir_root(dir_inode, new_root);
         self.save_sb().map_err(|_| VfsError::IOError)?;
-        let inum = self.cache(new_root, entry);
+        let inum = self.cache(dir_inode, entry, new_root);
         Ok(VfsNode { inode: inum, mode: MODE_DIR | PERM_R | PERM_W | PERM_X | PERM_D, size: 0 })
     }
 
     fn create(&mut self, dir_inode: u32, name: &str) -> Result<VfsNode, VfsError> {
-        let btree_root = self.inode_cache.get(dir_inode as usize).and_then(|x| x.as_ref()).map(|x| x.0).ok_or(VfsError::NotFound)?;
+        let btree_root = self.inode_cache.get(dir_inode as usize).and_then(|x| x.as_ref()).map(|c| c.root).ok_or(VfsError::NotFound)?;
         let entry = DirEntryV2::new_file(name);
         let mut garbage = Vec::new();
         let new_root = BTree::insert_tracked(self, btree_root, name.as_bytes(), &{
             let mut tmp = [0u8; DIRENTRY_SIZE]; entry.serialize(&mut tmp); tmp.to_vec()
         }, &mut garbage).ok_or(VfsError::IOError)?;
         for lba in garbage { self.cow_garbage.push((lba, 1)); }
-        if dir_inode == 0 { self.sb.root_btree_lba = new_root; }
-        self.update_inode_root(dir_inode, new_root);
+        self.propagate_dir_root(dir_inode, new_root);
         self.save_sb().map_err(|_| VfsError::IOError)?;
-        let inum = self.cache(new_root, entry);
+        let inum = self.cache(dir_inode, entry, new_root);
         Ok(VfsNode { inode: inum, mode: MODE_FILE | PERM_R | PERM_W | PERM_X | PERM_D, size: 0 })
     }
 
     fn stat(&mut self, inode: u32) -> Result<VfsNode, VfsError> {
-        let (_, entry) = self.inode_cache.get(inode as usize).and_then(|x| x.as_ref()).ok_or(VfsError::NotFound)?;
+        let entry = self.inode_cache.get(inode as usize).and_then(|x| x.as_ref()).map(|c| c.entry.clone()).ok_or(VfsError::NotFound)?;
         let size = if entry.inline_len > 0 { entry.inline_len as u32 } else { entry.size as u32 };
         Ok(VfsNode { inode, mode: entry.mode, size })
     }
 
     fn remove_file(&mut self, dir_inode: u32, name: &str) -> Result<(), VfsError> {
-        let btree_root = self.inode_cache.get(dir_inode as usize).and_then(|x| x.as_ref()).map(|x| x.0).ok_or(VfsError::NotFound)?;
+        let btree_root = self.inode_cache.get(dir_inode as usize).and_then(|x| x.as_ref()).map(|c| c.root).ok_or(VfsError::NotFound)?;
         if let Some(e) = dir_lookup(self, btree_root, name) { file_free_extents(&e, &mut self.freelist); }
         let mut garbage = Vec::new();
         let nr = BTree::delete_tracked(self, btree_root, name.as_bytes(), &mut garbage).ok_or(VfsError::IOError)?;
         for lba in garbage { self.cow_garbage.push((lba, 1)); }
-        if let Some(r) = nr {
-            if dir_inode == 0 { self.sb.root_btree_lba = r; }
-            self.update_inode_root(dir_inode, r);
-        }
+        if let Some(r) = nr { self.propagate_dir_root(dir_inode, r); }
         self.save_sb().map_err(|_| VfsError::IOError)
     }
 
     fn remove_dir(&mut self, dir_inode: u32, name: &str) -> Result<(), VfsError> {
-        let btree_root = self.inode_cache.get(dir_inode as usize).and_then(|x| x.as_ref()).map(|x| x.0).ok_or(VfsError::NotFound)?;
+        let btree_root = self.inode_cache.get(dir_inode as usize).and_then(|x| x.as_ref()).map(|c| c.root).ok_or(VfsError::NotFound)?;
         if let Some(e) = dir_lookup(self, btree_root, name) {
             if e.is_dir() {
                 let count = dir_count(self, e.extent_lba);
@@ -583,15 +624,12 @@ impl FileSystem for NeoDosFsV2 {
         let mut garbage = Vec::new();
         let nr = BTree::delete_tracked(self, btree_root, name.as_bytes(), &mut garbage).ok_or(VfsError::IOError)?;
         for lba in garbage { self.cow_garbage.push((lba, 1)); }
-        if let Some(r) = nr {
-            if dir_inode == 0 { self.sb.root_btree_lba = r; }
-            self.update_inode_root(dir_inode, r);
-        }
+        if let Some(r) = nr { self.propagate_dir_root(dir_inode, r); }
         self.save_sb().map_err(|_| VfsError::IOError)
     }
 
     fn rename(&mut self, dir_inode: u32, old: &str, new: &str) -> Result<(), VfsError> {
-        let btree_root = self.inode_cache.get(dir_inode as usize).and_then(|x| x.as_ref()).map(|x| x.0).ok_or(VfsError::NotFound)?;
+        let btree_root = self.inode_cache.get(dir_inode as usize).and_then(|x| x.as_ref()).map(|c| c.root).ok_or(VfsError::NotFound)?;
         let entry = dir_lookup(self, btree_root, old).ok_or(VfsError::NotFound)?;
         let entry_clone = entry.clone();
         let mut garbage = Vec::new();
@@ -602,8 +640,7 @@ impl FileSystem for NeoDosFsV2 {
             let mut tmp = [0u8; DIRENTRY_SIZE]; renamed.serialize(&mut tmp); tmp.to_vec()
         }, &mut garbage).ok_or(VfsError::IOError)?;
         for lba in garbage { self.cow_garbage.push((lba, 1)); }
-        if dir_inode == 0 { self.sb.root_btree_lba = nr; }
-        self.update_inode_root(dir_inode, nr);
+        self.propagate_dir_root(dir_inode, nr);
         self.save_sb().map_err(|_| VfsError::IOError)
     }
 
@@ -901,6 +938,100 @@ pub fn register_neodos_v2_tests() {
         let fs3 = NeoDosFsV2::new(IoStack::new(dev_id)).unwrap();
         crate::test_eq!(fs3.sb.snapshot_table_lba, 0);
         crate::test_eq!(fs3.snapshot_table.snapshot_count(), 0);
+
+        let _ = crate::globals::BLOCK_DEVICES.lock().force_remove(dev_id);
+    });
+
+    crate::test_case!("neofs_v2_subdir_persists_across_remount", {
+        let sectors = alloc::vec![[0u8; 512]; 2048];
+        let dev_id = crate::fs::fsck::register_test_device(sectors);
+        let io = IoStack::new(dev_id);
+        mkfs_ne2(&io, 256, "TEST").unwrap();
+
+        // Crear D/, D/F.TXT, D/E/ y D/E/G.TXT (dos niveles de anidamiento).
+        let mut fs = NeoDosFsV2::new(io).unwrap();
+        fs.mkdir(0, "D").unwrap();
+        let d = fs.lookup(0, "D").unwrap().inode;
+        fs.create(d, "F.TXT").unwrap();
+        fs.mkdir(d, "E").unwrap();
+        let e = fs.lookup(d, "E").unwrap().inode;
+        fs.create(e, "G.TXT").unwrap();
+        drop(fs);
+
+        // Remontar: cada nivel debe resolver a su raíz actual (no la obsoleta).
+        let mut fs2 = NeoDosFsV2::new(IoStack::new(dev_id)).unwrap();
+        let d2 = fs2.lookup(0, "D").unwrap().inode;
+        crate::test_true!(fs2.lookup(d2, "F.TXT").is_ok());
+        let e2 = fs2.lookup(d2, "E").unwrap().inode;
+        crate::test_true!(fs2.lookup(e2, "G.TXT").is_ok());
+
+        // Modificar un subdirectorio y remontar de nuevo.
+        fs2.create(d2, "H.TXT").unwrap();
+        drop(fs2);
+        let mut fs3 = NeoDosFsV2::new(IoStack::new(dev_id)).unwrap();
+        let d3 = fs3.lookup(0, "D").unwrap().inode;
+        crate::test_true!(fs3.lookup(d3, "H.TXT").is_ok());
+        crate::test_true!(fs3.lookup(d3, "F.TXT").is_ok());
+
+        let _ = crate::globals::BLOCK_DEVICES.lock().force_remove(dev_id);
+    });
+
+    crate::test_case!("neofs_v2_cow_reclaims_garbage", {
+        let sectors = alloc::vec![[0u8; 512]; 4096];
+        let dev_id = crate::fs::fsck::register_test_device(sectors);
+        let io = IoStack::new(dev_id);
+        mkfs_ne2(&io, 512, "TEST").unwrap();
+
+        let mut fs = NeoDosFsV2::new(io).unwrap();
+        fs.create(0, "A.TXT").unwrap();
+        let inode = fs.lookup(0, "A.TXT").unwrap().inode;
+        let data = alloc::vec![0xABu8; 4096 * 10];
+
+        fs.write(inode, 0, &data).unwrap();
+        fs.set_volume_label("T").unwrap();
+        let f1 = fs.freelist.total_free();
+
+        // Reescribir el mismo tamaño debe ser neto cero: se allocan nuevos
+        // bloques/extents y se reclaman los antiguos.
+        for _ in 0..5 {
+            fs.write(inode, 0, &data).unwrap();
+            fs.set_volume_label("T").unwrap();
+        }
+        let f2 = fs.freelist.total_free();
+        crate::test_eq!(f1, f2);
+        crate::test_true!(fs.freelist.is_valid(512));
+        crate::test_eq!(fs.snapshot_table.snapshot_count(), 0);
+
+        let _ = crate::globals::BLOCK_DEVICES.lock().force_remove(dev_id);
+    });
+
+    crate::test_case!("neofs_v2_cow_garbage_gated_by_snapshots", {
+        let sectors = alloc::vec![[0u8; 512]; 4096];
+        let dev_id = crate::fs::fsck::register_test_device(sectors);
+        let io = IoStack::new(dev_id);
+        mkfs_ne2(&io, 512, "TEST").unwrap();
+
+        let mut fs = NeoDosFsV2::new(io).unwrap();
+        fs.create(0, "A.TXT").unwrap();
+        let inode = fs.lookup(0, "A.TXT").unwrap().inode;
+        let data = alloc::vec![0xCDu8; 4096 * 10];
+        fs.write(inode, 0, &data).unwrap();
+        let _snap = fs.snapshot_create().unwrap();
+
+        // Con un snapshot presente los bloques reemplazados NO se liberan.
+        let f_before = fs.freelist.total_free();
+        for _ in 0..3 {
+            fs.write(inode, 0, &data).unwrap();
+            fs.set_volume_label("T").unwrap();
+        }
+        let f_after = fs.freelist.total_free();
+        crate::test_true!(f_after < f_before);
+
+        // PURGE vacía la tabla y permite reclamar lo retenido.
+        fs.snapshot_purge().unwrap();
+        let f_purged = fs.freelist.total_free();
+        crate::test_true!(f_purged > f_after);
+        crate::test_true!(fs.freelist.is_valid(512));
 
         let _ = crate::globals::BLOCK_DEVICES.lock().force_remove(dev_id);
     });
