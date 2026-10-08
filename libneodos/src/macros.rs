@@ -98,3 +98,12 @@ macro_rules! tr_plural {
         $crate::i18n::i18n_plural(__NLT_ID, $n as u64)
     }};
 }
+
+/// Like [`tr_plural!`] but also formats the selected form with `$args` (#579).
+#[macro_export]
+macro_rules! tr_plural_fmt {
+    ($key:expr, $n:expr, $args:expr) => {{
+        const __NLT_ID: u32 = $crate::i18n::key_id($key);
+        $crate::i18n::i18n_plural_format(__NLT_ID, $n as u64, $args)
+    }};
+}

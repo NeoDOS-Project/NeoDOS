@@ -152,23 +152,44 @@ pub fn i18n_language() -> &'static str;          // "es-ES"
 pub fn i18n_active_locale() -> &'static str;
 pub fn i18n_set_language(tag: &str);             // change + reload
 pub fn i18n_is_rtl() -> bool;
-pub fn i18n_load(app: &str) -> Result<(), ()>;   // NLTv2/v3
-pub fn i18n_get_id(id: u32) -> &'static str;     // "?" on miss
+pub fn i18n_load(app: &str) -> Result<(), LoadError>;   // NLTv2/v3 (#576)
+pub fn locale_chain(tag: &str) -> ([&str; 4], usize);   // negotiation (#580)
+pub fn i18n_get_id(id: u32) -> &'static str;     // "#<id>" marker on miss (#574)
 pub fn i18n_try_get_id(id: u32) -> Option<&'static str>;
 /// Compile-time symbolic key ("<app>.<NAME>") resolution (#578).
 pub const fn key_id(key: &str) -> u32;           // unknown key = compile error
 pub fn try_key_id(key: &str) -> Option<u32>;     // runtime lookup
 pub fn i18n_plural(id: u32, n: u64) -> &'static str;
+pub fn i18n_plural_format(id: u32, n: u64, args: &[&str]) -> &'static str; // (#579)
 pub fn i18n_format(id: u32, args: &[&str]) -> &'static str;
+pub fn i18n_format_into<'a>(id: u32, args: &[&str], out: &'a mut [u8]) -> &'a str; // (#575)
 pub fn i18n_format_str(tmpl: &str, args: &[&str]) -> &'static str;
+pub fn i18n_format_str_into<'a>(tmpl: &str, args: &[&str], out: &'a mut [u8]) -> &'a str; // (#575)
 pub fn i18n_region() -> Option<Region<'static>>;
+pub fn i18n_format_number(value: i64, out: &mut [u8]) -> &str;                 // (#579)
+pub fn i18n_format_currency(minor_units: i64, out: &mut [u8]) -> &str;         // (#579)
+pub fn i18n_format_date(y: i32, m: u8, d: u8, long: bool, out: &mut [u8]) -> &str; // (#579)
+pub fn i18n_format_time(h: u8, m: u8, s: u8, out: &mut [u8]) -> &str;          // (#579)
 pub fn i18n_reorder_visual(input: &str, out: &mut [u8]) -> usize;
-pub fn i18n_available_locales() -> &'static str;
+pub fn i18n_locale_count() -> usize;             // structured locales (#577)
+pub fn i18n_locale_at(index: usize) -> Option<&'static str>;
+pub fn i18n_rescan_locales();                    // force re-scan (#577)
+pub fn i18n_available_locales() -> &'static str; // compat ("a;b;c")
 pub fn i18n_unload(app: &str);
 pub fn i18n_reload_all();
-pub fn i18n_load_from_package() -> Result<(), ()>;
+pub fn i18n_load_from_package() -> Result<(), LoadError>;
+pub fn i18n_capacity() -> (usize, usize);        // (max_tables, max_bytes) (#576)
 pub fn i18n_verify_signature(data: &[u8], pk: &[u8;32]) -> bool; // feature
+
+/// UI-agnostic translation seam (#581).
+pub trait Translator { fn tr(&self, id: u32) -> &str; }
+pub struct I18nTranslator;      // runtime-backed
+pub struct I18nKeyTranslator;   // symbolic-key helper
 ```
+
+Cargo features: `i18n-signatures` (verify Ed25519) and
+`i18n-require-signed` (implies the former; **rejects** unsigned/rejected tables —
+for hardened images, #582).
 
 ### Macros
 
