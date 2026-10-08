@@ -2,7 +2,7 @@
 
 > **Container:** ELF64 (ET_DYN / PIE)
 > **Extension:** `.NXE` (on disk: `.nxe`)
-> **Kernel loader:** `neodos-kernel/src/elf.rs`
+> **Kernel loader:** `neodos-kernel/src/infra/elf.rs`
 
 ---
 

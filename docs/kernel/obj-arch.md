@@ -44,7 +44,7 @@ NeoDOS tiene un kernel funcional con **40 syscalls**, un **KOBJ registry** plano
 
 ## 2. Diagnóstico del Estado Actual
 
-### 2.1 Handle Table (src/handle.rs)
+### 2.1 Handle Table (src/infra/handle.rs)
 
 ```rust
 pub struct HandleEntry {
@@ -593,7 +593,7 @@ Dependencias PROHIBIDAS:
 
 ```text
 ~~v0.41 (Prep):~~ ✅ COMPLETADO
-  ~~─ src/handle.rs: añadir object_id campo~~ ✅
+  ~~─ src/infra/handle.rs: añadir object_id campo~~ ✅
   ~~─ src/kobj/mod.rs: refactor → ObjectManager module~~ ✅
   ~~─ src/object/mod.rs: nuevo módulo~~ ✅
   ~~─ src/syscall/mod.rs: handler_close → ob_close~~ ✅
@@ -798,7 +798,7 @@ pub fn ob_open_path(...) -> Result<ObId, ObError>;
 
 **Archivos:**
 
-- `src/handle.rs` (~285 líneas, implementado)
+- `src/infra/handle.rs` (~285 líneas, implementado)
 
 **Estructura final:**
 
@@ -1175,7 +1175,7 @@ El tipo se identifica mediante sentinelas en `object_id` (ObId::MAX, MAX-1, MAX-
 
 **Archivos:**
 
-- `src/handle.rs` (HandleEntry simplificado)
+- `src/infra/handle.rs` (HandleEntry simplificado)
 - `src/syscall/mod.rs` (todos los handlers migrados a object_id)
 - `src/scheduler/mod.rs` (kill_pid, exit migrados)
 

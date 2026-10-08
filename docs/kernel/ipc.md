@@ -44,7 +44,7 @@ pub fn block_current_for_pipe(pipe_id: u8);
 - `read` returns `Ok(0)` (EOF) when the write end is closed and the buffer is empty, or `Err(())` when no data is available.
 - Both return the number of bytes transferred on success. `MAX_PIPES = 16`; pipe IDs are `u8`.
 
-## Handle Table (src/handle.rs)
+## Handle Table (src/infra/handle.rs)
 
 ### Structure
 
@@ -146,7 +146,7 @@ pub trait BlockDevice {
 
 11 unit tests covering alloc/free, status transitions, error codes, queue FIFO ordering, queue wraparound, and callback dispatch ordering.
 
-## Deferred Work Queue (src/work_queue.rs)
+## Deferred Work Queue (src/infra/work_queue.rs)
 
 ### Architecture
 

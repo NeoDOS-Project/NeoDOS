@@ -176,8 +176,8 @@ frames into mmap, so the paging work is shared).
 | Path | Change |
 |------|--------|
 | `neodos-kernel/src/arch/x64/paging.rs` | Cap/stack/slot constants + allocator |
-| `neodos-kernel/src/usermode.rs` | `MAX_PROCESS_BIN`, load path, reclaim |
-| `neodos-kernel/src/elf.rs` | Segment loading (Phase 2) |
+| `neodos-kernel/src/infra/usermode.rs` | `MAX_PROCESS_BIN`, load path, reclaim |
+| `neodos-kernel/src/infra/elf.rs` | Segment loading (Phase 2) |
 | `neodos-kernel/src/scheduler/*` | Stack allocation per process |
 | `docs/userland/libneodos.md`, `nxe-format.md` | Document limits/metadata |
 

@@ -94,6 +94,24 @@
   `crate::kbd`, `crate::power`, `crate::font`) kept resolving via re-exports
   in `main.rs`; `check-deps-baseline.txt` refreshed. No behavior change.
 
+- **#542 / P2: group root infrastructure and extract `boot/`.** Cross-cutting
+  singletons (`cpu`, `handle`, `work_queue`, `globals`, `lock_order`, `trace`,
+  `invariants`, `panic_classification`, `abi_freeze`, `boot_benchmark`, `elf`,
+  `nxl`, `usermode`) moved to `src/infra/`; `slab.rs` and `allocator.rs` moved
+  to `src/memory/`. The ~785-line `rust_start` boot sequence moved from
+  `main.rs` to `src/boot/mod.rs::init()`, leaving `main.rs` as a thin
+  entrypoint. Historical `crate::<name>` paths kept via re-exports. No behavior
+  change.
+
+- **#544 / P4: split monolithic test files; module-layout rule.** Test
+  monoliths became directories: `scheduler/tests.rs` (2 670 lines) →
+  `scheduler/tests/{scheduling,regressions,mmap,threads,misc}.rs`;
+  `net/tests.rs` → `net/tests/{net,dns,socket}.rs`; `syscall/tests.rs` →
+  `syscall/tests/{table,sync,path}.rs`; the inline tests of `services/mod.rs`
+  moved to `services/tests.rs`. Test count and names unchanged (837).
+  `AGENTS.md` gains rule 12 (one directory = one subsystem, downward
+  dependencies, `mod.rs`, re-exports during migration).
+
 ### Fixed
 
 - **Scheduler snapshot self-deadlock (BSP freeze before `[PROC_SNAPSHOT]`).**

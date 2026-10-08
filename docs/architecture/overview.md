@@ -492,7 +492,7 @@ The underlying kernel loading path is `nem/loader.rs::load_nem()` → v3loader.
 
 ---
 
-### 8.5. NXL System (`src/nxl.rs`)
+### 8.5. NXL System (`src/infra/nxl.rs`)
 
 Shared library (NXL) loading subsystem for user-mode processes.
 
@@ -584,7 +584,7 @@ The kernel testing framework includes **825 tests** (200+ test_case! macros) wit
 | Security | 23 | NT6 Security: SID format, Token (groups/privileges/session_id), ACL allow/deny, SeAccessCheck, admin bypass, SAM database (parse/serialize, 64 entries) |
 | URN | 15 | NT5.5 Unified Resource Namespace: parse schemes, resolve file/device, Ob frontend (OB-025) |
 
-Tests run automatically at boot. The kernel runs 825 tests (200+ test_case! registrations). After boot, NeoInit spawns its user-mode test binaries when enabled via the registry (`userbin/neoinit/src/main.rs`), including the network test `C:\System\Tools\dhcptest.nxe`. Additional boot stress testing via `scripts/stress_boot.sh`.
+Tests run automatically at boot. The kernel runs 837 tests (200+ test_case! registrations). After boot, NeoInit spawns its user-mode test binaries when enabled via the registry (`userbin/neoinit/src/main.rs`), including the network test `C:\System\Tools\dhcptest.nxe`. Additional boot stress testing via `scripts/stress_boot.sh`.
 
 ---
 

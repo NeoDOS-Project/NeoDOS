@@ -2,7 +2,7 @@
 
 [![Version](https://img.shields.io/badge/version-v0.51.4-blue.svg)](CHANGELOG.md)
 [![Tests](https://img.shields.io/badge/tests-825-green.svg)](neodos-kernel/src/testing.rs)
-[![Rust](https://img.shields.io/badge/rust-nightly-orange.svg)](rust-toolchain.toml)
+[![Rust](https://img.shields.io/badge/rust-nightly-orange.svg)](neodos-kernel/rust-toolchain.toml)
 [![Organization](https://img.shields.io/badge/org-NeoDOS--Project-blueviolet.svg)](https://github.com/NeoDOS-Project)
 
 > **Official repository moved to the [NeoDOS-Project](https://github.com/NeoDOS-Project) organization.**

@@ -357,7 +357,7 @@ Useful when the guest needs direct network access (e.g., DHCP from a real LAN se
 | socket.rs | `src/net/socket.rs` |
 | nic.rs | `src/net/nic.rs` |
 | e1000 | `drivers/e1000/` (NEM) |
-| tests.rs | `src/net/tests.rs` |
+| tests/ | `src/net/tests/` |
 
 User-mode DHCP service: `userbin/dhcpd/src/main.rs`
 
@@ -406,6 +406,6 @@ When a packet needs to be sent to an IP address (e.g., ICMP ping), the ARP resol
 
 ## Tests
 
-17+ tests in `src/net/tests.rs` covering: MAC address formatting, IPv4 header checksum, ARP cache operations, TCP state machine transitions, TCP full lifecycle (listen -> connect -> established -> close), ICMP echo request/reply, socket creation/lookup/bind/connect, UDP header construction, NIC registry add/remove.
+17+ tests in `src/net/tests/` covering: MAC address formatting, IPv4 header checksum, ARP cache operations, TCP state machine transitions, TCP full lifecycle (listen -> connect -> established -> close), ICMP echo request/reply, socket creation/lookup/bind/connect, UDP header construction, NIC registry add/remove.
 
 Kernel DHCP tests removed (DHCP is now a userspace service).

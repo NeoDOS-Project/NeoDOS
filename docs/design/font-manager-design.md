@@ -658,7 +658,7 @@ No new syscall. New classes dispatched via existing handler.
 
 | Path | Change |
 |------|--------|
-| `neodos-kernel/src/main.rs` | Add `mod font;` + call `font::init()` in boot sequence |
+| `neodos-kernel/src/boot/mod.rs` | Add `mod font;` + call `font::init()` in boot sequence |
 | `neodos-kernel/src/console.rs` | Replace `use crate::font;` -> `use crate::font_manager;`, use Font Manager API for all glyph operations |
 | `neodos-kernel/src/graphics/font.rs` | **Deleted** -- replaced by `font/mod.rs` + `font/embedded.rs` |
 | `neodos-kernel/src/graphics/mod.rs` | No change (Font Manager takes put_pixel callback) |
