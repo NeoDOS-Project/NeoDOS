@@ -4,7 +4,7 @@
 #![allow(dead_code)]
 
 use alloc::vec::Vec;
-use super::crc32::crc32;
+use crate::fs::crc32::crc32;
 
 pub const REGION_SIZE: usize = 12; // start_lba(8) + length(4)
 pub const REGIONS_PER_NODE: usize = 340;

@@ -176,7 +176,7 @@ pub fn file_free_extents(entry: &DirEntryV2, freelist: &mut FreeList) {
     }
 }
 
-pub use super::crc32::crc32;
+pub use crate::fs::crc32::crc32;
 
 pub fn register_io_tests() {
     // NeoFS v2 I/O tests

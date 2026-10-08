@@ -12,12 +12,9 @@
   buffer/page_cache/mod.rs: imports 'drivers::block::BlockDevice' which contains forbidden dep(s): drivers
   drivers/nem/loader.rs: imports 'fs::vfs::MODE_FILE' which contains forbidden dep(s): fs, vfs
   drivers/nem/loader/hst.rs: imports 'syscall::wake_blocked_readers' which contains forbidden dep(s): syscall
-  drivers/nem/management/hotreload.rs: imports 'fs::vfs::MODE_FILE' which contains forbidden dep(s): fs, vfs
   drivers/nem/management/boot_loader/mod.rs: imports 'fs::vfs::MODE_DIR' which contains forbidden dep(s): fs, vfs
   drivers/nem/management/boot_loader/mod.rs: imports 'fs::vfs::MODE_FILE' which contains forbidden dep(s): fs, vfs
-  drivers/virtio/transport.rs: imports 'drivers::pci::pci_config_read_dword' which contains forbidden dep(s): drivers
-  drivers/virtio/transport.rs: imports 'drivers::pci::pci_config_read_word' which contains forbidden dep(s): drivers
-  drivers/virtio/transport.rs: imports 'drivers::pci::pci_config_write_word' which contains forbidden dep(s): drivers
+  drivers/nem/management/hotreload.rs: imports 'fs::vfs::MODE_FILE' which contains forbidden dep(s): fs, vfs
   drivers/hw/ahci.rs: imports 'boot_benchmark::ahci_cmd_done' which contains forbidden dep(s): boot_benchmark
   drivers/hw/ahci.rs: imports 'boot_benchmark::ahci_cmd_polled' which contains forbidden dep(s): boot_benchmark
   drivers/hw/ahci.rs: imports 'boot_benchmark::ahci_cmd_start' which contains forbidden dep(s): boot_benchmark
@@ -26,9 +23,12 @@
   drivers/hw/ahci.rs: imports 'boot_benchmark::boot_time_now' which contains forbidden dep(s): boot_benchmark
   drivers/hw/ahci.rs: imports 'boot_benchmark::elapsed_ms' which contains forbidden dep(s): boot_benchmark
   drivers/hw/virtio_blk.rs: imports 'boot_benchmark::VIRTIO_COMMANDS' which contains forbidden dep(s): boot_benchmark
-  fs/neodos_io.rs: imports 'buffer::page_cache::PageCache' which contains forbidden dep(s): buffer
+  drivers/virtio/transport.rs: imports 'drivers::pci::pci_config_read_dword' which contains forbidden dep(s): drivers
+  drivers/virtio/transport.rs: imports 'drivers::pci::pci_config_read_word' which contains forbidden dep(s): drivers
+  drivers/virtio/transport.rs: imports 'drivers::pci::pci_config_write_word' which contains forbidden dep(s): drivers
   fs/vfs/partition.rs: imports 'drivers::gpt' which contains forbidden dep(s): drivers/gpt
   fs/vfs/partition.rs: imports 'drivers::gpt::{self, MAX_NEODOS_PARTITIONS}' which contains forbidden dep(s): drivers/gpt
+  fs/neofs/neodos_io.rs: imports 'buffer::page_cache::PageCache' which contains forbidden dep(s): buffer
   irp/mod.rs: imports 'syscall::set_need_resched' which contains forbidden dep(s): syscall
   irp/mod.rs: imports 'work_queue::WORK_QUEUE' which contains forbidden dep(s): work_queue
   interrupts/msi.rs: imports 'drivers::driver_runtime' which contains forbidden dep(s): drivers
@@ -70,9 +70,9 @@
   input/manager.rs: imports 'syscall::interrupt_foreground_work' which contains forbidden dep(s): syscall
   input/manager.rs: imports 'work_queue::WORK_QUEUE' which contains forbidden dep(s): work_queue
   input/kbd/config.rs: imports 'security::token::Token::new_admin' which contains forbidden dep(s): security
-  input/kbd/layout.rs: imports 'fs::vfs::MODE_FILE' which contains forbidden dep(s): fs, vfs
   input/kbd/event.rs: imports 'syscall::set_need_resched' which contains forbidden dep(s): syscall
   input/kbd/hotkey.rs: imports 'interrupts::ioapic::dump_irq_routing' which contains forbidden dep(s): interrupts
+  input/kbd/layout.rs: imports 'fs::vfs::MODE_FILE' which contains forbidden dep(s): fs, vfs
   input/kbd/mod.rs: imports 'drivers::ps2::set_leds' which contains forbidden dep(s): drivers
   input/kbd/mod.rs: imports 'syscall::set_need_resched' which contains forbidden dep(s): syscall
   input/kbd/mod.rs: imports 'syscall::wake_blocked_readers' which contains forbidden dep(s): syscall

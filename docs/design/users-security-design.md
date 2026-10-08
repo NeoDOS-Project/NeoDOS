@@ -138,7 +138,7 @@ NeoDOS follows an **NT-inspired hybrid model**:
 | `src/scheduler/mod.rs` | Token-based process creation, session tracking |
 | `src/syscall/ob.rs` | Token query on Process/Thread, user creation syscalls |
 | `src/object/types.rs` | New ObType::User, ObType::Session |
-| `src/fs/neodos_dir.rs` | Extend DirEntryV2 with owner SID field |
+| `src/fs/neofs/neodos_dir.rs` | Extend DirEntryV2 with owner SID field |
 | `src/fs/vfs.rs` | Add permission checking in VFS operations |
 | `src/cm/` | Wire sec_desc_cell, user profile storage |
 | `userbin/neoinit/` | Login prompt or spawn login service |
@@ -847,8 +847,8 @@ pub fn token_set_integrity_level(fd: i64, level: IntegrityLevel) -> Result<(), i
 | `src/security/mod.rs` | Add USR-001..024 test registration | S |
 | `src/object/types.rs` | Add ObType::Session=19, ObInfoClass variants 24-28, ObSetInfoClass variants 28-32 | S |
 | `src/syscall/ob.rs` | Add Session handler, extend Process/Thread info with token data, VFS permission checks, token query, integrity level lowering | XL |
-| `src/fs/neodos_dir.rs` | Extend DirEntryV2 with owner_sid, backward compat | M |
-| `src/fs/neodos_v2.rs` | Write/read owner_sid, superblock feature flag | M |
+| `src/fs/neofs/neodos_dir.rs` | Extend DirEntryV2 with owner_sid, backward compat | M |
+| `src/fs/neofs/neodos_v2.rs` | Write/read owner_sid, superblock feature flag | M |
 | `src/fs/vfs.rs` | Add permission check in VFS operations, default perms by extension | L |
 | `src/cm/hive.rs` | Wire sec_desc_cell, default SD on key creation | M |
 | `src/cm/security.rs` | New file: Registry ACL checking | M |
@@ -912,8 +912,8 @@ pub fn token_set_integrity_level(fd: i64, level: IntegrityLevel) -> Result<(), i
 
 | Step | Files | Description |
 | ------ | ------- | ------------- |
-| 3.1 | `src/fs/neodos_dir.rs` | Add `owner_sid: Sid` to DirEntryV2 |
-| 3.2 | `src/fs/neodos_v2.rs` | Superblock `FEATURE_OWNER_SID` flag, backward compat read |
+| 3.1 | `src/fs/neofs/neodos_dir.rs` | Add `owner_sid: Sid` to DirEntryV2 |
+| 3.2 | `src/fs/neofs/neodos_v2.rs` | Superblock `FEATURE_OWNER_SID` flag, backward compat read |
 | 3.3 | `src/fs/vfs.rs` | Add `check_vfs_access()` function |
 | 3.4 | `src/syscall/ob.rs` | Wire permission checks in VFS operations |
 | 3.5 | `src/fs/vfs.rs` | Default permissions by file extension |

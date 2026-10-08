@@ -1,10 +1,9 @@
 pub mod crc32;
 pub mod fat32;
-pub mod neodos_dir;
-pub mod neodos_v2;
-pub mod neodos_io;
-pub mod vfs;
-pub mod btree;
-pub mod freelist;
-pub mod snapshot;
 pub mod fsck;
+pub mod neofs;
+pub mod vfs;
+
+// Historical `crate::fs::<name>` paths preserved after grouping NeoFS under
+// `fs/neofs/`.
+pub use neofs::{btree, freelist, neodos_dir, neodos_io, neodos_v2, snapshot};

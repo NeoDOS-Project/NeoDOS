@@ -11,7 +11,7 @@ pub struct SnapshotEntryRaw {
 
 #[allow(dead_code)]
 use alloc::vec::Vec;
-use super::crc32::crc32;
+use crate::fs::crc32::crc32;
 
 pub const MAX_SNAPSHOTS: usize = 64;
 pub const NODE_SIZE: usize = 4096;

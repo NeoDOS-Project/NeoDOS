@@ -388,10 +388,10 @@ neodos-kernel/src/
 
 ## 9. Plan de Implementación (por orden)
 
-1. `src/fs/btree.rs` — B-tree: insert, lookup, delete, walk, COW clone
-2. `src/fs/freelist.rs` — Free list: alloc, free, merge, save/load
-3. `src/fs/snapshot.rs` — Snapshot table: create, list, restore, purge
-4. `src/fs/neodos_v2.rs` — FileSystem trait impl con B-tree + extents + COW
+1. `src/fs/neofs/btree/` — B-tree: insert, lookup, delete, walk, COW clone
+2. `src/fs/neofs/freelist.rs` — Free list: alloc, free, merge, save/load
+3. `src/fs/neofs/snapshot.rs` — Snapshot table: create, list, restore, purge
+4. `src/fs/neofs/neodos_v2.rs` — FileSystem trait impl con B-tree + extents + COW
 5. `src/fs/fsck.rs` — Scrub de B-tree + checksums
 6. `src/syscall/ob/` — handler_ob_snapshot (RAX 48)
 7. Tests
