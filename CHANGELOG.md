@@ -6,6 +6,16 @@
 
 ### Added
 
+- **Filesystem: NeoFS v2 snapshot generations + per-snapshot delete (#16).**
+  Each snapshot now carries a monotonic **generation** (used as its stable id:
+  never reused across deletes or ring eviction) and the table persists it
+  (type-4 entry 16 → 24 bytes). New `SnapshotTable::delete(id)` exposed as
+  `sys_ob_snapshot` op `4=DELETE` (RAX 48) and `FileSystem::snapshot_delete`.
+  Ring buffer (64), create/restore/list/purge and persistence (#554) unchanged.
+  Tests: `snapshot_generation_monotonic_and_delete`,
+  `neofs_v2_snapshot_delete_persists`, `syscall_ob_snapshot_delete`.
+  `docs/filesystem/neofs-v2.md` updated.
+
 - **Filesystem: size-aware B-tree node capacity (#396).** B-tree nodes now
   split, merge and detect underflow by **serialized byte size** instead of a
   fixed entry count (`MAX_ENTRIES = 200`). With 128-byte directory entries a

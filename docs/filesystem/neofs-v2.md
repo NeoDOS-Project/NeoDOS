@@ -136,15 +136,17 @@ izquierda/derecha.
 
 ### 2.7 Node Type 4 — Snapshot Table
 
-Cada entrada = 16 bytes:
+Cada entrada = 24 bytes:
 
 ```text
 Offset  Size  Campo            Descripción
 0       8     root_btree_lba   Raíz del B-tree en ese snapshot
 8       8     timestamp        Cuándo se creó
+16      8     generation       Número de generación monótono (id estable)
 ```
 
-Caben ~255 entradas por nodo. Máximo 64 snapshots (anillo circular).
+Caben ~170 entradas por nodo. Máximo 64 snapshots (anillo circular). El `id` que
+usa la API es la **generación** (no se reutiliza al borrar/expulsar).
 
 La tabla **se persiste en disco** como un único nodo tipo 4: `save_sb` la
 serializa, guarda su LBA en `snapshot_table_lba` y libera el bloque anterior, de
@@ -252,12 +254,17 @@ RD /F PROYECTO  (force: borra aunque tenga contenido)
 ```text
 SNAPSHOT CREATE
 1. Copiar (root_btree_lba, root_timestamp) a la snapshot table
-2. snapshot_count++ (circular, máximo 64)
+2. Asignar un número de generación monótono (id) — no se reutiliza
+3. Si ya hay 64, descartar el más viejo (circular)
 
 SNAPSHOT RESTORE N
 1. root_btree_lba = snapshot[N].root_btree_lba
 2. root_version++
 3. El FS ahora ve el árbol como estaba en el momento N
+
+SNAPSHOT DELETE N
+1. Eliminar el snapshot con generación N
+2. root_version++
 
 SNAPSHOT PURGE
 1. Vaciar snapshot table
@@ -329,8 +336,8 @@ impl NeoDosFsV2 {
 
 ```text
 RBX = fd (handle a la raíz del FS, ej: \Global\FileSystem\C:\)
-RCX = op: 0=CREATE, 1=RESTORE, 2=LIST, 3=PURGE
-RDX = buf (para LIST: buffer de salida; para RESTORE: snapshot_id u64)
+RCX = op: 0=CREATE, 1=RESTORE, 2=LIST, 3=PURGE, 4=DELETE
+RDX = buf (para LIST: buffer de salida; para RESTORE/DELETE: snapshot_id u64)
 R8  = buf_size
 
 Returns:
@@ -338,6 +345,7 @@ Returns:
   RESTORE → 0 o error
   LIST → número de snapshots escritos en buf
   PURGE → 0 o error
+  DELETE → 0 o error
 
 Errors: -Inval, -NoEnt, -Io, -NoSys (si no es NeoFS)
 ```
