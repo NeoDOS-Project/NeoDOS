@@ -1,0 +1,12 @@
+[package]
+name = "libneotui"
+version = "0.1.0"
+edition = "2021"
+description = "Reusable console-UI toolkit for NeoDOS .NXE tools (menus, dialogs, key decoding). Generic: it does not depend on libneocfg, Ob, the Registry or any app."
+
+[lib]
+name = "libneotui"
+path = "src/lib.rs"
+crate-type = ["lib"]
+
+[dependencies]
