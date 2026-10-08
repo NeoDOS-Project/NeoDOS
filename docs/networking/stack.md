@@ -156,7 +156,7 @@ Loopback adapter. Validated in VirtualBox: 5 kernel tests
 ### Link state (`is_link_up`)
 
 NIC drivers run as NEM modules (`drivers/e1000`). The kernel NEM bridge
-(`src/drivers/nem/net_bridge.rs`) registers a bootstrap `NetworkInterface` at
+(`src/drivers/nem/loader/net_bridge.rs`) registers a bootstrap `NetworkInterface` at
 driver-load time, so it cannot call back into a driver that is still loading.
 Instead:
 

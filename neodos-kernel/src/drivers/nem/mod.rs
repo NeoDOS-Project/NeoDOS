@@ -1,9 +1,11 @@
+//! NEM dynamic driver framework: loader, certification runtime and management.
+
 pub mod loader;
-pub mod driver;
-pub mod event;
-pub mod hst;
+pub mod management;
 pub mod runtime;
-pub mod v3loader;
-pub mod net_bridge;
+
+// Historical submodule paths (`crate::drivers::nem::driver`, `.hst`, ...)
+// now live under `loader/`.
+pub use loader::{driver, event, hst, net_bridge, v3loader};
 
 pub use loader::load_nem as load_nem_driver;

@@ -1,4 +1,4 @@
-use super::device::{BusType, DeviceClass};
+use crate::drivers::device::{BusType, DeviceClass};
 use alloc::vec::Vec;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

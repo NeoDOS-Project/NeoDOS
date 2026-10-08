@@ -84,7 +84,7 @@ Todo el sistema cabe en una sola imagen de disco con tabla de particiones GUID (
 La imagen se genera con NeoDev (`neodev build --image`, implementado en `neodev/src/image.rs`),
 que utiliza `sfdisk` (util-linux) para crear la tabla GPT y luego copia los datos de cada
 partición en su offset correcto.
-El kernel incluye `drivers/gpt.rs` que parsea la tabla y encuentra la partición NeoDOS
+El kernel incluye `drivers/storage/gpt.rs` que parsea la tabla y encuentra la partición NeoDOS
 por su GUID de tipo (`EBD0A0A2-B9E5-4433-87C0-68B6B72699C7`).
 
 > **Propuesta de rediseño:** el layout interno de `C:` y su migración a una
@@ -94,7 +94,7 @@ por su GUID de tipo (`EBD0A0A2-B9E5-4433-87C0-68B6B72699C7`).
 
 El kernel usa una arquitectura de dos niveles para ATA:
 
-### Boot stub (`neodos-kernel/src/drivers/ata.rs`)
+### Boot stub (`neodos-kernel/src/drivers/hw/ata.rs`)
 
 `BootAta` — PIO only, primary channel only. Used during early boot (PHASE 3.6–3.8) for GPT
 parsing, NeoDOS superblock read, and block cache warmup before NEM drivers are loaded.
@@ -345,7 +345,7 @@ ABI constants: `ABI_MIN_VALID=1`, `ABI_TARGET=1`, `ABI_MAX_VALID=2`
 
 ---
 
-### 4. NEM v3 Loader (`src/drivers/nem/v3loader.rs`)
+### 4. NEM v3 Loader (`src/drivers/nem/loader/v3loader.rs`)
 
 Standalone NEM v3 binary driver loader. Loads a `.nem` from NeoFS or raw data, applies relocations, and resolves symbols against the **Kernel Export Table (KET)**.
 
@@ -377,7 +377,7 @@ Standalone NEM v3 binary driver loader. Loads a `.nem` from NeoFS or raw data, a
 
 ---
 
-### 5. Driver Certification Pipeline (`src/drivers/driver_runtime.rs`)
+### 5. Driver Certification Pipeline (`src/drivers/nem/runtime/mod.rs`)
 
 Strict **7-state state machine** for driver lifecycle management.
 
@@ -419,7 +419,7 @@ Any state → Faulted(5) | Unloaded(6)
 
 **Global driver runtime:** `lazy_static! { DRIVER_RUNTIME: Mutex<DriverRuntime> }` with 16 slots max.
 
-#### 5.5. X3 Capability System (`src/drivers/caps.rs`)
+#### 5.5. X3 Capability System (`src/drivers/nem/management/caps.rs`)
 
 Fine-grained resource access control for NEM drivers. Each driver inherits a 64-bit capability bitmap at load time based on its category:
 
@@ -437,7 +437,7 @@ See `docs/drivers/overview.md` for the complete capability flag table and `docs/
 
 ---
 
-### 6. Boot Driver Loader (`src/drivers/boot_loader/mod.rs`)
+### 6. Boot Driver Loader (`src/drivers/nem/management/boot_loader/mod.rs`)
 
 Automatic NEM v3 driver loading orchestrator at system startup (PHASE 3.85 in `main.rs`).
 
@@ -535,14 +535,14 @@ Beyond the NEM driver framework, the kernel includes integrated hardware drivers
 | ATA (NEM v3) | `drivers/ata/` (standalone) | DMA + PIO, primary + secondary, ~137 GB, registered via NemBlockDevice |
 | AHCI (boot + NEM) | `drivers/boot_ahci.rs` + `drivers/ahci/` (NEM) | DMA polling + NCQ (v0.46.2), per-port, ATA + ATAPI, PRDT scatter-gather |
 | PS/2 | `drivers/ps2.rs` | IRQ1, raw scancode → Event Bus → NeoKBD translates via .kbd layouts |
-| PCI | `drivers/pci.rs` | Config space primitives via ECAM MMIO with legacy PIO fallback (0xCF8/0xCFC). Init at Phase 2.3 from ACPI MCFG. BAR read/map utilities. |
-| GPT | `drivers/gpt.rs` | GUID partition table parser |
+| PCI | `drivers/hw/pci.rs` | Config space primitives via ECAM MMIO with legacy PIO fallback (0xCF8/0xCFC). Init at Phase 2.3 from ACPI MCFG. BAR read/map utilities. |
+| GPT | `drivers/storage/gpt.rs` | GUID partition table parser |
 | FAT32 | `drivers/fat32.rs` | ESP partition, absolute LBAs |
 | RTC | `drivers/rtc_bridge.rs` + `drivers/rtc/` (NEM) | CMOS RTC via NEM driver |
 | ACPI | `src/power/acpi.rs` + `drivers/acpi/` (NEM) | RSDP/XSDT, poweroff via PM1a |
 | NVMe | `drivers/nvme.rs` | NVMe probe + read/write sectors |
 | Storage Manager | `drivers/storage_manager.rs` | Unifies NVMe / AHCI / ATA (boot stub) |
-| Block Device | `drivers/block.rs` | Trait + block device manager |
+| Block Device | `drivers/storage/block.rs` | Trait + block device manager |
 | e1000 NIC | `drivers/e1000/` (NEM) | Intel e1000 NIC driver (82540EM/82543GC/82545EM/82574L) |
 | ECAM PCIe | `hal/pci.rs` | MMIO ECAM config space: set_ecam_base, ecam_is_active, ecam_read/write_config_dword/word/byte |
 | IOAPIC | `interrupts/ioapic.rs` | MADT-detected I/O APIC: init, mask/unmask, ISA IRQ routing, PIC disable |

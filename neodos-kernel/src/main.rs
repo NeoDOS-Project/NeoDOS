@@ -68,13 +68,12 @@ mod kwait;
 mod net;
 mod cm;
 mod services;
-mod virtio;
 mod kbd;
 mod stress_spawn; // #345 Phase 2 diagnostic spawn-storm harness
 mod abi_freeze;
 mod i18n_tests;
 
-use drivers::fat32::Fat32Driver;
+use fs::fat32::Fat32Driver;
 use drivers::gpt;
 use fs::neodos_v2::NeoDosFsV2;
 use graphics::FramebufferInfo;

@@ -15,7 +15,7 @@ use crate::fs::freelist::{FreeList, FreeRegion};
 use crate::fs::neodos_v2::NeoDosFsV2;
 use crate::vfs::io::IoStack;
 
-use crate::drivers::fsck::{FsckStats, FsckTrait};
+use super::{FsckStats, FsckTrait};
 
 pub const BLOCK_SIZE: usize = 4096;
 pub const SECTORS_PER_BLOCK: u64 = 8;
@@ -416,7 +416,7 @@ pub fn register_tests() {
     // Test 1: clean filesystem
     crate::test_case!("neofs_v2_fsck_clean", {
         let sectors = alloc::vec![[0u8; 512]; 1024];
-        let dev_id = crate::drivers::fsck::register_test_device(sectors);
+        let dev_id = super::register_test_device(sectors);
         let io = IoStack::new(dev_id);
         let num_blocks = 128;
         let _ = crate::fs::neodos_v2::mkfs_ne2(&io, num_blocks, "TEST");
@@ -433,7 +433,7 @@ pub fn register_tests() {
     // Test 2: corrupted B-tree node CRC
     crate::test_case!("neofs_v2_fsck_corrupt_btree", {
         let sectors = alloc::vec![[0u8; 512]; 1024];
-        let dev_id = crate::drivers::fsck::register_test_device(sectors);
+        let dev_id = super::register_test_device(sectors);
         let io = IoStack::new(dev_id);
         let num_blocks = 128;
         let _ = crate::fs::neodos_v2::mkfs_ne2(&io, num_blocks, "TEST");
@@ -452,7 +452,7 @@ pub fn register_tests() {
     // Test 3: bad superblock magic (via raw device manipulation)
     crate::test_case!("neofs_v2_fsck_bad_magic", {
         let sectors = alloc::vec![[0u8; 512]; 1024];
-        let dev_id = crate::drivers::fsck::register_test_device(sectors);
+        let dev_id = super::register_test_device(sectors);
         let io = IoStack::new(dev_id);
         let _ = crate::fs::neodos_v2::mkfs_ne2(&io, 128, "TEST");
         // Overwrite magic directly on the device
@@ -487,7 +487,7 @@ pub fn register_tests() {
         };
         let raw = unsafe { core::slice::from_raw_parts(&sb as *const _ as *const u8, 512) };
         sectors[0].copy_from_slice(raw);
-        let dev_id = crate::drivers::fsck::register_test_device(sectors);
+        let dev_id = super::register_test_device(sectors);
         let io = IoStack::new(dev_id);
         let stats = fsck_ne2(&io, false, false);
         crate::test_true!(stats.errors > 0);
@@ -497,7 +497,7 @@ pub fn register_tests() {
     // Test 5: fsck detects corrupted B-tree node CRC
     crate::test_case!("neofs_v2_fsck_crc_detect", {
         let sectors = alloc::vec![[0u8; 512]; 1024];
-        let dev_id = crate::drivers::fsck::register_test_device(sectors);
+        let dev_id = super::register_test_device(sectors);
         let io = IoStack::new(dev_id);
         let _ = crate::fs::neodos_v2::mkfs_ne2(&io, 128, "TEST");
 
@@ -516,7 +516,7 @@ pub fn register_tests() {
     // Test 6: repair mode — corrupt B-tree CRC, repair, verify repaired count
     crate::test_case!("neofs_v2_fsck_repair", {
         let sectors = alloc::vec![[0u8; 512]; 1024];
-        let dev_id = crate::drivers::fsck::register_test_device(sectors);
+        let dev_id = super::register_test_device(sectors);
         let io = IoStack::new(dev_id);
         let _ = crate::fs::neodos_v2::mkfs_ne2(&io, 128, "TEST");
 

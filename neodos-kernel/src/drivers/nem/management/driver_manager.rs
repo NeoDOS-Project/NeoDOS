@@ -15,7 +15,7 @@ use crate::log::LogSubsys;
 pub struct LoadedDriverInfo {
     pub id: u32,
     pub name: String,
-    pub driver_class: super::device::DeviceClass,
+    pub driver_class: crate::drivers::device::DeviceClass,
     pub bound_device: Option<DeviceInfo>,
 }
 
@@ -58,7 +58,7 @@ impl DriverManager {
 
     fn scan_available_drivers(&mut self) {
         kinfo!(LogSubsys::Driver, "Phase 2: Scanning available NEM drivers");
-        let files = super::boot_loader::driver_scan("C:\\System\\Drivers");
+        let files = crate::drivers::boot_loader::driver_scan("C:\\System\\Drivers");
         self.available_nem_files = files;
         kinfo!(LogSubsys::Driver, "{} NEM driver(s) available", self.available_nem_files.len());
     }
@@ -138,7 +138,7 @@ impl DriverManager {
 
     fn collect_platform_drivers(&mut self) {
         for desc in manifest::all_descriptors() {
-            if desc.bus_type != super::device::BusType::Platform {
+            if desc.bus_type != crate::drivers::device::BusType::Platform {
                 continue;
             }
             let name_upper = desc.name.to_ascii_uppercase();
@@ -185,7 +185,7 @@ impl DriverManager {
 
         let mut all_nem_data: BTreeMap<String, Vec<u8>> = BTreeMap::new();
         for file in &self.available_nem_files {
-            if let Ok(data) = super::boot_loader::read_nem_file(file) {
+            if let Ok(data) = crate::drivers::boot_loader::read_nem_file(file) {
                 if let Some(parsed) = nem::parse_nem_v3(&data) {
                     let name = parsed.name.to_ascii_uppercase();
                     all_nem_data.insert(name, data);
