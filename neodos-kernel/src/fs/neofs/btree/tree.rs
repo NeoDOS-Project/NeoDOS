@@ -71,7 +71,7 @@ impl BTree {
                 Ok(pos) => new_node.entries[pos].value = value.to_vec(),
                 Err(pos) => new_node.entries.insert(pos, BTreeEntry { key: key.to_vec(), value: value.to_vec() }),
             }
-            if new_node.entries.len() > new_node.max_entries() {
+            if !node_fits(&new_node) {
                 let (median_key, left, right) = split_node(&new_node);
                 let left_lba = io.write_node(&left);
                 let right_lba = io.write_node(&right);
@@ -94,7 +94,7 @@ impl BTree {
                     new_node.entries.insert(child_idx + 1, BTreeEntry {
                         key: median_key, value: right_lba.to_le_bytes().to_vec(),
                     });
-                    if new_node.entries.len() > new_node.max_entries() {
+                    if !node_fits(&new_node) {
                         let (mkey, left, right) = split_internal(&new_node);
                         Some(InsertResult::Split(mkey, io.write_node(&left), io.write_node(&right)))
                     } else {
@@ -163,7 +163,7 @@ impl BTree {
                 Some(lba) => {
                     new_node.entries[child_idx].value = lba.to_le_bytes().to_vec();
                     if let Some(child_node) = io.read_node(lba) {
-                        if child_node.entries.len() < MIN_ENTRIES {
+                        if node_underfull(&child_node) {
                             Self::try_borrow_or_merge(io, &mut new_node, child_idx, garbage);
                         }
                     }
@@ -188,7 +188,7 @@ impl BTree {
             Some(l) => l, None => return false,
         };
         let child = match io.read_node(child_lba) { Some(c) => c, None => return false };
-        if child.entries.len() >= MIN_ENTRIES { return true; }
+        if !node_underfull(&child) { return true; }
 
         // Try borrow from left sibling
         if child_idx > 0 {
@@ -196,7 +196,7 @@ impl BTree {
                 Some(l) => l, None => return false,
             };
             let left = match io.read_node(left_lba) { Some(l) => l, None => return false };
-            if left.entries.len() > MIN_ENTRIES {
+            if !node_underfull(&left) {
                 return Self::borrow_left(io, parent, child_idx, left, child, garbage);
             }
         }
@@ -208,7 +208,7 @@ impl BTree {
                 Some(l) => l, None => return false,
             };
             let right = match io.read_node(right_lba) { Some(r) => r, None => return false };
-            if right.entries.len() > MIN_ENTRIES {
+            if !node_underfull(&right) {
                 return Self::borrow_right(io, parent, child_idx, child, right, garbage);
             }
         }
@@ -315,6 +315,7 @@ impl BTree {
         if let Some(l) = u64_from_value(&parent.entries[child_idx - 1].value) { garbage.push(l); }
         if let Some(l) = u64_from_value(&parent.entries[child_idx].value) { garbage.push(l); }
         let merged = merge_nodes(left, child, &sep);
+        if !node_fits(&merged) { return false; }
 
         // child_idx-1 apunta al nodo fusionado; eliminamos child_idx
         let merged_lba = io.write_node(&merged);
@@ -336,6 +337,7 @@ impl BTree {
         if let Some(l) = u64_from_value(&parent.entries[child_idx].value) { garbage.push(l); }
         if let Some(l) = u64_from_value(&parent.entries[child_idx + 1].value) { garbage.push(l); }
         let merged = merge_nodes(child, right, &sep);
+        if !node_fits(&merged) { return false; }
 
         // child_idx apunta al fusionado; eliminamos child_idx+1
         let merged_lba = io.write_node(&merged);
@@ -393,6 +395,39 @@ enum InsertResult {
     Split(Vec<u8>, u64, u64),
 }
 
+fn entry_size(e: &BTreeEntry) -> usize { 4 + e.key.len() + e.value.len() }
+
+fn node_entries_size(node: &BTreeNode) -> usize {
+    node.entries.iter().map(entry_size).sum()
+}
+
+/// ¿Cabe el nodo serializado en un bloque de 4 KB?
+fn node_fits(node: &BTreeNode) -> bool {
+    HEADER_SIZE + node_entries_size(node) <= NODE_SIZE
+}
+
+/// ¿Está el nodo por debajo de la mitad de la capacidad del bloque (en bytes)?
+fn node_underfull(node: &BTreeNode) -> bool {
+    HEADER_SIZE + node_entries_size(node) < NODE_SIZE / 2
+}
+
+/// Índice de corte que reparte las entradas por bytes (~mitad) y deja ambas
+/// mitades dentro del bloque. Sustituye al corte por número de entradas, que
+/// fallaba con valores grandes (p. ej. DirEntry de 128 bytes).
+fn split_index(node: &BTreeNode) -> usize {
+    let n = node.entries.len();
+    if n < 2 { return 1; }
+    let total = node_entries_size(node);
+    let mut acc = 0usize;
+    for (i, e) in node.entries.iter().enumerate() {
+        acc += entry_size(e);
+        if acc * 2 >= total {
+            return (i + 1).clamp(1, n - 1);
+        }
+    }
+    (n / 2).clamp(1, n - 1)
+}
+
 fn u64_from_value(v: &[u8]) -> Option<u64> {
     if v.len() < 8 { return None; }
     Some(u64::from_le_bytes(v[..8].try_into().ok()?))
@@ -416,7 +451,7 @@ fn child_index(node: &BTreeNode, key: &[u8]) -> usize {
 }
 
 fn split_node(node: &BTreeNode) -> (Vec<u8>, BTreeNode, BTreeNode) {
-    let mid = node.entries.len() / 2;
+    let mid = split_index(node);
     let mut left = BTreeNode::new(NodeType::Leaf);
     let mut right = BTreeNode::new(NodeType::Leaf);
     left.entries = node.entries[..mid].to_vec();
@@ -425,7 +460,7 @@ fn split_node(node: &BTreeNode) -> (Vec<u8>, BTreeNode, BTreeNode) {
 }
 
 fn split_internal(node: &BTreeNode) -> (Vec<u8>, BTreeNode, BTreeNode) {
-    let mid = node.entries.len() / 2;
+    let mid = split_index(node);
     let mut left = BTreeNode::new(NodeType::Internal);
     let mut right = BTreeNode::new(NodeType::Internal);
     left.entries = node.entries[..mid].to_vec();

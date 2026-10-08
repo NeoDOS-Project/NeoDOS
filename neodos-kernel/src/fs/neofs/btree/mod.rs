@@ -16,7 +16,6 @@ pub use tests::register_btree_tests;
 pub const NODE_SIZE: usize = 4096;
 const HEADER_SIZE: usize = 8;
 pub const MAX_ENTRIES: usize = 200;
-const MIN_ENTRIES: usize = MAX_ENTRIES / 2;
 
 pub trait BTreeIO {
     fn read_node(&self, lba: u64) -> Option<BTreeNode>;

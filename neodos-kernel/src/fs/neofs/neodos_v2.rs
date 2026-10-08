@@ -1036,4 +1036,36 @@ pub fn register_neodos_v2_tests() {
         let _ = crate::globals::BLOCK_DEVICES.lock().force_remove(dev_id);
     });
 
+    crate::test_case!("neofs_v2_dir_60_entries_multileaf", {
+        // 60 entradas de directorio (128 B c/u) no caben en una hoja de 4 KB:
+        // fuerza árbol de directorio multi-hoja y su persistencia.
+        let sectors = alloc::vec![[0u8; 512]; 8192];
+        let dev_id = crate::fs::fsck::register_test_device(sectors);
+        let io = IoStack::new(dev_id);
+        mkfs_ne2(&io, 1024, "TEST").unwrap();
+
+        let mut fs = NeoDosFsV2::new(io).unwrap();
+        for i in 0..60u32 {
+            fs.create(0, &alloc::format!("F{:03}.TXT", i)).unwrap();
+        }
+        for i in 0..60u32 {
+            crate::test_true!(fs.lookup(0, &alloc::format!("F{:03}.TXT", i)).is_ok());
+        }
+        let mut n = 0usize;
+        while fs.readdir(0, n).unwrap().is_some() { n += 1; }
+        crate::test_eq!(n, 60);
+        drop(fs);
+
+        // Remontar: el árbol multi-hoja debe persistir.
+        let mut fs2 = NeoDosFsV2::new(IoStack::new(dev_id)).unwrap();
+        for i in 0..60u32 {
+            crate::test_true!(fs2.lookup(0, &alloc::format!("F{:03}.TXT", i)).is_ok());
+        }
+        let mut n = 0usize;
+        while fs2.readdir(0, n).unwrap().is_some() { n += 1; }
+        crate::test_eq!(n, 60);
+
+        let _ = crate::globals::BLOCK_DEVICES.lock().force_remove(dev_id);
+    });
+
 }
