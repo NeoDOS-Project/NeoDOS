@@ -6,6 +6,16 @@
 
 ### Added
 
+- **Filesystem: size-aware B-tree node capacity (#396).** B-tree nodes now
+  split, merge and detect underflow by **serialized byte size** instead of a
+  fixed entry count (`MAX_ENTRIES = 200`). With 128-byte directory entries a
+  leaf only holds ~28, so the old count-based split let `serialize` silently
+  truncate a node (declared count > written entries) and corrupted wide-value
+  directories. New helpers `node_fits`/`node_underfull`/`split_index`; merges
+  are skipped when the combined node would not fit. Tests:
+  `btree_wide_values_multileaf` (60×128 B) and
+  `neofs_v2_dir_60_entries_multileaf` (create/lookup/readdir + remount).
+
 - **Memory/FS: page-cache flush is device-scoped (#560).** `flush`,
   `flush_inode` and `flush_batch` take a `dev_tag` and only write pages owned by
   that device; `flush_cache_if_needed` now flushes every present device

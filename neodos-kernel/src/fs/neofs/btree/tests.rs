@@ -306,4 +306,38 @@ pub fn register_btree_tests() {
         let result = BTree::delete(&mut MemBTreeIO::new(), 0, b"any");
         crate::test_eq!(result, Some(None));
     });
+
+    crate::test_case!("btree_wide_values_multileaf", {
+        // Valores de 128 bytes (como un DirEntry): ~28 entradas por hoja, así
+        // que 60 fuerzan árbol multi-hoja. Antes del split por bytes, el
+        // serializador truncaba la hoja (count > entradas escritas).
+        let mut io = MemBTreeIO::new();
+        let mut r = 0;
+        let value = alloc::vec![0xABu8; 128];
+        for i in 0..60u32 {
+            let k = format!("f{:04}", i);
+            r = BTree::insert(&mut io, r, k.as_bytes(), &value).unwrap();
+        }
+        for i in 0..60u32 {
+            let k = format!("f{:04}", i);
+            crate::test_eq!(BTree::lookup(&io, r, k.as_bytes()), Some(value.clone()));
+        }
+        let mut count = 0;
+        BTree::walk(&io, r, &mut |_| count += 1);
+        crate::test_eq!(count, 60);
+
+        // Borrar 40 (fuerza merges/borrows) y comprobar las 20 restantes.
+        for i in 0..40u32 {
+            let k = format!("f{:04}", i);
+            let nr = BTree::delete(&mut io, r, k.as_bytes()).unwrap();
+            r = nr.unwrap_or(0);
+        }
+        let mut count = 0;
+        BTree::walk(&io, r, &mut |_| count += 1);
+        crate::test_eq!(count, 20);
+        for i in 40..60u32 {
+            let k = format!("f{:04}", i);
+            crate::test_true!(BTree::lookup(&io, r, k.as_bytes()).is_some());
+        }
+    });
 }
