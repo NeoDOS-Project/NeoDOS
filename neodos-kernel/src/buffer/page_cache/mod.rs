@@ -128,14 +128,14 @@ impl PageCache {
                 id
             } else {
                 self.misses += 1;
-                self.evict_slot(id, dev);
-                let id = self.evict_lru(dev)?;
+                self.evict_slot(id, dev_tag, dev);
+                let id = self.evict_lru(dev_tag, dev)?;
                 self.populate_slot(id, key, dev_tag, make_inode_key(drive_id, inode, block_num), dev)?;
                 id
             }
         } else {
             self.misses += 1;
-            let id = self.evict_lru(dev)?;
+            let id = self.evict_lru(dev_tag, dev)?;
             self.populate_slot(id, key, dev_tag, make_inode_key(drive_id, inode, block_num), dev)?;
             id
         };
@@ -161,14 +161,14 @@ impl PageCache {
                 id
             } else {
                 self.misses += 1;
-                self.evict_slot(id, dev);
-                let id = self.evict_lru(dev)?;
+                self.evict_slot(id, dev_tag, dev);
+                let id = self.evict_lru(dev_tag, dev)?;
                 self.populate_slot(id, key, dev_tag, make_inode_key(drive_id, inode, block_num), dev)?;
                 id
             }
         } else {
             self.misses += 1;
-            let id = self.evict_lru(dev)?;
+            let id = self.evict_lru(dev_tag, dev)?;
             self.populate_slot(id, key, dev_tag, make_inode_key(drive_id, inode, block_num), dev)?;
             id
         };
@@ -224,9 +224,13 @@ impl PageCache {
 
     // ── Flush ──────────────────────────────────────────────────────
 
-    pub fn flush(&mut self, dev: &mut dyn BlockDevice) -> Result<(), ()> {
+    /// Flush dirty pages belonging to `dev_tag`. Pages of other devices are
+    /// never written here (a single `dev` cannot write them correctly).
+    pub fn flush(&mut self, dev_tag: u64, dev: &mut dyn BlockDevice) -> Result<(), ()> {
         for i in 0..CACHE_SIZE {
-            if self.slots[i].valid && self.slots[i].dirty && !self.slots[i].write_pending {
+            if self.slots[i].valid && self.slots[i].dirty && !self.slots[i].write_pending
+                && self.slots[i].dev_tag == dev_tag
+            {
                 let lba = self.slots[i].lba;
                 let dirty = self.slots[i].dirty_sectors;
                 let data = &self.slots[i].data;
@@ -247,9 +251,11 @@ impl PageCache {
         Ok(())
     }
 
-    pub fn flush_inode(&mut self, drive_id: u8, inode: u32, dev: &mut dyn BlockDevice) -> Result<(), ()> {
+    pub fn flush_inode(&mut self, dev_tag: u64, drive_id: u8, inode: u32, dev: &mut dyn BlockDevice) -> Result<(), ()> {
         for i in 0..CACHE_SIZE {
-            if self.slots[i].valid && self.slots[i].dirty && !self.slots[i].write_pending {
+            if self.slots[i].valid && self.slots[i].dirty && !self.slots[i].write_pending
+                && self.slots[i].dev_tag == dev_tag
+            {
                 let k = self.slots[i].inode_key;
                 if k == 0 { continue; }
                 let slot_drive = (k >> 56) as u8;
@@ -410,13 +416,15 @@ impl PageCache {
         MIN_CACHE_SIZE
     }
 
-    pub fn flush_batch(&mut self, dev: &mut dyn BlockDevice, max_flush: usize) -> usize {
+    pub fn flush_batch(&mut self, dev_tag: u64, dev: &mut dyn BlockDevice, max_flush: usize) -> usize {
         let mut flushed = 0;
         for i in 0..CACHE_SIZE {
             if flushed >= max_flush {
                 break;
             }
-            if self.slots[i].valid && self.slots[i].dirty && !self.slots[i].write_pending {
+            if self.slots[i].valid && self.slots[i].dirty && !self.slots[i].write_pending
+                && self.slots[i].dev_tag == dev_tag
+            {
                 let lba = self.slots[i].lba;
                 let dirty = self.slots[i].dirty_sectors;
                 let data = self.slots[i].data;
@@ -471,10 +479,10 @@ impl PageCache {
                 self.move_to_head(slot_id);
                 return Ok(&self.slots[slot_id as usize].data);
             }
-            self.evict_slot(slot_id, dev);
+            self.evict_slot(slot_id, dev_tag, dev);
         }
         self.misses += 1;
-        let slot_id = self.evict_lru(dev)?;
+        let slot_id = self.evict_lru(dev_tag, dev)?;
         self.populate_slot(slot_id, lba, dev_tag, 0, dev)?;
         Ok(&self.slots[slot_id as usize].data)
     }
@@ -487,24 +495,26 @@ impl PageCache {
                 self.move_to_head(slot_id);
                 return Ok(slot_id);
             }
-            self.evict_slot(slot_id, dev);
+            self.evict_slot(slot_id, dev_tag, dev);
         }
         self.misses += 1;
-        let slot_id = self.evict_lru(dev)?;
+        let slot_id = self.evict_lru(dev_tag, dev)?;
         self.populate_slot(slot_id, lba, dev_tag, inode_key, dev)?;
         Ok(slot_id)
     }
 
     /// Evict a specific slot (flushing it first if dirty). Used when the cached
     /// page belongs to a different device than the one being accessed.
-    fn evict_slot(&mut self, slot_id: u16, dev: &mut dyn BlockDevice) {
+    fn evict_slot(&mut self, slot_id: u16, dev_tag: u64, dev: &mut dyn BlockDevice) {
         let i = slot_id as usize;
         if !self.slots[i].valid { return; }
-        let (lba, dirty, tmp) = {
+        let (lba, dirty, tmp, owner) = {
             let s = &self.slots[i];
-            (s.lba, s.dirty_sectors, s.data)
+            (s.lba, s.dirty_sectors, s.data, s.dev_tag)
         };
-        if self.slots[i].dirty && !self.slots[i].write_pending {
+        // Never write another device's dirty page to `dev`: that would corrupt
+        // it. Such a page is dropped (multi-device L2 write-back is unsupported).
+        if self.slots[i].dirty && !self.slots[i].write_pending && owner == dev_tag {
             for s in 0..8u8 {
                 if (dirty >> s) & 1 != 0 {
                     let offset = (s as usize) * 512;
@@ -520,7 +530,7 @@ impl PageCache {
         self.slots[i] = EMPTY_SLOT;
     }
 
-    fn evict_lru(&mut self, dev: &mut dyn BlockDevice) -> Result<u16, ()> {
+    fn evict_lru(&mut self, dev_tag: u64, dev: &mut dyn BlockDevice) -> Result<u16, ()> {
         for i in 0..CACHE_SIZE {
             if !self.slots[i].valid {
                 return Ok(i as u16);
@@ -528,7 +538,7 @@ impl PageCache {
         }
         if let Some(tail) = self.lru_tail {
             let slot = &self.slots[tail as usize];
-            if slot.valid && slot.dirty && !slot.write_pending {
+            if slot.valid && slot.dirty && !slot.write_pending && slot.dev_tag == dev_tag {
                 let lba = slot.lba;
                 let dirty = slot.dirty_sectors;
                 let tmp = slot.data;
