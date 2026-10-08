@@ -188,6 +188,13 @@ path = "C:\DOCS\INFORME.TXT"
 
 **COW asegura consistencia:** Si el sistema se cae entre el paso 6 y 7, el superblock sigue apuntando a la raíz vieja. El archivo está intacto. No hay journal, no hay replay.
 
+**Reclamación COW:** los nodos B-tree y extents de datos reemplazados se
+registran como basura y se devuelven a la free list al guardar
+(`save_sb`). La reclamación solo ocurre con la tabla de snapshots vacía, ya que
+un snapshot puede seguir referenciando árboles/datos antiguos; con snapshots
+presentes la basura se retiene hasta `SNAPSHOT PURGE`. Los bloques 0 y 1 están
+reservados y nunca se reutilizan.
+
 ### 3.3 Crear archivo
 
 ```text
