@@ -30,6 +30,7 @@ const SNAPSHOT_OP_RESTORE: u32 = 1;
 const SNAPSHOT_OP_LIST: u32 = 2;
 const SNAPSHOT_OP_PURGE: u32 = 3;
 const SNAPSHOT_OP_DELETE: u32 = 4;
+const SNAPSHOT_OP_EXTRACT: u32 = 5;
 
 const SERVICE_CONTROL_START: u32 = 0;
 const SERVICE_CONTROL_STOP: u32 = 1;
@@ -87,6 +88,30 @@ pub(super) fn handler_ob_snapshot(regs: super::Registers) -> u64 {
             });
             match result {
                 Ok(()) => 0,
+                Err(_) => err_to_u64(SyscallError::Io),
+            }
+        }
+        SNAPSHOT_OP_EXTRACT => {
+            // RDX -> [id: u64][src_len: u32][dst_len: u32][src bytes][dst bytes]
+            if buf_ptr == 0 || buf_size < 16 {
+                return err_to_u64(SyscallError::Inval);
+            }
+            if !is_user_ptr_valid(buf_ptr, 16) {
+                return err_to_u64(SyscallError::Fault);
+            }
+            let id = unsafe { core::ptr::read_volatile(buf_ptr as *const u64) };
+            let src_len = unsafe { core::ptr::read_volatile((buf_ptr as *const u32).add(2)) } as usize;
+            let dst_len = unsafe { core::ptr::read_volatile((buf_ptr as *const u32).add(3)) } as usize;
+            let total = 16usize.saturating_add(src_len).saturating_add(dst_len);
+            if total > buf_size || !is_user_ptr_valid(buf_ptr, total as u64) {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let src = unsafe { core::slice::from_raw_parts((buf_ptr + 16) as *const u8, src_len) };
+            let dst = unsafe { core::slice::from_raw_parts((buf_ptr + 16 + src_len as u64) as *const u8, dst_len) };
+            let src = match core::str::from_utf8(src) { Ok(s) => s, Err(_) => return err_to_u64(SyscallError::Inval) };
+            let dst = match core::str::from_utf8(dst) { Ok(s) => s, Err(_) => return err_to_u64(SyscallError::Inval) };
+            match crate::globals::with_vfs(|vfs| vfs.snapshot_extract(drive_idx, id, src, dst)) {
+                Ok(bytes) => bytes,
                 Err(_) => err_to_u64(SyscallError::Io),
             }
         }

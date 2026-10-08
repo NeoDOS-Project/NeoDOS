@@ -6,6 +6,17 @@
 
 ### Added
 
+- **Filesystem: NeoFS v2 per-file snapshot extraction (#569).** New
+  `SNAPSHOT EXTRACT <id> <src> <dst>` (syscall RAX 48 op `5=EXTRACT`) copies a
+  file as it was in a snapshot to the live tree, without rolling back the whole
+  volume — the "Previous Versions" style recovery. `NeoDosFsV2::snapshot_extract`
+  resolves `src` in the snapshot's B-tree, reads it (inline/extents) and writes
+  `dst`. `remove_file`/`remove_dir` now route replaced extents through COW
+  garbage so blocks referenced by a snapshot are retained. New Ring 3 command
+  `snapshot.nxe` (`LIST/CREATE/RESTORE/DELETE/PURGE/EXTRACT`) + `libneodos`
+  wrappers. Tests: `neofs_v2_snapshot_extract_file` (inline + extent, delete
+  recovery, remount), `syscall_ob_snapshot_extract` (real `C:`). Docs updated.
+
 - **Filesystem: NeoFS v2 snapshot generations + per-snapshot delete (#16).**
   Each snapshot now carries a monotonic **generation** (used as its stable id:
   never reused across deletes or ring eviction) and the table persists it

@@ -101,6 +101,12 @@ pub trait FileSystem: Send {
         Err(VfsError::NotImplemented)
     }
 
+    /// Copiar un fichero tal como estaba en el snapshot `id` a `dst` (árbol
+    /// actual). Devuelve los bytes copiados.
+    fn snapshot_extract(&mut self, _id: u64, _src: &str, _dst: &str) -> Result<u64, VfsError> {
+        Err(VfsError::NotImplemented)
+    }
+
     fn snapshot_purge(&mut self) -> Result<(), VfsError> {
         Err(VfsError::NotImplemented)
     }
@@ -446,6 +452,11 @@ impl Vfs {
     pub fn snapshot_delete(&mut self, drive_idx: usize, id: u64) -> Result<(), VfsError> {
         let fs = self.drives[drive_idx].as_mut().ok_or(VfsError::NotFound)?;
         fs.snapshot_delete(id)
+    }
+
+    pub fn snapshot_extract(&mut self, drive_idx: usize, id: u64, src: &str, dst: &str) -> Result<u64, VfsError> {
+        let fs = self.drives[drive_idx].as_mut().ok_or(VfsError::NotFound)?;
+        fs.snapshot_extract(id, src, dst)
     }
 
     pub fn snapshot_purge(&mut self, drive_idx: usize) -> Result<(), VfsError> {
