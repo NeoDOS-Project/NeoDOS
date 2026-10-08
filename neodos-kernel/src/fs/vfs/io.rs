@@ -129,9 +129,22 @@ impl IoStack {
             }
         }
 
-        let mut bdevs_lock = crate::globals::BLOCK_DEVICES.lock();
-        let dev = bdevs_lock.get(self.device_id).ok_or(())?;
-        dev.write_blocks(abs_lba, count as u8, buf)
+        let res = {
+            let mut bdevs_lock = crate::globals::BLOCK_DEVICES.lock();
+            let dev = bdevs_lock.get(self.device_id).ok_or(())?;
+            dev.write_blocks(abs_lba, count as u8, buf)
+        };
+
+        // L1 is read-cached: direct writes bypass the page cache, so evict any
+        // overlapping cached page or a later read would observe stale bytes
+        // (e.g. FSCK repairing a block that was just written to the device).
+        if self.cache_level == PageCacheLevel::L1 {
+            let _ord_pc = crate::lock_order::Guard::new(crate::lock_order::PAGE_CACHE);
+            let mut cache_lock = crate::globals::PAGE_CACHE.lock();
+            cache_lock.invalidate_range(abs_lba, abs_lba + count);
+        }
+
+        res
     }
 
     /// Convenience: read a single sector.

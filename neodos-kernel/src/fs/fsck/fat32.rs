@@ -105,6 +105,9 @@ fn analyze(fs: &Fat32Driver) -> Analysis {
         return Analysis { stats, orphans };
     }
 
+    // The root directory itself counts as a directory.
+    stats.total_dirs += 1;
+
     // Reserved FAT entries (informational).
     match fs.read_fat_entry(0) {
         Ok(v) if v & 0x0FFF_FF00 == 0x0FFF_F800 => {}
