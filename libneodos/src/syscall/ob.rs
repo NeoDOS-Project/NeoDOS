@@ -1,6 +1,6 @@
 //! Object Manager (Ob) syscall wrappers, ABI enums and query helpers.
 
-use super::{ret, EINVAL, sys_close};
+use super::{ret, ret_unit, EINVAL, sys_close};
 
 // ═══════════════════════════════════════════════════════════════════════
 // Object Manager (Ob) — RAX 60–77
@@ -418,5 +418,66 @@ pub fn sys_ob_service(fd: u8, control: u32, buf: &mut [u8]) -> Result<usize, i64
     let buf_len = buf.len() as u64;
     let r = unsafe { ob_syscall_4!(47, fd as u64, control as u64, buf_ptr, buf_len) };
     if r < 0 { Err(r as i64) } else { Ok(r as usize) }
+}
+
+// ── Snapshots (RAX=48) ──────────────────────────────────────────────
+
+pub mod snapshot_op {
+    pub const CREATE: u32 = 0;
+    pub const RESTORE: u32 = 1;
+    pub const LIST: u32 = 2;
+    pub const PURGE: u32 = 3;
+    pub const DELETE: u32 = 4;
+    pub const EXTRACT: u32 = 5;
+}
+
+/// ABI-stable snapshot entry returned by `LIST` (24 bytes).
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct SnapshotEntry {
+    pub id: u64,
+    pub root_lba: u64,
+    pub timestamp: u64,
+}
+
+pub fn sys_ob_snapshot_create(fd: u8) -> Result<u64, i64> {
+    let r = unsafe { ob_syscall_4!(48, fd as u64, snapshot_op::CREATE as u64, 0u64, 0u64) };
+    ret(r)
+}
+
+pub fn sys_ob_snapshot_purge(fd: u8) -> Result<(), i64> {
+    let r = unsafe { ob_syscall_4!(48, fd as u64, snapshot_op::PURGE as u64, 0u64, 0u64) };
+    ret_unit(r)
+}
+
+pub fn sys_ob_snapshot_list(fd: u8, buf: &mut [u8]) -> Result<usize, i64> {
+    let r = unsafe { ob_syscall_4!(48, fd as u64, snapshot_op::LIST as u64, buf.as_mut_ptr() as u64, buf.len() as u64) };
+    ret(r).map(|n| n as usize)
+}
+
+pub fn sys_ob_snapshot_restore(fd: u8, id: u64) -> Result<(), i64> {
+    let r = unsafe { ob_syscall_4!(48, fd as u64, snapshot_op::RESTORE as u64, &id as *const u64 as u64, 8u64) };
+    ret_unit(r)
+}
+
+pub fn sys_ob_snapshot_delete(fd: u8, id: u64) -> Result<(), i64> {
+    let r = unsafe { ob_syscall_4!(48, fd as u64, snapshot_op::DELETE as u64, &id as *const u64 as u64, 8u64) };
+    ret_unit(r)
+}
+
+/// Copiar `src` (tal como estaba en el snapshot `id`) a `dst` (árbol actual).
+pub fn sys_ob_snapshot_extract(fd: u8, id: u64, src: &str, dst: &str) -> Result<u64, i64> {
+    let sb = src.as_bytes();
+    let db = dst.as_bytes();
+    if sb.len() > 255 || db.len() > 255 { return Err(EINVAL); }
+    let mut buf = [0u8; 16 + 255 + 255];
+    buf[0..8].copy_from_slice(&id.to_le_bytes());
+    buf[8..12].copy_from_slice(&(sb.len() as u32).to_le_bytes());
+    buf[12..16].copy_from_slice(&(db.len() as u32).to_le_bytes());
+    buf[16..16 + sb.len()].copy_from_slice(sb);
+    buf[16 + sb.len()..16 + sb.len() + db.len()].copy_from_slice(db);
+    let total = 16 + sb.len() + db.len();
+    let r = unsafe { ob_syscall_4!(48, fd as u64, snapshot_op::EXTRACT as u64, buf.as_ptr() as u64, total as u64) };
+    ret(r)
 }
 

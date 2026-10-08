@@ -537,6 +537,53 @@ pub fn register_syscall_table_tests() {
         test_true!(crate::globals::with_vfs(|vfs| vfs.snapshot_restore(drive_c, id)).is_err());
     });
 
+    test_case!("syscall_ob_snapshot_extract", {
+        if crate::globals::VFS.try_lock().is_none() { return Ok(()); }
+        let drive_c = crate::fs::vfs::Vfs::drive_index('C').unwrap();
+        let src = "C:\\Temp\\_SNAP_SRC.TXT";
+        let dst = "C:\\Temp\\_SNAP_OLD.TXT";
+        let data = b"snapshot original content 1234567890";
+
+        // Crear el fichero original.
+        let created = crate::globals::with_vfs(|vfs| {
+            let node = vfs.create(src)?;
+            let (drive, _) = vfs.resolve_path("C:\\")?;
+            vfs.write(drive, node.inode, 0, data)?;
+            Ok::<(), crate::fs::vfs::VfsError>(())
+        });
+        test_true!(created.is_ok());
+
+        let id = crate::globals::with_vfs(|vfs| vfs.snapshot_create(drive_c)).unwrap();
+
+        // Modificarlo en el árbol actual.
+        let modified = crate::globals::with_vfs(|vfs| {
+            let (drive, node) = vfs.resolve_path(src)?;
+            vfs.write(drive, node.inode, 0, b"MODIFIED")?;
+            Ok::<(), crate::fs::vfs::VfsError>(())
+        });
+        test_true!(modified.is_ok());
+
+        // Extraer la versión del snapshot a dst.
+        let n = crate::globals::with_vfs(|vfs| {
+            vfs.snapshot_extract(drive_c, id, "\\Temp\\_SNAP_SRC.TXT", "\\Temp\\_SNAP_OLD.TXT")
+        });
+        test_true!(n.is_ok());
+        if let Ok(bytes) = n { test_eq!(bytes as usize, data.len()); }
+
+        // dst debe contener el contenido original.
+        let verified = crate::globals::with_vfs(|vfs| {
+            let (drive, node) = vfs.resolve_path(dst)?;
+            let mut buf = [0u8; 64];
+            let r = vfs.read(drive, node.inode, 0, &mut buf)?;
+            if &buf[..r] != data { return Err(crate::fs::vfs::VfsError::IOError); }
+            Ok::<(), crate::fs::vfs::VfsError>(())
+        });
+        test_true!(verified.is_ok());
+
+        let _ = crate::globals::with_vfs(|vfs| vfs.remove_file(src));
+        let _ = crate::globals::with_vfs(|vfs| vfs.remove_file(dst));
+    });
+
     test_case!("syscall_ob_snapshot_purge", {
         if crate::globals::VFS.try_lock().is_none() { return Ok(()); }
         let drive_c = crate::fs::vfs::Vfs::drive_index('C').unwrap();

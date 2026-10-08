@@ -266,6 +266,12 @@ SNAPSHOT DELETE N
 1. Eliminar el snapshot con generación N
 2. root_version++
 
+SNAPSHOT EXTRACT N <src> <dst>
+1. Resolver <src> en el árbol del snapshot N (root_btree_lba de N)
+2. Leer el fichero (inline o extents) — los bloques siguen vivos por COW
+3. Crear/escribir <dst> en el árbol actual
+4. No modifica el volumen: recuperación por fichero (estilo "Versiones anteriores")
+
 SNAPSHOT PURGE
 1. Vaciar snapshot table
 2. root_version++
@@ -336,8 +342,9 @@ impl NeoDosFsV2 {
 
 ```text
 RBX = fd (handle a la raíz del FS, ej: \Global\FileSystem\C:\)
-RCX = op: 0=CREATE, 1=RESTORE, 2=LIST, 3=PURGE, 4=DELETE
-RDX = buf (para LIST: buffer de salida; para RESTORE/DELETE: snapshot_id u64)
+RCX = op: 0=CREATE, 1=RESTORE, 2=LIST, 3=PURGE, 4=DELETE, 5=EXTRACT
+RDX = buf (para LIST: buffer de salida; para RESTORE/DELETE: snapshot_id u64;
+           para EXTRACT: [id:u64][src_len:u32][dst_len:u32][src][dst])
 R8  = buf_size
 
 Returns:
@@ -346,6 +353,7 @@ Returns:
   LIST → número de snapshots escritos en buf
   PURGE → 0 o error
   DELETE → 0 o error
+  EXTRACT → bytes copiados o error
 
 Errors: -Inval, -NoEnt, -Io, -NoSys (si no es NeoFS)
 ```
