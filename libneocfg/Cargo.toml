@@ -1,0 +1,12 @@
+[package]
+name = "libneocfg"
+version = "0.1.0"
+edition = "2021"
+description = "NeoCfg configuration logic — UI-agnostic core with injectable CfgUi / CfgPlatform / Translator seams. no_std target, host-testable with mocks."
+
+[lib]
+name = "libneocfg"
+path = "src/lib.rs"
+crate-type = ["lib"]
+
+[dependencies]

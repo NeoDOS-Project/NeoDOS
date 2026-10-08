@@ -135,6 +135,7 @@ pub fn app_to_id(app: &str) -> u32 {
         b"ntpd" => 49,
         b"netd" => 50,
         b"netapplier" => 51,
+        b"neocfg" => 52,
         _ => (crc32(l) & 0x7FFF) | 0x8000,
     }
 }

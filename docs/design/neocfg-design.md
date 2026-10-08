@@ -986,9 +986,11 @@ Reglas:
 de neocfg. Requisitos de diseño:
 
 - **API pública estable y autocontenida**: construir una pantalla y obtener una
-  acción no requiere conocer neocfg ni nada del kernel más allá de
-  `libneodos::console`/`io`. Dependencia permitida: `libneodos` (entrada/salida).
-  Prohibido: depender de `libneocfg`, de Ob, del Registry o de cualquier app.
+  acción no requiere conocer neocfg ni nada del kernel. Todo el I/O pasa por el
+  trait `libneotui::Console` (`write_str` / `read_byte` / `try_read_byte` /
+  `clear`); el binario aporta un backend sobre `libneodos::console`, y los tests
+  aportan un mock. **Dependencia prohibida**: `libneocfg`, Ob, el Registry o
+  cualquier app (y, para poder testear en host, tampoco `libneodos` directo).
 - **Modelo propio**: `Screen`/`Widget`/`Key`/`Action` de `libneotui` son suyos; el
   `View`/`Intent` de `libneocfg` es otro nivel (adapta uno a otro en el binario).
 - **Consumidores previstos**: `neocfg` hoy; y en el futuro cualquier herramienta
@@ -1031,6 +1033,13 @@ pub enum Intent {
 
 ### A.4 Seams
 
+> **Implementación (nota).** El runtime i18n ya implementado en NeoDOS usa
+> **IDs numéricos** (`libneodos::i18n::i18n_get_id(u32)` + `tr_id!`), no claves
+> string. El seam `Translator` se adapta a ese modelo: los módulos emiten
+> `u32` y la UI los resuelve. Los catálogos viven en
+> `data/locale/{en-US,es-ES,ca-ES}/neocfg.toml` (compilados a `.nlt` con `nltc`)
+> y las constantes se espejan en `libneocfg/src/i18n_keys.rs`.
+
 ```rust
 /// Presentación: renderiza una `View` y devuelve la `Intent` del usuario.
 /// Contempla `Tick` no bloqueante para progreso/animación.
@@ -1039,8 +1048,9 @@ pub trait CfgUi {
     fn tick(&mut self) {}
 }
 
-/// Traducción: resuelve una clave i18n. La TUI usa libneodos; los tests, identidad.
-pub trait Translator { fn tr(&self, key: &'static str) -> &str; }
+/// Traducción: resuelve un id i18n numérico. La TUI usa libneodos; los tests,
+/// identidad. Los módulos nunca formatean: emiten ids.
+pub trait Translator { fn tr(&self, id: u32) -> &str; }
 
 /// Datos/efectos: TODO el acceso al sistema pasa por aquí.
 /// Devuelve `None` en las capacidades opcionales aún no implementadas (Power/Locale).
@@ -1140,7 +1150,7 @@ Keyboard, stubs de Power/Locale y todos los textos vía claves.
 | Elemento | Cambio |
 | --- | --- |
 | `libneocfg/` | **NUEVO** crate de lógica (raíz del repo, como `libnet`). |
-| `libneotui/` | **NUEVO** toolkit TUI **reusable** (raíz del repo); dep. `libneodos`. |
+| `libneotui/` | **NUEVO** toolkit TUI **reusable** (raíz del repo); sin deps, I/O vía su trait `Console`. |
 | `userbin/neocfg/` | Binario glue; deps `libneodos` + `libneocfg` + `libneotui`. |
 | `neodev/src/image.rs` | Añadir `'neocfg'` a la lista de binarios (igual que `netcfg`). |
 | `libneogui/` + binario GUI | Futuro: nueva UI, **sin tocar `libneocfg` ni `libneotui`**. |

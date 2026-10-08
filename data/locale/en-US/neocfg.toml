@@ -1,0 +1,47 @@
+[meta]
+app = "neocfg"
+language = "en-US"
+
+[ids]
+NEOCFG_TITLE = 1001
+NEOCFG_EXIT = 1002
+NEOCFG_BACK = 1003
+NEOCFG_SELECT_HINT = 1004
+MODULE_SYSTEM_NAME = 1005
+MODULE_SYSTEM_DESC = 1006
+MODULE_POWER_NAME = 1007
+MODULE_POWER_DESC = 1008
+MODULE_LOCALE_NAME = 1009
+MODULE_LOCALE_DESC = 1010
+MODULE_KEYBOARD_NAME = 1011
+MODULE_KEYBOARD_DESC = 1012
+MODULE_ABOUT_NAME = 1013
+MODULE_ABOUT_DESC = 1014
+MODULE_PENDING = 1015
+POWER_NOT_AVAILABLE = 1016
+LOCALE_NOT_AVAILABLE = 1017
+PRESS_KEY = 1018
+NEOCFG_YES = 1019
+NEOCFG_NO = 1020
+
+[strings]
+NEOCFG_TITLE = "NeoCfg - Control Panel"
+NEOCFG_EXIT = "Exit"
+NEOCFG_BACK = "Back"
+NEOCFG_SELECT_HINT = "Select an option (1-5), Q to exit"
+MODULE_SYSTEM_NAME = "System"
+MODULE_SYSTEM_DESC = "View system information"
+MODULE_POWER_NAME = "Power"
+MODULE_POWER_DESC = "Manage power plans"
+MODULE_LOCALE_NAME = "Locale"
+MODULE_LOCALE_DESC = "Configure the system language"
+MODULE_KEYBOARD_NAME = "Keyboard"
+MODULE_KEYBOARD_DESC = "Change the keyboard layout"
+MODULE_ABOUT_NAME = "About"
+MODULE_ABOUT_DESC = "System version information"
+MODULE_PENDING = "This module is not implemented yet."
+POWER_NOT_AVAILABLE = "Power Manager is not available on this system."
+LOCALE_NOT_AVAILABLE = "Internationalization is not available on this system."
+PRESS_KEY = "Press any key to return..."
+NEOCFG_YES = "Yes"
+NEOCFG_NO = "No"
