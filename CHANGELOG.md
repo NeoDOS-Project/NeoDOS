@@ -6,6 +6,12 @@
 
 ### Added
 
+- **Memory/FS: page-cache flush is device-scoped (#560).** `flush`,
+  `flush_inode` and `flush_batch` take a `dev_tag` and only write pages owned by
+  that device; `flush_cache_if_needed` now flushes every present device
+  separately, and eviction never writes another device's dirty page to the
+  wrong `dev`. Test: `page_cache_flush_is_device_scoped`.
+
 - **Filesystem: O(1)-overhead COW garbage tracking (#559).** B-tree
   `insert`/`delete` gained `insert_tracked`/`delete_tracked` variants that report
   the LBAs of the nodes COW replaces (including collapsed roots and borrowed/
