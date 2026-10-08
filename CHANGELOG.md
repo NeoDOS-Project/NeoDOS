@@ -6,6 +6,13 @@
 
 ### Added
 
+- **Filesystem: O(1)-overhead COW garbage tracking (#559).** B-tree
+  `insert`/`delete` gained `insert_tracked`/`delete_tracked` variants that report
+  the LBAs of the nodes COW replaces (including collapsed roots and borrowed/
+  merged siblings). `NeoDosFsV2` now uses them instead of walking the whole
+  directory tree twice per mutation, so #553's reclamation no longer costs O(n)
+  node reads per write.
+
 - **Filesystem: NeoFS v2 COW reclamation (#553).** B-tree node blocks and file
   data extents replaced by copy-on-write are now tracked as garbage and
   returned to the free list on `save_sb`. Reclamation is only performed when

@@ -27,12 +27,25 @@ impl BTree {
 
     /// Insertar clave-valor (COW). Devuelve nueva root_lba.
     pub fn insert(io: &mut impl BTreeIO, root_lba: u64, key: &[u8], value: &[u8]) -> Option<u64> {
+        let mut garbage = Vec::new();
+        Self::insert_tracked(io, root_lba, key, value, &mut garbage)
+    }
+
+    /// Como [`insert`], pero registra en `garbage` los LBAs de los nodos que
+    /// el COW reemplaza (para reclamarlos tras confirmar la nueva raíz).
+    pub fn insert_tracked(
+        io: &mut impl BTreeIO,
+        root_lba: u64,
+        key: &[u8],
+        value: &[u8],
+        garbage: &mut Vec<u64>,
+    ) -> Option<u64> {
         if root_lba == 0 {
             let mut root = BTreeNode::new(NodeType::Leaf);
             root.entries.push(BTreeEntry { key: key.to_vec(), value: value.to_vec() });
             return Some(io.write_node(&root));
         }
-        let result = Self::ins(io, root_lba, key, value)?;
+        let result = Self::ins(io, root_lba, key, value, garbage)?;
         match result {
             InsertResult::Done(new_lba) => Some(new_lba),
             InsertResult::Split(median_key, left_lba, right_lba) => {
@@ -48,8 +61,10 @@ impl BTree {
         }
     }
 
-    fn ins(io: &mut impl BTreeIO, node_lba: u64, key: &[u8], value: &[u8]) -> Option<InsertResult> {
+    fn ins(io: &mut impl BTreeIO, node_lba: u64, key: &[u8], value: &[u8], garbage: &mut Vec<u64>) -> Option<InsertResult> {
         let node = io.read_node(node_lba)?;
+        // El nodo original queda reemplazado por su copia COW.
+        garbage.push(node_lba);
         if node.is_leaf() {
             let mut new_node = node.clone();
             match new_node.find_pos(key) {
@@ -67,7 +82,7 @@ impl BTree {
         } else {
             let child_idx = child_index(&node, key);
             let child_lba = u64_from_value(&node.entries[child_idx].value)?;
-            match Self::ins(io, child_lba, key, value)? {
+            match Self::ins(io, child_lba, key, value, garbage)? {
                 InsertResult::Done(new_child_lba) => {
                     let mut new_node = node.clone();
                     new_node.entries[child_idx].value = new_child_lba.to_le_bytes().to_vec();
@@ -92,14 +107,29 @@ impl BTree {
 
     /// Eliminar clave (COW). Devuelve Some(Some(new_root)) o Some(None) si árbol vacío.
     pub fn delete(io: &mut impl BTreeIO, root_lba: u64, key: &[u8]) -> Option<Option<u64>> {
+        let mut garbage = Vec::new();
+        Self::delete_tracked(io, root_lba, key, &mut garbage)
+    }
+
+    /// Como [`delete`], pero registra en `garbage` los LBAs de los nodos
+    /// reemplazados (incluido un nodo raíz colapsado).
+    pub fn delete_tracked(
+        io: &mut impl BTreeIO,
+        root_lba: u64,
+        key: &[u8],
+        garbage: &mut Vec<u64>,
+    ) -> Option<Option<u64>> {
         if root_lba == 0 { return Some(None); }
-        let result = Self::del(io, root_lba, key);
+        let result = Self::del(io, root_lba, key, garbage);
         match result? {
             None => Some(None),
             Some(lba) => {
                 if let Some(node) = io.read_node(lba) {
                     if node.node_type == NodeType::Internal && node.entries.len() == 1 {
                         if let Some(child_lba) = u64_from_value(&node.entries[0].value) {
+                            // El nodo raíz interno colapsado se acaba de escribir
+                            // y ya no se referencia: es basura.
+                            garbage.push(lba);
                             return Some(Some(child_lba));
                         }
                     }
@@ -109,8 +139,10 @@ impl BTree {
         }
     }
 
-    fn del(io: &mut impl BTreeIO, node_lba: u64, key: &[u8]) -> Option<Option<u64>> {
+    fn del(io: &mut impl BTreeIO, node_lba: u64, key: &[u8], garbage: &mut Vec<u64>) -> Option<Option<u64>> {
         let node = io.read_node(node_lba)?;
+        // El nodo original queda reemplazado (o eliminado) por su copia COW.
+        garbage.push(node_lba);
         if node.is_leaf() {
             let mut new_node = node.clone();
             if let Ok(pos) = new_node.find_pos(key) {
@@ -121,7 +153,7 @@ impl BTree {
         } else {
             let child_idx = child_index(&node, key);
             let child_lba = u64_from_value(&node.entries[child_idx].value)?;
-            let new_child = Self::del(io, child_lba, key)?;
+            let new_child = Self::del(io, child_lba, key, garbage)?;
             let mut new_node = node.clone();
             match new_child {
                 None => {
@@ -132,7 +164,7 @@ impl BTree {
                     new_node.entries[child_idx].value = lba.to_le_bytes().to_vec();
                     if let Some(child_node) = io.read_node(lba) {
                         if child_node.entries.len() < MIN_ENTRIES {
-                            Self::try_borrow_or_merge(io, &mut new_node, child_idx);
+                            Self::try_borrow_or_merge(io, &mut new_node, child_idx, garbage);
                         }
                     }
                 }
@@ -147,6 +179,7 @@ impl BTree {
         io: &mut impl BTreeIO,
         parent: &mut BTreeNode,
         child_idx: usize,
+        garbage: &mut Vec<u64>,
     ) -> bool {
         let n = parent.entries.len();
         if n == 0 { return false; }
@@ -164,7 +197,7 @@ impl BTree {
             };
             let left = match io.read_node(left_lba) { Some(l) => l, None => return false };
             if left.entries.len() > MIN_ENTRIES {
-                return Self::borrow_left(io, parent, child_idx, left, child);
+                return Self::borrow_left(io, parent, child_idx, left, child, garbage);
             }
         }
 
@@ -176,7 +209,7 @@ impl BTree {
             };
             let right = match io.read_node(right_lba) { Some(r) => r, None => return false };
             if right.entries.len() > MIN_ENTRIES {
-                return Self::borrow_right(io, parent, child_idx, child, right);
+                return Self::borrow_right(io, parent, child_idx, child, right, garbage);
             }
         }
 
@@ -186,14 +219,14 @@ impl BTree {
                 Some(l) => l, None => return false,
             };
             let left = match io.read_node(left_lba) { Some(l) => l, None => return false };
-            Self::merge_into_left(io, parent, child_idx, left, child)
+            Self::merge_into_left(io, parent, child_idx, left, child, garbage)
         } else if child_idx + 1 < n {
             let right_idx = child_idx + 1;
             let right_lba = match u64_from_value(&parent.entries[right_idx].value) {
                 Some(l) => l, None => return false,
             };
             let right = match io.read_node(right_lba) { Some(r) => r, None => return false };
-            Self::merge_into_right(io, parent, child_idx, child, right)
+            Self::merge_into_right(io, parent, child_idx, child, right, garbage)
         } else {
             true
         }
@@ -206,8 +239,11 @@ impl BTree {
         child_idx: usize,
         mut left: BTreeNode,
         mut child: BTreeNode,
+        garbage: &mut Vec<u64>,
     ) -> bool {
         let sep = parent.entries[child_idx].key.clone();
+        if let Some(l) = u64_from_value(&parent.entries[child_idx - 1].value) { garbage.push(l); }
+        if let Some(l) = u64_from_value(&parent.entries[child_idx].value) { garbage.push(l); }
 
         if child.is_leaf() {
             let borrowed = left.entries.pop().unwrap();
@@ -236,9 +272,12 @@ impl BTree {
         child_idx: usize,
         mut child: BTreeNode,
         mut right: BTreeNode,
+        garbage: &mut Vec<u64>,
     ) -> bool {
         let right_idx = child_idx + 1;
         let sep = parent.entries[right_idx].key.clone();
+        if let Some(l) = u64_from_value(&parent.entries[child_idx].value) { garbage.push(l); }
+        if let Some(l) = u64_from_value(&parent.entries[right_idx].value) { garbage.push(l); }
 
         if child.is_leaf() {
             let borrowed = right.entries.remove(0);
@@ -270,8 +309,11 @@ impl BTree {
         child_idx: usize,
         left: BTreeNode,
         child: BTreeNode,
+        garbage: &mut Vec<u64>,
     ) -> bool {
         let sep = parent.entries[child_idx].key.clone();
+        if let Some(l) = u64_from_value(&parent.entries[child_idx - 1].value) { garbage.push(l); }
+        if let Some(l) = u64_from_value(&parent.entries[child_idx].value) { garbage.push(l); }
         let merged = merge_nodes(left, child, &sep);
 
         // child_idx-1 apunta al nodo fusionado; eliminamos child_idx
@@ -288,8 +330,11 @@ impl BTree {
         child_idx: usize,
         child: BTreeNode,
         right: BTreeNode,
+        garbage: &mut Vec<u64>,
     ) -> bool {
         let sep = parent.entries[child_idx + 1].key.clone();
+        if let Some(l) = u64_from_value(&parent.entries[child_idx].value) { garbage.push(l); }
+        if let Some(l) = u64_from_value(&parent.entries[child_idx + 1].value) { garbage.push(l); }
         let merged = merge_nodes(child, right, &sep);
 
         // child_idx apunta al fusionado; eliminamos child_idx+1
