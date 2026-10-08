@@ -247,6 +247,14 @@ accesibles. Solo PURGE libera espacio definitivamente.
 5. NO verificar checksums de datos (opcional con flag --deep)
 ```
 
+La comprobación es agnóstica al conjunto de archivos mediante el trait
+`FsckTrait` (`check()` / `repair()`) definido en `src/fs/fsck/`. NeoFS v2
+implementa el walker genérico de B-tree (`FsckIntegrity`) en `fsck/ne2.rs`;
+FAT32 implementa su propio analizador de cadenas FAT en `fsck/fat32.rs`.
+El VFS enruta `FileSystem::fsck()` hacia la implementación del volumen y el
+Object Manager lo expone a Ring 3 vía `ObInfoClass::FsckStatus` /
+`ObSetInfoClass::FsckRepair` (binario `fsck.nxe`).
+
 ---
 
 ## 4. API

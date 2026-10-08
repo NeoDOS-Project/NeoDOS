@@ -2,7 +2,7 @@
 
 ## Overview
 
-In-kernel test harness. No external test runner required. 820 tests across 50+ suites compiled directly into the kernel image. Tests execute in kernel mode and can exercise all subsystems including privileged operations.
+In-kernel test harness. No external test runner required. 837 tests across 50+ suites compiled directly into the kernel image. Tests execute in kernel mode and can exercise all subsystems including privileged operations.
 
 Two execution paths:
 
@@ -86,7 +86,7 @@ test_case!("my_test", {
 | Framebuffer Ref | 8 | Entrypoint validation, lifecycle (init→clear→pixel→scroll→cleanup), error handling for null params |
 | Scheduler | 7 | Priority levels, time-slice accounting, round-robin fairness, aging boost after starvation threshold |
 | Mmap | 6 | MmapRegion struct layout, flag combinations, address bounds validation, VMA add/remove from process address space |
-| FSCK | 2 | NE2 B-tree walk + CRC32 node verification, freelist coherency, superblock checksum, corrupt node detection, repair mode |
+| FSCK | 10 | Framework trait (`FsckTrait` check/repair). NeoFS v2: B-tree walk + CRC32 node verification, freelist coherency, superblock checksum, corrupt node detection, repair mode. FAT32: geometry validation, FAT chain/cross-link detection, orphan clustering + repair |
 | UTF-8 | 6 | Validation: valid 1-4 byte sequences, overlong rejection, surrogate rejection, continuation byte errors |
 | Work Queue | 6 | Push/pop ordering, FIFO semantics, empty queue behavior, overflow returns Err, high/low queue isolation, pending flag atomicity |
 | IPI | 5 | Constants verification, TLB shootdown struct layout, call function struct layout, local-only mask, no-targets edge case |

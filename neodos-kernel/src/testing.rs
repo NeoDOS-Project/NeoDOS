@@ -242,6 +242,7 @@ pub fn register_tests() {
     crate::fs::snapshot::register_snapshot_tests();
     crate::fs::neodos_dir::register_dir_tests();
     crate::fs::fsck::register_fsck_tests();
+    crate::drivers::fat32::register_fsck_tests();
     crate::object::register_object_tests();
     crate::object::pipe::register_tests();
     crate::object::timer::register_timer_tests();

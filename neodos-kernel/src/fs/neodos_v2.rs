@@ -402,8 +402,12 @@ impl FileSystem for NeoDosFsV2 {
         self.snapshot_table.purge();
         self.save_sb().map_err(|_| VfsError::IOError)
     }
-    fn fsck(&mut self, repair: bool, deep: bool, stats: &mut crate::fs::fsck::FsckStatsRaw) -> Result<(), VfsError> {
-        let s = crate::fs::fsck::fsck_ne2(&self.io_stack, repair, deep);
+    fn fsck(&mut self, repair: bool, _deep: bool, stats: &mut crate::fs::fsck::FsckStatsRaw) -> Result<(), VfsError> {
+        let s = if repair {
+            <Self as crate::fs::fsck::FsckTrait>::repair(self)
+        } else {
+            <Self as crate::fs::fsck::FsckTrait>::check(self)
+        };
         *stats = s.to_raw();
         Ok(())
     }

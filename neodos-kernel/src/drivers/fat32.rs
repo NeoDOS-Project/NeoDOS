@@ -92,7 +92,7 @@ impl Fat32Driver {
         Err(Fat32Error::NotFat32)
     }
 
-    fn read_sector(&self, lba: u32) -> Result<[u8; 512], Fat32Error> {
+    pub(crate) fn read_sector(&self, lba: u32) -> Result<[u8; 512], Fat32Error> {
         self.io_stack.read_sector(lba as u64).map_err(|_| Fat32Error::NotFound)
     }
 
@@ -100,7 +100,7 @@ impl Fat32Driver {
         self.io_stack.read_sectors(lba as u64, count as u64, buf).map_err(|_| Fat32Error::NotFound)
     }
 
-    fn read_fat_entry(&self, cluster: u32) -> Result<u32, Fat32Error> {
+    pub(crate) fn read_fat_entry(&self, cluster: u32) -> Result<u32, Fat32Error> {
         let fat_start = self.boot_sector.reserved_sectors;
         let entry_offset = cluster * 4;
         let sector_idx = entry_offset / 512;
@@ -116,6 +116,28 @@ impl Fat32Driver {
         ]);
 
         Ok(val & 0x0FFFFFFF)
+    }
+
+    /// Write a FAT entry, preserving the top 4 reserved bits (FAT32).
+    pub(crate) fn write_fat_entry(&self, cluster: u32, value: u32) -> Result<(), Fat32Error> {
+        let fat_start = self.boot_sector.reserved_sectors;
+        let entry_offset = cluster * 4;
+        let sector_idx = entry_offset / 512;
+        let offset_in_sector = (entry_offset % 512) as usize;
+
+        let mut sector = self.read_sector(fat_start + sector_idx)?;
+        let existing = u32::from_le_bytes([
+            sector[offset_in_sector],
+            sector[offset_in_sector + 1],
+            sector[offset_in_sector + 2],
+            sector[offset_in_sector + 3],
+        ]);
+        let merged = (existing & 0xF000_0000) | (value & 0x0FFF_FFFF);
+        sector[offset_in_sector..offset_in_sector + 4].copy_from_slice(&merged.to_le_bytes());
+
+        self.io_stack
+            .write_sector((fat_start + sector_idx) as u64, &sector)
+            .map_err(|_| Fat32Error::NotFound)
     }
 
     fn name_to_11byte(name: &[u8]) -> [u8; 11] {
@@ -137,7 +159,7 @@ impl Fat32Driver {
         raw
     }
 
-    fn parse_entry(entry: &[u8; 32]) -> Option<DirEntry> {
+    pub(crate) fn parse_entry(entry: &[u8; 32]) -> Option<DirEntry> {
         if entry[0] == 0x00 || entry[0] == 0xE5 {
             return None;
         }
@@ -531,4 +553,135 @@ impl FileSystem for Fat32Driver {
     fn total_sectors(&self) -> u64 {
         self.boot_sector.total_sectors_32 as u64
     }
+
+    fn fsck(
+        &mut self,
+        repair: bool,
+        _deep: bool,
+        stats: &mut crate::drivers::fsck::FsckStatsRaw,
+    ) -> Result<(), VfsError> {
+        let s = if repair {
+            <Self as crate::drivers::fsck::FsckTrait>::repair(self)
+        } else {
+            <Self as crate::drivers::fsck::FsckTrait>::check(self)
+        };
+        *stats = s.to_raw();
+        Ok(())
+    }
+}
+
+// ── FSCK tests ──────────────────────────────────────────────────────
+
+/// Build a minimal single-FAT, 1-sector-per-cluster FAT32 volume:
+/// cluster 2 = root dir holding HELLO.TXT, cluster 3 = its data.
+fn build_fat32_image() -> alloc::vec::Vec<[u8; 512]> {
+    let mut sectors = alloc::vec![[0u8; 512]; 40];
+
+    let bs = &mut sectors[0];
+    bs[11..13].copy_from_slice(&512u16.to_le_bytes()); // bytes/sector
+    bs[13] = 1; // sectors/cluster
+    bs[14..16].copy_from_slice(&1u16.to_le_bytes()); // reserved sectors
+    bs[16] = 1; // num FATs
+    bs[32..36].copy_from_slice(&40u32.to_le_bytes()); // total sectors
+    bs[36..40].copy_from_slice(&1u32.to_le_bytes()); // sectors/FAT
+    bs[44..48].copy_from_slice(&2u32.to_le_bytes()); // root cluster
+    bs[71..82].copy_from_slice(b"TESTVOL    ");
+    bs[82..90].copy_from_slice(b"FAT32   ");
+    bs[510] = 0x55;
+    bs[511] = 0xAA;
+
+    set_fat(&mut sectors[1], 0, 0x0FFF_FFF8);
+    set_fat(&mut sectors[1], 1, 0x0FFF_FFFF);
+    set_fat(&mut sectors[1], 2, 0x0FFF_FFFF); // root dir EOC
+    set_fat(&mut sectors[1], 3, 0x0FFF_FFFF); // HELLO.TXT data EOC
+
+    let root = &mut sectors[2];
+    root[0..11].copy_from_slice(b"HELLO   TXT");
+    root[11] = 0x20; // archive
+    root[26..28].copy_from_slice(&3u16.to_le_bytes()); // cluster low
+    root[28..32].copy_from_slice(&100u32.to_le_bytes()); // size
+
+    sectors
+}
+
+fn set_fat(sector: &mut [u8; 512], cluster: u32, value: u32) {
+    let off = cluster as usize * 4;
+    sector[off..off + 4].copy_from_slice(&value.to_le_bytes());
+}
+
+pub fn register_fsck_tests() {
+    use crate::drivers::fsck::FsckTrait;
+
+    // Clean volume: one root dir + one file, everything reachable.
+    crate::test_case!("fat32_fsck_clean", {
+        let dev_id = crate::drivers::fsck::register_test_device(build_fat32_image());
+        let io = IoStack::new(dev_id);
+        let fs = Fat32Driver::new(io).unwrap();
+
+        let stats = fs.check();
+        crate::test_eq!(stats.errors, 0);
+        crate::test_eq!(stats.total_blocks, 38);
+        crate::test_eq!(stats.used_blocks, 2);
+        crate::test_eq!(stats.free_blocks, 36);
+        crate::test_eq!(stats.total_dirs, 1);
+        crate::test_eq!(stats.total_files, 1);
+        crate::test_eq!(stats.total_nodes, 2);
+
+        let _ = crate::globals::BLOCK_DEVICES.lock().force_remove(dev_id);
+    });
+
+    // Orphaned cluster: allocated in the FAT but unreachable. Repair frees it.
+    crate::test_case!("fat32_fsck_orphan_repair", {
+        let mut sectors = build_fat32_image();
+        set_fat(&mut sectors[1], 5, 0x0FFF_FFFF);
+        let dev_id = crate::drivers::fsck::register_test_device(sectors);
+        let io = IoStack::new(dev_id);
+        let fs = Fat32Driver::new(io).unwrap();
+
+        let checked = fs.check();
+        crate::test_true!(checked.errors >= 1);
+        crate::test_eq!(checked.free_blocks, 35);
+
+        let repaired = fs.repair();
+        crate::test_eq!(repaired.repaired, 1);
+        crate::test_eq!(repaired.errors, 0);
+        crate::test_eq!(repaired.free_blocks, 36);
+
+        let _ = crate::globals::BLOCK_DEVICES.lock().force_remove(dev_id);
+    });
+
+    // Cross-link: two directory entries reference the same data cluster.
+    crate::test_case!("fat32_fsck_crosslink_detect", {
+        let mut sectors = build_fat32_image();
+        let root = &mut sectors[2];
+        root[32..43].copy_from_slice(b"WORLD   TXT");
+        root[32 + 11] = 0x20;
+        root[32 + 26..32 + 28].copy_from_slice(&3u16.to_le_bytes());
+        root[32 + 28..32 + 32].copy_from_slice(&50u32.to_le_bytes());
+
+        let dev_id = crate::drivers::fsck::register_test_device(sectors);
+        let io = IoStack::new(dev_id);
+        let fs = Fat32Driver::new(io).unwrap();
+
+        let stats = fs.check();
+        crate::test_true!(stats.errors >= 1);
+        crate::test_eq!(stats.total_files, 2);
+
+        let _ = crate::globals::BLOCK_DEVICES.lock().force_remove(dev_id);
+    });
+
+    // Invalid root cluster must be rejected.
+    crate::test_case!("fat32_fsck_bad_root_cluster", {
+        let mut sectors = build_fat32_image();
+        sectors[0][44..48].copy_from_slice(&0u32.to_le_bytes());
+
+        let dev_id = crate::drivers::fsck::register_test_device(sectors);
+        let io = IoStack::new(dev_id);
+        let fs = Fat32Driver::new(io).unwrap();
+
+        let stats = fs.check();
+        crate::test_true!(stats.errors >= 1);
+
+        let _ = crate::globals::BLOCK_DEVICES.lock().force_remove(dev_id);
+    });
 }
