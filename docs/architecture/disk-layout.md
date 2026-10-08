@@ -88,7 +88,7 @@ nodos internos y hojas encadenadas. **Es el prerrequisito bloqueante del redise�
 ```text
 C:\
 ├── NeoDOS\                              # ≈ C:\Windows
-│   ├── System32\                        # TODOS los .NXE de sistema
+│   ├── System\                        # TODOS los .NXE de sistema
 │   │   ├── config\                      # hives: SYSTEM.hiv (+ SOFTWARE/SAM/SECURITY/DEFAULT)
 │   │   ├── drivers\                     # .NEM SYSTEM
 │   │   │   └── BOOT\                    # .NEM boot-critical (ps2kbd, serial, rtc…)
@@ -115,13 +115,13 @@ C:\
 | NT | NeoDOS | Contenido |
 | --- | --- | --- |
 | `\Windows` | `\NeoDOS` | raíz del sistema |
-| `\Windows\System32` | `\NeoDOS\System32` | `.NXE` de sistema (hoy `Programs` + `System\Tools`) |
-| `\Windows\System32\config` | `\NeoDOS\System32\config` | hives del registro |
-| `\Windows\System32\drivers` | `\NeoDOS\System32\drivers` | drivers `.NEM` |
+| `\Windows\System32` | `\NeoDOS\System` | `.NXE` de sistema (hoy `Programs` + `System\Tools`) |
+| `\Windows\System32\config` | `\NeoDOS\System\config` | hives del registro |
+| `\Windows\System32\drivers` | `\NeoDOS\System\drivers` | drivers `.NEM` |
 | `\Windows\System32\*.dll` | `\NeoDOS\Libraries` | librerías `.NXL` |
-| `\Windows\Fonts` | `\NeoDOS\System32\Fonts` | fuentes |
-| `\Windows\INF` | `\NeoDOS\System32\INF` | metadatos de drivers |
-| `\Windows\Globalization` | `\NeoDOS\System32\Globalization` | localizaciones `.nlt` |
+| `\Windows\Fonts` | `\NeoDOS\System\Fonts` | fuentes |
+| `\Windows\INF` | `\NeoDOS\System\INF` | metadatos de drivers |
+| `\Windows\Globalization` | `\NeoDOS\System\Globalization` | localizaciones `.nlt` |
 | `\Program Files` | `\Program Files` | aplicaciones instaladas |
 | `\ProgramData` | `\ProgramData` | datos machine-wide |
 | `\Users\<u>\AppData` | `\Users\<u>\AppData` | perfil de usuario |
@@ -140,8 +140,8 @@ y `\Users` encaja con la seguridad SAM/SID/ACL ya existente.
 | --- | --- | --- |
 | Raíz del OS | `C:\NeoDOS` | Análogo a `\Windows`, identidad propia, sin choque con el namespace de objetos `\System`. |
 | Directorio de apps | `C:\Program Files\` (con espacio) | Fidelidad NT. **Requiere** quoting/`;` correctos en el shell y en el PATH. |
-| Hives | `\NeoDOS\System32\config\SYSTEM.hiv` | Equivale a `config\SYSTEM`. Valorar quitar la extensión para máxima fidelidad. |
-| Librerías | `\NeoDOS\Libraries\` separado de `System32` | Claridad; en NT las DLL viven en `System32`, pero aquí `.NXL` es una categoría propia. |
+| Hives | `\NeoDOS\System\config\SYSTEM.hiv` | Equivale a `config\SYSTEM`. Valorar quitar la extensión para máxima fidelidad. |
+| Librerías | `\NeoDOS\Libraries\` separado de `System` | Claridad; en NT las DLL viven en `System32`, pero aquí `.NXL` es una categoría propia. |
 | Datos de usuario | `\Users\<usuario>\AppData\{Local,Roaming}` | Alineado con SAM/SID. |
 | Particiones (futuro) | `ESP → MSR(16 MB) → NeoDOS → Recovery` | Orden NT. No urgente. |
 
@@ -188,7 +188,7 @@ ejecutable**, no en una ruta global.
 ### Fase 2 — Abstracción de raíz y PATH
 
 - Constante `ND_SYSTEM_ROOT` y eliminación de literales en kernel, `libneodos` y userbin.
-- `PATH` en el registro; default apuntando a `System32`, `System\Tools` retirado.
+- `PATH` en el registro; default apuntando a `System`, `System\Tools` retirado.
 - Asegurar quoting para `Program Files` (espacio) antes de escribir en esa ruta.
 - Independiente de la Fase 1; ambas desbloquean la Fase 3.
 
