@@ -19,8 +19,16 @@ pub struct Sid {
 
 | Name | SID String | Usage |
 |------|------------|-------|
-| `sid_builtin_admin()` | `S-1-5-18` | NT AUTHORITY\SYSTEM (kernel/Idle/NeoInit) |
+| `sid_builtin_system()` / `sid_builtin_admin()` | `S-1-5-18` | NT AUTHORITY\SYSTEM (kernel/Idle/NeoInit) |
+| `sid_builtin_administrator()` | `S-1-5-21-0-0-0-500` | Built-in Administrator account |
+| `sid_builtin_guest()` | `S-1-5-21-0-0-0-501` | Built-in Guest account |
 | `sid_builtin_user()` | `S-1-5-21-0-0-0-1000` | Default domain user |
+
+`WELL_KNOWN_SIDS` (the `SeWellKnownSids` table) maps the canonical names
+(`SYSTEM`, `Administrator`, `Guest`, `Users`) to SIDs; look them up with
+`well_known_sid(name)` (case-insensitive). Domain RIDs are exposed as
+`RID_ADMINISTRATOR(500)`, `RID_GUEST(501)`, `RID_USER(1000)`, with
+`sid_builtin_domain()` = `S-1-5-21-0-0-0`.
 
 `format_string()` produces the human-readable `S-R-I-S*` format. `from_parts()` constructs a Sid from raw components.
 
@@ -90,6 +98,20 @@ Entry (repeated count times):
 ```
 
 `parse_sam(data)` deserializes from bytes. `serialize_sam(db)` produces bytes for disk persistence.
+
+### Built-in accounts
+
+`SamDatabase::with_builtins()` seeds the NT built-in accounts:
+
+| Account | SID | Flags |
+| --------- | ----- | ------- |
+| `Administrator` | `S-1-5-21-0-0-0-500` | admin, enabled |
+| `Guest` | `S-1-5-21-0-0-0-501` | disabled |
+| `SYSTEM` | `S-1-5-18` | admin |
+
+At boot, `init_security()` (Phase 2.77) creates the global `SAM_DB`
+(`spin::Mutex<SamDatabase>`) with these built-ins. Persistence to
+`\Registry\Machine\SAM` is USR-P1c.
 
 ## ACL (Access Control List)
 
@@ -214,12 +236,15 @@ Combined: `SE_ADMIN_PRIVILEGES = 0xFFFF` (all 12 bits set). `SE_USER_PRIVILEGES 
 
 ## Tests
 
-30 tests covering:
+34 tests covering:
 
-- SID format/parse, builtin construction, equality
+- SID format/parse, builtin construction, equality, **well-known SIDs**
+  (`SYSTEM`, `Administrator`, `Guest`, `Users`)
 - Token: new_admin, new_user, inherit, group membership
 - ACL: insert canonical order, allow/deny evaluation
 - SeAccessCheck: admin bypass, empty DACL (deny), NULL DACL / absent SD (grant),
   specific ACE matching, deny-first ordering, **group-SID** allow and deny
 - SACL: audit hook is a no-op without a SACL and does not affect the decision
-- SAM database: 12 tests including create, add user, find by username, find by SID, remove user, flag manipulation, parse roundtrip, magic number validation, truncation detection, max entries enforcement
+- SAM database: create, add/remove user, find by username/SID, flags, parse
+  roundtrip, magic/truncation validation, max entries, **built-in accounts**
+  (`Administrator`/`Guest`/`SYSTEM`) and the global `SAM_DB`

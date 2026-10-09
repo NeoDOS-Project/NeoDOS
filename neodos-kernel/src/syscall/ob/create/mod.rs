@@ -13,6 +13,7 @@ mod ipc;
 mod socket;
 mod service;
 mod driver;
+mod session;
 
 pub fn handler_ob_create(regs: crate::syscall::Registers) -> u64 {
     let path_ptr = regs.rbx;
@@ -44,6 +45,7 @@ pub fn handler_ob_create(regs: crate::syscall::Registers) -> u64 {
         16 => crate::object::ObType::Thread,
          17 => crate::object::ObType::Section,
          18 => crate::object::ObType::Socket,
+         19 => crate::object::ObType::Session,
          20 => crate::object::ObType::Service,
         _ => return err_to_u64(SyscallError::Inval),
     };
@@ -56,6 +58,7 @@ pub fn handler_ob_create(regs: crate::syscall::Registers) -> u64 {
         _ if socket::handles(obj_type) => socket::dispatch(obj_type, &path_str, fds_out, attrs),
         _ if service::handles(obj_type) => service::dispatch(obj_type, &path_str, fds_out, attrs),
         _ if driver::handles(obj_type) => driver::dispatch(obj_type, &path_str, fds_out, attrs),
+        _ if session::handles(obj_type) => session::dispatch(obj_type, &path_str, fds_out, attrs),
         _ => err_to_u64(SyscallError::Inval),
     }
 }
