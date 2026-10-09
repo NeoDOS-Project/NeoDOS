@@ -9,6 +9,8 @@ use alloc::vec::Vec;
 
 /// Export-table address of the relocatable (PIE) `math.nxl`, for the NXL test.
 pub static MATH_EXPORT_BASE: AtomicU64 = AtomicU64::new(0);
+/// Export-table address of the PIE `libarith.nxl` (imports `math_add`).
+pub static ARITH_EXPORT_BASE: AtomicU64 = AtomicU64::new(0);
 
 const NXL_REGION_BASE: u64 = 0x1e00_0000;
 const NXL_REGION_SIZE: u64 = 0x20_0000;
@@ -111,6 +113,16 @@ pub fn load_nxl() -> bool {
             kinfo!(LogSubsys::Nxl, "PIE math.nxl export table at 0x{:x}", base);
         }
         None => kwarn!(LogSubsys::Nxl, "math.nxl not found"),
+    }
+
+    // B2 end-to-end: load libarith.nxl, which imports `math_add` from math.nxl
+    // (resolved by `resolve_nxl_imports` from the registry above).
+    match nxl_load("C:\\System\\Libraries\\libarith.nxl") {
+        Some(base) => {
+            ARITH_EXPORT_BASE.store(base, Ordering::Relaxed);
+            kinfo!(LogSubsys::Nxl, "PIE libarith.nxl export table at 0x{:x}", base);
+        }
+        None => kwarn!(LogSubsys::Nxl, "libarith.nxl not found"),
     }
 
     ok
@@ -892,5 +904,15 @@ pub fn register_nxl_tests() {
             unsafe { core::mem::transmute(*(base.wrapping_add(8) as *const u64)) };
         test_eq!(sum3(1, 2, 3), 6);
         test_eq!(sum3(10, -4, 1), 7);
+    });
+
+    // B2 from the real image: `libarith.nxl` is packaged by the (data-driven)
+    // image builder and loaded at boot; its `math_add` import must resolve.
+    test_case!("nxl_cross_library_import_from_image", {
+        let base = ARITH_EXPORT_BASE.load(Ordering::Relaxed);
+        test_true!(base != 0);
+        let sum3: extern "C" fn(i64, i64, i64) -> i64 =
+            unsafe { core::mem::transmute(*(base.wrapping_add(8) as *const u64)) };
+        test_eq!(sum3(1, 2, 3), 6);
     });
 }
