@@ -1,118 +1,174 @@
 ---
 name: drivers
-description: Develop NEM drivers, modify driver runtime, ABI negotiation, lifecycle
+description: Develop NEM drivers, modify the driver runtime, ABI negotiation, lifecycle
 ---
 
 # Drivers
 
 ## When to use
 
-Developing a new NEM driver, modifying the driver runtime, changing the ABI negotiation, updating capability flags, or altering the driver lifecycle.
+Developing a new NEM driver, modifying the driver runtime, changing ABI
+negotiation, updating capability flags, or altering the driver lifecycle.
 
 ## Goal
 
-Create or modify a NEM driver correctly — from .nxe module through ABI negotiation, capability declaration, isolation, and lifecycle management.
+Create or modify a NEM driver correctly — from standalone `.o` through
+`nem-pack`, ABI negotiation, capability declaration, isolation, and lifecycle.
+
+## References
+
+- `docs/drivers/overview.md`, `docs/drivers/nem-spec.md`,
+  `docs/drivers/driver-migration.md`, `docs/drivers/kcr-compliance.md`
+- Kernel format/loader: `src/drivers/nem/format.rs`,
+  `src/drivers/nem/loader/` (`v3loader.rs`, `net_bridge.rs`)
+- Runtime/certification: `src/drivers/nem/runtime/`
+- Management: `src/drivers/nem/management/` (`abi/mod.rs`, `caps.rs`,
+  `isolation.rs`, `dependency/mod.rs`, `boot_loader/mod.rs`, manager, hot-reload)
+- Hardware drivers: `src/drivers/hw/` (`pci`, `ata`, `ahci`, `nvme`,
+  `virtio_blk`, `ps2`, `rtc`); storage: `src/drivers/storage/`
+- Example driver: `drivers/e1000/` (`src/lib.rs`, `build_nem.py`)
+- Packer: `tools/nem-pack.py`
+
+## NEM v3 format (80-byte header)
+
+Source: `src/drivers/nem/format.rs` (re-exported as `crate::nem`).
+Magic `"NEM3"` = `0x334D454E`, `header_size = 80`, `version = 3`.
+
+Key fields: `abi_min`, `abi_target`, `abi_max` (u16), `driver_type`,
+`category` (0=BOOT, 1=SYSTEM, 2=DEMAND), section sizes
+(`text/rodata/data/bss/total_mem_size`), entry offsets (`entry_init`,
+`entry_event`, `entry_fini`), relocation table, symbol/string tables, and the
+driver name offset. ABI constants: `ABI_MIN_VALID = 1`, `ABI_TARGET = 1`,
+`ABI_MAX_VALID = 2`.
 
 ## Steps
 
-1. **Read `docs/drivers/overview.md`**
-   Understand NEM format, driver lifecycle, capabilities, isolation model, and ABI negotiation.
+### 1. Author the driver as a standalone `no_std` library
 
-2. **Choose driver category**
-   - `BOOT(0)`: Loaded during boot phase 2 before the object manager is fully initialized.
-   - `SYSTEM(1)`: Core system drivers loaded by the driver boot loader.
-   - `DEMAND(2)`: On-demand drivers loaded when a device or service is requested.
+Place it in `drivers/<name>/src/lib.rs`:
 
-3. **Create the NEM module source**
-   Place in `drivers/<name>/src/main.rs`. Structure:
+```rust
+#![no_std]
+#![no_main]
 
-   ```rust
-   #![no_std]
-   #![no_main]
+use core::panic::PanicInfo;
 
-   use nem::*;
+#[panic_handler]
+fn panic(_: &PanicInfo) -> ! { loop {} }
 
-   nem_driver! {
-       name: "mydriver",
-       category: DEMAND,    // or BOOT, SYSTEM
-       abi_min: 5,
-       abi_target: 7,
-       abi_max: 7,
-       caps: CAP_IRQ | CAP_IO,
-       init: mydriver_init,
-       unload: mydriver_unload,
-   }
+#[no_mangle]
+pub extern "C" fn driver_init() -> i32 { /* probe + register */ 0 }
 
-   fn mydriver_init(ctx: &mut DriverContext) -> Result<(), DriverError> {
-       // Register devices, allocate resources
-       Ok(())
-   }
+#[no_mangle]
+pub extern "C" fn driver_activate() -> i32 { 0 }
 
-   fn mydriver_unload(ctx: &mut DriverContext) -> Result<(), DriverError> {
-       // Release resources, unregister devices
-       Ok(())
-   }
-   ```
+#[no_mangle]
+pub unsafe extern "C" fn driver_on_event(event: *const NeoEvent) -> i32 { 0 }
 
-4. **NEM v2 header** (`neodos-kernel/src/nem/`)
-   The header is 48 bytes. Fields: magic ("NE"), format_version (2), abi_min/abi_target/abi_max, caps bitmap, entry points, size, checksum.
-   The `nem_driver!` macro generates this automatically.
+#[no_mangle]
+pub extern "C" fn driver_fini() { /* release resources */ }
+```
 
-5. **Capability flags** (`src/drivers/caps.rs`)
-   Declare only what the driver needs. Review 12 flags:
-   - `CAP_IRQ(1)` — interrupt handling
-   - `CAP_DMA(2)` — direct memory access
-   - `CAP_IO(4)` — port I/O
-   - `CAP_MMIO(8)` — memory-mapped I/O
-   - `CAP_ISOLATION(2048)` — driver isolation (hardware-enforced)
+Drivers call host services through imported `hst_*` functions (`hst_inb/outb`,
+`hst_log`, `hst_push_event`, `hst_ecam_read_dword`,
+`hst_register_network_device`, `hst_virt_to_phys`, …). See `drivers/e1000/`
+for a complete example.
 
-6. **Driver lifecycle states** (`src/drivers/driver_runtime.rs`)
-   8 states: `Loaded → Initialized → Registered → Bound → Active → Faulted → Unloaded → Unloading`.
-   Handle each state transition in `mydriver_init()`: typically go from Initialized to Registered.
+### 2. Build and pack the driver
 
-7. **ABI negotiation** (`src/drivers/abi/`)
-   The kernel compares `abi_min..=abi_max` against `KERNEL_ABI_VERSION`. If the intersection is empty, loading fails.
-   Update `KERNEL_ABI_VERSION` in `src/nem/mod.rs` when the NEM ABI changes.
+Each driver carries a `build_nem.py` that compiles the Rust sources to an object
+and runs the packer. At the project level use `neodev build --nem`, or:
 
-8. **Isolation** (`src/drivers/isolation/`)
-   If `CAP_ISOLATION` is set, the driver runs in a restricted environment (separate address space, I/O port restrictions).
-   Ensure the driver can handle page faults gracefully if isolated.
+```bash
+python3 tools/nem-pack.py <input.o> <output.nem> \
+    --name <name> --type <0-5> --category <0-2> \
+    --abi-min 1 --abi-target 1 --abi-max 2
+```
 
-9. **Add to boot loader** (`src/drivers/boot_loader/`)
-   If BOOT or SYSTEM category: register the driver in the boot loader's driver list so it's loaded automatically.
+### 3. Choose the category
 
-10. **Build and test**
+- `BOOT(0)` — loaded during boot before the system is fully up.
+- `SYSTEM(1)` — core drivers loaded by the boot driver loader.
+- `DEMAND(2)` — on-demand drivers.
 
-    ```bash
-    bash scripts/build.sh --neodos-image
-    python3 scripts/auto_test.py
-    ```
+### 4. Declare capabilities (`management/caps.rs`)
+
+Request the minimum needed. 13 frozen v0.42 bits (0-12):
+
+`CAP_IRQ(0)`, `CAP_DMA(1)`, `CAP_MMIO(2)`, `CAP_PORTIO(3)`,
+`CAP_ALLOC_PAGE(4)`, `CAP_BLOCK_DEVICE(5)`, `CAP_EVENT_BUS(6)`, `CAP_INPUT(7)`,
+`CAP_LOG(8)`, `CAP_TIMING(9)`, `CAP_MEMORY(10)`, `CAP_ISOLATION(11)`,
+`CAP_NS_WRITE(12)`. Each `hst_*` export calls `check_cap()` first. DEMAND drivers
+cannot escalate (hard boundary); SYSTEM drivers may escalate via
+`EVENT_CAP_ESCALATION`.
+
+### 5. Lifecycle (8 states)
+
+`Loaded → Initialized → Registered → Bound → Active → Faulted → Unloading →
+Unloaded`. `certify_and_activate()` only reaches `Active` when the state is
+`Bound`, `last_error == ERR_NONE`, and the driver is not `Faulted`. Handle
+`Faulted → Unloaded` and the unload path carefully.
+
+### 6. ABI negotiation (`management/abi/mod.rs`)
+
+The kernel compares the driver's `[abi_min, abi_max]` against `ABI_TARGET`; empty
+intersection = `Incompatible`. Update `ABI_TARGET` in
+`src/drivers/nem/format.rs` only on a breaking NEM ABI change (and bump the ABI in
+`AGENTS.md`).
+
+### 7. Isolation (`management/isolation.rs`)
+
+`CAP_ISOLATION` runs the driver in one of 16 × 1 MB slots at `DRIVER_ISO_BASE`
+(`0x30000000`). Modes: `None`, `Basic` (page-isolated, validated exports),
+`Sandbox` (faults outside the region → `FAULTED`). `validate_driver_ptr()`
+accepts only known regions. Make the driver fault-tolerant when isolated.
+
+### 8. Dependencies (`management/dependency/mod.rs`)
+
+Declare `__dep_DRIVERNAME` symbols in the NEM symbol table. The resolver computes
+a topological order (max 32 deps/driver, max 16 drivers) and rejects cycles.
+
+### 9. Boot loading (`management/boot_loader/mod.rs`, Phase 3.85)
+
+BOOT drivers load first, then SYSTEM drivers (dependency-sorted). A failing BOOT
+driver is marked `FAULTED` and logged; boot continues.
+
+### 10. Build and test
+
+```bash
+neodev build --nem
+neodev build --image && neodev test
+neodev check-deps
+```
+
+Driver state is observable through the Object Manager:
+`ob_open("\Global\Info\Drivers")` + `ob_query_info(Drivers)`.
 
 ## Best practices
 
-- Request exactly the capabilities needed — over-privilege is a security risk.
-- Handle all state transitions gracefully, especially `Faulted → Unloaded`.
-- Use `DriverContext` for all resource registration (IRQs, MMIO, DMA).
-- Validate ABI versions at compile time with `static_assert!` if possible.
-- Keep init/unload functions idempotent where possible.
+- Request exactly the capabilities the driver needs; over-privilege is a risk.
+- Only go through HAL host services (`hst_*`) — never touch hardware directly.
+- Keep `driver_init`/`driver_fini` symmetric (release every IRQ/MMIO/DMA).
+- Set `abi_max` honestly — too high risks loading on an incompatible kernel.
+- Test the isolated mode if `CAP_ISOLATION` is set.
 
 ## Common mistakes
 
-- Setting `abi_max` too high — the driver may load on a kernel that breaks compatibility.
-- Not releasing IRQs in `unload` — causes double-free on the IRQ line.
-- Requesting `CAP_ISOLATION` without testing — isolation adds significant complexity.
-- Forgetting to update `KERNEL_ABI_VERSION` when the NEM ABI changes.
-- Accessing hardware directly without going through HAL abstractions.
+- Forgetting to release IRQs/MMIO on `driver_fini` (double-free later).
+- Declaring `abi_max` above what the kernel supports.
+- Requesting `CAP_ISOLATION` / escalation without testing (DEMAND cannot escalate).
+- Assuming the old `nem_driver!` macro exists — drivers are standalone libs with
+  `#[no_mangle]` entry points, packed by `nem-pack.py`.
+- Bumping `ABI_TARGET` without updating `AGENTS.md` docs.
 
 ## Final checklist
 
-- [ ] NEM v2 header valid (magic, checksum, version fields)
-- [ ] ABI version range intersects `KERNEL_ABI_VERSION`
-- [ ] Capabilities declared (minimum required set)
+- [ ] NEM v3 header valid (magic, checksum, version fields)
+- [ ] ABI `[min, target, max]` intersects `ABI_TARGET`
+- [ ] Capabilities declared (minimum set)
 - [ ] Category correct (BOOT/SYSTEM/DEMAND)
-- [ ] Lifecycle states handled: init, unload, fault recovery
-- [ ] Registered in boot loader if BOOT or SYSTEM
-- [ ] Resources released on unload (IRQs, MMIO, DMA channels)
-- [ ] Isolation model correct if `CAP_ISOLATION` set
-- [ ] `cargo build` and `python3 scripts/auto_test.py` pass
+- [ ] Lifecycle handled: init, activate, event, fini, fault recovery
+- [ ] Dependencies declared and acyclic (`__dep_*`)
+- [ ] Isolation behavior correct if `CAP_ISOLATION` set
+- [ ] Builds via `neodev build --nem` and `neodev test` passes
 - [ ] `docs/drivers/overview.md` updated if ABI or lifecycle changed

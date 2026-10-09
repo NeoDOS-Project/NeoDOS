@@ -7,81 +7,117 @@ description: Modify scheduling policy, priorities, SMP, thread states, timeslice
 
 ## When to use
 
-Modifying scheduling policy, priority management, SMP load balancing, thread/process state transitions, or timeslice allocation.
+Modifying scheduling policy, priority management, SMP load balancing,
+thread/process state transitions, or timeslice allocation.
 
 ## Goal
 
-Make correct scheduler changes without breaking preemption, fairness, or SMP invariants.
+Make correct scheduler changes without breaking preemption, fairness, or SMP
+invariants.
+
+## References
+
+- `docs/scheduler/scheduler.md` — subsystem documentation
+- `src/scheduler/schedule.rs` — `schedule()`, `schedule_with()`, dispatch
+- `src/scheduler/mod.rs` — scheduler entry points and global state
+- `src/scheduler/queue.rs` — per-CPU priority run queues (`CpuRunQueue`),
+  `try_dequeue_local()`
+- `src/scheduler/wake.rs` — `wake_waiters` / `wake_blocked_on_magic`
+- `src/scheduler/aging.rs` — starvation boost
+- `src/scheduler/smp.rs` — work stealing (`try_work_steal`), IPI
+- `src/scheduler/accounting.rs` — monotonic `cpu_time` accounting (Phase 15-A.1)
+- `src/scheduler/snapshot.rs` — `snapshot_into` (proc/thread inspection)
+- `src/scheduler/thread.rs`, `src/scheduler/process.rs`, `src/scheduler/types.rs`
+- `src/arch/x64/cpu_local.rs` — `KPRCB` per-CPU data
 
 ## Steps
 
-1. **Read `docs/scheduler/scheduler.md`**
-   Understand priorities, aging, time slices, SMP work stealing, and per-CPU run queues.
+1. **Read `docs/scheduler/scheduler.md`** — priority scan, run queues, work
+   stealing, aging, SMP.
 
-2. **Locate the right source file**
-   - `src/scheduler/mod.rs` — main scheduler logic, priority, aging, timeslice allocation
-   - `src/scheduler/runnable_queue.rs` — per-CPU run queues, work stealing
-   - `src/scheduler/priority.rs` — priority levels and boost logic
-   - `src/process/mod.rs` — EPROCESS, KTHREAD structures and thread state machine
-   - `src/scheduler/smp.rs` — IPI, per-CPU idle threads
+2. **Locate the right file** (see References). Most policy lives in
+   `schedule.rs`; the O(1) dispatch path is `queue.rs`; IPI/stealing is `smp.rs`.
 
-3. **Priority levels** (`src/scheduler/mod.rs`)
-   - `HIGH(0)`: 400 tick timeslice
-   - `ABOVE_NORMAL(1)`: 200 tick timeslice
-   - `NORMAL(2)`: 100 tick timeslice
-   - `IDLE(3)`: 50 tick timeslice
-   When changing, update the `PRIORITY_TIMESLICES` array.
+3. **Priority levels** (`src/scheduler/types.rs` / `mod.rs`)
 
-4. **Thread states** (`src/process/mod.rs` — `ThreadState` enum)
-   Valid transitions: Ready→Running, Running→Ready (preempt), Running→Blocked, Blocked→Ready.
-   Never transition directly between Blocked and Running.
+   | Level | Constant | Timeslice |
+   | ------- | ---------- | ----------- |
+   | 0 | `PRIORITY_HIGH` | 400 ticks |
+   | 1 | `PRIORITY_ABOVE_NORMAL` | 200 ticks |
+   | 2 | `PRIORITY_NORMAL` | 100 ticks |
+   | 3 | `PRIORITY_IDLE` | 50 ticks |
 
-5. **SMP work stealing** (`src/scheduler/runnable_queue.rs`)
-   When a CPU's run queue is empty, it steals from the busiest sibling CPU.
-   The `steal_work()` function iterates CPUs and transfers a batch of threads.
-   After stealing, send IPI via `send_ipi()` in `src/scheduler/smp.rs` to trigger reschedule on the victim CPU.
+   ```rust
+   pub const PRIORITY_COUNT: u8 = 4;
+   pub const TIME_SLICES: [u16; 4] = [400, 200, 100, 50];
+   pub const IDLE_TIME_SLICE: u16 = 10;
+   ```
 
-6. **Add new scheduling policy** (if needed)
-   - Implement the policy algorithm in a new file `src/scheduler/my_policy.rs`.
-   - Add a policy enum variant in the scheduler's main types.
-   - Wire it into the `schedule()` function in `src/scheduler/mod.rs`.
-   - Ensure it respects the preemption model (voluntary + preemptive).
+   When changing, update `TIME_SLICES` (the array the tick path indexes).
 
-7. **Write tests**
-   Add tests in `src/testing.rs`:
-   - Thread creation and state transitions
-   - Priority inheritance/boost (if applicable)
-   - SMP steal under load
-   - Timeslice exhaustion triggers reschedule
+4. **Thread states** (`ThreadState`)
 
-8. **Build and test**
+   ```rust
+   pub enum ThreadState { Ready, Running, Blocked { waiting_for: u64 }, Suspended, Terminated }
+   ```
+
+   Valid transitions: `Ready→Running`, `Running→Ready` (preempt), `Running→Blocked`,
+   `Blocked→Ready`, `Running→Terminated`. Never `Blocked → Running` directly.
+
+5. **Run queue / dispatch** (`queue.rs`, `schedule.rs`)
+   Each CPU owns four priority sub-queues (64 entries each) selected by an
+   `active_bitmap`; `pop()` picks the highest non-empty level via `trailing_zeros`
+   (O(1)). A popped candidate below the global `highest_ready_priority()` is
+   returned and dispatch falls through to the global priority scan (`#382`).
+   Enqueueing on a remote CPU sends `IPI_RESCHEDULE` (0xF0).
+
+6. **Work stealing / SMP** (`smp.rs`)
+   `try_work_steal()` pulls one thread from a remote CPU's queue when the local
+   queue is empty. IPI vectors: `0xF0` reschedule, `0xF1` TLB shootdown,
+   `0xF2` call-function.
+
+7. **Aging** (`aging.rs`)
+   Every `AGING_INTERVAL_TICKS` (500) scan Ready non-idle threads; threads Ready
+   for ≥ 5000 ticks get boosted one level (up to HIGH) and re-enqueued at the new
+   level.
+
+8. **Write tests** with `test_case!` in `src/scheduler/tests/` (registered via
+   the scheduler's `register_*_tests()`): priority ordering, round-robin,
+   timeslice expiry, aging boost, state transitions, work stealing.
+
+9. **Build and test**
 
    ```bash
-   cargo build && python3 scripts/auto_test.py
+   cd neodos-kernel && cargo build
+   neodev build --quick --image && neodev test
+   neodev check-deps
    ```
 
 ## Best practices
 
-- Keep the scheduler lock-free where possible — use atomic operations on thread states.
-- Always yield the current timeslice before blocking (voluntary preemption).
-- Work stealing must be O(1) on the steal target — don't scan all threads.
-- Priority boost on I/O completion prevents starvation.
-- Use `SCHED_DEBUG` or trace points for scheduler diagnostics, not printk.
+- Keep state transitions atomic; a Running thread must be on exactly one CPU.
+- Send `IPI_RESCHEDULE` after moving a thread between CPU run queues.
+- Do not acquire the scheduler lock while holding another spinlock out of order.
+- Kernel threads are found by the global priority scan (they do not self-enqueue);
+  Ring 3 threads enqueue and IPI the target CPU.
+- Use trace points / `trace_sched_state!` for diagnostics, not `printk`.
 
 ## Common mistakes
 
-- Introducing deadlocks by acquiring scheduler lock while holding another spinlock.
-- Breaking the invariant: a thread in Running state must be on exactly one CPU's run queue.
-- Forgetting to send IPI after moving threads between CPU run queues.
-- Starving HIGH priority threads by allowing NORMAL threads to run without preemption.
-- Not updating `ThreadState` atomically — leading to inconsistent scheduler views.
+- Introducing a lock inversion with `SCHEDULER`.
+- Publishing a user thread `Ready` on a Ring-0 frame (must be Ring 3; see
+  scheduler.md `#338`/`#474`).
+- Forgetting the IPI after thread migration.
+- Letting the run queue silently drop a thread (push degrades to a *lower* level
+  only).
+- Forgetting to update `TIME_SLICES` when changing priority behavior.
 
 ## Final checklist
 
-- [ ] Thread state machine transitions correct (no invalid transitions)
+- [ ] State machine transitions valid (no `Blocked → Running`)
 - [ ] Timeslice values aligned with priority levels
-- [ ] SMP work stealing tested under concurrent load
+- [ ] Run-queue/steal path keeps `highest_ready_priority` invariant
 - [ ] IPI sent after thread migration
-- [ ] No new spinlock inversions introduced
-- [ ] Kernel tests added and pass
+- [ ] No new spinlock inversions
+- [ ] Tests added; `cargo build`, `neodev test`, `neodev check-deps` pass
 - [ ] `docs/scheduler/scheduler.md` updated if behavior changed
