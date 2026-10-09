@@ -20,16 +20,7 @@ const IDS_USAGE: u32 = 1003;
 
 const APP_NAME: &str = "coretype";
 
-fn to_ob_path<'a>(vfs: &'a str, buf: &'a mut [u8; 512]) -> &'a str {
-    let prefix = b"\\Global\\FileSystem\\";
-    let vfs_bytes = vfs.as_bytes();
-    let total = prefix.len() + vfs_bytes.len();
-    if total > 510 { return vfs; }
-    buf[..prefix.len()].copy_from_slice(prefix);
-    buf[prefix.len()..total].copy_from_slice(vfs_bytes);
-    buf[total] = 0;
-    unsafe { core::str::from_utf8_unchecked(&buf[..total]) }
-}
+use libneoutil::to_ob_path;
 
 fn write_str(s: &[u8]) {
     let _ = syscall::sys_write(1, s);
@@ -47,54 +38,7 @@ TYPE [drive:][path]filename\r\n\
   TYPE C:\\readme.txt   shows the readme file.\r\n\
 ::END::";
 
-fn normalize_path(input: &[u8]) -> [u8; 260] {
-    let path_str = core::str::from_utf8(input).unwrap_or("");
-    if path_str.is_empty() {
-        let mut buf = [0u8; 260];
-        let mut cwd_buf = [0u8; 256];
-        match syscall::sys_getcwd(&mut cwd_buf) {
-            Ok(n) if n > 0 => {
-                let mut pos = 0;
-                for &b in &cwd_buf[..n] {
-                    if pos < 259 { buf[pos] = b; pos += 1; }
-                }
-                if pos < 259 { buf[pos] = 0; }
-            }
-            _ => {
-                buf[..3].copy_from_slice(b"C:\\");
-            }
-        }
-        return buf;
-    }
-
-    let bytes = path_str.as_bytes();
-    let mut buf = [0u8; 260];
-    if bytes[0] == b'\\' || bytes.contains(&b':') {
-        let n = bytes.len().min(259);
-        buf[..n].copy_from_slice(&bytes[..n]);
-    } else {
-        let mut cwd_buf = [0u8; 256];
-        let mut pos = 0;
-        match syscall::sys_getcwd(&mut cwd_buf) {
-            Ok(n) if n > 0 => {
-                for &b in &cwd_buf[..n] {
-                    if pos < 259 { buf[pos] = b; pos += 1; }
-                }
-                if pos > 0 && buf[pos - 1] != b'\\' {
-                    if pos < 259 { buf[pos] = b'\\'; pos += 1; }
-                }
-            }
-            _ => {
-                buf[..3].copy_from_slice(b"C:\\");
-                pos = 3;
-            }
-        }
-        for &b in bytes {
-            if pos < 259 { buf[pos] = b; pos += 1; }
-        }
-    }
-    buf
-}
+use libneodos::path::normalize_path;
 
 fn print_usage() {
     write_str(b"\r\n");

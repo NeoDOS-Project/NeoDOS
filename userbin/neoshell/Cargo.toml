@@ -14,6 +14,7 @@ path = "src/lib.rs"
 
 [dependencies]
 libneodos = { path = "../../libneodos" }
+libneoutil = { path = "../../libneoutil" }
 
 [profile.release]
 panic = "abort"
