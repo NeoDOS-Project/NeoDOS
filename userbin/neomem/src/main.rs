@@ -30,19 +30,12 @@ fn write_str(s: &[u8]) {
 }
 
 fn write_num(n: u64) {
-    if n == 0 {
-        write_str(b"0");
-        return;
-    }
+    // Decimal formatting comes from the shared service in math.nxl (libmath).
     let mut buf = [0u8; 20];
-    let mut i = 20;
-    let mut v = n;
-    while v > 0 {
-        i -= 1;
-        buf[i] = b'0' + (v % 10) as u8;
-        v /= 10;
+    let len = libmath::format_u64(n, &mut buf);
+    if len > 0 {
+        write_str(&buf[..len]);
     }
-    write_str(&buf[i..]);
 }
 
 /// Human-readable size, delegated to the shared units service in `math.nxl`.
