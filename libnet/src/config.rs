@@ -125,25 +125,25 @@ pub fn load_key(key: &RegistryKey) -> NetConfig {
 
 /// Write the full interface configuration to an already-open key.
 pub fn store_key(key: &RegistryKey, cfg: &NetConfig) {
-    key.set_dword(VALUE_DHCP_ENABLED, cfg.dhcp_enabled as u32);
-    key.set_dword(VALUE_IP_ADDRESS, cfg.ip);
-    key.set_dword(VALUE_SUBNET_MASK, cfg.mask);
-    key.set_dword(VALUE_GATEWAY, cfg.gateway);
-    key.set_dword(VALUE_DNS1, cfg.dns[0]);
-    key.set_dword(VALUE_DNS2, cfg.dns[1]);
-    key.set_dword(VALUE_DNS3, cfg.dns[2]);
-    key.set_dword(VALUE_DHCP_BOUND, cfg.dhcp_bound as u32);
-    key.set_dword(VALUE_DHCP_SERVER, cfg.dhcp_server);
-    key.set_dword(VALUE_LEASE_TIME, cfg.lease_time);
-    key.set_dword(VALUE_LEASE_OBTAINED, cfg.lease_obtained);
-    key.set_dword(VALUE_T1_RENEW, cfg.t1_renew);
-    key.set_dword(VALUE_T2_REBIND, cfg.t2_rebind);
-    key.set_string(VALUE_DOMAIN, &cfg.domain[..domain_len(&cfg.domain)]);
-    key.set_dword(VALUE_BROADCAST, cfg.broadcast);
-    key.set_dword(VALUE_NTP1, cfg.ntp[0]);
-    key.set_dword(VALUE_NTP2, cfg.ntp[1]);
-    key.set_dword(VALUE_NTP3, cfg.ntp[2]);
-    key.set_dword(VALUE_MTU, cfg.mtu);
+    let _ = key.set_dword(VALUE_DHCP_ENABLED, cfg.dhcp_enabled as u32);
+    let _ = key.set_dword(VALUE_IP_ADDRESS, cfg.ip);
+    let _ = key.set_dword(VALUE_SUBNET_MASK, cfg.mask);
+    let _ = key.set_dword(VALUE_GATEWAY, cfg.gateway);
+    let _ = key.set_dword(VALUE_DNS1, cfg.dns[0]);
+    let _ = key.set_dword(VALUE_DNS2, cfg.dns[1]);
+    let _ = key.set_dword(VALUE_DNS3, cfg.dns[2]);
+    let _ = key.set_dword(VALUE_DHCP_BOUND, cfg.dhcp_bound as u32);
+    let _ = key.set_dword(VALUE_DHCP_SERVER, cfg.dhcp_server);
+    let _ = key.set_dword(VALUE_LEASE_TIME, cfg.lease_time);
+    let _ = key.set_dword(VALUE_LEASE_OBTAINED, cfg.lease_obtained);
+    let _ = key.set_dword(VALUE_T1_RENEW, cfg.t1_renew);
+    let _ = key.set_dword(VALUE_T2_REBIND, cfg.t2_rebind);
+    let _ = key.set_string(VALUE_DOMAIN, &cfg.domain[..domain_len(&cfg.domain)]);
+    let _ = key.set_dword(VALUE_BROADCAST, cfg.broadcast);
+    let _ = key.set_dword(VALUE_NTP1, cfg.ntp[0]);
+    let _ = key.set_dword(VALUE_NTP2, cfg.ntp[1]);
+    let _ = key.set_dword(VALUE_NTP3, cfg.ntp[2]);
+    let _ = key.set_dword(VALUE_MTU, cfg.mtu);
 }
 
 /// Write the full interface configuration and flush it to disk.
@@ -159,25 +159,25 @@ pub fn store(iface: u32, cfg: &NetConfig) -> Result<(), i64> {
 /// interface as bound. It never touches the runtime NIC (the applier does).
 pub fn publish_lease(iface: u32, cfg: &NetConfig) -> Result<(), i64> {
     let key = interface_key(iface)?;
-    key.set_dword(VALUE_IP_ADDRESS, cfg.ip);
-    key.set_dword(VALUE_SUBNET_MASK, cfg.mask);
-    key.set_dword(VALUE_GATEWAY, cfg.gateway);
-    key.set_dword(VALUE_DNS1, cfg.dns[0]);
-    key.set_dword(VALUE_DNS2, cfg.dns[1]);
-    key.set_dword(VALUE_DNS3, cfg.dns[2]);
-    key.set_dword(VALUE_LEASE_TIME, cfg.lease_time);
-    key.set_dword(VALUE_LEASE_OBTAINED, cfg.lease_obtained);
-    key.set_dword(VALUE_T1_RENEW, cfg.t1_renew);
-    key.set_dword(VALUE_T2_REBIND, cfg.t2_rebind);
-    key.set_string(VALUE_DOMAIN, &cfg.domain[..domain_len(&cfg.domain)]);
-    key.set_dword(VALUE_BROADCAST, cfg.broadcast);
-    key.set_dword(VALUE_NTP1, cfg.ntp[0]);
-    key.set_dword(VALUE_NTP2, cfg.ntp[1]);
-    key.set_dword(VALUE_NTP3, cfg.ntp[2]);
-    key.set_dword(VALUE_MTU, cfg.mtu);
-    key.set_dword(VALUE_DHCP_BOUND, cfg.dhcp_bound as u32);
+    let _ = key.set_dword(VALUE_IP_ADDRESS, cfg.ip);
+    let _ = key.set_dword(VALUE_SUBNET_MASK, cfg.mask);
+    let _ = key.set_dword(VALUE_GATEWAY, cfg.gateway);
+    let _ = key.set_dword(VALUE_DNS1, cfg.dns[0]);
+    let _ = key.set_dword(VALUE_DNS2, cfg.dns[1]);
+    let _ = key.set_dword(VALUE_DNS3, cfg.dns[2]);
+    let _ = key.set_dword(VALUE_LEASE_TIME, cfg.lease_time);
+    let _ = key.set_dword(VALUE_LEASE_OBTAINED, cfg.lease_obtained);
+    let _ = key.set_dword(VALUE_T1_RENEW, cfg.t1_renew);
+    let _ = key.set_dword(VALUE_T2_REBIND, cfg.t2_rebind);
+    let _ = key.set_string(VALUE_DOMAIN, &cfg.domain[..domain_len(&cfg.domain)]);
+    let _ = key.set_dword(VALUE_BROADCAST, cfg.broadcast);
+    let _ = key.set_dword(VALUE_NTP1, cfg.ntp[0]);
+    let _ = key.set_dword(VALUE_NTP2, cfg.ntp[1]);
+    let _ = key.set_dword(VALUE_NTP3, cfg.ntp[2]);
+    let _ = key.set_dword(VALUE_MTU, cfg.mtu);
+    let _ = key.set_dword(VALUE_DHCP_BOUND, cfg.dhcp_bound as u32);
     if cfg.dhcp_server != 0 {
-        key.set_dword(VALUE_DHCP_SERVER, cfg.dhcp_server);
+        let _ = key.set_dword(VALUE_DHCP_SERVER, cfg.dhcp_server);
     }
     key.flush()
 }
