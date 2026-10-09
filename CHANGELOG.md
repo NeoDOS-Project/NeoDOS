@@ -6,6 +6,31 @@
 
 ### Added
 
+- **NXL v2: relocatable PIE libraries with symbol resolution (#601, #586).**
+  NXL shared libraries can be built position-independent (`ET_DYN`) and load
+  into any free slot: the loader applies `R_X86_64_RELATIVE` relocations and
+  reports the `.export_table` address. Only the core `libneodos.nxl` (`fs.nxl`,
+  the syscall gateway) stays a fixed-base legacy library. The loader also builds
+  a symbol registry from each library's `.dynsym` and resolves
+  `R_X86_64_64` / `GLOB_DAT` / `JUMP_SLOT`, enabling NXL→NXL imports
+  (`libarith-nxl` imports `math_add`). `libmath-nxl`, `libconsole-nxl` and
+  `libnet-nxl` are now PIE. Includes uniform version-first export tables (core
+  `AbiTable` v7 → v8), a 256 KB slot size cap with fail-closed rejection (#584),
+  a compile-time AbiTable layout freeze (#585) and NXL contract tests.
+
+- **Units service in `math.nxl` + `libmath` client (#590).** `math.nxl` (v3)
+  exports `kib_to_bytes`, `bytes_to_kib`, `scale_size`, `format_size` and
+  `format_size_compact`; the new `libmath` crate is the userland client.
+  `neomem`, `drives` and `neotop` now format sizes through the shared service.
+
+- **Userland NXL path resolution via the Registry (#73).** `libmath`, `libnet`
+  and `console` resolve their path through
+  `\Registry\Machine\System\CurrentControlSet\Control\Library\<name>` (REG_SZ,
+  `KnownDlls`-style) with a `C:\System\Libraries\<name>.nxl` fallback; defaults
+  are created by `cm::init::ensure_boot_defaults`. The kernel boot-loads only
+  `fs.nxl`; `math`/`console`/`net`/`libarith` are userland libraries loaded on
+  demand.
+
 - **Security: `ObType::Session` + built-in SAM accounts (USR-P1a, #19).** Added
   `ObType::Session = 19` — `ob_create`/`ob_destroy` now accept it and create a
   `Session` object in the namespace. Added the built-in account-domain SIDs
@@ -26,6 +51,11 @@
   map (covers the `ObType::Session` acceptance from #19). 3 new tests.
 
 ### Fixed
+
+- **`neomem` memory ABI drift (#591).** `neomem` declared a private 13-field
+  `MemInfo` that no longer matched the kernel's 15-field `MemoryStats` (120 B),
+  so it printed misaligned garbage. It now queries directly into
+  `libneodos::syscall::MemInfo`.
 
 - **Security: NT-correct `SeAccessCheck` — empty DACL, group SIDs, SACL audit
   (#22).** `se_access_check` now **denies all access on an empty DACL** (present,
