@@ -233,6 +233,24 @@ pub fn format_size_compact(bytes: u64, buf: &mut [u8]) -> usize {
     pos.min(buf.len())
 }
 
+// ── Numeric formatting ──
+
+/// Write a decimal `u64` into `buf` (left-aligned); returns bytes written.
+pub fn format_u64(v: u64, buf: &mut [u8]) -> usize {
+    let mut pos = 0usize;
+    put_dec(v, buf, &mut pos);
+    pos.min(buf.len())
+}
+
+/// Write a `×10` percentage (`1374` → `137.4`) into `buf`; returns bytes written.
+pub fn format_percent_x10(x10: u64, buf: &mut [u8]) -> usize {
+    let mut pos = 0usize;
+    put_dec(x10 / 10, buf, &mut pos);
+    put_str(b".", buf, &mut pos);
+    put_dec(x10 % 10, buf, &mut pos);
+    pos.min(buf.len())
+}
+
 // ── Export table type ──
 
 #[repr(C)]
@@ -263,5 +281,7 @@ pub struct MathAbiTable {
     pub scale_size: extern "C" fn(u64) -> u64,
     pub format_size: extern "C" fn(u64, *mut u8, usize) -> usize,
     pub format_size_compact: extern "C" fn(u64, *mut u8, usize) -> usize,
+    pub format_u64: extern "C" fn(u64, *mut u8, usize) -> usize,
+    pub format_percent_x10: extern "C" fn(u64, *mut u8, usize) -> usize,
     pub _reserved: [u64; 4],
 }

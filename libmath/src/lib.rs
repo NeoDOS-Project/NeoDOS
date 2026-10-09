@@ -43,6 +43,8 @@ pub struct MathAbiTable {
     pub scale_size: extern "C" fn(u64) -> u64,
     pub format_size: extern "C" fn(u64, *mut u8, usize) -> usize,
     pub format_size_compact: extern "C" fn(u64, *mut u8, usize) -> usize,
+    pub format_u64: extern "C" fn(u64, *mut u8, usize) -> usize,
+    pub format_percent_x10: extern "C" fn(u64, *mut u8, usize) -> usize,
     pub _reserved: [u64; 4],
 }
 
@@ -107,6 +109,22 @@ pub fn format_size(bytes: u64, buf: &mut [u8]) -> usize {
 pub fn format_size_compact(bytes: u64, buf: &mut [u8]) -> usize {
     match get_table() {
         Some(t) => (t.format_size_compact)(bytes, buf.as_mut_ptr(), buf.len()),
+        None => 0,
+    }
+}
+
+/// Decimal `u64` into `buf`; returns bytes written.
+pub fn format_u64(v: u64, buf: &mut [u8]) -> usize {
+    match get_table() {
+        Some(t) => (t.format_u64)(v, buf.as_mut_ptr(), buf.len()),
+        None => 0,
+    }
+}
+
+/// `×10` percentage (`137.4`) into `buf`; returns bytes written.
+pub fn format_percent_x10(x10: u64, buf: &mut [u8]) -> usize {
+    match get_table() {
+        Some(t) => (t.format_percent_x10)(x10, buf.as_mut_ptr(), buf.len()),
         None => 0,
     }
 }
