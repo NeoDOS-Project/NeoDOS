@@ -122,13 +122,16 @@ Offset  Size  Campo            Descripción
 
 Caben ~340 regiones por nodo. Si se acaba el espacio, el nodo tiene `next_lba` al final (últimos 8 bytes del payload) apuntando a otro nodo freelist.
 
-La free list **se persiste en disco**: `save_sb` serializa las regiones en una
-cadena de nodos tipo 3 y guarda la LBA de la cabeza en `freelist_lba`. Los
-nodos de la cadena se liberan antes de reescribirla, de modo que no se filtra
-espacio. Al montar, si `freelist_lba != 0` la lista se carga y valida; si el
-puntero es 0, apunta fuera de rango o la lista es inválida, se **reconstruye**
-recorriendo el B-tree de directorios (nodos, extents de datos y subdirectorios)
-y marcando como libres los bloques no alcanzables.
+La free list se persiste en disco **solo al formatear** (mkfs/imagen): una
+cadena de nodos tipo 3 con la cabeza en `freelist_lba`. En tiempo de ejecución
+la persistencia es **perezosa**: cada guardado (`save_sb`) **invalida** el
+puntero (`freelist_lba = 0`) en vez de reescribir la lista (evita ~4 KB de E/S
+por operación de metadatos), y los bloques de la cadena anterior se devuelven a
+la lista. Al montar, si `freelist_lba != 0` (volumen intacto) se carga y valida;
+si es 0, se **reconstruye** recorriendo el B-tree del directorio actual **y los
+árboles de todos los snapshots**, más el nodo de la tabla de snapshots y los
+bloques 0/1, marcando como libres los bloques no alcanzables. La reconstrucción
+es por tanto snapshot-aware y no libera bloques referenciados por un snapshot.
 
 Asignación **best-fit**: se elige la región libre más pequeña que quepa y se
 divide si es mayor de lo pedido. `free()` fusiona con las regiones adyacentes

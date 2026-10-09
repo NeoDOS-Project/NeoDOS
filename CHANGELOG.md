@@ -6,14 +6,18 @@
 
 ### Added
 
-- **Filesystem: cheaper NeoFS v2 metadata writes (dirty flags + in-place
-  rewrite).** `FreeList` now tracks a `dirty` flag (set on every alloc/free) and
-  `save_freelist` skips persistence when nothing changed and rewrites the chain
-  **in place** when the node count is unchanged (no free/realloc churn). The
-  snapshot table has its own `snapshot_dirty` flag and is rewritten in place too.
-  Measured with `neofs_v2_metadata_bench` (200× create+write+remove, best of 5):
-  **415.4M → 390.7M TSC (~6%)**. Further reduction would require lazy freelist
-  persistence (recover on mount), which changes #15 semantics.
+- **Filesystem: lazy free-list persistence + dirty flags (~29% faster metadata
+  writes).** The free list is now persisted only at format time; on every
+  `save_sb` it is **invalidated** (`freelist_lba = 0`, no ~4 KB node write) and
+  its chain blocks are returned to the list. Mount **reconstructs** it from the
+  current directory B-tree **and every snapshot's tree** plus the snapshot-table
+  node (snapshot-aware), so no block referenced by a snapshot is freed. `FreeList`
+  tracks a `dirty` flag and the snapshot table a `snapshot_dirty` flag (rewritten
+  in place only when changed). Measured with `neofs_v2_metadata_bench` (200×
+  create+write+remove, best of 5): **415.4M → 294.9M TSC (~29%)**. Tests updated
+  for the lazy semantics (`neofs_v2_freelist_survives_remount`,
+  `neofs_v2_freelist_recovers_without_persisted_list`); the multi-node chain test
+  was removed (chaining is no longer used at runtime).
 
 - **Filesystem: NeoFS v2 per-file snapshot extraction (#569).** New
   `SNAPSHOT EXTRACT <id> <src> <dst>` (syscall RAX 48 op `5=EXTRACT`) copies a

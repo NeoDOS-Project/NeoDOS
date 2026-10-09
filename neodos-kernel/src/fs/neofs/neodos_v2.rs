@@ -7,7 +7,7 @@ use alloc::string::String;
 use crate::vfs::io::IoStack;
 use crate::fs::vfs::{FileSystem, VfsNode, DirEntry, VfsError, MODE_DIR, MODE_FILE};
 use crate::fs::btree::{BTree, BTreeNode, BTreeIO, NodeType, NODE_SIZE};
-use crate::fs::freelist::{FreeList, FreeRegion, REGIONS_PER_NODE};
+use crate::fs::freelist::{FreeList, FreeRegion};
 use crate::fs::neodos_dir::{DirEntryV2, dir_lookup, dir_readdir, dir_count, DIRENTRY_SIZE, PERM_R, PERM_W, PERM_X, PERM_D};
 use crate::fs::neodos_io::{file_read, file_write, crc32};
 use crate::fs::snapshot::{SnapshotTable, SnapshotEntryRaw};
@@ -252,65 +252,22 @@ impl NeoDosFsV2 {
         true
     }
 
-    /// Serializar la free list a una cadena de nodos tipo 3 y actualizar
-    /// `sb.freelist_lba`. Si no cambió desde la última persistencia y la cadena
-    /// sigue siendo válida, no hace nada. Si el número de nodos no cambia,
-    /// reescribe **in-place** (sin liberar/reasignar la cadena). Si no hay
-    /// bloques libres o la escritura falla, deja `freelist_lba = 0` para forzar
-    /// la reconstrucción al montar.
+    /// Persistencia **perezosa** de la free list.
+    ///
+    /// En vez de reescribir la lista en cada guardado, se **invalida** el puntero
+    /// (`freelist_lba = 0`) y se reconstruye al montar recorriendo el árbol
+    /// (snapshot-aware). Los bloques de la cadena anterior se devuelven a la
+    /// lista. La free list solo se persiste en disco al formatear (mkfs/imagen),
+    /// que da un arranque rápido en volúmenes intactos.
     fn save_freelist(&mut self) {
-        if !self.freelist.dirty && self.sb.freelist_lba != 0 && !self.freelist_chain.is_empty() {
+        if !self.freelist.dirty && self.sb.freelist_lba == 0 {
             return;
         }
-
-        let region_count = self.freelist.region_count();
-        if region_count == 0 {
-            for &lba in &self.freelist_chain {
-                self.freelist.free(lba, 1);
-            }
-            self.freelist_chain.clear();
-            self.sb.freelist_lba = 0;
-            self.freelist.dirty = false;
-            return;
+        for &lba in &self.freelist_chain {
+            self.freelist.free(lba, 1);
         }
-
-        let num_nodes = (region_count + REGIONS_PER_NODE - 1) / REGIONS_PER_NODE;
-        let chain: Vec<u64> = if self.freelist_chain.len() == num_nodes {
-            // Reescritura in-place: los bloques de la cadena siguen reservados.
-            self.freelist_chain.clone()
-        } else {
-            for &lba in &self.freelist_chain {
-                self.freelist.free(lba, 1);
-            }
-            self.freelist_chain.clear();
-            let mut c = Vec::with_capacity(num_nodes);
-            for _ in 0..num_nodes {
-                match self.freelist.alloc(1) {
-                    Some((lba, _)) => c.push(lba),
-                    None => {
-                        self.sb.freelist_lba = 0;
-                        return;
-                    }
-                }
-            }
-            c
-        };
-
-        for (idx, &lba) in chain.iter().enumerate() {
-            let start = idx * REGIONS_PER_NODE;
-            let end = (start + REGIONS_PER_NODE).min(self.freelist.regions.len());
-            let chunk = FreeList { regions: self.freelist.regions[start..end].to_vec(), dirty: false };
-            let next = if idx + 1 < chain.len() { chain[idx + 1] } else { 0 };
-            let mut buf = [0u8; NODE_SIZE];
-            chunk.serialize(&mut buf, next);
-            if !self.write_block_raw(lba, &buf) {
-                self.sb.freelist_lba = 0;
-                return;
-            }
-        }
-
-        self.sb.freelist_lba = chain[0];
-        self.freelist_chain = chain;
+        self.freelist_chain.clear();
+        self.sb.freelist_lba = 0;
         self.freelist.dirty = false;
     }
 
@@ -371,8 +328,10 @@ impl NeoDosFsV2 {
         }
     }
 
-    /// Reconstruir la free list recorriendo el árbol de directorios y marcando
-    /// como usados los nodos B-tree, los extents de datos, y los bloques 0/1.
+    /// Reconstruir la free list recorriendo el árbol de directorios actual y los
+    /// de **todos los snapshots**, marcando como usados los nodos B-tree, los
+    /// extents de datos, los bloques 0/1 y el nodo de la tabla de snapshots.
+    /// Necesario porque la free list no se persiste en cada guardado (lazy).
     fn recover_freelist(&mut self) {
         let total = self.sb.num_blocks;
         let mut used: Vec<u64> = alloc::vec![0, 1];
@@ -380,13 +339,25 @@ impl NeoDosFsV2 {
         if self.sb.root_btree_lba != 0 {
             pending.push(self.sb.root_btree_lba);
         }
+        // Las raíces de los snapshots referencian árboles/datos que siguen vivos.
+        for (_, snap) in self.snapshot_table.list() {
+            if snap.root_lba != 0 {
+                pending.push(snap.root_lba);
+            }
+        }
         while let Some(dir_root) = pending.pop() {
             self.collect_directory_blocks(dir_root, &mut used, &mut pending);
+        }
+        // El nodo de la tabla de snapshots también está en uso.
+        if self.sb.snapshot_table_lba != 0 {
+            used.push(self.sb.snapshot_table_lba);
         }
         used.sort_unstable();
         used.dedup();
         self.freelist = FreeList::from_used(&used, total);
         self.freelist_chain.clear();
+        // Reconstruida: no hace falta persistirla (se reconstruirá al montar).
+        self.freelist.dirty = false;
     }
 
     /// Marcar los bloques usados por el B-tree de `dir_root` y encolar los
@@ -912,19 +883,17 @@ pub fn register_neodos_v2_tests() {
         let io = IoStack::new(dev_id);
         mkfs_ne2(&io, 256, "TEST").unwrap();
 
-        // Escribir dispara COW (nodos nuevos) y persiste la free list.
+        // Persistencia lazy: tras una mutación la free list queda invalidada.
         let mut fs = NeoDosFsV2::new(io).unwrap();
         fs.create(0, "A.TXT").unwrap();
-        let free_after = fs.freelist.total_free();
-        let freelist_lba = fs.sb.freelist_lba;
-        crate::test_true!(free_after < 253);
-        crate::test_true!(freelist_lba > 0);
+        crate::test_eq!(fs.sb.freelist_lba, 0);
         drop(fs);
 
-        // Remontar: se debe cargar exactamente la free list persistida.
+        // Al remontar se reconstruye y el fichero sigue accesible.
         let mut fs2 = NeoDosFsV2::new(IoStack::new(dev_id)).unwrap();
-        crate::test_eq!(fs2.sb.freelist_lba, freelist_lba);
-        crate::test_eq!(fs2.freelist.total_free(), free_after);
+        crate::test_eq!(fs2.sb.freelist_lba, 0);
+        crate::test_true!(fs2.freelist.is_valid(256));
+        crate::test_true!(fs2.freelist.total_free() > 0);
         crate::test_true!(fs2.lookup(0, "A.TXT").is_ok());
 
         let _ = crate::globals::BLOCK_DEVICES.lock().force_remove(dev_id);
@@ -955,52 +924,14 @@ pub fn register_neodos_v2_tests() {
         crate::test_true!(fs2.freelist.is_valid(num_blocks));
         crate::test_true!(fs2.lookup(0, "A.TXT").is_ok());
 
-        // Tras recuperar, un guardado vuelve a persistir la free list.
+        // Mutar y remontar de nuevo: se reconstruye y ambos ficheros siguen.
         fs2.create(0, "B.TXT").unwrap();
-        let persisted_lba = fs2.sb.freelist_lba;
-        let free_after = fs2.freelist.total_free();
-        crate::test_true!(persisted_lba > 0);
         drop(fs2);
-
-        let fs3 = NeoDosFsV2::new(IoStack::new(dev_id)).unwrap();
-        crate::test_eq!(fs3.sb.freelist_lba, persisted_lba);
-        crate::test_eq!(fs3.freelist.total_free(), free_after);
+        let mut fs3 = NeoDosFsV2::new(IoStack::new(dev_id)).unwrap();
+        crate::test_eq!(fs3.sb.freelist_lba, 0);
         crate::test_true!(fs3.freelist.is_valid(num_blocks));
-
-        let _ = crate::globals::BLOCK_DEVICES.lock().force_remove(dev_id);
-    });
-
-    crate::test_case!("neofs_v2_freelist_multi_node_chain", {
-        // Forzar más de REGIONS_PER_NODE regiones para validar el encadenado.
-        let mut fl = FreeList::new();
-        let mut lba = 2u64;
-        for _ in 0..(REGIONS_PER_NODE + 5) {
-            fl.free(lba, 1);
-            lba += 2; // deja huecos: cada bloque libre es una región
-        }
-        crate::test_true!(fl.region_count() > REGIONS_PER_NODE);
-
-        let sectors = alloc::vec![[0u8; 512]; 8192];
-        let dev_id = crate::fs::fsck::register_test_device(sectors);
-        let io = IoStack::new(dev_id);
-        mkfs_ne2(&io, 1024, "TEST").unwrap();
-
-        let mut fs = NeoDosFsV2::new(io).unwrap();
-        fs.freelist = fl;
-        fs.freelist_chain.clear();
-        fs.sb.freelist_lba = 0;
-        fs.save_freelist();
-        let free_after = fs.freelist.total_free();
-        let regions_after = fs.freelist.region_count();
-        let head = fs.sb.freelist_lba;
-        crate::test_true!(head > 0);
-        crate::test_true!(fs.freelist_chain.len() >= 2);
-        drop(fs);
-
-        let fs2 = NeoDosFsV2::new(IoStack::new(dev_id)).unwrap();
-        crate::test_eq!(fs2.sb.freelist_lba, head);
-        crate::test_eq!(fs2.freelist.region_count(), regions_after);
-        crate::test_eq!(fs2.freelist.total_free(), free_after);
+        crate::test_true!(fs3.lookup(0, "A.TXT").is_ok());
+        crate::test_true!(fs3.lookup(0, "B.TXT").is_ok());
 
         let _ = crate::globals::BLOCK_DEVICES.lock().force_remove(dev_id);
     });
