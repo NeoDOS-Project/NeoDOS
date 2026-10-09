@@ -228,6 +228,7 @@ pub fn register_tests() {
     crate::syscall::register_ob_set_tests();
     crate::nem::register_nem_tests();
     crate::elf::register_elf_tests();
+    crate::nxl::register_nxl_tests();
     crate::eventbus::register_tests();
     crate::drivers::caps::register_cap_tests();
     crate::drivers::isolation::register_isolation_tests();

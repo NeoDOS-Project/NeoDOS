@@ -2,9 +2,13 @@ use crate::arch::x64::paging;
 use crate::log::LogSubsys;
 use crate::globals;
 use crate::fs::vfs::{VfsNode, MODE_DIR, MODE_FILE};
+use core::sync::atomic::{AtomicU64, Ordering};
 use spin::Mutex;
 use lazy_static::lazy_static;
 use alloc::vec::Vec;
+
+/// Export-table address of the relocatable (PIE) `math.nxl`, for the NXL test.
+pub static MATH_EXPORT_BASE: AtomicU64 = AtomicU64::new(0);
 
 const NXL_REGION_BASE: u64 = 0x1e00_0000;
 const NXL_REGION_SIZE: u64 = 0x20_0000;
@@ -18,6 +22,21 @@ struct NxlSlot {
     base: u64,
     size: usize,
     name: [u8; 24],
+}
+
+/// ELF64 section header (64 bytes). Only the fields we need are read.
+#[repr(C)]
+struct Elf64Shdr {
+    sh_name: u32,
+    sh_type: u32,
+    sh_flags: u64,
+    sh_addr: u64,
+    sh_offset: u64,
+    sh_size: u64,
+    sh_link: u32,
+    sh_info: u32,
+    sh_addralign: u64,
+    sh_entsize: u64,
 }
 
 lazy_static! {
@@ -56,7 +75,7 @@ pub fn init_nxl_region() -> bool {
 }
 
 pub fn load_nxl() -> bool {
-    match nxl_load("C:\\System\\Libraries\\fs.nxl") {
+    let ok = match nxl_load("C:\\System\\Libraries\\fs.nxl") {
         Some(base) => {
             kinfo!(LogSubsys::Nxl, "libneodos NXL loaded at 0x{:x}", base);
             dump_abi_table(base);
@@ -66,7 +85,19 @@ pub fn load_nxl() -> bool {
             kwarn!(LogSubsys::Nxl, "libneodos.nxl not found");
             false
         }
+    };
+
+    // B1 spike: load the relocatable (PIE) math library at boot so the
+    // R_X86_64_RELATIVE path is exercised and available to the NXL tests.
+    match nxl_load("C:\\System\\Libraries\\math.nxl") {
+        Some(base) => {
+            MATH_EXPORT_BASE.store(base, Ordering::Relaxed);
+            kinfo!(LogSubsys::Nxl, "PIE math.nxl export table at 0x{:x}", base);
+        }
+        None => kwarn!(LogSubsys::Nxl, "math.nxl not found"),
     }
+
+    ok
 }
 
 /// Dump key entries from the NXL AbiTable at `base`.
@@ -132,6 +163,14 @@ pub fn nxl_load(path: &str) -> Option<u64> {
     };
 
     let data = &buf[..image_size];
+
+    // PIE (ET_DYN) NXLs are relocatable: place them in any free slot and let
+    // the ELF loader apply R_X86_64_RELATIVE relocations at the chosen base.
+    // Legacy NXLs are ET_EXEC linked at a fixed slot base and take the path
+    // below (no relocation).
+    if elf_is_pie(data) {
+        return nxl_load_pie(data, image_size, path);
+    }
 
     // Parse ELF to find the compiled vaddr base (first PT_LOAD vaddr aligned to slot boundary)
     let compiled_base = match elf_compiled_base(data) {
@@ -208,6 +247,207 @@ pub fn nxl_load(path: &str) -> Option<u64> {
 
     kinfo!(LogSubsys::Nxl, "'{}' => 0x{:x} ({} bytes)", path, base, image_size);
     Some(base)
+}
+
+/// True when `data` is a position-independent ELF (`ET_DYN`).
+fn elf_is_pie(data: &[u8]) -> bool {
+    if data.len() < core::mem::size_of::<crate::elf::Elf64Hdr>() {
+        return false;
+    }
+    let hdr: &crate::elf::Elf64Hdr =
+        unsafe { &*(data.as_ptr() as *const crate::elf::Elf64Hdr) };
+    hdr.e_ident[..4] == [0x7f, b'E', b'L', b'F'] && hdr.e_type == 3 // ET_DYN
+}
+
+/// Lowest PT_LOAD virtual address (the library's link base; 0 for `. = 0` PIE).
+fn first_load_vaddr(data: &[u8]) -> Option<u64> {
+    use core::mem::size_of;
+
+    if data.len() < size_of::<crate::elf::Elf64Hdr>() {
+        return None;
+    }
+    let hdr: &crate::elf::Elf64Hdr =
+        unsafe { &*(data.as_ptr() as *const crate::elf::Elf64Hdr) };
+    if hdr.e_ident[..4] != [0x7f, b'E', b'L', b'F'] {
+        return None;
+    }
+
+    let phoff = hdr.e_phoff as usize;
+    let phentsize = hdr.e_phentsize as usize;
+    let phnum = hdr.e_phnum as usize;
+    if phentsize != size_of::<crate::elf::Elf64Phdr>() {
+        return None;
+    }
+    if phoff + phnum * phentsize > data.len() {
+        return None;
+    }
+
+    let mut min_vaddr: Option<u64> = None;
+    for i in 0..phnum {
+        let off = phoff + i * phentsize;
+        let phdr: &crate::elf::Elf64Phdr =
+            unsafe { &*(data.as_ptr().add(off) as *const crate::elf::Elf64Phdr) };
+        if phdr.p_type == 1 {
+            min_vaddr = Some(match min_vaddr {
+                Some(m) => m.min(phdr.p_vaddr),
+                None => phdr.p_vaddr,
+            });
+        }
+    }
+    min_vaddr
+}
+
+/// 24-byte slot name from an NXL path.
+fn nxl_slot_name(path: &str) -> [u8; 24] {
+    let mut n = [0u8; 24];
+    let b = path.as_bytes();
+    let l = core::cmp::min(b.len(), 23);
+    n[..l].copy_from_slice(&b[..l]);
+    n
+}
+
+/// True when a slot's stored name matches `path` (prefix compare, NUL-padded).
+fn slot_name_matches(slot_name: &[u8; 24], path: &str) -> bool {
+    let want = nxl_slot_name(path);
+    slot_name == &want
+}
+
+/// Find the virtual address (link-relative) of the `.export_table` section.
+///
+/// Legacy NXLs place the export table at offset 0; PIE NXLs let lld map the ELF
+/// header into the first LOAD segment, so the table moves. Consumers still read
+/// `returned_base + 0`, so the loader must report the table's real address.
+fn nxl_export_table_offset(data: &[u8]) -> Option<u64> {
+    use core::mem::size_of;
+
+    if data.len() < size_of::<crate::elf::Elf64Hdr>() {
+        return None;
+    }
+    let hdr: &crate::elf::Elf64Hdr =
+        unsafe { &*(data.as_ptr() as *const crate::elf::Elf64Hdr) };
+    if hdr.e_ident[..4] != [0x7f, b'E', b'L', b'F'] {
+        return None;
+    }
+
+    let shoff = hdr.e_shoff as usize;
+    let shentsize = hdr.e_shentsize as usize;
+    let shnum = hdr.e_shnum as usize;
+    let shstrndx = hdr.e_shstrndx as usize;
+    if shentsize < size_of::<Elf64Shdr>() || shnum == 0 || shstrndx >= shnum {
+        return None;
+    }
+    if shoff.checked_add(shnum.checked_mul(shentsize)?)? > data.len() {
+        return None;
+    }
+
+    let shdr_at = |i: usize| -> Option<&Elf64Shdr> {
+        let off = shoff + i * shentsize;
+        if off + size_of::<Elf64Shdr>() > data.len() {
+            return None;
+        }
+        Some(unsafe { &*(data.as_ptr().add(off) as *const Elf64Shdr) })
+    };
+
+    let shstr = shdr_at(shstrndx)?;
+    let st_off = shstr.sh_offset as usize;
+    let st_end = st_off.checked_add(shstr.sh_size as usize)?;
+    let strtab = data.get(st_off..st_end)?;
+
+    for i in 0..shnum {
+        if let Some(sh) = shdr_at(i) {
+            let no = sh.sh_name as usize;
+            if no < strtab.len() {
+                let end = strtab[no..]
+                    .iter()
+                    .position(|&b| b == 0)
+                    .map(|p| no + p)
+                    .unwrap_or(strtab.len());
+                if &strtab[no..end] == b".export_table" {
+                    return Some(sh.sh_addr);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Load a position-independent (PIE/ET_DYN) NXL into any free slot.
+///
+/// The library is linked at virtual 0 and `load_elf` is given a non-zero
+/// `load_offset`, which makes it apply the `R_X86_64_RELATIVE` relocations from
+/// `.rela.dyn`. The result is identical in shape to the legacy fixed-base path
+/// (base returned is the export-table address).
+fn nxl_load_pie(data: &[u8], image_size: usize, path: &str) -> Option<u64> {
+    // Reuse an already-loaded PIE by file name (base is not fixed any more).
+    {
+        let registry = NXL_REGISTRY.lock();
+        for slot in registry.iter() {
+            if slot.loaded && slot_name_matches(&slot.name, path) {
+                kdebug!(LogSubsys::Nxl, "PIE '{}' already loaded at 0x{:x}, reusing", path, slot.base);
+                return Some(slot.base);
+            }
+        }
+    }
+
+    // Reserve any free slot: a PIE does not care which base it lands on.
+    let (slot_idx, base) = {
+        let mut registry = NXL_REGISTRY.lock();
+        match registry.iter().position(|s| !s.loaded) {
+            Some(i) => {
+                // Mark taken immediately (same TOCTOU guard as the legacy path).
+                registry[i].loaded = true;
+                (i, registry[i].base)
+            }
+            None => {
+                kerror!(LogSubsys::Nxl, "No free NXL slot for PIE '{}'", path);
+                return None;
+            }
+        }
+    };
+
+    let min_vaddr = first_load_vaddr(data).unwrap_or(0);
+    let load_offset = base.wrapping_sub(min_vaddr);
+
+    kinfo!(LogSubsys::Nxl, "Loading PIE '{}' @ slot {} => 0x{:x} (link 0x{:x}, offset 0x{:x})",
+        path, slot_idx, base, min_vaddr, load_offset);
+
+    let result = match crate::elf::load_elf(data, None, load_offset) {
+        Ok(r) => r,
+        Err(e) => {
+            kerror!(LogSubsys::Nxl, "PIE ELF load failed for '{}': {:?}", path, e);
+            let mut registry = NXL_REGISTRY.lock();
+            registry[slot_idx].loaded = false;
+            return None;
+        }
+    };
+    kdebug!(LogSubsys::Nxl, "PIE entry=0x{:x}", result.entry);
+
+    for seg in &result.segments {
+        mark_segment_user_accessible(seg.vaddr, seg.memsz, seg.flags);
+    }
+
+    // Consumers read `returned_base + 0` as the export table. Find the real
+    // section address (PIE moves it past the mapped ELF header) and report
+    // that absolute address, matching the legacy fixed-base contract.
+    let export_off = nxl_export_table_offset(data).unwrap_or(0);
+    let export_addr = base.wrapping_add(export_off);
+    if export_off != 0 {
+        kdebug!(LogSubsys::Nxl, "PIE '{}' export table at base+0x{:x}", path, export_off);
+    }
+
+    {
+        let mut registry = NXL_REGISTRY.lock();
+        registry[slot_idx] = NxlSlot {
+            loaded: true,
+            base: export_addr,
+            size: image_size,
+            name: nxl_slot_name(path),
+        };
+    }
+
+    kinfo!(LogSubsys::Nxl, "PIE '{}' => export table 0x{:x} (load 0x{:x}, {} bytes)",
+        path, export_addr, base, image_size);
+    Some(export_addr)
 }
 
 /// Peek at the ELF header to find the first PT_LOAD virtual address, aligned to slot size.
@@ -329,4 +569,25 @@ fn mark_segment_user_accessible(vaddr: u64, memsz: u64, p_flags: u32) {
 
     kdebug!(LogSubsys::Nxl, "Marked 0x{:x}..0x{:x} USER_ACCESSIBLE{}",
         start, end, if writable { " + WRITABLE" } else { "" });
+}
+
+/// Register NXL loader tests with the kernel test framework.
+pub fn register_nxl_tests() {
+    use crate::test_case;
+    use crate::test_eq;
+    use crate::test_true;
+
+    // `math.nxl` is built as PIE and loaded at boot through the relocatable
+    // path (R_X86_64_RELATIVE). Verify the relocated export table is callable.
+    test_case!("nxl_pie_math_export_table", {
+        let base = MATH_EXPORT_BASE.load(Ordering::Relaxed);
+        test_true!(base != 0);
+
+        // MathAbiTable: version: u32 @ 0, add: fn(i64,i64)->i64 @ 8.
+        let add: extern "C" fn(i64, i64) -> i64 = unsafe {
+            core::mem::transmute(*(base.wrapping_add(8) as *const u64))
+        };
+        test_eq!(add(2, 3), 5);
+        test_eq!(add(-4, 1), -3);
+    });
 }
