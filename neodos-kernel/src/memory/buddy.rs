@@ -111,16 +111,25 @@ impl BuddyAllocator {
 
     pub fn init_from_regions(&mut self, regions: &[(u64, u64)], phys_max: u64) {
         let max_frames = phys_max.max(1).div_ceil(PAGE_SIZE);
-        self.total_pages = max_frames;
         let limit = (max_frames as usize).min(self.bitmap_words * 64);
 
+        // `total_pages` counts the *managed* (usable) frames, not the frames up
+        // to `phys_max` (which includes high MMIO regions). Deriving it from
+        // `phys_max` made `MemoryStats.total_pages` inconsistent with
+        // `free_pages`/`used_pages` (#611).
+        let mut covered: u64 = 0;
         for &(start, end) in regions {
             let first = (start / PAGE_SIZE) as usize;
             let last = end.div_ceil(PAGE_SIZE) as usize;
-            for frame in first..last.min(limit) {
-                self.bitmap_clear(frame);
+            let hi = last.min(limit);
+            if hi > first {
+                for frame in first..hi {
+                    self.bitmap_clear(frame);
+                }
+                covered += (hi - first) as u64;
             }
         }
+        self.total_pages = covered;
 
         let mut run_start: Option<usize> = None;
         for frame in 0..=limit {

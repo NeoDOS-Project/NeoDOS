@@ -374,9 +374,19 @@ pub fn register_stress_tests() {
     extern crate alloc;
     use crate::test_case;
     use crate::test_eq;
+    use crate::test_true;
     use alloc::boxed::Box;
     use alloc::vec::Vec;
     use alloc::string::String;
+
+    // Regression for #611: paging totals must reflect managed frames, not
+    // phys_max, so they stay consistent with free/used.
+    test_case!("memory_paging_stats_consistent", {
+        let s = stats();
+        test_eq!(s.used_pages, s.total_pages.saturating_sub(s.free_pages));
+        test_true!(s.free_pages <= s.total_pages);
+        test_true!(s.total_pages.saturating_mul(4) <= s.total_kib);
+    });
 
     test_case!("buddy_alloc_free_sanity", {
         let p = allocate_frame().expect("alloc failed");
