@@ -35,8 +35,8 @@ objects, handles, security, and namespace.
 - `ObType` (0-22): 0 Unknown, 1 Process, 2 Driver, 3 Device, 4 Pipe,
   5 EventBus, 6 BlockDevice, 7 Filesystem, 8 MemoryRegion, 9 Symlink,
   10 MountPoint, 11 Directory, 12 Key, 13 Event, 14 Semaphore, 15 Timer,
-  16 Thread, 17 Section, 18 Socket, 20 Service, 21 PowerManager,
-  22 KeyboardDevice. `19` is free; the next unused number is `23`.
+  16 Thread, 17 Section, 18 Socket, 19 Session, 20 Service, 21 PowerManager,
+  22 KeyboardDevice. The next unused number is `23`.
 - User-creatable via `ob_create`: Process, Driver, Pipe, Directory, Event,
   Semaphore, Timer, Thread, Section, Service. Kernel-created only:
   `PowerManager(21)`, `KeyboardDevice(22)`.

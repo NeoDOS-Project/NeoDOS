@@ -96,6 +96,7 @@ offset for SeAccessCheck re-verification.
 | 16 | Thread | Thread object (waitable on join) |
 | 17 | Section | Shared memory section (maps to VMA) |
 | 18 | Socket | Network socket (Tcp/Udp) |
+| 19 | Session | Login session (USR-P1a; lifecycle/tokens in USR-P2) |
 | 20 | Service | Managed service process (Sm) |
 | 21 | PowerManager | Power management (kernel-created, `\System\PowerManager`) |
 | 22 | KeyboardDevice | Keyboard device — NeoKBD (kernel-created, `\Device\Keyboard`) |

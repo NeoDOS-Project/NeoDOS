@@ -4,6 +4,19 @@
 
 ## Unreleased
 
+### Added
+
+- **Security: `ObType::Session` + built-in SAM accounts (USR-P1a, #19).** Added
+  `ObType::Session = 19` — `ob_create`/`ob_destroy` now accept it and create a
+  `Session` object in the namespace. Added the built-in account-domain SIDs
+  (`sid_builtin_administrator()` = `S-1-5-21-0-0-0-500`, `sid_builtin_guest()` =
+  `S-1-5-21-0-0-0-501`, `sid_builtin_system()` = `S-1-5-18`) plus a
+  `WELL_KNOWN_SIDS` (`SeWellKnownSids`) table and `well_known_sid(name)`.
+  `SamDatabase::with_builtins()` seeds `Administrator` (enabled, admin), `Guest`
+  (disabled) and `SYSTEM` (admin); `init_security()` (Phase 2.77) creates the
+  global `SAM_DB`. Session tokens and the `\Session\{id}` manager are USR-P2.
+  5 new tests.
+
 ### Fixed
 
 - **Security: NT-correct `SeAccessCheck` — empty DACL, group SIDs, SACL audit

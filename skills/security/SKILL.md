@@ -35,11 +35,14 @@ Format `S-R-I-S*` (revision, identifier authority, sub-authorities).
 
 | Built-in | SID string | Usage |
 | ---------- | ----------- | ------- |
-| `sid_builtin_admin()` | `S-1-5-18` | NT AUTHORITY\SYSTEM (kernel/Idle/NeoInit) |
+| `sid_builtin_system()` / `sid_builtin_admin()` | `S-1-5-18` | NT AUTHORITY\SYSTEM (kernel/Idle/NeoInit) |
+| `sid_builtin_administrator()` | `S-1-5-21-0-0-0-500` | Built-in Administrator account |
+| `sid_builtin_guest()` | `S-1-5-21-0-0-0-501` | Built-in Guest account |
 | `sid_builtin_user()` | `S-1-5-21-0-0-0-1000` | Default domain user |
 
 Construct with `Sid::from_parts(revision: u8, authority: &[u8; 6],
-sub_authorities: &[u32])`; format with `format_string()`.
+sub_authorities: &[u32])`; format with `format_string()`. `WELL_KNOWN_SIDS`
+(`SeWellKnownSids`) + `well_known_sid(name)` resolve canonical names.
 
 ## Token (`src/security/token.rs`)
 
@@ -150,9 +153,11 @@ pub struct SamEntry {
 ```
 
 Flags: `SAM_FLAG_ADMIN(1)`, `SAM_FLAG_DISABLED(2)`, `SAM_FLAG_LOCKED(4)`.
-API: `SamDatabase::new()`, `add_user(entry)` / `SamEntry::new(username, sid,
-is_admin)`, `remove_user(name)`, `find_by_username(name)` (case-insensitive),
-`find_by_sid(sid)`, `serialize_sam(&db)`, `parse_sam(&bytes)`.
+API: `SamDatabase::new()`, `SamDatabase::with_builtins()` (Administrator/Guest/
+SYSTEM seeded at boot as the global `SAM_DB`), `add_user(entry)` /
+`SamEntry::new(username, sid, is_admin)`, `remove_user(name)`,
+`find_by_username(name)` (case-insensitive), `find_by_sid(sid)`,
+`serialize_sam(&db)`, `parse_sam(&bytes)`.
 
 ## Steps
 

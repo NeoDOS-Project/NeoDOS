@@ -10,12 +10,21 @@ use crate::log::LogSubsys;
 lazy_static! {
     pub static ref DEFAULT_ADMIN_TOKEN: token::Token = token::Token::new_admin();
     pub static ref DEFAULT_USER_TOKEN: token::Token = token::Token::new_user();
+
+    /// Global SAM database, seeded with the built-in accounts on first use
+    /// (Administrator, Guest, SYSTEM). See `docs/design/users-security-design.md`.
+    pub static ref SAM_DB: spin::Mutex<sam::SamDatabase> =
+        spin::Mutex::new(sam::SamDatabase::with_builtins());
 }
 
 pub fn init_security() {
     kinfo!(LogSubsys::Security, "Security subsystem initialized");
-    kinfo!(LogSubsys::Security, "Admin SID: {}", sid::sid_builtin_admin());
+    kinfo!(LogSubsys::Security, "System SID: {}", sid::sid_builtin_system());
+    kinfo!(LogSubsys::Security, "Administrator SID: {}", sid::sid_builtin_administrator());
+    kinfo!(LogSubsys::Security, "Guest SID: {}", sid::sid_builtin_guest());
     kinfo!(LogSubsys::Security, "User SID: {}", sid::sid_builtin_user());
+    let count = SAM_DB.lock().entry_count();
+    kinfo!(LogSubsys::Security, "SAM initialized with {} built-in accounts", count);
 }
 
 pub fn register_security_tests() {
@@ -39,6 +48,27 @@ pub fn register_security_tests() {
         test_eq!(admin_sid.revision, 1);
         test_eq!(admin_sid.sub_authority_count, 1);
         test_eq!(admin_sid.sub_authorities[0], 18);
+    });
+
+    test_case!("sid_well_known_builtins", {
+        test_eq!(sid_builtin_system().format_string(), "S-1-5-18");
+        test_eq!(sid_builtin_administrator().format_string(), "S-1-5-21-0-0-0-500");
+        test_eq!(sid_builtin_guest().format_string(), "S-1-5-21-0-0-0-501");
+        test_eq!(sid_builtin_user().format_string(), "S-1-5-21-0-0-0-1000");
+    });
+
+    test_case!("sid_well_known_table", {
+        test_eq!(well_known_sid("Administrator").unwrap(), sid_builtin_administrator());
+        test_eq!(well_known_sid("guest").unwrap(), sid_builtin_guest());
+        test_eq!(well_known_sid("SYSTEM").unwrap(), sid_builtin_system());
+        test_true!(well_known_sid("Nobody").is_none());
+    });
+
+    test_case!("sam_global_seeded", {
+        let count = SAM_DB.lock().entry_count();
+        test_true!(count >= 3);
+        test_true!(SAM_DB.lock().find_by_username("Administrator").is_some());
+        test_true!(SAM_DB.lock().find_by_sid(&sid_builtin_guest()).is_some());
     });
 
     test_case!("token_admin_boot_default", {

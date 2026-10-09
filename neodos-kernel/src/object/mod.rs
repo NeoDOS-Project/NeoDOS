@@ -94,6 +94,16 @@ pub fn register_object_tests() {
         test_eq!(ObType::Semaphore.to_str(), "SEMAPHORE");
         test_eq!(ObType::Timer.to_str(), "TIMER");
         test_eq!(ObType::Section.to_str(), "SECTION");
+        test_eq!(ObType::Session.to_str(), "SESSION");
+    });
+
+    test_case!("ob_session_object", {
+        // USR-P1a: Session is a first-class ObType (=19) usable as an object.
+        test_eq!(ObType::Session as u32, 19);
+        let id = ob_create_object(ObType::Session, "p1a_session", 0, 0, None).unwrap();
+        let obj = ob_lookup(id).unwrap();
+        test_eq!(obj.obj_type, ObType::Session);
+        ob_destroy_object(id).unwrap();
     });
 
     test_case!("ob_error_codes", {
