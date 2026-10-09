@@ -513,9 +513,11 @@ fn resolve_nxl_imports(data: &[u8], load_offset: u64) {
             };
             match nxl_lookup_symbol_bytes(name) {
                 Some(target) => {
+                    // S + A for R_X86_64_64; A is normally 0 for GLOB_DAT/JUMP_SLOT.
+                    let value = target.wrapping_add(rela.r_addend as u64);
                     let slot = load_offset.wrapping_add(rela.r_offset);
-                    unsafe { core::ptr::write_volatile(slot as *mut u64, target) };
-                    kdebug!(LogSubsys::Nxl, "resolved NXL import {:?} -> 0x{:x}", name, target);
+                    unsafe { core::ptr::write_volatile(slot as *mut u64, value) };
+                    kdebug!(LogSubsys::Nxl, "resolved NXL import {:?} -> 0x{:x}", name, value);
                 }
                 None => {
                     kwarn!(LogSubsys::Nxl, "unresolved NXL import {:?}", name);
@@ -576,14 +578,16 @@ fn nxl_load_pie(data: &[u8], image_size: usize, path: &str) -> Option<u64> {
     };
     kdebug!(LogSubsys::Nxl, "PIE entry=0x{:x}", result.entry);
 
+    // B2: publish exports and resolve imports *before* finalizing page
+    // permissions. GOT/RELRO segments are writable at load time and must be
+    // patched before `mark_segment_user_accessible` applies PF_W (otherwise a
+    // read-only GOT page faults on the write).
+    register_nxl_symbols(data, load_offset);
+    resolve_nxl_imports(data, load_offset);
+
     for seg in &result.segments {
         mark_segment_user_accessible(seg.vaddr, seg.memsz, seg.flags);
     }
-
-    // B2: publish this library's exported symbols, then resolve its imports
-    // against the registry (its own symbols + any earlier-loaded NXL).
-    register_nxl_symbols(data, load_offset);
-    resolve_nxl_imports(data, load_offset);
 
     // Consumers read `returned_base + 0` as the export table. Find the real
     // section address (PIE moves it past the mapped ELF header) and report
@@ -730,6 +734,93 @@ fn mark_segment_user_accessible(vaddr: u64, memsz: u64, p_flags: u32) {
         start, end, if writable { " + WRITABLE" } else { "" });
 }
 
+/// Build a minimal PIE ELF (in memory) with one undefined symbol referenced by
+/// a `R_X86_64_GLOB_DAT` relocation at `r_offset = 0`. Used to exercise
+/// `resolve_nxl_imports` deterministically without shipping a second NXL.
+///
+/// Sections: null, `.dynsym`, `.dynstr`, `.rela.dyn`, `.shstrtab`.
+fn build_synthetic_import_elf(sym_name: &[u8]) -> alloc::vec::Vec<u8> {
+    fn put16(b: &mut [u8], o: usize, v: u16) { b[o..o + 2].copy_from_slice(&v.to_le_bytes()); }
+    fn put32(b: &mut [u8], o: usize, v: u32) { b[o..o + 4].copy_from_slice(&v.to_le_bytes()); }
+    fn put64(b: &mut [u8], o: usize, v: u64) { b[o..o + 8].copy_from_slice(&v.to_le_bytes()); }
+
+    const DYNSTR_OFF: usize = 64;
+    let mut dynstr: alloc::vec::Vec<u8> = alloc::vec![0u8];
+    dynstr.extend_from_slice(sym_name);
+    dynstr.push(0);
+
+    let dynsym_off = (DYNSTR_OFF + dynstr.len() + 7) & !7;
+    const DYNSYM_SIZE: usize = 48; // 2 entries × 24
+    let rela_off = dynsym_off + DYNSYM_SIZE;
+    const RELA_SIZE: usize = 24;
+    let shstr_off = rela_off + RELA_SIZE;
+
+    let mut shstr: alloc::vec::Vec<u8> = alloc::vec![0u8];
+    shstr.extend_from_slice(b".dynsym\0");   // name off 1
+    shstr.extend_from_slice(b".dynstr\0");   // name off 9
+    shstr.extend_from_slice(b".rela.dyn\0"); // name off 17
+    shstr.extend_from_slice(b".shstrtab\0"); // name off 27
+
+    let shoff = (shstr_off + shstr.len() + 7) & !7;
+    const SHNUM: usize = 5;
+    let mut b = alloc::vec![0u8; shoff + SHNUM * 64];
+
+    // ELF header (ET_DYN, little-endian, 64-bit).
+    b[0..4].copy_from_slice(&[0x7f, b'E', b'L', b'F']);
+    b[4] = 2; // ELFCLASS64
+    b[5] = 1; // ELFDATA2LSB
+    b[6] = 1; // EV_CURRENT
+    put16(&mut b, 16, 3);  // e_type = ET_DYN
+    put16(&mut b, 18, 62); // e_machine = EM_X86_64
+    put32(&mut b, 20, 1);  // e_version
+    put64(&mut b, 40, shoff as u64); // e_shoff
+    put16(&mut b, 52, 64); // e_ehsize
+    put16(&mut b, 54, 56); // e_phentsize
+    put16(&mut b, 56, 0);  // e_phnum
+    put16(&mut b, 58, 64); // e_shentsize
+    put16(&mut b, 60, SHNUM as u16);
+    put16(&mut b, 62, 4);  // e_shstrndx = .shstrtab
+
+    // .dynstr
+    b[DYNSTR_OFF..DYNSTR_OFF + dynstr.len()].copy_from_slice(&dynstr);
+
+    // .dynsym[1]: undefined global "sym_name"
+    let e1 = dynsym_off + 24;
+    put32(&mut b, e1, 1);        // st_name -> dynstr offset 1
+    b[e1 + 4] = 0x10;            // st_info = GLOBAL NOTYPE
+    put16(&mut b, e1 + 6, 0);    // st_shndx = SHN_UNDEF
+
+    // .rela.dyn[0]: GLOB_DAT on symbol 1, at r_offset 0
+    put64(&mut b, rela_off, 0);                 // r_offset
+    put64(&mut b, rela_off + 8, (1u64 << 32) | 6); // r_info = sym 1, type 6
+    put64(&mut b, rela_off + 16, 0);            // r_addend
+
+    // .shstrtab
+    b[shstr_off..shstr_off + shstr.len()].copy_from_slice(&shstr);
+
+    // Section headers.
+    let mut wsh = |i: usize, name: u32, typ: u32, flags: u64, off: usize, size: u64,
+                   link: u32, info: u32, align: u64, entsize: u64| {
+        let o = shoff + i * 64;
+        put32(&mut b, o, name);
+        put32(&mut b, o + 4, typ);
+        put64(&mut b, o + 8, flags);
+        put64(&mut b, o + 24, off as u64);
+        put64(&mut b, o + 32, size);
+        put32(&mut b, o + 40, link);
+        put32(&mut b, o + 44, info);
+        put64(&mut b, o + 48, align);
+        put64(&mut b, o + 56, entsize);
+    };
+    // index 0 = null (zeroed)
+    wsh(1, 1, 11, 2, dynsym_off, DYNSYM_SIZE as u64, 2, 1, 8, 24); // .dynsym
+    wsh(2, 9, 3, 2, DYNSTR_OFF, dynstr.len() as u64, 0, 0, 1, 0);  // .dynstr
+    wsh(3, 17, 4, 2, rela_off, RELA_SIZE as u64, 1, 0, 8, 24);     // .rela.dyn
+    wsh(4, 27, 3, 0, shstr_off, shstr.len() as u64, 0, 0, 1, 0);   // .shstrtab
+
+    b
+}
+
 /// Register NXL loader tests with the kernel test framework.
 pub fn register_nxl_tests() {
     use crate::test_case;
@@ -763,5 +854,43 @@ pub fn register_nxl_tests() {
         // The exported object symbol must match the export-table address.
         let exported = nxl_lookup_symbol("MATH_EXPORT_TABLE");
         test_eq!(exported, Some(MATH_EXPORT_BASE.load(Ordering::Relaxed)));
+    });
+
+    // B2: import resolution writes the registry address into the target slot.
+    test_case!("nxl_resolve_import_glob_dat", {
+        NXL_SYMBOLS.lock().push((b"fake_target".to_vec(), 0x1234_5678_9ABC_DEF0));
+        let blob = build_synthetic_import_elf(b"fake_target");
+        let mut slot: u64 = 0;
+        let load_offset = &mut slot as *mut u64 as u64;
+        resolve_nxl_imports(&blob, load_offset);
+        test_eq!(slot, 0x1234_5678_9ABC_DEF0);
+    });
+
+    // B2: an unresolved import leaves the slot untouched (and only warns).
+    test_case!("nxl_resolve_import_unresolved", {
+        let blob = build_synthetic_import_elf(b"missing_symbol_xyz");
+        let mut slot: u64 = 0xAAAA_AAAA_AAAA_AAAA;
+        let load_offset = &mut slot as *mut u64 as u64;
+        resolve_nxl_imports(&blob, load_offset);
+        test_eq!(slot, 0xAAAA_AAAA_AAAA_AAAA);
+    });
+
+    // B2 end-to-end: load a real PIE NXL that imports `math_add` from
+    // `math.nxl` and call it. The loader must resolve the cross-library
+    // GLOB_DAT + the R_X86_64_64 export-table pointer from the registry.
+    test_case!("nxl_cross_library_import_end_to_end", {
+        static ARITH: &[u8] = include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/testdata/arith_nxl_fixture.dat"
+        ));
+        let base = match nxl_load_pie(ARITH, ARITH.len(), "arith.test") {
+            Some(b) => b,
+            None => return Err("failed to load arith fixture"),
+        };
+        // ArithAbiTable: version: u32 @ 0, sum3: fn(i64,i64,i64)->i64 @ 8.
+        let sum3: extern "C" fn(i64, i64, i64) -> i64 =
+            unsafe { core::mem::transmute(*(base.wrapping_add(8) as *const u64)) };
+        test_eq!(sum3(1, 2, 3), 6);
+        test_eq!(sum3(10, -4, 1), 7);
     });
 }
