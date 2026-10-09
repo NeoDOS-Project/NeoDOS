@@ -16,7 +16,9 @@ const NXL_REGION_BASE: u64 = 0x1e00_0000;
 const NXL_REGION_SIZE: u64 = 0x20_0000;
 const NXL_SLOT_SIZE: u64 = 0x4_0000;
 const NXL_SLOT_COUNT: usize = 8;
-const NXL_MAX_SIZE: usize = 64 * 1024;
+/// Maximum NXL file size. Slots are 256 KB; the loader uses the whole slot and
+/// rejects (instead of silently truncating) anything larger (#584).
+const NXL_MAX_SIZE: usize = NXL_SLOT_SIZE as usize;
 
 #[derive(Clone, Copy)]
 struct NxlSlot {
@@ -147,7 +149,8 @@ fn dump_abi_table(base: u64) {
         "sys_ob_set_info", "sys_ob_enum", "sys_ob_wait",
     ];
     // version is at offset 42*8
-    let version = unsafe { core::ptr::read_volatile(tbl.add(42) as *const u32) };
+    // `version: u32` is the 44th field (index 43): 43 u64 fields precede it.
+    let version = unsafe { core::ptr::read_volatile(tbl.add(43) as *const u32) };
     crate::serial_println!("[NXL] AbiTable at 0x{:x} version={}", base, version);
     for (i, name) in names.iter().enumerate() {
         let val = unsafe { core::ptr::read_volatile(tbl.add(i)) };
@@ -175,6 +178,13 @@ pub fn nxl_load(path: &str) -> Option<u64> {
 
             match resolved {
                 Some((drive_idx, node)) => {
+                    // Fail closed on an oversized library instead of letting
+                    // `vfs.read` truncate it into a corrupt image.
+                    if node.size as usize > NXL_MAX_SIZE {
+                        kerror!(LogSubsys::Nxl, "'{}' is {} bytes (> {} limit), refusing",
+                            path, node.size, NXL_MAX_SIZE);
+                        return Err(());
+                    }
                     match vfs.read(drive_idx, node.inode, 0, buf) {
                         Ok(n) => { size = n; Ok(()) }
                         Err(e) => {
@@ -610,6 +620,18 @@ fn nxl_load_pie(data: &[u8], image_size: usize, path: &str) -> Option<u64> {
         kdebug!(LogSubsys::Nxl, "PIE '{}' export table at load+0x{:x}", path, export_off);
     }
 
+    // ABI convention for relocatable (PIE) NXLs: the export table starts with
+    // `version: u32`. Reject an unset version (0) so an incompatible library
+    // fails closed instead of being used blindly (#584).
+    let abi_version = unsafe { core::ptr::read_volatile(export_addr as *const u32) };
+    if abi_version == 0 {
+        kerror!(LogSubsys::Nxl, "PIE '{}' export table version is 0 (unset), refusing", path);
+        let mut registry = NXL_REGISTRY.lock();
+        registry[slot_idx].loaded = false;
+        return None;
+    }
+    kinfo!(LogSubsys::Nxl, "PIE '{}' ABI version {}", path, abi_version);
+
     {
         let mut registry = NXL_REGISTRY.lock();
         registry[slot_idx] = NxlSlot {
@@ -911,6 +933,9 @@ pub fn register_nxl_tests() {
     test_case!("nxl_cross_library_import_from_image", {
         let base = ARITH_EXPORT_BASE.load(Ordering::Relaxed);
         test_true!(base != 0);
+        // The export table must declare ABI version 1 (#584).
+        let version = unsafe { core::ptr::read_volatile(base as *const u32) };
+        test_eq!(version, 1);
         let sum3: extern "C" fn(i64, i64, i64) -> i64 =
             unsafe { core::mem::transmute(*(base.wrapping_add(8) as *const u64)) };
         test_eq!(sum3(1, 2, 3), 6);
