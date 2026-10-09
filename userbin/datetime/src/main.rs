@@ -9,6 +9,24 @@ fn noop_test_runner(_tests: &[&dyn Fn()]) {
     loop {}
 }
 
+// `datetime` links `libntp` (which uses `alloc`), so it needs a global
+// allocator like the other time/net tools.
+use core::alloc::{GlobalAlloc, Layout};
+
+struct SbrkAlloc;
+
+unsafe impl GlobalAlloc for SbrkAlloc {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        let size = layout.size().max(8) as i64;
+        let ptr = libneodos::mem::sbrk(size).ok().unwrap_or(0) as *mut u8;
+        if ptr.is_null() { core::ptr::null_mut() } else { ptr }
+    }
+    unsafe fn dealloc(&self, _ptr: *mut u8, _layout: Layout) {}
+}
+
+#[global_allocator]
+static ALLOC: SbrkAlloc = SbrkAlloc;
+
 use libneodos::i18n;
 use libneodos::syscall;
 use libneodos::syscall::DateTime;
@@ -35,29 +53,31 @@ fn write_str(s: &[u8]) {
     let _ = syscall::sys_write(1, s);
 }
 
-fn write_u8_pad(v: u8) {
-    let hi = v / 10;
-    let lo = v % 10;
-    let buf = [b'0' + hi, b'0' + lo];
-    write_str(&buf);
+fn as_utc(dt: &DateTime) -> libntp::UtcDateTime {
+    libntp::UtcDateTime {
+        second: dt.second,
+        minute: dt.minute,
+        hour: dt.hour,
+        day: dt.day,
+        month: dt.month,
+        year: dt.year,
+    }
 }
 
 fn show_date(dt: &DateTime) {
+    let utc = as_utc(dt);
+    let mut buf = [0u8; 16];
+    let n = libntp::format_date(&utc, &mut buf);
     write_str(tr_id!(IDS_CUR_DATE).as_bytes());
-    write_u8_pad(dt.day);
-    write_str(b"/");
-    write_u8_pad(dt.month);
-    write_str(b"/");
-    write_u8_pad(dt.year);
+    write_str(&buf[..n]);
 }
 
 fn show_time(dt: &DateTime) {
+    let utc = as_utc(dt);
+    let mut buf = [0u8; 16];
+    let n = libntp::format_time(&utc, &mut buf);
     write_str(tr_id!(IDS_CUR_TIME).as_bytes());
-    write_u8_pad(dt.hour);
-    write_str(b":");
-    write_u8_pad(dt.minute);
-    write_str(b":");
-    write_u8_pad(dt.second);
+    write_str(&buf[..n]);
 }
 
 fn get_datetime_via_ob(dt: &mut DateTime, class: ObInfoClass) -> Result<(), i64> {

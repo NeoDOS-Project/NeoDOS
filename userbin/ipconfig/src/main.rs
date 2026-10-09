@@ -163,19 +163,6 @@ fn write_padded_str(buf: &[u8]) {
     if end > 0 { write_str(&buf[..end]); }
 }
 
-fn write_02(v: u8) {
-    write_str(&[b'0' + (v / 10).min(9), b'0' + (v % 10)]);
-}
-
-fn write_04(v: u16) {
-    let mut b = [b'0'; 4];
-    b[0] += ((v / 1000) % 10) as u8;
-    b[1] += ((v / 100) % 10) as u8;
-    b[2] += ((v / 10) % 10) as u8;
-    b[3] += (v % 10) as u8;
-    write_str(&b);
-}
-
 fn write_ip_text(ip: u32) {
     let mut b = [0u8; 16];
     let n = config::format_ip(ip, &mut b);
@@ -228,17 +215,9 @@ fn print_compact(info: &libnet::NetIfaceInfo, cfg: &config::NetConfig) {
 /// Write Unix seconds as `DD/MM/YYYY HH:MM:SS` (UTC).
 fn write_datetime(secs: u32) {
     let Some(dt) = libntp::unix_secs_to_utc(secs as i64) else { return };
-    write_02(dt.day);
-    write_str(b"/");
-    write_02(dt.month);
-    write_str(b"/");
-    write_04(2000 + dt.year as u16);
-    write_str(b" ");
-    write_02(dt.hour);
-    write_str(b":");
-    write_02(dt.minute);
-    write_str(b":");
-    write_02(dt.second);
+    let mut buf = [0u8; 24];
+    let n = libntp::format_datetime(&dt, &mut buf);
+    write_str(&buf[..n]);
     write_str(b"\r\n");
 }
 

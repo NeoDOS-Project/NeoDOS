@@ -294,6 +294,63 @@ pub fn parse_servers_owned(raw: &str) -> Vec<String> {
     parse_servers(raw).into_iter().map(String::from).collect()
 }
 
+// ── Date/time formatting ──
+
+fn put_02(v: u8, buf: &mut [u8], pos: &mut usize) {
+    if *pos < buf.len() { buf[*pos] = b'0' + (v / 10) % 10; *pos += 1; }
+    if *pos < buf.len() { buf[*pos] = b'0' + v % 10; *pos += 1; }
+}
+
+fn put_sep(b: u8, buf: &mut [u8], pos: &mut usize) {
+    if *pos < buf.len() { buf[*pos] = b; *pos += 1; }
+}
+
+fn put_year4(year: u8, buf: &mut [u8], pos: &mut usize) {
+    let y = 2000u16 + year as u16;
+    for shift in [1000u16, 100, 10, 1] {
+        if *pos < buf.len() { buf[*pos] = b'0' + ((y / shift) % 10) as u8; *pos += 1; }
+    }
+}
+
+/// Format `DD/MM/YY` (two-digit year) into `buf`; returns bytes written.
+pub fn format_date(dt: &UtcDateTime, buf: &mut [u8]) -> usize {
+    let mut pos = 0usize;
+    put_02(dt.day, buf, &mut pos);
+    put_sep(b'/', buf, &mut pos);
+    put_02(dt.month, buf, &mut pos);
+    put_sep(b'/', buf, &mut pos);
+    put_02(dt.year, buf, &mut pos);
+    pos.min(buf.len())
+}
+
+/// Format `HH:MM:SS` into `buf`; returns bytes written.
+pub fn format_time(dt: &UtcDateTime, buf: &mut [u8]) -> usize {
+    let mut pos = 0usize;
+    put_02(dt.hour, buf, &mut pos);
+    put_sep(b':', buf, &mut pos);
+    put_02(dt.minute, buf, &mut pos);
+    put_sep(b':', buf, &mut pos);
+    put_02(dt.second, buf, &mut pos);
+    pos.min(buf.len())
+}
+
+/// Format `DD/MM/YYYY HH:MM:SS` into `buf`; returns bytes written.
+pub fn format_datetime(dt: &UtcDateTime, buf: &mut [u8]) -> usize {
+    let mut pos = 0usize;
+    put_02(dt.day, buf, &mut pos);
+    put_sep(b'/', buf, &mut pos);
+    put_02(dt.month, buf, &mut pos);
+    put_sep(b'/', buf, &mut pos);
+    put_year4(dt.year, buf, &mut pos);
+    put_sep(b' ', buf, &mut pos);
+    put_02(dt.hour, buf, &mut pos);
+    put_sep(b':', buf, &mut pos);
+    put_02(dt.minute, buf, &mut pos);
+    put_sep(b':', buf, &mut pos);
+    put_02(dt.second, buf, &mut pos);
+    pos.min(buf.len())
+}
+
 // ═══════════════════════════════════════════════════════════════════════
 // Tests
 // ═══════════════════════════════════════════════════════════════════════
@@ -450,5 +507,17 @@ mod tests {
     fn parse_servers_trims_and_drops_empty() {
         assert_eq!(parse_servers("a; b ;;c;"), alloc::vec!["a", "b", "c"]);
         assert!(parse_servers("   ").is_empty());
+    }
+
+    #[test]
+    fn format_helpers_pad_fields() {
+        let dt = UtcDateTime { second: 5, minute: 7, hour: 9, day: 3, month: 4, year: 24 };
+        let mut b = [0u8; 24];
+        let n = format_date(&dt, &mut b);
+        assert_eq!(&b[..n], b"03/04/24");
+        let n = format_time(&dt, &mut b);
+        assert_eq!(&b[..n], b"09:07:05");
+        let n = format_datetime(&dt, &mut b);
+        assert_eq!(&b[..n], b"03/04/2024 09:07:05");
     }
 }
