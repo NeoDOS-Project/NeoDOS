@@ -13,99 +13,41 @@
 //!        Registry (Cm)    net.nxl SetNicIp/SetNicGateway
 //! ```
 //!
-//! Consumers must not hardcode `Network\Interfaces\<n>` or its value names.
-//! The persistent store remains the Registry interface key (canonical names per
-//! #314); there is no second source of truth.
+//! Registry access goes through the shared `libneodos::registry::RegistryKey`
+//! client (no ad-hoc `[type][len][data]` parsing, #588). Consumers must not
+//! hardcode `Network\Interfaces\<n>` or its value names (#314); the persistent
+//! store remains the Registry interface key.
 //!
 //! The pure contract (canonical names, defaults, IPv4 helpers, [`NetConfig`])
 //! lives in the dependency-free, host-testable `libnet-config` crate and is
 //! re-exported here.
 
+use libneodos::registry::RegistryKey;
 use libneodos::syscall;
 
 pub use libnet_config::*;
 
 use crate::NetIfaceInfo;
 
+fn interface_key(iface: u32) -> Result<RegistryKey, i64> {
+    let mut buf = [0u8; 128];
+    let n = build_interface_path(iface, &mut buf);
+    let path = core::str::from_utf8(&buf[..n]).map_err(|_| -1i64)?;
+    RegistryKey::open(path)
+}
+
 /// Ensure the Registry key for interface `iface` exists, creating
 /// `Interfaces\<iface>` under the Network key when missing.
 pub fn ensure_interface(iface: u32) -> Result<(), i64> {
-    if open_interface(iface).is_ok() {
-        return Ok(());
-    }
-    let parent = "\\Registry\\Machine\\System\\CurrentControlSet\\Services\\Network\\Interfaces";
-    let pfd = syscall::sys_cm_open_key(parent)?;
-    let mut num = [b'0'; 10];
-    let mut n = 0usize;
-    let mut v = iface;
-    loop {
-        num[n] = b'0' + (v % 10) as u8;
-        n += 1;
-        v /= 10;
-        if v == 0 { break; }
-    }
-    let mut name = [0u8; 10];
-    for j in 0..n {
-        name[j] = num[n - 1 - j];
-    }
-    let s = core::str::from_utf8(&name[..n]).map_err(|_| -1i64)?;
-    // Exist is fine: the key is there either way afterwards.
-    let _ = syscall::sys_cm_create_key(pfd, s);
-    let _ = syscall::sys_close(pfd);
-    open_interface(iface).map(|fd| {
-        let _ = syscall::sys_close(fd);
-    })
+    let mut buf = [0u8; 128];
+    let n = build_interface_path(iface, &mut buf);
+    let path = core::str::from_utf8(&buf[..n]).map_err(|_| -1i64)?;
+    RegistryKey::create_tree(path).map(|_| ())
 }
 
 /// Open the Registry key for interface `iface`.
-pub fn open_interface(iface: u32) -> Result<u8, i64> {
-    let mut buf = [0u8; 128];
-    let n = libnet_config::build_interface_path(iface, &mut buf);
-    let path = core::str::from_utf8(&buf[..n]).map_err(|_| -1i64)?;
-    syscall::sys_cm_open_key(path)
-}
-
-/// Read a REG_DWORD value from an open interface key.
-pub fn read_dword(key_fd: u8, name: &str) -> Option<u32> {
-    let mut reg_buf = [0u8; 12];
-    let total = syscall::sys_cm_query_value(key_fd, name, &mut reg_buf).ok()?;
-    if total < 12 {
-        return None;
-    }
-    let value_type = u32::from_le_bytes([reg_buf[0], reg_buf[1], reg_buf[2], reg_buf[3]]);
-    if value_type != syscall::REG_DWORD {
-        return None;
-    }
-    Some(u32::from_le_bytes([reg_buf[8], reg_buf[9], reg_buf[10], reg_buf[11]]))
-}
-
-/// Write a REG_DWORD value to an open interface key.
-pub fn write_dword(key_fd: u8, name: &str, val: u32) {
-    let _ = syscall::sys_cm_set_value(key_fd, name, syscall::REG_DWORD, &val.to_le_bytes());
-}
-
-/// Read a REG_SZ value into `buf`, returning the byte length (without NUL).
-pub fn read_string(key_fd: u8, name: &str, buf: &mut [u8]) -> usize {
-    let mut reg = [0u8; 264];
-    let total = match syscall::sys_cm_query_value(key_fd, name, &mut reg) {
-        Ok(n) => n,
-        Err(_) => return 0,
-    };
-    if total < 8 {
-        return 0;
-    }
-    let data_len = u32::from_le_bytes([reg[4], reg[5], reg[6], reg[7]]) as usize;
-    let available = total.saturating_sub(8).min(reg.len() - 8);
-    let src = &reg[8..8 + data_len.min(available)];
-    let end = src.iter().position(|&b| b == 0).unwrap_or(src.len());
-    let n = end.min(buf.len());
-    buf[..n].copy_from_slice(&src[..n]);
-    n
-}
-
-/// Write a REG_SZ value (raw bytes, no NUL added).
-pub fn write_string(key_fd: u8, name: &str, val: &[u8]) {
-    let _ = syscall::sys_cm_set_value(key_fd, name, syscall::REG_SZ, val);
+pub fn open_interface(iface: u32) -> Result<RegistryKey, i64> {
+    interface_key(iface)
 }
 
 /// Current time as Unix seconds (0 = unknown).
@@ -144,75 +86,71 @@ pub fn now_unix() -> u32 {
 ///
 /// Returns `None` when the interface key cannot be opened.
 pub fn load(iface: u32) -> Option<NetConfig> {
-    let fd = open_interface(iface).ok()?;
-    let cfg = load_fd(fd);
-    let _ = syscall::sys_close(fd);
-    Some(cfg)
+    let key = interface_key(iface).ok()?;
+    Some(load_key(&key))
 }
 
-/// Load the full interface configuration from an already-open key.
-pub fn load_fd(fd: u8) -> NetConfig {
+/// Load the full interface configuration from an open key.
+pub fn load_key(key: &RegistryKey) -> NetConfig {
     NetConfig {
-        dhcp_enabled: read_dword(fd, VALUE_DHCP_ENABLED).unwrap_or(1) != 0,
-        ip: read_dword(fd, VALUE_IP_ADDRESS).unwrap_or(0),
-        mask: read_dword(fd, VALUE_SUBNET_MASK).unwrap_or(0),
-        gateway: read_dword(fd, VALUE_GATEWAY).unwrap_or(0),
+        dhcp_enabled: key.query_dword(VALUE_DHCP_ENABLED).unwrap_or(1) != 0,
+        ip: key.query_dword(VALUE_IP_ADDRESS).unwrap_or(0),
+        mask: key.query_dword(VALUE_SUBNET_MASK).unwrap_or(0),
+        gateway: key.query_dword(VALUE_GATEWAY).unwrap_or(0),
         dns: [
-            read_dword(fd, VALUE_DNS1).unwrap_or(0),
-            read_dword(fd, VALUE_DNS2).unwrap_or(0),
-            read_dword(fd, VALUE_DNS3).unwrap_or(0),
+            key.query_dword(VALUE_DNS1).unwrap_or(0),
+            key.query_dword(VALUE_DNS2).unwrap_or(0),
+            key.query_dword(VALUE_DNS3).unwrap_or(0),
         ],
-        dhcp_bound: read_dword(fd, VALUE_DHCP_BOUND).unwrap_or(0) != 0,
-        dhcp_server: read_dword(fd, VALUE_DHCP_SERVER).unwrap_or(0),
-        lease_time: read_dword(fd, VALUE_LEASE_TIME).unwrap_or(0),
-        lease_obtained: read_dword(fd, VALUE_LEASE_OBTAINED).unwrap_or(0),
-        t1_renew: read_dword(fd, VALUE_T1_RENEW).unwrap_or(0),
-        t2_rebind: read_dword(fd, VALUE_T2_REBIND).unwrap_or(0),
+        dhcp_bound: key.query_dword(VALUE_DHCP_BOUND).unwrap_or(0) != 0,
+        dhcp_server: key.query_dword(VALUE_DHCP_SERVER).unwrap_or(0),
+        lease_time: key.query_dword(VALUE_LEASE_TIME).unwrap_or(0),
+        lease_obtained: key.query_dword(VALUE_LEASE_OBTAINED).unwrap_or(0),
+        t1_renew: key.query_dword(VALUE_T1_RENEW).unwrap_or(0),
+        t2_rebind: key.query_dword(VALUE_T2_REBIND).unwrap_or(0),
         domain: {
             let mut d = [0u8; 64];
-            read_string(fd, VALUE_DOMAIN, &mut d);
+            key.query_string(VALUE_DOMAIN, &mut d);
             d
         },
-        broadcast: read_dword(fd, VALUE_BROADCAST).unwrap_or(0),
+        broadcast: key.query_dword(VALUE_BROADCAST).unwrap_or(0),
         ntp: [
-            read_dword(fd, VALUE_NTP1).unwrap_or(0),
-            read_dword(fd, VALUE_NTP2).unwrap_or(0),
-            read_dword(fd, VALUE_NTP3).unwrap_or(0),
+            key.query_dword(VALUE_NTP1).unwrap_or(0),
+            key.query_dword(VALUE_NTP2).unwrap_or(0),
+            key.query_dword(VALUE_NTP3).unwrap_or(0),
         ],
-        mtu: read_dword(fd, VALUE_MTU).unwrap_or(0),
+        mtu: key.query_dword(VALUE_MTU).unwrap_or(0),
     }
 }
 
 /// Write the full interface configuration to an already-open key.
-pub fn store_fd(fd: u8, cfg: &NetConfig) {
-    write_dword(fd, VALUE_DHCP_ENABLED, cfg.dhcp_enabled as u32);
-    write_dword(fd, VALUE_IP_ADDRESS, cfg.ip);
-    write_dword(fd, VALUE_SUBNET_MASK, cfg.mask);
-    write_dword(fd, VALUE_GATEWAY, cfg.gateway);
-    write_dword(fd, VALUE_DNS1, cfg.dns[0]);
-    write_dword(fd, VALUE_DNS2, cfg.dns[1]);
-    write_dword(fd, VALUE_DNS3, cfg.dns[2]);
-    write_dword(fd, VALUE_DHCP_BOUND, cfg.dhcp_bound as u32);
-    write_dword(fd, VALUE_DHCP_SERVER, cfg.dhcp_server);
-    write_dword(fd, VALUE_LEASE_TIME, cfg.lease_time);
-    write_dword(fd, VALUE_LEASE_OBTAINED, cfg.lease_obtained);
-    write_dword(fd, VALUE_T1_RENEW, cfg.t1_renew);
-    write_dword(fd, VALUE_T2_REBIND, cfg.t2_rebind);
-    write_string(fd, VALUE_DOMAIN, &cfg.domain[..libnet_config::domain_len(&cfg.domain)]);
-    write_dword(fd, VALUE_BROADCAST, cfg.broadcast);
-    write_dword(fd, VALUE_NTP1, cfg.ntp[0]);
-    write_dword(fd, VALUE_NTP2, cfg.ntp[1]);
-    write_dword(fd, VALUE_NTP3, cfg.ntp[2]);
-    write_dword(fd, VALUE_MTU, cfg.mtu);
+pub fn store_key(key: &RegistryKey, cfg: &NetConfig) {
+    key.set_dword(VALUE_DHCP_ENABLED, cfg.dhcp_enabled as u32);
+    key.set_dword(VALUE_IP_ADDRESS, cfg.ip);
+    key.set_dword(VALUE_SUBNET_MASK, cfg.mask);
+    key.set_dword(VALUE_GATEWAY, cfg.gateway);
+    key.set_dword(VALUE_DNS1, cfg.dns[0]);
+    key.set_dword(VALUE_DNS2, cfg.dns[1]);
+    key.set_dword(VALUE_DNS3, cfg.dns[2]);
+    key.set_dword(VALUE_DHCP_BOUND, cfg.dhcp_bound as u32);
+    key.set_dword(VALUE_DHCP_SERVER, cfg.dhcp_server);
+    key.set_dword(VALUE_LEASE_TIME, cfg.lease_time);
+    key.set_dword(VALUE_LEASE_OBTAINED, cfg.lease_obtained);
+    key.set_dword(VALUE_T1_RENEW, cfg.t1_renew);
+    key.set_dword(VALUE_T2_REBIND, cfg.t2_rebind);
+    key.set_string(VALUE_DOMAIN, &cfg.domain[..domain_len(&cfg.domain)]);
+    key.set_dword(VALUE_BROADCAST, cfg.broadcast);
+    key.set_dword(VALUE_NTP1, cfg.ntp[0]);
+    key.set_dword(VALUE_NTP2, cfg.ntp[1]);
+    key.set_dword(VALUE_NTP3, cfg.ntp[2]);
+    key.set_dword(VALUE_MTU, cfg.mtu);
 }
 
 /// Write the full interface configuration and flush it to disk.
 pub fn store(iface: u32, cfg: &NetConfig) -> Result<(), i64> {
-    let fd = open_interface(iface)?;
-    store_fd(fd, cfg);
-    let r = syscall::sys_cm_flush_key(fd);
-    let _ = syscall::sys_close(fd);
-    r
+    let key = interface_key(iface)?;
+    store_key(&key, cfg);
+    key.flush()
 }
 
 /// Publish a DHCP lease (or APIPA fallback) to the Registry.
@@ -220,30 +158,28 @@ pub fn store(iface: u32, cfg: &NetConfig) -> Result<(), i64> {
 /// This is the `dhcpd` path: it writes the lease values and marks the
 /// interface as bound. It never touches the runtime NIC (the applier does).
 pub fn publish_lease(iface: u32, cfg: &NetConfig) -> Result<(), i64> {
-    let fd = open_interface(iface)?;
-    write_dword(fd, VALUE_IP_ADDRESS, cfg.ip);
-    write_dword(fd, VALUE_SUBNET_MASK, cfg.mask);
-    write_dword(fd, VALUE_GATEWAY, cfg.gateway);
-    write_dword(fd, VALUE_DNS1, cfg.dns[0]);
-    write_dword(fd, VALUE_DNS2, cfg.dns[1]);
-    write_dword(fd, VALUE_DNS3, cfg.dns[2]);
-    write_dword(fd, VALUE_LEASE_TIME, cfg.lease_time);
-    write_dword(fd, VALUE_LEASE_OBTAINED, cfg.lease_obtained);
-    write_dword(fd, VALUE_T1_RENEW, cfg.t1_renew);
-    write_dword(fd, VALUE_T2_REBIND, cfg.t2_rebind);
-    write_string(fd, VALUE_DOMAIN, &cfg.domain[..libnet_config::domain_len(&cfg.domain)]);
-    write_dword(fd, VALUE_BROADCAST, cfg.broadcast);
-    write_dword(fd, VALUE_NTP1, cfg.ntp[0]);
-    write_dword(fd, VALUE_NTP2, cfg.ntp[1]);
-    write_dword(fd, VALUE_NTP3, cfg.ntp[2]);
-    write_dword(fd, VALUE_MTU, cfg.mtu);
-    write_dword(fd, VALUE_DHCP_BOUND, cfg.dhcp_bound as u32);
+    let key = interface_key(iface)?;
+    key.set_dword(VALUE_IP_ADDRESS, cfg.ip);
+    key.set_dword(VALUE_SUBNET_MASK, cfg.mask);
+    key.set_dword(VALUE_GATEWAY, cfg.gateway);
+    key.set_dword(VALUE_DNS1, cfg.dns[0]);
+    key.set_dword(VALUE_DNS2, cfg.dns[1]);
+    key.set_dword(VALUE_DNS3, cfg.dns[2]);
+    key.set_dword(VALUE_LEASE_TIME, cfg.lease_time);
+    key.set_dword(VALUE_LEASE_OBTAINED, cfg.lease_obtained);
+    key.set_dword(VALUE_T1_RENEW, cfg.t1_renew);
+    key.set_dword(VALUE_T2_REBIND, cfg.t2_rebind);
+    key.set_string(VALUE_DOMAIN, &cfg.domain[..domain_len(&cfg.domain)]);
+    key.set_dword(VALUE_BROADCAST, cfg.broadcast);
+    key.set_dword(VALUE_NTP1, cfg.ntp[0]);
+    key.set_dword(VALUE_NTP2, cfg.ntp[1]);
+    key.set_dword(VALUE_NTP3, cfg.ntp[2]);
+    key.set_dword(VALUE_MTU, cfg.mtu);
+    key.set_dword(VALUE_DHCP_BOUND, cfg.dhcp_bound as u32);
     if cfg.dhcp_server != 0 {
-        write_dword(fd, VALUE_DHCP_SERVER, cfg.dhcp_server);
+        key.set_dword(VALUE_DHCP_SERVER, cfg.dhcp_server);
     }
-    let r = syscall::sys_cm_flush_key(fd);
-    let _ = syscall::sys_close(fd);
-    r
+    key.flush()
 }
 
 /// Apply a configuration to the runtime NIC (`SetNicIp`/`SetNicGateway`).

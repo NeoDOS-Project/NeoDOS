@@ -286,25 +286,16 @@ pub fn i18n_init() {
         }
         INITIALIZED = true;
     }
-    if let Ok(fd) = syscall::sys_cm_open_key(REG_LOCALE_KEY) {
+    if let Ok(key) = crate::registry::RegistryKey::open(REG_LOCALE_KEY) {
         let mut buf = [0u8; 128];
-        if let Ok(size) = syscall::sys_cm_query_value(fd, REG_LANG_VALUE, &mut buf) {
-            if size > 8 {
-                let data_len = u32::from_le_bytes([buf[4], buf[5], buf[6], buf[7]]) as usize;
-                let end = buf.len().min(8 + data_len);
-                let data = &buf[8..end];
-                let trimmed = match data.iter().position(|&b| b == 0) {
-                    Some(z) => &data[..z],
-                    None => data,
-                };
-                if let Ok(l) = str::from_utf8(trimmed) {
-                    if !l.is_empty() {
-                        set_lang(l);
-                    }
+        let n = key.query_string(REG_LANG_VALUE, &mut buf);
+        if n > 0 {
+            if let Ok(l) = str::from_utf8(&buf[..n]) {
+                if !l.is_empty() {
+                    set_lang(l);
                 }
             }
         }
-        let _ = syscall::sys_close(fd);
     }
     unsafe {
         if LANG_LEN == 0 {

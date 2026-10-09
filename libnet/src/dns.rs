@@ -15,6 +15,8 @@ use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
 use libdns::{is_localhost, is_unspecified, validate_hostname};
+use libneodos::registry::RegistryKey;
+use libnet_config::{build_interface_path, VALUE_DNS1, VALUE_DNS2, VALUE_DNS3};
 
 pub use libdns::{
     build_query, decode_name, encode_name, parse_dotted_ip, parse_response, query_server,
@@ -37,13 +39,9 @@ pub const DNS_RECV_MAX_SPINS: u32 = 2_000_000;
 /// How many times to retry the UDP send while waiting for ARP resolution.
 pub const DNS_SEND_ATTEMPTS: usize = 50;
 
-const REG_NET_PATH: &str =
-    "\\Registry\\Machine\\System\\CurrentControlSet\\Services\\Network\\Interfaces\\0";
-
-/// Registry value names holding DNS servers, in preference order.
-/// DNS servers read from the Registry, in preference order. Written by the DHCP
-/// client (option 6) and/or by `netcfg /setdns`. `0.0.0.0` = unset.
-const DNS_VALUE_NAMES: [&str; DNS_MAX_SERVERS] = ["DnsServer", "DnsServer2", "DnsServer3"];
+/// Registry value names holding DNS servers, in preference order (canonical
+/// names from the `libnet-config` contract; `0.0.0.0` = unset).
+const DNS_VALUE_NAMES: [&str; DNS_MAX_SERVERS] = [VALUE_DNS1, VALUE_DNS2, VALUE_DNS3];
 
 // ── Result ──
 
@@ -161,49 +159,36 @@ pub fn configured_servers() -> Vec<[u8; 4]> {
 }
 
 fn read_servers() -> Result<Vec<[u8; 4]>, DnsError> {
-    let fd = libneodos::sys_cm_open_key(REG_NET_PATH).map_err(|_| DnsError::NoConfig)?;
+    let mut pbuf = [0u8; 128];
+    let n = build_interface_path(0, &mut pbuf);
+    let path = core::str::from_utf8(&pbuf[..n]).map_err(|_| DnsError::NoConfig)?;
+    let key = RegistryKey::open(path).map_err(|_| DnsError::NoConfig)?;
 
     let mut servers: Vec<[u8; 4]> = Vec::new();
     for value_name in DNS_VALUE_NAMES {
-        if let Some(ip) = read_server_value(fd, value_name) {
+        if let Some(ip) = read_server_value(&key, value_name) {
             if !is_unspecified(ip) && !servers.contains(&ip) {
                 servers.push(ip);
             }
         }
     }
-
-    let _ = libneodos::sys_close(fd);
     Ok(servers)
 }
 
-fn read_server_value(fd: u8, name: &str) -> Option<[u8; 4]> {
-    let mut buf = [0u8; 64];
-    let total = libneodos::sys_cm_query_value(fd, name, &mut buf).ok()?;
-    if total < 8 {
-        return None;
+fn read_server_value(key: &RegistryKey, name: &str) -> Option<[u8; 4]> {
+    // REG_DWORD: IP stored as a big-endian value in a little-endian DWORD.
+    if let Some(v) = key.query_dword(name) {
+        return Some(v.to_be_bytes());
     }
-
-    let value_type = u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]);
-    let data_len = u32::from_le_bytes([buf[4], buf[5], buf[6], buf[7]]) as usize;
-    let available = total.saturating_sub(8).min(buf.len() - 8);
-    let data_len = data_len.min(available);
-    let data = &buf[8..8 + data_len];
-
-    match value_type {
-        // REG_DWORD: IP stored as a big-endian value in a little-endian DWORD.
-        2 if data_len >= 4 => {
-            let ip_u32 = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
-            Some(ip_u32.to_be_bytes())
+    // Fallback: REG_SZ dotted-decimal string.
+    let mut s = [0u8; 64];
+    let n = key.query_string(name, &mut s);
+    if n > 0 {
+        if let Ok(text) = core::str::from_utf8(&s[..n]) {
+            return parse_dotted_ip(text.trim());
         }
-        // REG_BINARY / REG_NONE: raw 4 bytes.
-        _ if data_len >= 4 => Some([data[0], data[1], data[2], data[3]]),
-        // REG_SZ: dotted-decimal string.
-        1 => {
-            let s = core::str::from_utf8(data).ok()?;
-            parse_dotted_ip(s.trim().trim_matches('\0'))
-        }
-        _ => None,
     }
+    None
 }
 
 // ── Resolver ──
