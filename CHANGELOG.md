@@ -31,6 +31,25 @@
   `fs.nxl`; `math`/`console`/`net`/`libarith` are userland libraries loaded on
   demand.
 
+- **`libneodos::registry::RegistryKey` (CM-LIB, #73).** RAII Registry client
+  (`open` / `create_tree` / `query_dword` / `query_string` / `set_dword` /
+  `set_string` / `delete_key` / `delete_value` / `query_multi_string` / `flush`,
+  plus `RegistryError`). `libnet::config`, `libnet::dns`, `libneodos::keyboard`
+  and `libneodos::i18n` now use it, removing the ad-hoc `[type][len][data]`
+  parsers and the duplicated Registry path/value strings (#588).
+
+- **`libneodiag` — table/column padding (#590).** Pure, host-testable
+  `pad_width` / `pad_left` / `pad_right`; `ps` and `neotop` use it.
+
+- **`libneoutil` — path/text utilities (#589).** Pure, host-testable
+  `to_ob_path` / `to_ob_path_bytes` / `nul_str` / `parse_u32` /
+  `split_first_token` / `errno_str`, plus `libneodos::path::normalize_path` for
+  cwd resolution. 15 tools migrated off their duplicated `to_ob_path` and 6 off
+  `normalize_path`.
+
+- **Shared date/time formatting in `libntp` (#590).** `format_date` /
+  `format_time` / `format_datetime`; `datetime` and `ipconfig` use them.
+
 - **Security: `ObType::Session` + built-in SAM accounts (USR-P1a, #19).** Added
   `ObType::Session = 19` — `ob_create`/`ob_destroy` now accept it and create a
   `Session` object in the namespace. Added the built-in account-domain SIDs
@@ -51,6 +70,13 @@
   map (covers the `ObType::Session` acceptance from #19). 3 new tests.
 
 ### Fixed
+
+- **`MemoryStats.total_pages` derived from managed frames (#611).** It was
+  computed from `phys_max` (including high MMIO regions), so it was inconsistent
+  with `free_pages`/`used_pages`; it now counts the managed region frames.
+
+- **`nslookup` toolchain (#618).** It pinned `nightly-2024-09-15`, which cannot
+  compile the current `libneodos` (E0658); aligned with the project nightly.
 
 - **`neomem` memory ABI drift (#591).** `neomem` declared a private 13-field
   `MemInfo` that no longer matched the kernel's 15-field `MemoryStats` (120 B),
