@@ -955,4 +955,25 @@ pub fn register_nxl_tests() {
             unsafe { core::mem::transmute(*(base.wrapping_add(8) as *const u64)) };
         test_eq!(sum3(1, 2, 3), 6);
     });
+
+    // console.nxl / net.nxl are PIE now: they must load into any free slot
+    // (previously fixed bases 0x1e080000/0x1e0c0000 collided with dynamically
+    // placed PIE libraries).
+    test_case!("nxl_console_pie_load", {
+        let base = match nxl_load("C:\\System\\Libraries\\console.nxl") {
+            Some(b) => b,
+            None => return Err("console.nxl not loaded"),
+        };
+        let v = unsafe { core::ptr::read_volatile(base as *const u32) };
+        test_eq!(v, 3);
+    });
+
+    test_case!("nxl_net_pie_load", {
+        let base = match nxl_load("C:\\System\\Libraries\\net.nxl") {
+            Some(b) => b,
+            None => return Err("net.nxl not loaded"),
+        };
+        let v = unsafe { core::ptr::read_volatile(base as *const u32) };
+        test_eq!(v, 1);
+    });
 }
