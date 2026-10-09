@@ -204,7 +204,7 @@ pub fn verify_freelist(used: &BlockSet, total_blocks: u64, stats: &mut FsckStats
         stats.warnings += 1;
     }
 
-    FreeList { regions: free_regions }
+    FreeList { regions: free_regions, dirty: false }
 }
 
 // ── NE2 on-disk format ──────────────────────────────────────────────

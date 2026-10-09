@@ -63,6 +63,8 @@ pub struct NeoDosFsV2 {
     /// referenciar árboles/datos antiguos); si los hay, se retienen hasta
     /// `snapshot_purge`.
     cow_garbage: Vec<(u64, u32)>,
+    /// `true` si la tabla de snapshots cambió desde la última persistencia.
+    snapshot_dirty: bool,
 }
 
 impl BTreeIO for NeoDosFsV2 {
@@ -170,6 +172,7 @@ impl NeoDosFsV2 {
             snapshot_table,
             freelist_chain: Vec::new(),
             cow_garbage: Vec::new(),
+            snapshot_dirty: false,
         };
 
         // Recuperar la free list: si el superblock apunta a una cadena
@@ -240,7 +243,7 @@ impl NeoDosFsV2 {
             lba = next;
         }
 
-        let fl = FreeList { regions };
+        let fl = FreeList { regions, dirty: false };
         if !fl.is_valid(self.sb.num_blocks) {
             return false;
         }
@@ -250,37 +253,53 @@ impl NeoDosFsV2 {
     }
 
     /// Serializar la free list a una cadena de nodos tipo 3 y actualizar
-    /// `sb.freelist_lba`. Libera primero los nodos de la cadena anterior para
-    /// no filtrar espacio. Si no hay bloques libres o la escritura falla,
-    /// deja `freelist_lba = 0` para forzar la reconstrucción al montar.
+    /// `sb.freelist_lba`. Si no cambió desde la última persistencia y la cadena
+    /// sigue siendo válida, no hace nada. Si el número de nodos no cambia,
+    /// reescribe **in-place** (sin liberar/reasignar la cadena). Si no hay
+    /// bloques libres o la escritura falla, deja `freelist_lba = 0` para forzar
+    /// la reconstrucción al montar.
     fn save_freelist(&mut self) {
-        for &lba in &self.freelist_chain {
-            self.freelist.free(lba, 1);
+        if !self.freelist.dirty && self.sb.freelist_lba != 0 && !self.freelist_chain.is_empty() {
+            return;
         }
-        self.freelist_chain.clear();
 
         let region_count = self.freelist.region_count();
         if region_count == 0 {
+            for &lba in &self.freelist_chain {
+                self.freelist.free(lba, 1);
+            }
+            self.freelist_chain.clear();
             self.sb.freelist_lba = 0;
+            self.freelist.dirty = false;
             return;
         }
 
         let num_nodes = (region_count + REGIONS_PER_NODE - 1) / REGIONS_PER_NODE;
-        let mut chain = Vec::with_capacity(num_nodes);
-        for _ in 0..num_nodes {
-            match self.freelist.alloc(1) {
-                Some((lba, _)) => chain.push(lba),
-                None => {
-                    self.sb.freelist_lba = 0;
-                    return;
+        let chain: Vec<u64> = if self.freelist_chain.len() == num_nodes {
+            // Reescritura in-place: los bloques de la cadena siguen reservados.
+            self.freelist_chain.clone()
+        } else {
+            for &lba in &self.freelist_chain {
+                self.freelist.free(lba, 1);
+            }
+            self.freelist_chain.clear();
+            let mut c = Vec::with_capacity(num_nodes);
+            for _ in 0..num_nodes {
+                match self.freelist.alloc(1) {
+                    Some((lba, _)) => c.push(lba),
+                    None => {
+                        self.sb.freelist_lba = 0;
+                        return;
+                    }
                 }
             }
-        }
+            c
+        };
 
         for (idx, &lba) in chain.iter().enumerate() {
             let start = idx * REGIONS_PER_NODE;
             let end = (start + REGIONS_PER_NODE).min(self.freelist.regions.len());
-            let chunk = FreeList { regions: self.freelist.regions[start..end].to_vec() };
+            let chunk = FreeList { regions: self.freelist.regions[start..end].to_vec(), dirty: false };
             let next = if idx + 1 < chain.len() { chain[idx + 1] } else { 0 };
             let mut buf = [0u8; NODE_SIZE];
             chunk.serialize(&mut buf, next);
@@ -292,29 +311,43 @@ impl NeoDosFsV2 {
 
         self.sb.freelist_lba = chain[0];
         self.freelist_chain = chain;
+        self.freelist.dirty = false;
     }
 
     /// Persistir la tabla de snapshots (nodo tipo 4, una sola página) y
     /// actualizar `sb.snapshot_table_lba`. La tabla vacía se representa con
     /// `snapshot_table_lba = 0` (no ocupa bloque).
     fn save_snapshot_table(&mut self) {
-        let old = self.sb.snapshot_table_lba;
-        if old != 0 {
-            self.freelist.free(old, 1);
-            self.sb.snapshot_table_lba = 0;
-        }
-        if self.snapshot_table.snapshot_count() == 0 {
+        // Sin cambios desde la última persistencia → nada que hacer.
+        if !self.snapshot_dirty {
             return;
         }
-        let lba = match self.freelist.alloc(1) {
-            Some((lba, _)) => lba,
-            None => return,
+        if self.snapshot_table.snapshot_count() == 0 {
+            if self.sb.snapshot_table_lba != 0 {
+                self.freelist.free(self.sb.snapshot_table_lba, 1);
+                self.sb.snapshot_table_lba = 0;
+            }
+            self.snapshot_dirty = false;
+            return;
+        }
+        // Reutilizar el bloque actual (in-place) si ya existe.
+        let lba = if self.sb.snapshot_table_lba != 0 {
+            self.sb.snapshot_table_lba
+        } else {
+            match self.freelist.alloc(1) {
+                Some((lba, _)) => lba,
+                None => {
+                    self.snapshot_dirty = false;
+                    return;
+                }
+            }
         };
         let mut buf = [0u8; NODE_SIZE];
         self.snapshot_table.serialize(&mut buf);
         if self.write_block_raw(lba, &buf) {
             self.sb.snapshot_table_lba = lba;
         }
+        self.snapshot_dirty = false;
     }
 
 
@@ -707,6 +740,7 @@ impl FileSystem for NeoDosFsV2 {
         let root_lba = self.sb.root_btree_lba;
         let timestamp = crate::hal::get_ticks();
         let id = self.snapshot_table.create(root_lba, timestamp);
+        self.snapshot_dirty = true;
         self.save_sb().map_err(|_| VfsError::IOError)?;
         Ok(id)
     }
@@ -747,6 +781,7 @@ impl FileSystem for NeoDosFsV2 {
         if !self.snapshot_table.delete(id) {
             return Err(VfsError::NotFound);
         }
+        self.snapshot_dirty = true;
         self.save_sb().map_err(|_| VfsError::IOError)
     }
 
@@ -769,6 +804,7 @@ impl FileSystem for NeoDosFsV2 {
 
     fn snapshot_purge(&mut self) -> Result<(), VfsError> {
         self.snapshot_table.purge();
+        self.snapshot_dirty = true;
         self.save_sb().map_err(|_| VfsError::IOError)
     }
     fn fsck(&mut self, repair: bool, _deep: bool, stats: &mut crate::fs::fsck::FsckStatsRaw) -> Result<(), VfsError> {
@@ -1220,6 +1256,33 @@ pub fn register_neodos_v2_tests() {
         crate::test_eq!(&buf[..r], b"hello v1");
         crate::test_true!(fs2.lookup(0, "B.TXT").is_err());
         crate::test_true!(fs2.lookup(0, "B_REC.TXT").is_ok());
+
+        let _ = crate::globals::BLOCK_DEVICES.lock().force_remove(dev_id);
+    });
+
+    crate::test_case!("neofs_v2_metadata_bench", {
+        // Benchmark de metadatos: mide ticks de N ciclos create+write+remove.
+        let sectors = alloc::vec![[0u8; 512]; 8192];
+        let dev_id = crate::fs::fsck::register_test_device(sectors);
+        let io = IoStack::new(dev_id);
+        mkfs_ne2(&io, 1024, "TEST").unwrap();
+
+        let mut fs = NeoDosFsV2::new(io).unwrap();
+        const N: u32 = 200;
+        let mut best = u64::MAX;
+        for _round in 0..5 {
+            let t0 = unsafe { crate::hal::raw::raw_read_tsc() };
+            for i in 0..N {
+                let name = alloc::format!("B{:04}.TXT", i);
+                fs.create(0, &name).unwrap();
+                let ino = fs.lookup(0, &name).unwrap().inode;
+                fs.write(ino, 0, b"hello world benchmark payload").unwrap();
+                fs.remove_file(0, &name).unwrap();
+            }
+            let t1 = unsafe { crate::hal::raw::raw_read_tsc() };
+            best = best.min(t1.wrapping_sub(t0));
+        }
+        crate::serial_println!("[BENCH] metadata {} create+write+remove = {} tsc (best of 5)", N, best);
 
         let _ = crate::globals::BLOCK_DEVICES.lock().force_remove(dev_id);
     });

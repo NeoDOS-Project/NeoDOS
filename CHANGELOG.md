@@ -6,6 +6,15 @@
 
 ### Added
 
+- **Filesystem: cheaper NeoFS v2 metadata writes (dirty flags + in-place
+  rewrite).** `FreeList` now tracks a `dirty` flag (set on every alloc/free) and
+  `save_freelist` skips persistence when nothing changed and rewrites the chain
+  **in place** when the node count is unchanged (no free/realloc churn). The
+  snapshot table has its own `snapshot_dirty` flag and is rewritten in place too.
+  Measured with `neofs_v2_metadata_bench` (200× create+write+remove, best of 5):
+  **415.4M → 390.7M TSC (~6%)**. Further reduction would require lazy freelist
+  persistence (recover on mount), which changes #15 semantics.
+
 - **Filesystem: NeoFS v2 per-file snapshot extraction (#569).** New
   `SNAPSHOT EXTRACT <id> <src> <dst>` (syscall RAX 48 op `5=EXTRACT`) copies a
   file as it was in a snapshot to the live tree, without rolling back the whole

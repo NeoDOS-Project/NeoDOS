@@ -21,11 +21,13 @@ pub struct FreeRegion {
 #[derive(Debug, Clone)]
 pub struct FreeList {
     pub regions: Vec<FreeRegion>,
+    /// `true` si hubo alloc/free desde la última persistencia en disco.
+    pub dirty: bool,
 }
 
 impl FreeList {
     pub fn new() -> Self {
-        FreeList { regions: Vec::new() }
+        FreeList { regions: Vec::new(), dirty: false }
     }
 
     /// Crear freelist inicial con una sola región que cubre todo el espacio libre.
@@ -35,6 +37,7 @@ impl FreeList {
             start_lba,
             length: total_blocks as u32,
         });
+        fl.dirty = true;
         fl
     }
 
@@ -55,6 +58,7 @@ impl FreeList {
             }
         }
         let i = best?;
+        self.dirty = true;
         let region = self.regions[i];
         if region.length == count {
             self.regions.remove(i);
@@ -74,6 +78,7 @@ impl FreeList {
 
     /// Liberar un rango de bloques. Mergea con regiones adyacentes.
     pub fn free(&mut self, start_lba: u64, length: u32) {
+        self.dirty = true;
         let new = FreeRegion { start_lba, length };
 
         // Buscar posición de inserción ordenada por start_lba
@@ -175,7 +180,7 @@ impl FreeList {
                 length: (block - start) as u32,
             });
         }
-        FreeList { regions }
+        FreeList { regions, dirty: true }
     }
 
     /// Serializar freelist al formato de nodo type 3.
@@ -227,7 +232,7 @@ impl FreeList {
         } else {
             0
         };
-        Some((FreeList { regions }, next_lba))
+        Some((FreeList { regions, dirty: false }, next_lba))
     }
 }
 
@@ -341,17 +346,17 @@ pub fn register_freelist_tests() {
         let overlap = FreeList { regions: alloc::vec![
             FreeRegion { start_lba: 2, length: 10 },
             FreeRegion { start_lba: 5, length: 10 },
-        ] };
+        ], dirty: false };
         crate::test_false!(overlap.is_valid(100));
 
         let out_of_bounds = FreeList { regions: alloc::vec![
             FreeRegion { start_lba: 2, length: 200 },
-        ] };
+        ], dirty: false };
         crate::test_false!(out_of_bounds.is_valid(100));
 
         let touches_superblock = FreeList { regions: alloc::vec![
             FreeRegion { start_lba: 0, length: 4 },
-        ] };
+        ], dirty: false };
         crate::test_false!(touches_superblock.is_valid(100));
     });
 
