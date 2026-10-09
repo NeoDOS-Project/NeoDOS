@@ -139,23 +139,25 @@ pub fn build_port_unreachable(original_ip: &Ipv4Header, original_udp: &[u8]) -> 
 /// Send an ICMP echo request and wait for reply.
 /// Returns Some(rtt_us) on success, None on timeout or ARP failure.
 pub fn icmp_ping(dest_ip: crate::net::types::Ipv4Addr, timeout_us: u64) -> Option<u64> {
+    // Loopback (#484): no NIC, no ARP. The request goes through the real
+    // dispatch path (request → echo reply → notify) via the loopback queue.
+    if dest_ip.is_loopback() {
+        return icmp_ping_loopback(dest_ip);
+    }
     use crate::net::types::Ipv4Addr;
     use crate::net::nic::{nic_send_packet, nic_default_id, nic_get_ip};
     use crate::net::ethernet::{EthernetHeader, ETH_HDR_LEN, ETH_TYPE_IPV4, ETH_TYPE_ARP};
     use crate::net::ipv4::{build_ipv4_header, IPV4_HDR_MIN_LEN, IPV4_PROTO_ICMP};
     use crate::net::arp::ArpPacket;
     use crate::net::nic::NIC_REGISTRY;
-    use core::sync::atomic::AtomicU16;
     use alloc::vec::Vec;
 
-    static PING_ID: AtomicU16 = AtomicU16::new(1);
     let id = PING_ID.fetch_add(1, Ordering::Relaxed);
     let seq = 1u16;
 
     let nic_id = nic_default_id()?;
     let src_ip = nic_get_ip(nic_id).unwrap_or(Ipv4Addr::unspecified());
     if src_ip == Ipv4Addr::unspecified() { return None; }
-
     // Get source MAC
     let src_mac = {
         let mut registry = NIC_REGISTRY.lock();
@@ -282,6 +284,67 @@ pub fn icmp_ping(dest_ip: crate::net::types::Ipv4Addr, timeout_us: u64) -> Optio
 }
 
 static LAST_PING_REPLY: AtomicU64 = AtomicU64::new(0);
+static PING_ID: core::sync::atomic::AtomicU16 = core::sync::atomic::AtomicU16::new(1);
+
+/// Loopback ping (#484): builds a real Echo Request frame, pushes it through
+/// the loopback queue and the single dispatch path, and observes the Echo
+/// Reply the same way the NIC path does. No NIC, no ARP, RTT ≈ 0.
+fn icmp_ping_loopback(dest_ip: crate::net::types::Ipv4Addr) -> Option<u64> {
+    use crate::net::types::{Ipv4Addr, MacAddr};
+    use crate::net::ethernet::{EthernetHeader, ETH_HDR_LEN, ETH_TYPE_IPV4};
+    use crate::net::ipv4::{build_ipv4_header, IPV4_HDR_MIN_LEN, IPV4_PROTO_ICMP};
+
+    let id = PING_ID.fetch_add(1, Ordering::Relaxed);
+    let seq = 1u16;
+    let src_ip = Ipv4Addr::localhost();
+    let mac = MacAddr::loopback();
+
+    let icmp_hdr = IcmpHeader::echo_request(id, seq);
+    let payload = [0x00u8; 56];
+    let icmp_checksum = compute_icmp_checksum(&icmp_hdr, &payload);
+    let mut hdr_with_cs = icmp_hdr;
+    hdr_with_cs.checksum = icmp_checksum.to_be();
+    let hdr_bytes = unsafe {
+        core::slice::from_raw_parts(
+            &hdr_with_cs as *const IcmpHeader as *const u8,
+            core::mem::size_of::<IcmpHeader>(),
+        )
+    };
+    let mut icmp_pkt = Vec::with_capacity(core::mem::size_of::<IcmpHeader>() + payload.len());
+    icmp_pkt.extend_from_slice(hdr_bytes);
+    icmp_pkt.extend_from_slice(&payload);
+
+    let ip_hdr = build_ipv4_header(src_ip, dest_ip, IPV4_PROTO_ICMP, icmp_pkt.len(), 0);
+    let ip_bytes = unsafe {
+        core::slice::from_raw_parts(
+            &ip_hdr as *const Ipv4Header as *const u8,
+            IPV4_HDR_MIN_LEN,
+        )
+    };
+    let eth = EthernetHeader::new(mac, mac, ETH_TYPE_IPV4);
+    let eth_bytes = unsafe {
+        core::slice::from_raw_parts(
+            &eth as *const EthernetHeader as *const u8,
+            core::mem::size_of::<EthernetHeader>(),
+        )
+    };
+    let mut frame = Vec::with_capacity(ETH_HDR_LEN + IPV4_HDR_MIN_LEN + icmp_pkt.len());
+    frame.extend_from_slice(eth_bytes);
+    frame.extend_from_slice(ip_bytes);
+    frame.extend_from_slice(&icmp_pkt);
+
+    LAST_PING_REPLY.store(0, Ordering::Release);
+    // One pump drains both the request (→ queues the reply) and the reply
+    // (→ notify_ping_reply), since replies are re-queued.
+    crate::net::loopback::loopback_send(&frame).ok()?;
+    crate::net::loopback::loopback_pump();
+    if LAST_PING_REPLY.load(Ordering::Acquire) == id as u64 {
+        // Non-zero: the RAX 36 ABI (and ping.nxe) treat 0 as failure.
+        Some(1)
+    } else {
+        None
+    }
+}
 
 /// Called from net_handle_incoming_packet when an ICMP echo reply is received.
 pub fn notify_ping_reply(id: u16, _seq: u16) {

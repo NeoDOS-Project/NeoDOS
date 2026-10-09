@@ -4,13 +4,31 @@ NeoDOS drivers are NEM-format binaries (.nem) loaded by the kernel and managed
 through the Driver Runtime. The architecture provides ABI negotiation, dependency
 resolution, capability-based access control, and optional memory isolation.
 
+## Directory Layout
+
+`src/drivers/` is the whole driver subsystem, grouped by responsibility:
+
+| Path | Contents |
+| ------ | ---------- |
+| `device/` | Device registry and enumeration |
+| `hw/` | Built-in hardware drivers (`pci`, `ata`, `ahci`, `nvme`, `virtio_blk`, `ps2`, `rtc`) |
+| `storage/` | Block layer and partition parsing (`block`, `gpt`, `manager`) |
+| `virtio/` | VirtIO bus/transport layer (reusable base; device-specific ABIs live with their driver) |
+| `nem/loader/` | NEM v3 loader and per-driver services (HST, net bridge) |
+| `nem/runtime/` | Driver certification pipeline and lifecycle |
+| `nem/management/` | ABI, capabilities, isolation, manifest, dependency, manager, hot reload, boot loader |
+
+FAT32 is a `FileSystem` and lives in `src/fs/fat32.rs`, with its FSCK in
+`src/fs/fsck/fat32.rs`. Historical paths under `crate::drivers::<name>` are kept
+resolving through re-exports in `src/drivers/mod.rs`.
+
 ## NEM v2/v3 Format
 
-Source: `src/nem/mod.rs`, `src/drivers/nem/v3loader.rs`.
+Source: `src/drivers/nem/format.rs`, `src/drivers/nem/loader/v3loader.rs`.
 
 ### NEM v3 Header (80 bytes)
 
-Source: `neodos-kernel/src/nem/mod.rs`. `#[repr(C)]` struct with implicit alignment padding.
+Source: `neodos-kernel/src/drivers/nem/format.rs`. `#[repr(C)]` struct with implicit alignment padding.
 
 | Offset | Size | Field         | Description                            |
 |--------|------|---------------|----------------------------------------|
@@ -63,7 +81,7 @@ ABI constants: `ABI_MIN_VALID = 1`, `ABI_TARGET = 1`, `ABI_MAX_VALID = 2`.
 
 ## ABI Negotiation Layer
 
-Source: `src/drivers/abi/mod.rs`. Each driver carries an `AbiVersion`:
+Source: `src/drivers/nem/management/abi/mod.rs`. Each driver carries an `AbiVersion`:
 
 ```rust
 pub struct AbiVersion {
@@ -94,7 +112,7 @@ Warnings: `driver.max < ABI_TARGET` (driver built for older kernel),
 
 ## Driver Certification Pipeline
 
-Source: `src/drivers/driver_runtime.rs`. Every driver follows an 8-state lifecycle:
+Source: `src/drivers/nem/runtime/mod.rs`. Every driver follows an 8-state lifecycle:
 
 ```text
                     ┌─────────┐
@@ -152,7 +170,7 @@ Error tracking:
 
 ## Driver Dependency Resolver
 
-Source: `src/drivers/dependency/mod.rs`. Dependencies are declared via
+Source: `src/drivers/nem/management/dependency/mod.rs`. Dependencies are declared via
 `__dep_DRIVERNAME` symbols in the NEM symbol table.
 
 ```rust
@@ -170,7 +188,7 @@ Max 32 deps per driver, max 16 drivers in dep graph. 13 unit tests.
 
 ## X3 Capability System
 
-Source: `src/drivers/caps.rs`. Fine-grained resource access control.
+Source: `src/drivers/nem/management/caps.rs`. Fine-grained resource access control.
 
 | Bit | Constant          | Default BOOT | SYSTEM | DEMAND |
 |-----|-------------------|:---:|:------:|:------:|
@@ -195,7 +213,7 @@ Each `hst_*` export function calls `check_cap()` before executing.
 
 ## X4 Driver Isolation
 
-Source: `src/drivers/isolation.rs`. Dedicated 16 MB region at
+Source: `src/drivers/nem/management/isolation.rs`. Dedicated 16 MB region at
 `DRIVER_ISO_BASE` (0x30000000) with 16 slots of 1 MB each.
 
 ### Isolation Modes
@@ -223,7 +241,7 @@ are rejected. 12 tests.
 
 ## Boot Driver Loader
 
-Source: `src/drivers/boot_loader/mod.rs`. Called at Phase 3.85.
+Source: `src/drivers/nem/management/boot_loader/mod.rs`. Called at Phase 3.85.
 
 Sequence per category:
 

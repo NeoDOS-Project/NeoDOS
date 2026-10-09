@@ -138,7 +138,7 @@ NeoDOS follows an **NT-inspired hybrid model**:
 | `src/scheduler/mod.rs` | Token-based process creation, session tracking |
 | `src/syscall/ob.rs` | Token query on Process/Thread, user creation syscalls |
 | `src/object/types.rs` | New ObType::User, ObType::Session |
-| `src/fs/neodos_dir.rs` | Extend DirEntryV2 with owner SID field |
+| `src/fs/neofs/neodos_dir.rs` | Extend DirEntryV2 with owner SID field |
 | `src/fs/vfs.rs` | Add permission checking in VFS operations |
 | `src/cm/` | Wire sec_desc_cell, user profile storage |
 | `userbin/neoinit/` | Login prompt or spawn login service |
@@ -847,15 +847,15 @@ pub fn token_set_integrity_level(fd: i64, level: IntegrityLevel) -> Result<(), i
 | `src/security/mod.rs` | Add USR-001..024 test registration | S |
 | `src/object/types.rs` | Add ObType::Session=19, ObInfoClass variants 24-28, ObSetInfoClass variants 28-32 | S |
 | `src/syscall/ob.rs` | Add Session handler, extend Process/Thread info with token data, VFS permission checks, token query, integrity level lowering | XL |
-| `src/fs/neodos_dir.rs` | Extend DirEntryV2 with owner_sid, backward compat | M |
-| `src/fs/neodos_v2.rs` | Write/read owner_sid, superblock feature flag | M |
+| `src/fs/neofs/neodos_dir.rs` | Extend DirEntryV2 with owner_sid, backward compat | M |
+| `src/fs/neofs/neodos_v2.rs` | Write/read owner_sid, superblock feature flag | M |
 | `src/fs/vfs.rs` | Add permission check in VFS operations, default perms by extension | L |
 | `src/cm/hive.rs` | Wire sec_desc_cell, default SD on key creation | M |
 | `src/cm/security.rs` | New file: Registry ACL checking | M |
 | `src/cm/mod.rs` | Add user profile hive, SAM persistence | M |
 | `src/scheduler/mod.rs` | Token-based spawn, session tracking, integrity inheritance | M |
 | `src/syscall/permission.rs` | Add SE_* privilege enforcement to admin-only syscalls | S |
-| `src/globals.rs` | Add SESSION_MANAGER global | S |
+| `src/infra/globals.rs` | Add SESSION_MANAGER global | S |
 | `src/main.rs` | Init SESSION_MANAGER, default SAM creation | S |
 | `libneodos/src/syscall.rs` | Add wrappers for session/user/token operations | M |
 | `userbin/neologon/` | New: login binary | M |
@@ -901,7 +901,7 @@ pub fn token_set_integrity_level(fd: i64, level: IntegrityLevel) -> Result<(), i
 | 2.2 | `src/syscall/ob.rs` | Handler for `ObInfoClass::SessionInfo` (24) |
 | 2.3 | `src/syscall/ob.rs` | Handler for `ObSetInfoClass::SessionLock/Logoff` (28-29) |
 | 2.4 | `src/syscall/ob.rs` | Handler for `ObSetInfoClass::ChangePassword` (31) |
-| 2.5 | `src/globals.rs` | Add `SESSION_MANAGER: Mutex<SessionManager>` |
+| 2.5 | `src/infra/globals.rs` | Add `SESSION_MANAGER: Mutex<SessionManager>` |
 | 2.6 | `libneodos/src/syscall.rs` | Add session/CRUD wrappers |
 | 2.7 | `userbin/neologon/` | New binary: login prompt, SAM authentication, session creation |
 | 2.8 | `userbin/neoinit/` | Spawn neologon instead of shell directly |
@@ -912,8 +912,8 @@ pub fn token_set_integrity_level(fd: i64, level: IntegrityLevel) -> Result<(), i
 
 | Step | Files | Description |
 | ------ | ------- | ------------- |
-| 3.1 | `src/fs/neodos_dir.rs` | Add `owner_sid: Sid` to DirEntryV2 |
-| 3.2 | `src/fs/neodos_v2.rs` | Superblock `FEATURE_OWNER_SID` flag, backward compat read |
+| 3.1 | `src/fs/neofs/neodos_dir.rs` | Add `owner_sid: Sid` to DirEntryV2 |
+| 3.2 | `src/fs/neofs/neodos_v2.rs` | Superblock `FEATURE_OWNER_SID` flag, backward compat read |
 | 3.3 | `src/fs/vfs.rs` | Add `check_vfs_access()` function |
 | 3.4 | `src/syscall/ob.rs` | Wire permission checks in VFS operations |
 | 3.5 | `src/fs/vfs.rs` | Default permissions by file extension |

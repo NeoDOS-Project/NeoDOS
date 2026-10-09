@@ -2,7 +2,7 @@
 
 use crate::object::types::ObInfoClass;
 use crate::syscall::{err_to_u64, SyscallError};
-use crate::syscall::ob::types::{StatsHeader, CpuStatsEntry, ThreadStatsEntry, STATS_VERSION, ProcSnapshotHeader, ProcessInfoRaw, ThreadInfoRaw, PROC_SNAPSHOT_VERSION, PROC_NAME_MAX, PROC_SNAPSHOT_FLAG_TRUNCATED};
+use crate::syscall::ob::types::{StatsHeader, CpuStatsEntry, ThreadStatsEntry, STATS_VERSION, SmpStats, SMP_STATS_VERSION, ProcSnapshotHeader, ProcessInfoRaw, ThreadInfoRaw, PROC_SNAPSHOT_VERSION, PROC_NAME_MAX, PROC_SNAPSHOT_FLAG_TRUNCATED};
 use super::process::process_state_aggregate;
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -135,6 +135,29 @@ fn snapshot_cpu_stats(buf_ptr: u64, buf_size: usize) -> u64 {
         }
     }
     (hdr_sz + returned * entry_sz) as u64
+}
+
+/// Build a `SmpStats` (global work-stealing counters) into `buf_ptr`.
+fn snapshot_smp_stats(buf_ptr: u64, buf_size: usize) -> u64 {
+    use core::sync::atomic::Ordering;
+    let sz = core::mem::size_of::<SmpStats>();
+    if buf_size < sz {
+        return err_to_u64(SyscallError::Inval);
+    }
+    let stats = SmpStats {
+        version: SMP_STATS_VERSION,
+        _pad: 0,
+        steal_attempts: crate::scheduler::smp::STEAL_ATTEMPTS.load(Ordering::Relaxed),
+        steal_success: crate::scheduler::smp::STEAL_SUCCESS.load(Ordering::Relaxed),
+    };
+    unsafe {
+        core::ptr::copy_nonoverlapping(
+            &stats as *const SmpStats as *const u8,
+            buf_ptr as *mut u8,
+            sz,
+        );
+    }
+    sz as u64
 }
 
 /// Build a `[StatsHeader][ThreadStatsEntry; returned]` snapshot into `buf_ptr`.
@@ -328,6 +351,7 @@ pub(super) fn handles(info_class: u32) -> bool {
     info_class == ObInfoClass::CpuStats as u32
         || info_class == ObInfoClass::ThreadStats as u32
         || info_class == ObInfoClass::ProcessSnapshot as u32
+        || info_class == ObInfoClass::SmpStats as u32
 }
 
 /// Dispatch the `stats` info classes.
@@ -382,6 +406,21 @@ pub(super) fn dispatch(
             }
             snapshot_process_snapshot(buf_ptr, buf_size)
         }
+        _ if info_class == ObInfoClass::SmpStats as u32 => {
+            if entry.object_id == 0 {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let obj = match crate::object::ob_lookup(entry.object_id) {
+                Some(o) => o,
+                None => return err_to_u64(SyscallError::BadF),
+            };
+            // Global work-stealing counters hang off \Global\Info\CpuInfo
+            // (native_id 3), the same key as CpuStats.
+            if obj.obj_type != crate::object::ObType::Key || obj.native_id != 3 {
+                return err_to_u64(SyscallError::Inval);
+            }
+            snapshot_smp_stats(buf_ptr, buf_size)
+        }
         _ => err_to_u64(SyscallError::Inval),
     }
 }
@@ -408,6 +447,32 @@ pub fn register_ob_stats_tests() {
         test_eq!(core::mem::size_of::<CpuStatsEntry>(), 40);
         test_eq!(core::mem::size_of::<ThreadStatsEntry>(), 24);
         test_eq!(STATS_VERSION, 1);
+    });
+
+    test_case!("ob_info_class_smp_stats_id", {
+        // New class in the 27 slot (28 unused); existing IDs must not shift.
+        test_eq!(crate::object::types::ObInfoClass::SmpStats as u32, 27);
+        test_eq!(crate::object::types::ObInfoClass::ProcessSnapshot as u32, 26);
+        test_eq!(crate::object::types::ObInfoClass::ServiceState as u32, 29);
+    });
+
+    test_case!("smp_stats_abi_layout", {
+        test_eq!(core::mem::size_of::<SmpStats>(), 24);
+        test_eq!(SMP_STATS_VERSION, 1);
+    });
+
+    test_case!("smp_stats_snapshot", {
+        let mut buf = [0u8; core::mem::size_of::<SmpStats>()];
+        let n = snapshot_smp_stats(buf.as_mut_ptr() as u64, buf.len()) as usize;
+        test_eq!(n, core::mem::size_of::<SmpStats>());
+        let s = unsafe { core::ptr::read_unaligned(buf.as_ptr() as *const SmpStats) };
+        test_eq!(s.version, SMP_STATS_VERSION);
+        // Counters are read live; a snapshot must report success >= attempts.
+        test_true!(s.steal_success <= s.steal_attempts);
+        // Too-small buffer is rejected, not truncated.
+        let mut small = [0u8; 4];
+        let r = snapshot_smp_stats(small.as_mut_ptr() as u64, small.len());
+        test_true!(r > u64::MAX - 0x1000); // err_to_u64(...) => huge (negative) value
     });
 
     test_case!("process_state_aggregate_semantics", {

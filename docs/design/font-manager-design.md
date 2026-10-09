@@ -11,7 +11,7 @@
 
 ### Current Limitation
 
-NeoDOS embeds a single 8x16 monochrome bitmap font directly in the kernel binary at `neodos-kernel/src/font.rs`. The font is a `const [[u8; 16]; 256]` array compiled statically, with a `draw_char()` free function that iterates pixel rows and calls `RENDERER.put_pixel()`.
+NeoDOS embeds a single 8x16 monochrome bitmap font directly in the kernel binary at `neodos-kernel/src/graphics/font.rs`. The font is a `const [[u8; 16]; 256]` array compiled statically, with a `draw_char()` free function that iterates pixel rows and calls `RENDERER.put_pixel()`.
 
 ### Why Existing Abstractions Cannot Solve It
 
@@ -31,9 +31,9 @@ NeoDOS embeds a single 8x16 monochrome bitmap font directly in the kernel binary
 
 | File | Role | Contains font data? |
 |------|------|---------------------|
-| `neodos-kernel/src/font.rs` | Hardcoded 8x16 bitmap (256 glyphs) | **YES** -- 4096 bytes |
+| `neodos-kernel/src/graphics/font.rs` | Hardcoded 8x16 bitmap (256 glyphs) | **YES** -- 4096 bytes |
 | `neodos-kernel/src/console.rs` | ANSI console, calls `font::draw_char()` | No |
-| `neodos-kernel/src/graphics.rs` | Framebuffer renderer, `put_pixel()` | No |
+| `neodos-kernel/src/graphics/mod.rs` | Framebuffer renderer, `put_pixel()` | No |
 | `neodos-kernel/src/input/vt.rs` | VT shadow buffer (char grid) | No |
 | `neodos-kernel/build_font.py` | Manual OTF to font.rs converter | Generator script |
 | [`NeoDev`](https://github.com/NeoDOS-Project/NeoDev) | Build tool | **No font handling at all** |
@@ -658,10 +658,10 @@ No new syscall. New classes dispatched via existing handler.
 
 | Path | Change |
 |------|--------|
-| `neodos-kernel/src/main.rs` | Add `mod font;` + call `font::init()` in boot sequence |
+| `neodos-kernel/src/boot/mod.rs` | Add `mod font;` + call `font::init()` in boot sequence |
 | `neodos-kernel/src/console.rs` | Replace `use crate::font;` -> `use crate::font_manager;`, use Font Manager API for all glyph operations |
-| `neodos-kernel/src/font.rs` | **Deleted** -- replaced by `font/mod.rs` + `font/embedded.rs` |
-| `neodos-kernel/src/graphics.rs` | No change (Font Manager takes put_pixel callback) |
+| `neodos-kernel/src/graphics/font.rs` | **Deleted** -- replaced by `font/mod.rs` + `font/embedded.rs` |
+| `neodos-kernel/src/graphics/mod.rs` | No change (Font Manager takes put_pixel callback) |
 | `neodos-kernel/src/object/types.rs` | Add `ObType::Font = 24`; `ObInfoClass::FontMetrics = 51`, `FontGlyph = 52`; `ObSetInfoClass::FontLoad = 62`, `FontSetDefault = 63` |
 | `neodos-kernel/src/object/mod.rs` | Register `ObOperations` for Font type |
 | `neodos-kernel/src/syscall/handlers.rs` | Add dispatch for ObSetInfoClass::FontLoad and FontSetDefault |
@@ -804,7 +804,7 @@ No new syscall. New classes dispatched via existing handler.
 
 ### Phase 2 (v0.52): Old font.rs removal
 
-- Remove `neodos-kernel/src/font.rs`.
+- Remove `neodos-kernel/src/graphics/font.rs`.
 - Remove `neodos-kernel/build_font.py`.
 - Remove all references to `font::FONT_WIDTH`, `font::FONT_HEIGHT`, `font::draw_char()`.
 - Console exclusively uses Font Manager.

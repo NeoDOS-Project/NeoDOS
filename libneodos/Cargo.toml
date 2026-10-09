@@ -16,6 +16,9 @@ default = []
 # Ring 3 binaries do not pay the crypto size cost; production images can enable
 # it for trusted loaders (see docs/userland/nlt.md).
 i18n-signatures = ["libnlt/signatures"]
+# Enforce signatures: reject unsigned/rejected tables (implies i18n-signatures).
+# Intended for hardened/production images (#582).
+i18n-require-signed = ["i18n-signatures"]
 
 [dependencies]
 libnlt = { path = "../libnlt" }

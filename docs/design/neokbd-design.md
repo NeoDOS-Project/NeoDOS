@@ -35,7 +35,7 @@ PS/2 IRQ (IDT handler)
 | `drivers/ps2kbd/layouts/KBDUS.klc` | Layout US (inglés) | ~100 |
 | `drivers/ps2kbd/layouts/KBDSP.klc` | Layout SP (español) | ~100 |
 | `neodos-kernel/src/arch/x64/idt.rs:698-756` | IRQ handler: lee scancode, check Ctrl+Alt+Del, Alt+F#, push EVENT_KEYBOARD_INPUT | 58 |
-| `neodos-kernel/src/drivers/nem/hst.rs:78-82` | `hst_push_input_byte()`: capability check → input::push_byte | 4 |
+| `neodos-kernel/src/drivers/nem/loader/hst.rs:78-82` | `hst_push_input_byte()`: capability check → input::push_byte | 4 |
 | `neodos-kernel/src/eventbus/mod.rs` | `EVENT_KEYBOARD_INPUT=1`, `EVENT_KEYB_LAYOUT=9` | 548 |
 | `neodos-kernel/src/input/manager.rs` | `InputManager`: 4 VT queues, dispatch | 78 |
 | `neodos-kernel/src/input/vt.rs` | `VtInputQueue`: ring buffer 4096 bytes, lock-free SPSC | 66 |
@@ -44,8 +44,8 @@ PS/2 IRQ (IDT handler)
 | `neodos-kernel/src/syscall/ob.rs:1921-1935` | `ob_set_info(KeyboardLayout)`: escribe KEYBOARD_LAYOUT, push EVENT_KEYB_LAYOUT | 15 |
 | `neodos-kernel/src/syscall/mod.rs:231` | `KEYBOARD_LAYOUT: AtomicU8 = 1` (default Spanish) | 1 |
 | `neodos-kernel/src/object/types.rs` | `ObInfoClass::KeyboardLayout=14`, `ObSetInfoClass::KeyboardLayout=5` | definiciones |
-| `neodos-kernel/src/main.rs:246-248` | Crea `\Global\Info\Keyboard` (ObType::Key, native_id=9) | 3 |
-| `neodos-kernel/src/drivers/boot_loader/mod.rs:165-172` | Registra PS2KBD para EVENT_KEYBOARD_INPUT + EVENT_KEYB_LAYOUT | 8 |
+| `neodos-kernel/src/boot/mod.rs:246-248` | Crea `\Global\Info\Keyboard` (ObType::Key, native_id=9) | 3 |
+| `neodos-kernel/src/drivers/nem/management/boot_loader/mod.rs:165-172` | Registra PS2KBD para EVENT_KEYBOARD_INPUT + EVENT_KEYB_LAYOUT | 8 |
 | `libconsole-nxl/src/main.rs` | `read_byte()` → `sys_read(0)` → devuelve byte | 60 |
 | `libneodos/src/console.rs` | `read_byte()` via NXL export table | 20 |
 | `userbin/neoshell/src/shell.rs` | `readline()` → `console::read_byte()` → build line | ~200 |
@@ -127,7 +127,7 @@ ps2kbd NEM driver (SIMPLIFICADO)                   │
   │ solo modifica state (make/break → modifiers)   │
   │ emite eventos estructurados                    ▼
   └──────────────────────────────────┐    NeoKBD (kernel)
-                                     │    src/kbd/
+                                     │    src/input/kbd/
                                      │    ┌──────────────────┐
                                      │    │ Event Processor  │ ← recibe EVENT_KEYBOARD_INPUT
                                      │    ├──────────────────┤
@@ -172,13 +172,13 @@ KeyboardDevice = 22,
 
 | Ruta | Propósito | Líneas estimadas |
 | --- | --- | --- |
-| `src/kbd/mod.rs` | `NeoKbd` struct, `KBD` global singleton, `kbd_init()` | 150 |
-| `src/kbd/layout.rs` | Layout engine: `KbdLayout`, `KeyEntry`, carga de `.kbd`, lookup scancode→key→unicode | 250 |
-| `src/kbd/unicode.rs` | Unicode mapper: combinación dead keys, UTF-8 encode, compose tables | 120 |
-| `src/kbd/hotkey.rs` | Hotkey dispatcher: registro, matching, callback | 100 |
-| `src/kbd/repeat.rs` | Auto-repeat: timer management, repeat rate/delay | 80 |
-| `src/kbd/config.rs` | Config Manager: load/save to Registry, defaults | 120 |
-| `src/kbd/event.rs` | Event types, subscriber for EVENT_KEYBOARD_INPUT | 80 |
+| `src/input/kbd/mod.rs` | `NeoKbd` struct, `KBD` global singleton, `kbd_init()` | 150 |
+| `src/input/kbd/layout.rs` | Layout engine: `KbdLayout`, `KeyEntry`, carga de `.kbd`, lookup scancode→key→unicode | 250 |
+| `src/input/kbd/unicode.rs` | Unicode mapper: combinación dead keys, UTF-8 encode, compose tables | 120 |
+| `src/input/kbd/hotkey.rs` | Hotkey dispatcher: registro, matching, callback | 100 |
+| `src/input/kbd/repeat.rs` | Auto-repeat: timer management, repeat rate/delay | 80 |
+| `src/input/kbd/config.rs` | Config Manager: load/save to Registry, defaults | 120 |
+| `src/input/kbd/event.rs` | Event types, subscriber for EVENT_KEYBOARD_INPUT | 80 |
 
 **Total estimado: ~900 líneas.**
 
@@ -193,7 +193,7 @@ KeyboardDevice = 22,
 | `src/syscall/mod.rs` | Eliminar `KEYBOARD_LAYOUT: AtomicU8` (reemplazado por NeoKBD) |
 | `src/eventbus/mod.rs` | Añadir `EVENT_KEYDOWN = 27`, `EVENT_KEYUP = 28`, `EVENT_KEY_CHAR = 29`, `EVENT_KBD_MODIFIER = 30`, `EVENT_KBD_REPEAT = 31` |
 | `src/main.rs` | Añadir PHASE 3.875: `kbd::kbd_init()` (después de input init, antes de driver loader) |
-| `src/drivers/boot_loader/mod.rs:165-172` | Mantener registro de PS2KBD para EVENT_KEYBOARD_INPUT (NeoKBD será handler adicional o reemplazo) |
+| `src/drivers/nem/management/boot_loader/mod.rs:165-172` | Mantener registro de PS2KBD para EVENT_KEYBOARD_INPUT (NeoKBD será handler adicional o reemplazo) |
 | `src/cm/mod.rs` | Añadir defaults Registry: `cm_ensure_default_values()` crear `\Registry\Machine\System\Keyboard\*` |
 | `drivers/ps2kbd/src/lib.rs` | **Simplificar**: eliminar layout tables, dead keys, UTF-8 encode. Mantener solo modifier tracking + scancode→event. Emitir eventos estructurados via nueva HST. |
 | `libneodos/src/keyboard.rs` (nuevo) | Wrappers: `kbd_get_layout()`, `kbd_set_layout()`, `kbd_list_layouts()`, `kbd_get_repeat()`, `kbd_set_repeat()`, `kbd_get_state()`, `kbd_set_leds()` |
@@ -255,7 +255,7 @@ Tamaño por layout (~256 scancodes): `16 + 32 + 16 + 4 + (256×16) + 4 + (N×6)`
 ### 3.8 Nuevos tipos/structs
 
 ```rust
-// src/kbd/mod.rs
+// src/input/kbd/mod.rs
 pub struct NeoKbd {
     state: KbdState,
     config: KbdConfig,
@@ -744,14 +744,14 @@ pub struct KbdCaps {
 
 ### Step 1: Kernel module scaffolding (1 day)
 
-**Archivos:** `src/kbd/mod.rs`, `src/kbd/layout.rs`
+**Archivos:** `src/input/kbd/mod.rs`, `src/input/kbd/layout.rs`
 
-1. Crear `src/kbd/mod.rs`:
+1. Crear `src/input/kbd/mod.rs`:
    - struct `NeoKbd` con state, config, layouts vec, modifiers, dead_key
    - `pub static KBD: NeoKbd` (o `Mutex<NeoKbd>`)
    - `pub fn kbd_init()`: escanea `C:\System\Keyboard\*.kbd`, carga layouts, aplica defaults
    - `pub fn kbd_event(scancode: u8)`: procesa un scancode raw (make → lookup composición → push byte)
-2. Crear `src/kbd/layout.rs`:
+2. Crear `src/input/kbd/layout.rs`:
    - `KbdLayout` struct con nombre, lang_tag, `[KeyEntry; 256]`, `Vec<ComposeEntry>`
    - `load_kbd(path: &str) -> Result<KbdLayout, ()>`: parsea archivo `.kbd` binario
    - `lookup(scancode, mods) -> Option<u16>`: retorna codepoint para scancode + modifiers
@@ -780,7 +780,7 @@ kbd::kbd_init();
 
 ### Step 3: ObType and namespace (0.5 day)
 
-**Archivos:** `src/object/types.rs`, `src/kbd/mod.rs`
+**Archivos:** `src/object/types.rs`, `src/input/kbd/mod.rs`
 
 1. Añadir `KeyboardDevice = 22` a `ObType` enum + `to_str()` match arm
 2. Añadir `KeyboardInfo = 35`, `KeyboardCaps = 36` a `ObInfoClass`
@@ -809,20 +809,20 @@ object::namespace::ob_insert_object("\\Device\\Keyboard", kbd_id);
 
 ### Step 5: Event Bus integration (0.5 day)
 
-**Archivos:** `src/eventbus/mod.rs`, `src/kbd/event.rs`, `src/kbd/hotkey.rs`
+**Archivos:** `src/eventbus/mod.rs`, `src/input/kbd/event.rs`, `src/input/kbd/hotkey.rs`
 
 1. Añadir constantes `EVENT_KEYDOWN=27`, `EVENT_KEYUP=28`, `EVENT_KEY_CHAR=29`, `EVENT_KBD_MODIFIER=30`, `EVENT_KBD_REPEAT=31`
-2. Crear `src/kbd/event.rs`:
+2. Crear `src/input/kbd/event.rs`:
    - Registrar NeoKBD como handler de `EVENT_KEYBOARD_INPUT`
    - `kbd_event_handler()`: recibe evento, llama a `kbd_process_scancode()`
-3. Crear `src/kbd/hotkey.rs`:
+3. Crear `src/input/kbd/hotkey.rs`:
    - Hotkey: Ctrl+Alt+Del → sys_poweroff (reemplaza el chequeo en IDT handler)
    - Hotkey: Alt+F1-F4 → VT switch (reemplaza el chequeo en IDT handler)
 4. Simplificar `keyboard_handler` en `idt.rs`: eliminar Ctrl+Alt+Del y Alt+F# check (NeoKBD los maneja vía eventos)
 
 ### Step 6: Unicode mapper + dead keys (0.5 day)
 
-**Archivos:** `src/kbd/unicode.rs`
+**Archivos:** `src/input/kbd/unicode.rs`
 
 1. `scancode_to_unicode(scancode, mods, layout) -> Option<u32>`:
    - Lookup en layout por scancode + modifiers
@@ -835,7 +835,7 @@ object::namespace::ob_insert_object("\\Device\\Keyboard", kbd_id);
 
 ### Step 7: Auto-repeat (0.5 day)
 
-**Archivos:** `src/kbd/repeat.rs`
+**Archivos:** `src/input/kbd/repeat.rs`
 
 1. Cuando una tecla se mantiene presionada (KeyDown sin KeyUp), iniciar timer:
    - Esperar `repeat_delay` ms
@@ -881,7 +881,7 @@ object::namespace::ob_insert_object("\\Device\\Keyboard", kbd_id);
 
 ### Step 11: Tests de integración (0.5 day)
 
-**Archivos:** Tests kernel en `src/kbd/mod.rs` (bloque `#[test_case]`)
+**Archivos:** Tests kernel en `src/input/kbd/mod.rs` (bloque `#[test_case]`)
 
 1. Implementar tests de las secciones 7.1 a 7.11
 2. Tests de carga de archivos `.kbd` de ejemplo (US, Spanish)

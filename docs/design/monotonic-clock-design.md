@@ -193,7 +193,7 @@ clients can convert ticks without a second query.
 
 | Path | Change |
 |------|--------|
-| `neodos-kernel/src/main.rs` | `mod time;` |
+| `neodos-kernel/src/boot/mod.rs` | `mod time;` |
 | `neodos-kernel/src/arch/x64/idt/mod.rs` | Call `time::tick()` in the timer handler |
 | `neodos-kernel/src/syscall/ob/query/time.rs` | `Uptime`, `HighResTime` |
 | `neodos-kernel/src/syscall/ob/set/mod.rs` | `SleepMs` |

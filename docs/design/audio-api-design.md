@@ -189,7 +189,7 @@ Handle close/exit MUST stop playback and free the ring.
 | `neodos-kernel/src/object/types.rs` | Type + classes |
 | `neodos-kernel/src/syscall/ob/query/mod.rs` | `AudioInfo`, `AudioPosition` |
 | `neodos-kernel/src/syscall/ob/set/mod.rs` | Configure/Map/Start/Stop |
-| `neodos-kernel/src/main.rs` | Audio stub init |
+| `neodos-kernel/src/boot/mod.rs` | Audio stub init |
 | `docs/drivers/overview.md` | Audio category |
 
 ---

@@ -16,7 +16,7 @@
 NeoDOS can only draw to the screen from Ring 0, and only as a text console.
 There is no path for a Ring 3 process to produce pixels.
 
-`neodos-kernel/src/graphics.rs` is a kernel-only singleton:
+`neodos-kernel/src/graphics/mod.rs` is a kernel-only singleton:
 
 ```rust
 pub struct FramebufferInfo {
@@ -64,9 +64,9 @@ The `Renderer` walks the GOP framebuffer obtained by the UEFI bootloader
 
 | File | Role | Relevant to display? |
 |------|------|----------------------|
-| `neodos-kernel/src/graphics.rs` | `FramebufferInfo`, `Renderer`, `RENDERER` | **YES** — kernel-only pixel path |
+| `neodos-kernel/src/graphics/mod.rs` | `FramebufferInfo`, `Renderer`, `RENDERER` | **YES** — kernel-only pixel path |
 | `neodos-kernel/src/console/mod.rs` | Text rendering, scroll, cursor | **YES** — must yield FB in graphics mode |
-| `neodos-kernel/src/font.rs` | Bitmap glyph blitting | No |
+| `neodos-kernel/src/graphics/font.rs` | Bitmap glyph blitting | No |
 | `neodos-kernel/src/input/vt.rs` | Per-VT shadow buffers | **YES** — VT ownership/mode |
 | `neodos-kernel/src/input/manager.rs` | `active_vt`, per-VT state | **YES** — present gating |
 | `neodos-kernel/src/object/section.rs` | Anonymous shared memory | Partial — not FB-backed |
@@ -572,12 +572,12 @@ cleanup as `DisplayFreeBuffer`: unmap, free frames, release the VT
 | `neodos-kernel/src/syscall/handlers.rs` | Dispatch new info/set classes |
 | `neodos-kernel/src/syscall/ob/query/mod.rs` | `DisplayInfo` query |
 | `neodos-kernel/src/syscall/ob/set/mod.rs` | Map/Present/Free handlers |
-| `neodos-kernel/src/graphics.rs` | Accessors for `FramebufferInfo`; no longer the only writer of the FB |
+| `neodos-kernel/src/graphics/mod.rs` | Accessors for `FramebufferInfo`; no longer the only writer of the FB |
 | `neodos-kernel/src/console/mod.rs` | Respect `VtMode::Graphics` (suppress physical text) |
 | `neodos-kernel/src/input/vt.rs` | `VtMode` definition |
 | `neodos-kernel/src/input/manager.rs` | Per-VT mode + owner, present gating helpers |
 | `neodos-kernel/src/arch/x64/paging.rs` | Map display frames into the mmap region as user pages |
-| `neodos-kernel/src/main.rs` | `mod display;` + `display::init(fb_info)` at Phase 3.86 |
+| `neodos-kernel/src/boot/mod.rs` | `mod display;` + `display::init(fb_info)` at Phase 3.86 |
 | `libneodos/src/lib.rs` / export | Register the display module/export entry |
 | `docs/kernel/objects.md` | Display ObType, namespace, info classes |
 | `docs/kernel/syscalls.md` | Document classes 43, 52–54 |

@@ -45,7 +45,7 @@ pub struct BootInfo {
 
 ## Kernel Boot Phases
 
-Sequence from `src/main.rs` `rust_start()`:
+Sequence from `src/boot/mod.rs` `init()`:
 
 | Phase | Description | Key Code |
 | ------- | ------------- | ---------- |
@@ -79,7 +79,7 @@ Sequence from `src/main.rs` `rust_start()`:
 | 3.881 | Registry init (Cm): create `\Registry` namespace tree, mount SYSTEM hive | `:488` |
 | 3.881b | Default registry values: `CurrentControlSet\Services\NeoInit\DefaultShell`, `Network\Interfaces\0\DHCPEnabled`, `Control\WaitForNetwork` | `:497` |
 | 3.9 | ABI freeze validation: `syscall::validate_abi()` asserts SSDT completeness, `abi_freeze::verify_all_frozen_abis()` checks frozen ABI structs | `:503-507` |
-| 4 | Kernel self-tests (805 tests), netpump kernel-thread spawn, benchmarks, NeoInit launch (PID 1, Ring 3) | `:513-663` |
+| 4 | Kernel self-tests (825 tests), netpump kernel-thread spawn, benchmarks, NeoInit launch (PID 1, Ring 3) | `:513-663` |
 
 ## Unified GPT Disk Layout
 

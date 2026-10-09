@@ -1,27 +1,16 @@
-pub mod abi;
-pub mod ata;
-pub mod boot_ahci;
-pub mod block;
-pub mod boot_loader;
-
-pub mod caps;
-pub mod dependency;
 pub mod device;
-pub mod driver_manager;
-pub mod manifest;
-pub mod fsck_neodos;
-pub mod driver_runtime;
-pub mod fat32;
-pub mod gpt;
-pub mod hotreload;
-pub mod isolation;
-pub mod storage_manager;
-pub mod ps2;
+pub mod hw;
 pub mod nem;
-pub mod nvme;
-pub mod pci;
-pub mod rtc_bridge;
-pub mod virtio_blk;
+pub mod storage;
+pub mod virtio;
+
+// ── Historical path re-exports ──────────────────────────────────────
+// Keep the pre-reorganization paths (`crate::drivers::<old>`) resolving so
+// call-sites outside `drivers/` do not have to change.
+pub use hw::{ahci as boot_ahci, ata, nvme, pci, ps2, rtc as rtc_bridge, virtio_blk};
+pub use storage::{block, gpt, manager as storage_manager};
+pub use nem::management::{abi, boot_loader, caps, dependency, driver_manager, hotreload, isolation, manifest};
+pub use nem::runtime as driver_runtime;
 
 use core::sync::atomic::AtomicBool;
 

@@ -1,6 +1,6 @@
 # NeoDOS — AI Agent Context
 
-**Version:** v0.51.4 | **Tests:** 825 (kernel) | **ABI:** v8 | **SSDT:** RAX 0-99 (37 assigned) | **Dev Server:** [neodos-dev-server](https://github.com/NeoDOS-Project/neodos-dev-server) | **NeoTools:** [NeoTools](https://github.com/NeoDOS-Project/NeoTools)
+**Version:** v0.51.5 | **Tests:** 861 (kernel) | **ABI:** v8 | **SSDT:** RAX 0-99 (37 assigned) | **Dev Server:** [neodos-dev-server](https://github.com/NeoDOS-Project/neodos-dev-server) | **NeoTools:** [NeoTools](https://github.com/NeoDOS-Project/NeoTools)
 
 ## Permanent Rules (MUST always follow)
 
@@ -15,6 +15,7 @@
 9. **Keep AGENTS.md minimal.** Move specialized instructions to `docs/` and procedural checklists to `skills/`.
 10. **Naming:** kebab-case for files/dirs, PascalCase for types/enums/traits, snake_case for fns/vars.
 11. **Branch first.** Every feature, bug fix, investigation, refactor, audit, or architectural change MUST be developed on its own dedicated branch. Never work directly on `develop`. See [Branching Rule](#branching-rule).
+12. **Module layout.** One directory = one subsystem, with dependencies flowing only downward (enforced by `neodev check-deps`). Never reuse a module name across layers. Use `mod.rs` for directory modules. During incremental moves, keep historical `crate::<name>` paths working via re-exports in the parent, and refresh `check-deps-baseline.txt` for the moved paths.
 
 ## Quick Reference
 
@@ -296,7 +297,7 @@ For every subsystem, consult its doc — not this file:
 | Testing | `docs/development/testing.md` | Test suites, how to add tests |
 | History | `docs/reference/history.md` | Project history |
 | Audit Report | `docs/reference/audit-report.md` | Previous architecture audit |
-| Package Manager Arch | `docs/reference/package-manager-arch.md` | Package manager design |
+| Package Manager Arch | `docs/architecture/package-manager-arch.md` | Package manager design |
 | Roadmap | `ROADMAP.md` | Master roadmap: phases, milestones, priorities (project root) |
 | GitHub Sync | `scripts/sync-roadmap.sh` | Sync roadmap local ↔ GitHub Issues (idempotent) |
 | Roadmap Data | `roadmap/` | Labels, milestones, improvements.md, issue templates |

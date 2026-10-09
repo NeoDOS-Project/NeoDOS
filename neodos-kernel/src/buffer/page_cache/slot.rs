@@ -8,6 +8,10 @@ pub(crate) struct CacheSlot {
     pub(crate) dirty: bool,
     pub(crate) write_pending: bool,
     pub(crate) lba: u64,
+    /// Identificador del dispositivo al que pertenece la página. La caché está
+    /// indexada por LBA, así que este campo evita que dos dispositivos con LBAs
+    /// solapados (p. ej. dispositivos de test) se devuelvan datos entre sí.
+    pub(crate) dev_tag: u64,
     pub(crate) dirty_sectors: u8,
     pub(crate) inode_key: u64,
     pub(crate) dirty_since_tick: u64,
@@ -21,6 +25,7 @@ pub(crate) const EMPTY_SLOT: CacheSlot = CacheSlot {
     dirty: false,
     write_pending: false,
     lba: 0,
+    dev_tag: 0,
     dirty_sectors: 0,
     inode_key: 0,
     dirty_since_tick: 0,

@@ -418,6 +418,28 @@ impl Scheduler {
         activated
     }
 
+    /// #501: mark the Ring-3 bootstrap hand-off *target* thread `Running`.
+    ///
+    /// Resolves the thread by `target_tid`, never via `current_kthread_mut()`:
+    /// since #482 the per-CPU `KPRCB.current_thread` still points at the
+    /// bootstrap thread until the deferred publication that happens just
+    /// before the Ring-3 `iretq`, so `current_kthread_mut()` resolves to boot
+    /// and would leave the target `Suspended`. `schedule()` only ever commits
+    /// `Ready` candidates, so a `Suspended` target is never scheduled again —
+    /// NeoInit never reaches its first syscall and the shell never starts.
+    ///
+    /// Returns `true` when a thread with `target_tid` was found.
+    pub fn mark_handoff_target_running(&mut self, target_tid: u32) -> bool {
+        match self.find_kthread_mut(target_tid) {
+            Some(k) => {
+                crate::scheduler::diag::run_ev(crate::scheduler::diag::RUN_SITE_USERMODE, k);
+                k.state = ThreadState::Running;
+                true
+            }
+            None => false,
+        }
+    }
+
     /// Ensure the eprocesses and kthreads Vecs have at least one free slot,
     /// growing them now so no realloc happens inside the critical section.
     /// P0.2: use try_reserve to avoid panic on OOM (was push() panic).

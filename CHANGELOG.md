@@ -2,6 +2,288 @@
 
 <!-- markdownlint-disable MD013 MD024 MD056 -->
 
+## v0.51.5 — 2026-10-09
+
+### Added
+
+- **Filesystem: lazy free-list persistence + dirty flags (~29% faster metadata
+  writes).** The free list is now persisted only at format time; on every
+  `save_sb` it is **invalidated** (`freelist_lba = 0`, no ~4 KB node write) and
+  its chain blocks are returned to the list. Mount **reconstructs** it from the
+  current directory B-tree **and every snapshot's tree** plus the snapshot-table
+  node (snapshot-aware), so no block referenced by a snapshot is freed. `FreeList`
+  tracks a `dirty` flag and the snapshot table a `snapshot_dirty` flag (rewritten
+  in place only when changed). Measured with `neofs_v2_metadata_bench` (200×
+  create+write+remove, best of 5): **415.4M → 294.9M TSC (~29%)**. Tests updated
+  for the lazy semantics (`neofs_v2_freelist_survives_remount`,
+  `neofs_v2_freelist_recovers_without_persisted_list`); the multi-node chain test
+  was removed (chaining is no longer used at runtime).
+
+- **Filesystem: NeoFS v2 per-file snapshot extraction (#569).** New
+  `SNAPSHOT EXTRACT <id> <src> <dst>` (syscall RAX 48 op `5=EXTRACT`) copies a
+  file as it was in a snapshot to the live tree, without rolling back the whole
+  volume — the "Previous Versions" style recovery. `NeoDosFsV2::snapshot_extract`
+  resolves `src` in the snapshot's B-tree, reads it (inline/extents) and writes
+  `dst`. `remove_file`/`remove_dir` now route replaced extents through COW
+  garbage so blocks referenced by a snapshot are retained. New Ring 3 command
+  `snapshot.nxe` (`LIST/CREATE/RESTORE/DELETE/PURGE/EXTRACT`) + `libneodos`
+  wrappers. Tests: `neofs_v2_snapshot_extract_file` (inline + extent, delete
+  recovery, remount), `syscall_ob_snapshot_extract` (real `C:`). Docs updated.
+
+- **Filesystem: NeoFS v2 snapshot generations + per-snapshot delete (#16).**
+  Each snapshot now carries a monotonic **generation** (used as its stable id:
+  never reused across deletes or ring eviction) and the table persists it
+  (type-4 entry 16 → 24 bytes). New `SnapshotTable::delete(id)` exposed as
+  `sys_ob_snapshot` op `4=DELETE` (RAX 48) and `FileSystem::snapshot_delete`.
+  Ring buffer (64), create/restore/list/purge and persistence (#554) unchanged.
+  Tests: `snapshot_generation_monotonic_and_delete`,
+  `neofs_v2_snapshot_delete_persists`, `syscall_ob_snapshot_delete`.
+  `docs/filesystem/neofs-v2.md` updated.
+
+- **Filesystem: size-aware B-tree node capacity (#396).** B-tree nodes now
+  split, merge and detect underflow by **serialized byte size** instead of a
+  fixed entry count (`MAX_ENTRIES = 200`). With 128-byte directory entries a
+  leaf only holds ~28, so the old count-based split let `serialize` silently
+  truncate a node (declared count > written entries) and corrupted wide-value
+  directories. New helpers `node_fits`/`node_underfull`/`split_index`; merges
+  are skipped when the combined node would not fit. Tests:
+  `btree_wide_values_multileaf` (60×128 B) and
+  `neofs_v2_dir_60_entries_multileaf` (create/lookup/readdir + remount).
+
+- **Memory/FS: page-cache flush is device-scoped (#560).** `flush`,
+  `flush_inode` and `flush_batch` take a `dev_tag` and only write pages owned by
+  that device; `flush_cache_if_needed` now flushes every present device
+  separately, and eviction never writes another device's dirty page to the
+  wrong `dev`. Test: `page_cache_flush_is_device_scoped`.
+
+- **Filesystem: O(1)-overhead COW garbage tracking (#559).** B-tree
+  `insert`/`delete` gained `insert_tracked`/`delete_tracked` variants that report
+  the LBAs of the nodes COW replaces (including collapsed roots and borrowed/
+  merged siblings). `NeoDosFsV2` now uses them instead of walking the whole
+  directory tree twice per mutation, so #553's reclamation no longer costs O(n)
+  node reads per write.
+
+- **Filesystem: NeoFS v2 COW reclamation (#553).** B-tree node blocks and file
+  data extents replaced by copy-on-write are now tracked as garbage and
+  returned to the free list on `save_sb`. Reclamation is only performed when
+  the snapshot table is empty (a snapshot may still reference old roots/data);
+  with snapshots present the garbage is retained and released by
+  `snapshot_purge`. Tests: `neofs_v2_cow_reclaims_garbage` and
+  `neofs_v2_cow_garbage_gated_by_snapshots`.
+
+- **Memory/FS: device-scoped page cache (`#552`).** `CacheSlot` now records the
+  owning device (`dev_tag`) and every lookup validates it, so two block devices
+  whose LBA ranges overlap no longer return each other's cached pages. The tag
+  is threaded through `IoStack` and the NeoFS file I/O path, and a new
+  `PageCache::invalidate_device()` drops the pages of a device whose index is
+  reused after removal. `register_test_device` now uses it instead of clearing
+  the whole cache.
+
+- **Filesystem: NeoFS v2 snapshot table persistence (#554).** The snapshot
+  table is now serialized to a type-4 node on every `save_sb` and its LBA stored
+  in `SuperblockNE2::snapshot_table_lba`; the previous block is returned to the
+  free list and the empty table is represented by `snapshot_table_lba = 0`. On
+  mount the table is loaded, so `SNAPSHOT CREATE/RESTORE/LIST/PURGE` survive a
+  reboot. Test: `neofs_v2_snapshot_survives_remount`.
+  `docs/filesystem/neofs-v2.md` updated.
+
+- **Filesystem: NeoFS v2 free list persistence, best-fit allocation and mount
+  recovery (#15).** The free list is now written to disk as a chain of type-3
+  nodes whose head LBA lives in `SuperblockNE2::freelist_lba`; every
+  `save_sb` re-serializes it and returns the previous chain blocks to the free
+  list so no space leaks. On mount the persisted list is loaded and validated,
+  and if it is missing, out of range or corrupted the list is reconstructed by
+  walking the directory B-tree (nodes, file extents and subdirectories).
+  Allocation is now **best-fit** (smallest region that fits, split when
+  larger). The B-tree COW allocator draws from this list. The superblock CRC32
+  now covers all 512 bytes (with the checksum field zeroed), protecting
+  `freelist_lba`. `neodos-kernel/src/fs/neofs/{freelist,neodos_v2,btree/tree}.rs`
+  and `docs/filesystem/neofs-v2.md` updated.
+
+- **Scheduler: per-CPU O(1) priority runqueues (`feat/per-cpu-scheduler`).**
+  The dispatch fast path no longer performs a global linear scan of all Ready
+  threads. Each CPU owns a 4-level priority runqueue (`src/arch/x64/cpu_local.rs`)
+  whose `active_bitmap` selects the highest-priority non-empty sub-queue in O(1)
+  via `trailing_zeros` (4 × 64 = 256 entries). Enqueue degrades to a lower level
+  if a sub-queue is full so a Ready thread is never silently dropped, and entries
+  are deduplicated. `read_active_bitmap` is lock-free; the O(CPUs)
+  `highest_ready_priority()` guard prevents the fast path from bypassing a
+  higher-priority Ready thread (#382). Aging now re-enqueues the boosted thread
+  into its owning CPU's queue. The global priority scan remains the fallback.
+  A work-stealing overflow counter (`RUNQUEUE_OVERFLOW`) is reported in the boot
+  diagnostics. `docs/scheduler/scheduler.md` updated.
+
+- **Network: loopback interface (`127.0.0.0/8`) + local routing (#484/#528).**
+  Synthetic `MacAddr::loopback()` (`02:00:00:00:00:01`),
+  `Route::{Loopback,OnLink,ViaGateway,Unreachable}` with `nic_route()`, and
+  `net/loopback.rs` (`\Device\Loopback`, TX queue + `loopback_pump()` outside
+  `NIC_REGISTRY`). UDP/ICMP/TCP send paths route `127/8` through the loopback
+  queue without NIC/ARP; `icmp_ping` returns a real RTT. Loopback appears as an
+  appended read-only entry in `NicInfo` and in the `ipconfig` "Loopback"
+  section. Kernel tests: route, UDP e2e, ping 127/8, TCP segment, 0-NIC.
+  `docs/networking/stack.md` updated.
+
+- **Network: per-interface statistics + DHCP options/domain (#373/#532/#533).**
+  New `ObInfoClass::NetStats = 28`: per-NIC-slot + loopback RX/TX
+  packets/bytes/errors, in `NicInfo` enumeration order;
+  `net.nxl::net_iface_stats` and `ipconfig` render per-adapter counters. `dhcpd`
+  parses the PRL plus options 58/59/15/28/26/42 with a NAK counter; the Registry
+  stores `T1Renew`/`T2Rebind`/`Domain`/`Broadcast`/`NtpServer[3]`/`MTU`;
+  `ipconfig` shows domain and renew/rebind datetimes (IDS 1034-1036 en/es/ca).
+  `docs/kernel/objects.md` and `docs/networking/userland.md` updated.
+
+- **Network: `ipconfig` arguments, CIDR + divergence warnings (#531/#534).**
+  `ipconfig` accepts arguments and a compact per-interface view with `/24`-style
+  CIDR, warns when configuration diverges, and retries ping-loopback.
+
+- **Network: DHCP renewal supervisor T1/T2 + DORA restart (#316/#535).**
+  Lease-driven renewal supervisor with periodic REQUEST retry (ARP race) and a
+  full DORA restart on failure.
+
+- **Network: e1000 multi-instance, probe all NICs (#536/#537).**
+  The e1000 NEM driver probes and drives multiple instances (all NICs) instead of
+  only the first; a NIC with no Registry entry reports a no-config source rather
+  than static.
+
+- **Network: per-NIC DHCP + applier, `SocketBindNic` (#538).**
+  Addresses are per NIC (no cross-slot propagation); per-NIC DORA and supervision
+  feed a configuration applier. New `ObSetInfoClass::SocketBindNic = 29` pins a
+  socket to a NIC for send-interface selection (u32 LE nic id); send honors the
+  bound NIC.
+
+- **Network: TCP data path — tick/flush, ACKs, FIN + e2e test (#486/#539).**
+  TCP data transfer with tick-driven flush, ACK handling and FIN/orderly close,
+  covered by an end-to-end loopback test.
+
+### Changed
+
+- **VFS lock-contention reduction and synchronization hardening (#83, #519).**
+  `MOUNT_MANAGER` joins the enforced filesystem lock hierarchy
+  (`VFS -> MOUNT_MANAGER -> PAGE_CACHE -> BLOCK_DEVICES`); every production
+  `PAGE_CACHE`/`BLOCK_DEVICES` acquisition in the filesystem stack now goes
+  through the preempt-disabling, order-checked `with_page_cache`/
+  `with_block_devices` helpers; `flush_cache_if_needed` writes back one page per
+  lock acquisition (bounded, flag re-armed while dirty) instead of holding both
+  locks across a multi-page burst; path resolution no longer allocates under the
+  `VFS` lock; and the boot storage probe runs outside the block-device registry
+  lock. The global `VFS` and `BLOCK_DEVICES` locks remain (per-drive
+  synchronization is future work) and no throughput claim is made. Design,
+  baseline and readiness report:
+  `docs/investigation/vfs-lock-contention-83-{baseline,report}.md`.
+
+- **#18 / VFS-2.2: trait-based FSCK (`FsckTrait`).** Filesystem integrity
+  checking is now a pluggable trait (`check`/`repair`) implemented per
+  filesystem, replacing the single NeoFS-only path. `src/fs/fsck/` holds the
+  framework plus `ne2.rs` (NeoFS v2, generic B-tree walker + CRC32 + freelist
+  rebuild) and `fat32.rs` (FAT32 geometry validation, cross-link and orphan
+  detection, orphan repair). Removed the duplicated `drivers/fsck_neodos.rs`
+  module and the second CRC32 implementation (#507); the checker now uses the
+  shared `fs/crc32.rs`. `FsckStats.repaired` reports the count of fixed issues
+  instead of a boolean. Both filesystems are reachable from Ring 3 through
+  `ObInfoClass::FsckStatus` / `ObSetInfoClass::FsckRepair` and `fsck.nxe`.
+
+- **#540: reorganize `neodos-kernel/src/drivers` by responsibility.** The
+  directory now separates the driver framework from hardware and storage:
+  `hw/` (pci, ata, ahci, nvme, virtio_blk, ps2, rtc), `storage/` (block, gpt,
+  manager), `virtio/` (bus/transport, moved in from `src/virtio/`), and
+  `nem/{loader,runtime,management}/`. VirtIO block-specific ABI moved from
+  `virtio/mod.rs` to `hw/virtio_blk.rs`. FAT32 — a `FileSystem` — moved to
+  `src/fs/fat32.rs` with its FSCK in `src/fs/fsck/fat32.rs`; the FS-agnostic
+  `FsckTrait` now lives in `src/fs/fsck/`. Historical `crate::drivers::<name>`
+  paths keep resolving via re-exports in `src/drivers/mod.rs`. No behavior
+  change; `check-deps-baseline.txt` refreshed for the moved paths.
+
+- **#541 / P1: consolidate top-level kernel modules.** VFS moved from
+  `src/vfs/` into `src/fs/vfs/` (one home with the `FileSystem` trait); the
+  NEM *format* parser moved from `src/nem/` to `src/drivers/nem/format.rs`
+  (disambiguated from the `drivers/nem` framework); `kbd/` → `input/kbd/`;
+  `power/` → `services/power/`; `graphics.rs` + `font.rs` →
+  `graphics/{mod,font}.rs`. Historical paths (`crate::vfs`, `crate::nem`,
+  `crate::kbd`, `crate::power`, `crate::font`) kept resolving via re-exports
+  in `main.rs`; `check-deps-baseline.txt` refreshed. No behavior change.
+
+- **#542 / P2: group root infrastructure and extract `boot/`.** Cross-cutting
+  singletons (`cpu`, `handle`, `work_queue`, `globals`, `lock_order`, `trace`,
+  `invariants`, `panic_classification`, `abi_freeze`, `boot_benchmark`, `elf`,
+  `nxl`, `usermode`) moved to `src/infra/`; `slab.rs` and `allocator.rs` moved
+  to `src/memory/`. The ~785-line `rust_start` boot sequence moved from
+  `main.rs` to `src/boot/mod.rs::init()`, leaving `main.rs` as a thin
+  entrypoint. Historical `crate::<name>` paths kept via re-exports. No behavior
+  change.
+
+- **#544 / P4: split monolithic test files; module-layout rule.** Test
+  monoliths became directories: `scheduler/tests.rs` (2 670 lines) →
+  `scheduler/tests/{scheduling,regressions,mmap,threads,misc}.rs`;
+  `net/tests.rs` → `net/tests/{net,dns,socket}.rs`; `syscall/tests.rs` →
+  `syscall/tests/{table,sync,path}.rs`; the inline tests of `services/mod.rs`
+  moved to `services/tests.rs`. Test count and names unchanged (837).
+  `AGENTS.md` gains rule 12 (one directory = one subsystem, downward
+  dependencies, `mod.rs`, re-exports during migration).
+
+- **#543 / P3: group NeoFS v2 under `fs/neofs/`.** `neodos_v2`, `neodos_dir`,
+  `neodos_io`, `btree`, `freelist` and `snapshot` moved from `fs/` into
+  `fs/neofs/`; `crate::fs::<name>` paths kept via re-exports in `fs/mod.rs`.
+  `drivers/` deliberately untouched. No behavior change.
+
+### Fixed
+
+- **#519: raw `VFS.lock()`/`MOUNT_MANAGER.lock()` on the unified mount/unmount
+  paths.** `vfs_mount_filesystem`/`vfs_unmount_filesystem` bypassed the
+  preempt-disable and lock-order guard; they now use `with_vfs` plus the new
+  `with_mount_manager`, and update `Vfs.drives[]` and `MountManager` under a
+  single `VFS` critical section so a concurrent lookup cannot observe a
+  half-mounted drive. Regression tests added for the `MOUNT_MANAGER` lock rank.
+
+- **Filesystem: persist subdirectory B-tree root changes to the parent, and
+  re-enable COW reclamation (#563, #553).** `NeoDosFsV2` now tracks each
+  directory's parent inode and, when a directory's B-tree root changes,
+  re-inserts its `DirEntry` (`extent_lba = new_root`) into the parent tree,
+  propagating up to the root (`propagate_dir_root`). Previously the parent kept
+  pointing at the replaced root, so subdirectory changes were not persisted and
+  freeing the replaced block corrupted `C:` on the second boot. With this fixed,
+  COW reclamation (#553) is safe and re-enabled (`reclaim_cow_garbage` frees
+  replaced blocks when the snapshot table is empty). Tests:
+  `neofs_v2_subdir_persists_across_remount` plus the restored
+  `neofs_v2_cow_reclaims_garbage` / `neofs_v2_cow_garbage_gated_by_snapshots`.
+  Verified across two consecutive boots on the same image (853/853 each).
+
+- **Scheduler snapshot self-deadlock (BSP freeze before `[PROC_SNAPSHOT]`).**
+  `kernel_snapshot_into()` acquired the global `SCHEDULER` spinlock with
+  interrupts enabled; a same-CPU timer IRQ then re-entered the non-reentrant
+  mutex and self-deadlocked, intermittently hanging the BSP before the shell
+  started. The lock is now acquired inside `without_interrupts` for its whole
+  hold time. Verified across 8/8 SMP2 boots.
+
+- **#501: NeoInit was left `SUSP` at the bootstrap hand-off; NeoShell never
+  started.** `wait_for_process` marked the hand-off target's state via
+  `current_kthread_mut()`, which resolves through the per-CPU
+  `KPRCB.current_thread`. Since #482 deferred the KPRCB publication to just
+  before the Ring-3 `iretq`, that resolver still identified the bootstrap
+  thread, so the target stayed `Suspended` and was never scheduled again. The
+  target is now marked `Running` by TID via
+  `Scheduler::mark_handoff_target_running`; the deferred publication, RSP0
+  handling and `iretq` ordering are unchanged. Regression test
+  `handoff_target_marked_running_by_tid`. See
+  `docs/investigation/issue-501-neoinit-suspend.md`.
+
+- **#491: `ntpd` could not apply the clock (`clock set denied`).** The root
+  cause was not a kernel/security/RTC source bug: the disk image packaged a
+  stale `rtc.nem` (from the gitignored `data/nem_bin/**` fallback) that
+  predates `EVENT_RTC_WRITE` support (#366), so `rtc_bridge::set_datetime`
+  never received its read-back ACK. Fixed in the NeoDev image pipeline
+  (NeoDOS-Project/NeoDev#21): image generation now builds the NEM drivers
+  before packaging them. Added the `ob_set_datetime_rtc_write_acks` kernel
+  regression guard. See
+  `docs/investigation/issue-491-ntpd-clock-set-denied.md`.
+
+- **#530: e1000 NEM link state + `ipconfig` lease info.** The NEM bridge had no
+  link-query slot, so `driver_link_up()` was dead code and the registry stayed
+  link-down despite working traffic; the e1000 RX poll path now republishes link
+  state via `hst_set_network_link_state` (throttled, one `STATUS.LU` read per 512
+  polls). Added the `LeaseObtained` contract and APIPA check; `ipconfig` shows the
+  DHCP server, an APIPA mark (`169.254/16`) and lease obtained/expiry dates
+  (IDS 1030-1033 en/es/ca).
+
 ## v0.51.4 — 2026-10-06
 
 ### Fixed

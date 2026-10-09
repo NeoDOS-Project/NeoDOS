@@ -68,3 +68,42 @@ macro_rules! plural_id {
         $crate::i18n::i18n_plural($id, $n as u64)
     };
 }
+
+/// Translate a symbolic key (`"<app>.<NAME>"`) resolved at **compile time**.
+///
+/// The key is looked up in `libneodos::i18n_keymap`; a typo or missing key is a
+/// build error. Prefer this over [`tr_id!`] where the keymap applies.
+#[macro_export]
+macro_rules! tr {
+    ($key:expr) => {{
+        const __NLT_ID: u32 = $crate::i18n::key_id($key);
+        $crate::i18n::i18n_get_id(__NLT_ID)
+    }};
+}
+
+/// Like [`tr!`] but formats the resolved template with positionals.
+#[macro_export]
+macro_rules! tr_key_fmt {
+    ($key:expr, $args:expr) => {{
+        const __NLT_ID: u32 = $crate::i18n::key_id($key);
+        $crate::i18n::i18n_format(__NLT_ID, $args)
+    }};
+}
+
+/// Like [`tr!`] but selects a plural form for `n`.
+#[macro_export]
+macro_rules! tr_plural {
+    ($key:expr, $n:expr) => {{
+        const __NLT_ID: u32 = $crate::i18n::key_id($key);
+        $crate::i18n::i18n_plural(__NLT_ID, $n as u64)
+    }};
+}
+
+/// Like [`tr_plural!`] but also formats the selected form with `$args` (#579).
+#[macro_export]
+macro_rules! tr_plural_fmt {
+    ($key:expr, $n:expr, $args:expr) => {{
+        const __NLT_ID: u32 = $crate::i18n::key_id($key);
+        $crate::i18n::i18n_plural_format(__NLT_ID, $n as u64, $args)
+    }};
+}

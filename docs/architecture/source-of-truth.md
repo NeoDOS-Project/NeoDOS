@@ -333,7 +333,7 @@ that collide with live IRPs. (Pool size 64 vs 32-bit ID space makes this safe.)
 
 ### 8.1 Header Format (v3)
 
-Matches `NemHeaderV3` in `neodos-kernel/src/nem/mod.rs` (80-byte header, magic `b"NEM3"`).
+Matches `NemHeaderV3` in `neodos-kernel/src/drivers/nem/format.rs` (80-byte header, magic `b"NEM3"`).
 
 | Offset | Size | Field | Notes |
 | -------- | ------ | ------- | ------- |
@@ -544,7 +544,7 @@ NEM ps2kbd driver translates scancode to ASCII â†’ `hst_push_input_byte(byte)` â
 `eprocess.vt_num`. Each process has a `vt_num` field (u8) inherited from its parent at
 spawn time.
 
-**Rule 11.2.3**: Keyboard input flows through NeoKBD (`src/kbd/`). The PS/2 IRQ handler
+**Rule 11.2.3**: Keyboard input flows through NeoKBD (`src/input/kbd/`). The PS/2 IRQ handler
 pushes raw scancodes to the Event Bus as `EVENT_KEYBOARD_INPUT`. NeoKBD processes them
 through the layout engine, producing `EVENT_KEYDOWN` (27), `EVENT_KEYUP` (28),
 `EVENT_KEY_CHAR` (29), and `EVENT_KBD_MODIFIER` (30) events. Layout switching is via
@@ -597,7 +597,7 @@ This affects which VT queue `sys_read(fd=0)` reads from for that process.
 
 ### 11.6 Keyboard Layout (NeoKBD)
 
-**Rule 11.6.1**: NeoKBD (`src/kbd/`) is the kernel keyboard manager. It loads `.kbd` binary
+**Rule 11.6.1**: NeoKBD (`src/input/kbd/`) is the kernel keyboard manager. It loads `.kbd` binary
 layout files from `C:\System\Keyboard\` at boot and exposes them through `\Device\Keyboard`
 (ObType::KeyboardDevice = 22). Layouts are compiled from `.klc` source files by
 `tools/kbdcompile/` and bundled into the disk image.

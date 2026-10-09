@@ -44,7 +44,13 @@ const DHCP_OPTION_SUBNET_MASK: u8 = 1;
 const DHCP_OPTION_ROUTER: u8 = 3;
 #[allow(dead_code)]
 const DHCP_OPTION_DNS: u8 = 6;
+const DHCP_OPTION_DOMAIN: u8 = 15;
+const DHCP_OPTION_MTU: u8 = 26;
+const DHCP_OPTION_BROADCAST: u8 = 28;
+const DHCP_OPTION_NTP: u8 = 42;
 const DHCP_OPTION_LEASE_TIME: u8 = 51;
+const DHCP_OPTION_T1: u8 = 58;
+const DHCP_OPTION_T2: u8 = 59;
 const DHCP_OPTION_DHCP_MSG_TYPE: u8 = 53;
 const DHCP_OPTION_SERVER_ID: u8 = 54;
 const DHCP_OPTION_REQUEST_LIST: u8 = 55;
@@ -78,14 +84,57 @@ struct DhcpHeader {
 
 const DHCP_HDR_LEN: usize = 240;
 
+#[derive(PartialEq, Eq, Clone, Copy)]
 enum DhcpState {
     Init,
     Selecting,
     Requesting,
-    #[allow(dead_code)]
     Bound,
-    #[allow(dead_code)]
     Renewing,
+    Rebinding,
+}
+
+/// Max supervised DHCP leases (one per NIC slot).
+const MAX_LEASES: usize = 4;
+/// Kernel NicInfo sentinel for the loopback entry: never DHCP-managed.
+const LOOPBACK_NIC_ID: u32 = 0xFFFF_FFFF;
+
+/// Per-NIC lease state for discovery + supervision (multi-NIC DHCP).
+struct NicLease {
+    active: bool,
+    bound: bool,
+    nic_id: u32,
+    ifidx: u32,
+    mac: [u8; 6],
+    offered_ip: u32,
+    server_ip: u32,
+    subnet_mask: u32,
+    gateway: u32,
+    dns: [u32; MAX_DHCP_DNS],
+    dns_count: usize,
+    lease_time: u32,
+    t1: u32,
+    t2: u32,
+    obtained: u32,
+    domain: [u8; 64],
+    broadcast: u32,
+    ntp: [u32; MAX_DHCP_NTP],
+    mtu: u32,
+    state: DhcpState,
+    last_send: u32,
+}
+
+impl NicLease {
+    const fn empty() -> Self {
+        NicLease {
+            active: false, bound: false, nic_id: 0, ifidx: 0,
+            mac: [0; 6], offered_ip: 0, server_ip: 0,
+            subnet_mask: 0, gateway: 0, dns: [0; MAX_DHCP_DNS], dns_count: 0,
+            lease_time: 0, t1: 0, t2: 0, obtained: 0,
+            domain: [0; 64], broadcast: 0, ntp: [0; MAX_DHCP_NTP], mtu: 0,
+            state: DhcpState::Init, last_send: 0,
+        }
+    }
 }
 
 struct DhcpClient {
@@ -100,6 +149,15 @@ struct DhcpClient {
     dns: [u32; MAX_DHCP_DNS],
     dns_count: usize,
     lease_time: u32,
+    t1: u32,
+    t2: u32,
+    domain: [u8; 64],
+    broadcast: u32,
+    ntp: [u32; MAX_DHCP_NTP],
+    ntp_count: usize,
+    mtu: u32,
+    nak_count: u32,
+    obtained: u32,
     renew_interval: u64,
     ticks_in_state: u64,
     retry_count: u8,
@@ -221,11 +279,17 @@ fn build_dhcp_packet(
 
     // Parameter request list
     buf[opt] = DHCP_OPTION_REQUEST_LIST; opt += 1;
-    buf[opt] = 4; opt += 1;
+    buf[opt] = 10; opt += 1;
     buf[opt] = 1; opt += 1;   // subnet mask
     buf[opt] = 3; opt += 1;   // router
     buf[opt] = 6; opt += 1;   // dns
+    buf[opt] = 15; opt += 1;  // domain name
+    buf[opt] = 26; opt += 1;  // interface MTU
+    buf[opt] = 28; opt += 1;  // broadcast
+    buf[opt] = 42; opt += 1;  // NTP servers
     buf[opt] = 51; opt += 1;  // lease time
+    buf[opt] = 58; opt += 1;  // T1 renew
+    buf[opt] = 59; opt += 1;  // T2 rebind
 
     // Server identifier (for REQUEST)
     if server_ip != 0 {
@@ -254,6 +318,9 @@ fn dhcp_payload_length() -> usize {
 
 // ── DHCP option parsing ──
 
+/// Maximum NTP servers taken from DHCP option 42.
+const MAX_DHCP_NTP: usize = 3;
+
 struct DhcpOptions {
     msg_type: u8,
     server_id: u32,
@@ -262,6 +329,13 @@ struct DhcpOptions {
     dns: [u32; MAX_DHCP_DNS],
     dns_count: usize,
     lease_time: u32,
+    t1: u32,
+    t2: u32,
+    domain: [u8; 64],
+    broadcast: u32,
+    ntp: [u32; MAX_DHCP_NTP],
+    ntp_count: usize,
+    mtu: u32,
 }
 
 fn parse_dhcp_options(data: &[u8]) -> Option<DhcpOptions> {
@@ -279,6 +353,13 @@ fn parse_dhcp_options(data: &[u8]) -> Option<DhcpOptions> {
     let mut dns = [0u32; MAX_DHCP_DNS];
     let mut dns_count = 0usize;
     let mut lease_time = 86400u32;
+    let mut t1 = 0u32;
+    let mut t2 = 0u32;
+    let mut domain = [0u8; 64];
+    let mut broadcast = 0u32;
+    let mut ntp = [0u32; MAX_DHCP_NTP];
+    let mut ntp_count = 0usize;
+    let mut mtu = 0u32;
 
     let mut i = 0;
     while i < options.len() {
@@ -332,6 +413,60 @@ fn parse_dhcp_options(data: &[u8]) -> Option<DhcpOptions> {
                 dns_count = n;
                 i += opt_len + 2;
             }
+            DHCP_OPTION_T1 => {
+                if i + 5 < options.len() {
+                    t1 = u32::from_be_bytes([
+                        options[i + 2], options[i + 3], options[i + 4], options[i + 5],
+                    ]);
+                }
+                i += 6;
+            }
+            DHCP_OPTION_T2 => {
+                if i + 5 < options.len() {
+                    t2 = u32::from_be_bytes([
+                        options[i + 2], options[i + 3], options[i + 4], options[i + 5],
+                    ]);
+                }
+                i += 6;
+            }
+            DHCP_OPTION_DOMAIN => {
+                // Option 15 is a plain domain string (not label-encoded).
+                let opt_len = options.get(i + 1).copied().unwrap_or(0) as usize;
+                let end = (i + 2 + opt_len).min(options.len());
+                let src = &options[i + 2..end.max(i + 2)];
+                let n = src.len().min(63);
+                domain[..n].copy_from_slice(&src[..n]);
+                i += opt_len + 2;
+            }
+            DHCP_OPTION_BROADCAST => {
+                if i + 5 < options.len() {
+                    broadcast = u32::from_be_bytes([
+                        options[i + 2], options[i + 3], options[i + 4], options[i + 5],
+                    ]);
+                }
+                i += 6;
+            }
+            DHCP_OPTION_MTU => {
+                if i + 3 < options.len() {
+                    mtu = u16::from_be_bytes([options[i + 2], options[i + 3]]) as u32;
+                }
+                let opt_len = options.get(i + 1).copied().unwrap_or(0) as usize;
+                i += opt_len + 2;
+            }
+            DHCP_OPTION_NTP => {
+                let opt_len = options.get(i + 1).copied().unwrap_or(0) as usize;
+                let mut n = 0usize;
+                let mut j = i + 2;
+                while n < MAX_DHCP_NTP && j + 4 <= i + 2 + opt_len && j + 4 <= options.len() {
+                    ntp[n] = u32::from_be_bytes([
+                        options[j], options[j + 1], options[j + 2], options[j + 3],
+                    ]);
+                    n += 1;
+                    j += 4;
+                }
+                ntp_count = n;
+                i += opt_len + 2;
+            }
             DHCP_OPTION_LEASE_TIME => {
                 if i + 5 < options.len() {
                     lease_time = u32::from_be_bytes([
@@ -357,6 +492,13 @@ fn parse_dhcp_options(data: &[u8]) -> Option<DhcpOptions> {
         dns,
         dns_count,
         lease_time,
+        t1,
+        t2,
+        domain,
+        broadcast,
+        ntp,
+        ntp_count,
+        mtu,
     })
 }
 
@@ -376,6 +518,15 @@ impl DhcpClient {
             dns: [0; MAX_DHCP_DNS],
             dns_count: 0,
             lease_time: 86400,
+            t1: 0,
+            t2: 0,
+            domain: [0; 64],
+            broadcast: 0,
+            ntp: [0; MAX_DHCP_NTP],
+            ntp_count: 0,
+            mtu: 0,
+            nak_count: 0,
+            obtained: 0,
             renew_interval: 43200,
             ticks_in_state: 0,
             retry_count: 0,
@@ -407,7 +558,7 @@ impl DhcpClient {
                 }
 
                 DhcpState::Selecting => {
-                    if let Some(ip) = self.poll_response() {
+                    if let Some((ip, _)) = self.poll_response() {
                         self.offered_ip = ip;
                         write_str(b"");
                     write_str(tr_id!(IDS_PREFIX).as_bytes());
@@ -445,7 +596,7 @@ impl DhcpClient {
                     self.retry_count = 0;
 
                     loop {
-                        if let Some(ip) = self.poll_response() {
+                        if let Some((ip, _)) = self.poll_response() {
                             write_str(b"");
                     write_str(tr_id!(IDS_PREFIX).as_bytes());
                     write_str(b"ACK: IP=");
@@ -475,7 +626,7 @@ impl DhcpClient {
                     }
                 }
 
-                DhcpState::Bound | DhcpState::Renewing => {
+                DhcpState::Bound | DhcpState::Renewing | DhcpState::Rebinding => {
                     // This state is handled in the outer loop after run() returns
                     return self.offered_ip;
                 }
@@ -483,7 +634,8 @@ impl DhcpClient {
         }
     }
 
-    fn poll_response(&mut self) -> Option<u32> {
+    /// Poll one datagram; returns (ip, server_id) for attribution across leases.
+    fn poll_response(&mut self) -> Option<(u32, u32)> {
         let mut buf = [0u8; 1024];
         let ret = syscall::ob_socket_recv(self.socket_fd as u8, &mut buf);
         let len = match ret {
@@ -513,8 +665,9 @@ impl DhcpClient {
                         if opts.gateway != 0 { self.gateway = opts.gateway; }
                         if opts.dns_count > 0 { self.dns = opts.dns; self.dns_count = opts.dns_count; }
                         self.lease_time = opts.lease_time;
+                        self.copy_extra_options(&opts);
                         self.renew_interval = (opts.lease_time as u64 / LEASE_RENEW_DIVISOR).max(60);
-                        return Some(self.offered_ip);
+                        return Some((self.offered_ip, self.server_ip));
                     }
                 }
                 DHCP_ACK => {
@@ -526,13 +679,17 @@ impl DhcpClient {
                     if opts.gateway != 0 { self.gateway = opts.gateway; }
                     if opts.dns_count > 0 { self.dns = opts.dns; self.dns_count = opts.dns_count; }
                     self.lease_time = opts.lease_time;
+                    self.copy_extra_options(&opts);
                     self.renew_interval = (opts.lease_time as u64 / LEASE_RENEW_DIVISOR).max(60);
-                    return Some(ip);
+                    return Some((ip, self.server_ip));
                 }
                 DHCP_NAK => {
-                    write_str(b"\r\n[dhcpd] NAK received\r\n");
+                    self.nak_count += 1;
+                    write_str(b"\r\n[dhcpd] NAK received (count=");
+                    write_dec_u32(self.nak_count);
+                    write_str(b")\r\n");
                     self.state = DhcpState::Init;
-                    return Some(0xFFFFFFFF);
+                    return Some((0xFFFF_FFFF, opts.server_id));
                 }
                 _ => {}
             }
@@ -540,29 +697,264 @@ impl DhcpClient {
         None
     }
 
-    #[allow(dead_code)]
-    fn renew(&mut self) -> bool {
-        write_str(b"");
-                    write_str(tr_id!(IDS_PREFIX).as_bytes());
-                    write_str(b"Renewing lease...\r\n");
-        self.send_dhcp(DHCP_REQUEST, Some(self.offered_ip));
-        for _ in 0..TIMEOUT_ITERATIONS {
-            if let Some(ip) = self.poll_response() {
-                if ip == 0xFFFFFFFF { return false; }
-                write_str(b"");
-                    write_str(tr_id!(IDS_PREFIX).as_bytes());
-                    write_str(b"Renewal OK: IP=");
-                write_ip(ip);
-                write_str(b"\r\n");
-                return true;
-            }
-            yield_for(1);
-        }
-        write_str(b"");
-                    write_str(tr_id!(IDS_PREFIX).as_bytes());
-                    write_str(b"Renewal failed\r\n");
-        false
+    /// Copy the #532 extra options (T1/T2/domain/broadcast/NTP/MTU).
+    fn copy_extra_options(&mut self, opts: &DhcpOptions) {
+        self.t1 = opts.t1;
+        self.t2 = opts.t2;
+        self.domain = opts.domain;
+        self.broadcast = opts.broadcast;
+        self.ntp = opts.ntp;
+        self.ntp_count = opts.ntp_count;
+        self.mtu = opts.mtu;
     }
+
+
+    /// Publish the in-memory lease (DORA or renewal ACK) through the shared
+    /// config backend. Returns the stamped `obtained` time.
+    fn publish_current_lease(&self, ifidx: u32) -> u32 {
+        let _ = config::ensure_interface(ifidx);
+        let mut cfg = config::load(ifidx).unwrap_or_default();
+        cfg.ip = self.offered_ip;
+        cfg.mask = self.subnet_mask;
+        cfg.gateway = self.gateway;
+        let mut dns = [0u32; MAX_DHCP_DNS];
+        let n = self.dns_count.min(MAX_DHCP_DNS);
+        for i in 0..n { dns[i] = self.dns[i]; }
+        cfg.dns = dns;
+        cfg.lease_time = self.lease_time;
+        cfg.dhcp_server = self.server_ip;
+        cfg.dhcp_bound = true;
+        cfg.lease_obtained = config::now_unix();
+        cfg.t1_renew = self.t1;
+        cfg.t2_rebind = self.t2;
+        cfg.domain = self.domain;
+        cfg.broadcast = self.broadcast;
+        cfg.ntp = self.ntp;
+        cfg.mtu = self.mtu;
+        let _ = config::publish_lease(ifidx, &cfg);
+        cfg.lease_obtained
+    }
+
+    /// Log the renewal schedule once per bound lease (#316).
+    fn log_schedule(&self) {
+        use config::{rebind_at, renew_at};
+        write_str(b"[dhcpd] Renew in ");
+        write_dec_u32(renew_at(self.lease_time, self.t1).min(u32::MAX as u64) as u32);
+        write_str(b"s, rebind in ");
+        write_dec_u32(rebind_at(self.lease_time, self.t2).min(u32::MAX as u64) as u32);
+        write_str(b"s\r\n");
+    }
+
+}
+
+// ── Multi-NIC discovery + supervision ──
+
+/// Run DORA for one NIC and fill its lease slot. Publishes to
+/// `Interfaces\\<ifidx>` (created when missing); APIPA fallback for that
+/// interface on failure.
+fn discover_lease(
+    sock_fd: i32,
+    xid: u32,
+    nic_id: u32,
+    ifidx: u32,
+    mac: [u8; 6],
+    lease: &mut NicLease,
+) {
+    use config::{rebind_at, renew_at};
+    let _ = config::ensure_interface(ifidx);
+    let _ = syscall::ob_socket_bind_nic(sock_fd as u8, nic_id);
+    // Fresh broadcast direction (a previous renew may have left the shared
+    // socket pointed at a unicast server).
+    reconnect(sock_fd, 0xFFFF_FFFF);
+    let mut client = DhcpClient::new(xid, sock_fd, mac);
+    let ip = client.run();
+    *lease = NicLease::empty();
+    lease.active = true;
+    lease.nic_id = nic_id;
+    lease.ifidx = ifidx;
+    lease.mac = mac;
+    if ip == 0 {
+        publish_apipa_iface(ifidx);
+        return;
+    }
+    lease.bound = true;
+    lease.offered_ip = client.offered_ip;
+    lease.server_ip = client.server_ip;
+    lease.subnet_mask = client.subnet_mask;
+    lease.gateway = client.gateway;
+    lease.dns = client.dns;
+    lease.dns_count = client.dns_count;
+    lease.lease_time = client.lease_time;
+    lease.t1 = client.t1;
+    lease.t2 = client.t2;
+    lease.domain = client.domain;
+    lease.broadcast = client.broadcast;
+    lease.ntp = client.ntp;
+    lease.mtu = client.mtu;
+    lease.obtained = client.publish_current_lease(ifidx);
+    lease.state = DhcpState::Bound;
+    client.log_schedule();
+    write_str(b"[dhcpd] NIC ");
+    write_dec_u32(nic_id);
+    write_str(b" bound: IP=");
+    write_ip(ip);
+    write_str(b"\r\n");
+    let _ = renew_at(lease.lease_time, lease.t1);
+    let _ = rebind_at(lease.lease_time, lease.t2);
+}
+
+/// Attribute a renewal response to a lease slot: server match first,
+/// then yiaddr. Index-based so callers can reborrow mutably.
+fn find_lease_idx(leases: &[NicLease; MAX_LEASES], server: u32, ip: u32) -> Option<usize> {
+    if server != 0 {
+        if let Some(i) = leases
+            .iter()
+            .position(|l| l.active && l.bound && l.server_ip == server)
+        {
+            return Some(i);
+        }
+    }
+    if ip != 0 && ip != 0xFFFF_FFFF {
+        if let Some(i) = leases
+            .iter()
+            .position(|l| l.active && l.bound && l.offered_ip == ip)
+        {
+            return Some(i);
+        }
+    }
+    None
+}
+
+/// Supervise all bound leases (#316, multi-NIC): T1 unicast renew, T2
+/// broadcast rebind, inline re-discovery on NAK/expiry. Never returns.
+fn supervise_all(sock_fd: i32, xid: u32, leases: &mut [NicLease; MAX_LEASES]) -> ! {
+    use config::{rebind_at, renew_at};
+    let mut tmp = DhcpClient::new(xid, sock_fd, [0; 6]);
+    let mut tick = 0u32;
+    loop {
+        tick = tick.wrapping_add(1);
+        if tick % 1024 == 0 {
+            let now = config::now_unix();
+            if now != 0 {
+                for lease in leases.iter_mut().filter(|l| l.active && l.bound) {
+                    let elapsed = now.saturating_sub(lease.obtained) as u64;
+                    let t1 = renew_at(lease.lease_time, lease.t1);
+                    let t2 = rebind_at(lease.lease_time, lease.t2);
+                    if lease.lease_time != 0 && elapsed >= lease.lease_time as u64 {
+                        write_str(b"[dhcpd] Lease expired on NIC ");
+                        write_dec_u32(lease.nic_id);
+                        write_str(b", rediscovering\r\n");
+                        let (nic_id, ifidx, mac) = (lease.nic_id, lease.ifidx, lease.mac);
+                        discover_lease(sock_fd, xid, nic_id, ifidx, mac, lease);
+                    } else if lease.state == DhcpState::Bound && elapsed >= t1 {
+                        write_str(b"[dhcpd] T1 on NIC ");
+                        write_dec_u32(lease.nic_id);
+                        write_str(b", unicast renew\r\n");
+                        let _ = syscall::ob_socket_bind_nic(sock_fd as u8, lease.nic_id);
+                        reconnect(sock_fd, lease.server_ip);
+                        tmp.send_dhcp(DHCP_REQUEST, None);
+                        lease.state = DhcpState::Renewing;
+                        lease.last_send = tick;
+                    } else if lease.state == DhcpState::Renewing && elapsed >= t2 {
+                        write_str(b"[dhcpd] T2 on NIC ");
+                        write_dec_u32(lease.nic_id);
+                        write_str(b", broadcast rebind\r\n");
+                        let _ = syscall::ob_socket_bind_nic(sock_fd as u8, lease.nic_id);
+                        reconnect(sock_fd, 0xFFFF_FFFF);
+                        tmp.send_dhcp(DHCP_REQUEST, None);
+                        lease.state = DhcpState::Rebinding;
+                        lease.last_send = tick;
+                    }
+                }
+            }
+        }
+        let awaiting = leases.iter().any(|l| {
+            l.active && l.bound
+                && (l.state == DhcpState::Renewing || l.state == DhcpState::Rebinding)
+        });
+        if awaiting {
+            // Resend periodically (ARP race on idle servers).
+            for lease in leases.iter_mut().filter(|l| {
+                l.active && l.bound
+                    && (l.state == DhcpState::Renewing || l.state == DhcpState::Rebinding)
+                    && tick.wrapping_sub(l.last_send) >= 512
+            }) {
+                let _ = syscall::ob_socket_bind_nic(sock_fd as u8, lease.nic_id);
+                if lease.state == DhcpState::Renewing {
+                    reconnect(sock_fd, lease.server_ip);
+                } else {
+                    reconnect(sock_fd, 0xFFFF_FFFF);
+                }
+                tmp.send_dhcp(DHCP_REQUEST, None);
+                lease.last_send = tick;
+            }
+            if let Some((ip, server)) = tmp.poll_response() {
+                if ip == 0xFFFF_FFFF {
+                    write_str(b"[dhcpd] NAK during renewal, rediscovering\r\n");
+                    if let Some(i) = find_lease_idx(leases, server, 0) {
+                        let (nic_id, ifidx, mac) =
+                            (leases[i].nic_id, leases[i].ifidx, leases[i].mac);
+                        discover_lease(sock_fd, xid, nic_id, ifidx, mac, &mut leases[i]);
+                    }
+                } else if let Some(i) = find_lease_idx(leases, server, ip) {
+                    let lease = &mut leases[i];
+                    lease.offered_ip = tmp.offered_ip;
+                    lease.server_ip = tmp.server_ip;
+                    if tmp.subnet_mask != 0 { lease.subnet_mask = tmp.subnet_mask; }
+                    if tmp.gateway != 0 { lease.gateway = tmp.gateway; }
+                    if tmp.dns_count > 0 {
+                        lease.dns = tmp.dns;
+                        lease.dns_count = tmp.dns_count;
+                    }
+                    lease.lease_time = tmp.lease_time;
+                    lease.t1 = tmp.t1;
+                    lease.t2 = tmp.t2;
+                    lease.domain = tmp.domain;
+                    lease.broadcast = tmp.broadcast;
+                    lease.ntp = tmp.ntp;
+                    lease.mtu = tmp.mtu;
+                    lease.obtained = {
+                        let _ = config::ensure_interface(lease.ifidx);
+                        let mut cfg = config::load(lease.ifidx).unwrap_or_default();
+                        cfg.ip = lease.offered_ip;
+                        cfg.mask = lease.subnet_mask;
+                        cfg.gateway = lease.gateway;
+                        cfg.dns = lease.dns;
+                        cfg.lease_time = lease.lease_time;
+                        cfg.dhcp_server = lease.server_ip;
+                        cfg.dhcp_bound = true;
+                        cfg.lease_obtained = config::now_unix();
+                        cfg.t1_renew = lease.t1;
+                        cfg.t2_rebind = lease.t2;
+                        cfg.domain = lease.domain;
+                        cfg.broadcast = lease.broadcast;
+                        cfg.ntp = lease.ntp;
+                        cfg.mtu = lease.mtu;
+                        let _ = config::publish_lease(lease.ifidx, &cfg);
+                        cfg.lease_obtained
+                    };
+                    lease.state = DhcpState::Bound;
+                    write_str(b"[dhcpd] Renewal OK on NIC ");
+                    write_dec_u32(lease.nic_id);
+                    write_str(b": IP=");
+                    write_ip(ip);
+                    write_str(b"\r\n");
+                }
+            }
+        }
+        syscall::sys_yield();
+    }
+}
+
+/// Reconnect the shared DHCP socket: unicast to a server (renew) or
+/// broadcast (discover/rebind). Best effort; a failed unicast connect
+/// just falls back to broadcast delivery.
+fn reconnect(sock_fd: i32, server: u32) {
+    let _ = syscall::ob_socket_connect(
+        sock_fd as u8,
+        server.to_be_bytes(),
+        67,
+    );
 }
 
 // ── Main entry ──
@@ -570,13 +962,27 @@ impl DhcpClient {
 /// Publish the APIPA fallback lease (169.254.1.1) through the shared config
 /// backend. APIPA is 169.254.0.0/16 -> mask 255.255.0.0 (big-endian, #367).
 fn publish_apipa() {
-    let mut cfg = config::load(0).unwrap_or_default();
+    publish_apipa_iface(0);
+}
+
+/// APIPA fallback for one interface (multi-NIC DHCP).
+fn publish_apipa_iface(ifidx: u32) {
+    let _ = config::ensure_interface(ifidx);
+    let mut cfg = config::load(ifidx).unwrap_or_default();
     cfg.ip = 0xA9FE0101; // 169.254.1.1
     cfg.mask = 0xFFFF0000; // 255.255.0.0
     cfg.gateway = 0;
     cfg.dhcp_server = 0;
     cfg.dhcp_bound = true;
-    let _ = config::publish_lease(0, &cfg);
+    cfg.lease_time = 0;
+    cfg.lease_obtained = config::now_unix();
+    cfg.t1_renew = 0;
+    cfg.t2_rebind = 0;
+    cfg.domain = [0; 64];
+    cfg.broadcast = 0;
+    cfg.ntp = [0; 3];
+    cfg.mtu = 0;
+    let _ = config::publish_lease(ifidx, &cfg);
 }
 
 #[no_mangle]
@@ -656,80 +1062,45 @@ pub extern "C" fn _start() -> ! {
         loop { syscall::sys_yield(); }
     }
 
-    // Get MAC address and current IP from NIC 0
-    let mut iface = libnet::NetIfaceInfo {
-        nic_id: 0,
-        mac: [0u8; 6],
-        ip: [0u8; 4],
-        link_up: 0,
-        vendor_id: 0,
-        device_id: 0,
-        name: [0u8; 16],
-        description: [0u8; 48],
-    };
-    let mac = if libnet::iface_info(0, &mut iface) == 0 {
-        let cur_ip = u32::from_be_bytes(iface.ip);
-        write_str(b"");
-                    write_str(tr_id!(IDS_PREFIX).as_bytes());
-                    write_str(b"NIC IP=");
-        write_ip(cur_ip);
-        write_str(b"\r\n");
-        iface.mac
-    } else {
-        write_str(b"");
-                    write_str(tr_id!(IDS_PREFIX).as_bytes());
-                    write_str(b"WARN: no NIC info, using fake MAC\r\n");
-        [0x02, 0x00, 0x00, 0x00, 0x00, 0x01]
-    };
-
     let xid = 0x12345678;
-    let mut client = DhcpClient::new(xid, sock_fd as i32, mac);
-    let ip = client.run();
 
-    if ip != 0 {
-        write_str(b"");
-                    write_str(tr_id!(IDS_PREFIX).as_bytes());
-                    write_str(b"DORA complete, IP=");
-        write_ip(ip);
-        write_str(b" mask=");
-        write_ip(client.subnet_mask);
-        write_str(b" gw=");
-        write_ip(client.gateway);
-        write_str(b" lease=");
-        write_dec_u32(client.lease_time);
-        write_str(b"s\r\n");
-
-        // Publish the lease through the shared config backend. The `netapplier`
-        // service is the one that applies it to the NIC (single applier; see
-        // #320/#314/#365).
-        let mut cfg = config::load(0).unwrap_or_default();
-        cfg.ip = ip;
-        cfg.mask = client.subnet_mask;
-        cfg.gateway = client.gateway;
-        // DHCP-provided DNS (option 6) is authoritative; zero any slot beyond
-        // the number of servers actually offered.
-        let mut dns = [0u32; MAX_DHCP_DNS];
-        let n = client.dns_count.min(MAX_DHCP_DNS);
-        for i in 0..n { dns[i] = client.dns[i]; }
-        cfg.dns = dns;
-        cfg.lease_time = client.lease_time;
-        cfg.dhcp_server = client.server_ip;
-        cfg.dhcp_bound = true;
-        let _ = config::publish_lease(0, &cfg);
-
-        write_str(b"");
-                    write_str(tr_id!(IDS_PREFIX).as_bytes());
-                    write_str(b"Network configured\r\n");
-    } else {
-        write_str(b"");
-                    write_str(tr_id!(IDS_PREFIX).as_bytes());
-                    write_str(b"DORA failed, using APIPA fallback\r\n");
-        write_str(b"");
-                    write_str(tr_id!(IDS_PREFIX).as_bytes());
-                    write_str(b"APIPA 169.254.1.1\r\n");
+    // Enumerate physical NICs (skip loopback) and run DORA on each.
+    // One shared socket (port 68); the NIC is selected per round (#536).
+    let count = libnet::iface_count();
+    if count == 0 {
         publish_apipa();
+        loop { syscall::sys_yield(); }
     }
-
-    // Main loop: yield forever (DHCP renew handled by OS)
-    loop { syscall::sys_yield(); }
+    let mut leases = [
+        NicLease::empty(),
+        NicLease::empty(),
+        NicLease::empty(),
+        NicLease::empty(),
+    ];
+    let mut n = 0usize;
+    let mut idx = 0u32;
+    while idx < count && n < MAX_LEASES {
+        let mut info = libnet::NetIfaceInfo {
+            nic_id: 0,
+            mac: [0u8; 6],
+            ip: [0u8; 4],
+            link_up: 0,
+            vendor_id: 0,
+            device_id: 0,
+            name: [0u8; 16],
+            description: [0u8; 48],
+        };
+        if libnet::iface_info(idx, &mut info) != 0 {
+            idx += 1;
+            continue;
+        }
+        if info.nic_id == LOOPBACK_NIC_ID {
+            idx += 1;
+            continue;
+        }
+        discover_lease(sock_fd as i32, xid, info.nic_id, idx, info.mac, &mut leases[n]);
+        n += 1;
+        idx += 1;
+    }
+    supervise_all(sock_fd as i32, xid, &mut leases);
 }

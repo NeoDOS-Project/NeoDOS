@@ -122,6 +122,10 @@ pub fn register_ob_set_tests() {
         test_true!(!validate_datetime(0, 0, 0, 29, 2, 23)); // 2023 not leap
         test_true!(!validate_datetime(0, 0, 0, 31, 4, 24)); // Apr 31
     });
+
+    // #491: the RTC-write ACK guard lives in `time` (the module that already
+    // owns the `rtc_bridge` dependency).
+    time::register_tests();
 }
 // ═══════════════════════════════════════════════════════════════════════
 // OB-014: ObEnum — RAX=64

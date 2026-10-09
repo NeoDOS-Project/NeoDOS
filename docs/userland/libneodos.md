@@ -297,6 +297,7 @@ Current ABI is **v8**. Key ABI structs (all `#[repr(C)]`, defined in `libneodos/
 - `ObEnumEntry` — directory listing entry (id, type, name, mode, size)
 - `ObProcessInfo` — process query result (pid, parent pid, priority, thread count, state)
 - `CpuStatsEntry` / `ThreadStatsEntry` — SMP observability snapshots (classes 24/25)
+- `SmpStats` — global work-stealing counters (class 27, `\Global\Info\CpuInfo`)
 - `ProcSnapshotHeader` / `ProcessInfoRaw` / `ThreadInfoRaw` — coherent process+thread snapshot (class 26)
 
 NEM drivers and NXL libraries that interact with these structs must match the v8

@@ -1,6 +1,6 @@
 # NeoGet — Package Manager
 
-> **Architecture:** `docs/reference/package-manager-arch.md`
+> **Architecture:** `docs/architecture/package-manager-arch.md`
 > **Format:** `.nxp` — NeoDOS eXecutable Package (magic `b"NXP1"`)
 > **Binary:** `userbin/neoget/` → `C:\Programs\neoget.nxe`
 > **Library:** `libneopkg/` — engine shared by CLI, GUI, and services
@@ -13,7 +13,7 @@
 
 | Document | Contents |
 | ---------- | ---------- |
-| [`../reference/package-manager-arch.md`](../reference/package-manager-arch.md) | Complete architecture: format, components, Ob integration, security, transactions, CLI, API |
+| [`../architecture/package-manager-arch.md`](../architecture/package-manager-arch.md) | Complete architecture: format, components, Ob integration, security, transactions, CLI, API |
 | `userbin/neoget/` | CLI source (future) |
 | `libneopkg/` | Engine library source (future) |
 
@@ -36,7 +36,7 @@ neoget doctor               # Diagnose issues
 
 ## Implementation phases
 
-See [`../reference/package-manager-arch.md`](../reference/package-manager-arch.md) §13 for the full roadmap (v1-v5).
+See [`../architecture/package-manager-arch.md`](../architecture/package-manager-arch.md) §13 for the full roadmap (v1-v5).
 
 **Phase 1 — Foundation (v1 core):**
 

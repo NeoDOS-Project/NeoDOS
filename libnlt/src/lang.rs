@@ -135,8 +135,76 @@ pub fn app_to_id(app: &str) -> u32 {
         b"ntpd" => 49,
         b"netd" => 50,
         b"netapplier" => 51,
+        b"neocfg" => 52,
         _ => (crc32(l) & 0x7FFF) | 0x8000,
     }
+}
+
+/// Canonical locale tag for a bare language code, e.g. `"es"` → `"es-ES"`.
+///
+/// Used by [`fallback_chain`] because the language table is keyed by full tags.
+fn canonical_for_language(lang: &str) -> Option<&'static str> {
+    let mut lower = [0u8; 8];
+    let n = lang.len().min(8);
+    for (i, b) in lang.as_bytes()[..n].iter().enumerate() {
+        lower[i] = b.to_ascii_lowercase();
+    }
+    match &lower[..n] {
+        b"en" => Some("en-US"),
+        b"es" => Some("es-ES"),
+        b"ca" => Some("ca-ES"),
+        b"eu" => Some("eu-ES"),
+        b"gl" => Some("gl-ES"),
+        b"fr" => Some("fr-FR"),
+        b"de" => Some("de-DE"),
+        b"it" => Some("it-IT"),
+        b"pt" => Some("pt-PT"),
+        b"ja" => Some("ja-JP"),
+        b"zh" => Some("zh-CN"),
+        b"ru" => Some("ru-RU"),
+        b"ar" => Some("ar-SA"),
+        b"nl" => Some("nl-NL"),
+        b"pl" => Some("pl-PL"),
+        b"sv" => Some("sv-SE"),
+        b"da" => Some("da-DK"),
+        b"fi" => Some("fi-FI"),
+        b"nb" => Some("nb-NO"),
+        b"ko" => Some("ko-KR"),
+        b"tr" => Some("tr-TR"),
+        b"cs" => Some("cs-CZ"),
+        b"hu" => Some("hu-HU"),
+        _ => None,
+    }
+}
+
+/// Fallback locale chain for `tag`, most specific first, deduplicated (#580).
+///
+/// `"es-MX"` → `["es-MX", "es", "es-ES", "en-US"]`; `"en-US"` → `["en-US", "en"]`.
+/// The canonical tag comes from [`canonical_for_language`] (or the language
+/// table for already-canonical tags), so region-less tags still resolve.
+pub fn fallback_chain(tag: &str) -> ([&str; 4], usize) {
+    let lang_only = match tag.find('-') {
+        Some(i) => &tag[..i],
+        None => tag,
+    };
+    let canonical = match canonical_for_language(lang_only) {
+        Some(c) => c,
+        None => id_to_lang(lang_to_id(lang_only)),
+    };
+    let candidates = [tag, lang_only, canonical, "en-US"];
+
+    let mut buf: [&str; 4] = [""; 4];
+    let mut n = 0usize;
+    let mut i = 0usize;
+    while i < candidates.len() {
+        let c = candidates[i];
+        if !c.is_empty() && c != "unknown" && n < 4 && !buf[..n].contains(&c) {
+            buf[n] = c;
+            n += 1;
+        }
+        i += 1;
+    }
+    (buf, n)
 }
 
 /// Human-readable English name for a known language ID.
@@ -196,5 +264,59 @@ mod tests {
         assert_eq!(app_to_id("NXLOCALE"), 41);
         assert_eq!(app_to_id("neolocale"), 7);
         assert!(app_to_id("made-up") & 0x8000 != 0);
+    }
+
+    #[test]
+    fn known_app_ids_are_unique_and_low() {
+        // Keep in sync with the `match` in `app_to_id` (#583).
+        const KNOWN: &[&str] = &[
+            "neoshell", "neoinit", "corehelp", "coredir", "corecopy", "coretype",
+            "neolocale", "neokey", "neomem", "neotop", "kill", "ps", "label",
+            "fsck", "poweroff", "reboot", "datetime", "ver", "echo", "drives",
+            "pri", "cd", "colors", "progress", "vol", "corerd", "coremd",
+            "coreren", "coredel", "corecls", "tree", "dhcpd", "netcfg",
+            "ipconfig", "cpuinfo", "stresscmd", "cmdtest", "shtest", "nxlocale",
+            "nxres", "nxverify", "hostname", "keyb", "nslookup", "ping",
+            "dhcptest", "ntpd", "netd", "netapplier", "neocfg",
+        ];
+        let mut ids: Vec<u32> = KNOWN.iter().map(|a| app_to_id(a)).collect();
+        ids.sort_unstable();
+        let before = ids.len();
+        ids.dedup();
+        assert_eq!(before, ids.len(), "duplicate known app id");
+        for (app, id) in KNOWN.iter().zip(KNOWN.iter().map(|a| app_to_id(a))) {
+            assert!(id < 0x8000, "{app} id {id:#x} collides with the CRC range");
+        }
+    }
+
+    #[test]
+    fn app_id_is_case_insensitive_and_stable() {
+        assert_eq!(app_to_id("NeoCfg"), app_to_id("neocfg"));
+        assert_eq!(app_to_id("made-up"), app_to_id("MADE-UP"));
+    }
+
+    #[test]
+    fn known_langs_round_trip() {
+        for tag in ["en-US", "es-ES", "ca-ES", "fr-FR", "de-DE", "ja-JP", "ar-SA"] {
+            let id = lang_to_id(tag);
+            assert_eq!(id_to_lang(id), tag, "round-trip failed for {tag}");
+            assert!(!lang_name(id).is_empty());
+        }
+    }
+
+    #[test]
+    fn fallback_chain_negotiates_region_then_language_then_default() {
+        let (c, n) = fallback_chain("es-MX");
+        assert_eq!(&c[..n], &["es-MX", "es", "es-ES", "en-US"]);
+
+        let (c, n) = fallback_chain("en-US");
+        assert_eq!(&c[..n], &["en-US", "en"]);
+
+        let (c, n) = fallback_chain("ca");
+        assert_eq!(&c[..n], &["ca", "ca-ES", "en-US"]);
+
+        let (c, n) = fallback_chain("xx-YY");
+        // Unknown language with a region: unknown canonical is dropped.
+        assert_eq!(&c[..n], &["xx-YY", "xx", "en-US"]);
     }
 }

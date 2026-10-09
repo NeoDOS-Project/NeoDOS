@@ -4,6 +4,13 @@
 // This loader reads .nem files from the filesystem and loads them into kernel memory
 // using the v3 loader backend. All drivers must be NEM v3 format.
 
+pub mod driver;
+pub mod event;
+pub mod hst;
+pub mod net_bridge;
+pub mod runtime;
+pub mod v3loader;
+
 use alloc::vec::Vec;
 use crate::nem::NemDriverType;
 use crate::drivers::driver_runtime::{self, DriverId};
@@ -21,7 +28,7 @@ pub fn load_nem(path: &str) -> Result<DriverId, &'static str> {
     let data = read_file(path).map_err(|_| "Failed to read .nem file")?;
     
     // Load using v3 backend
-    let result = super::v3loader::load_nem_v3(&data)?;
+    let result = v3loader::load_nem_v3(&data)?;
     
     // Register in driver runtime
     let driver_name = core::str::from_utf8(&result.name)

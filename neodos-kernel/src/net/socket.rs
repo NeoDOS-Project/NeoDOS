@@ -189,23 +189,31 @@ pub fn socket_listen(id: u32) -> bool {
 }
 
 pub fn socket_connect(id: u32, remote: SocketAddrV4) -> bool {
-    let mut mgr = SOCKET_MANAGER.lock();
-    let socket = match mgr.get_socket_mut(id) {
-        Some(s) => s,
-        None => return false,
-    };
-    socket.remote = remote;
-    socket.direction = SocketDirection::Connecting;
-    if socket.socket_type == SocketType::Tcp {
-        if let Some(tcp_id) = socket.tcp_conn_id {
-            crate::net::tcp::tcp_connect(tcp_id, remote);
+    // Snapshot under lock, then act without holding SOCKET_MANAGER:
+    // tcp_connect() transmits the SYN, whose dispatch path takes this lock
+    // again (#486).
+    let tcp_id = {
+        let mut mgr = SOCKET_MANAGER.lock();
+        let socket = match mgr.get_socket_mut(id) {
+            Some(s) => s,
+            None => return false,
+        };
+        socket.remote = remote;
+        socket.direction = SocketDirection::Connecting;
+        if socket.socket_type != SocketType::Tcp {
+            return true;
         }
-    }
+        match socket.tcp_conn_id {
+            Some(tcp_id) => tcp_id,
+            None => return true,
+        }
+    };
+    crate::net::tcp::tcp_connect(tcp_id, remote);
     true
 }
 
 pub fn socket_send(id: u32, data: &[u8]) -> Result<usize, ()> {
-    let (local, remote) = {
+    let (local, remote, bound_nic) = {
         let mut mgr = SOCKET_MANAGER.lock();
         let socket = match mgr.get_socket_mut(id) {
             Some(s) => s,
@@ -220,11 +228,11 @@ pub fn socket_send(id: u32, data: &[u8]) -> Result<usize, ()> {
             }
             return Err(());
         }
-        (socket.local, socket.remote)
+        (socket.local, socket.remote, socket.nic_id)
     };
     // Drop SOCKET_MANAGER lock before transmitting to avoid lock inversion
     // with NIC_REGISTRY (incoming path locks NIC_REGISTRY then SOCKET_MANAGER).
-    socket_send_udp_raw(local, remote, data)
+    socket_send_udp_raw_on(local, remote, data, bound_nic)
 }
 
 pub fn socket_recv(id: u32, buf: &mut [u8]) -> Result<usize, ()> {
@@ -256,14 +264,23 @@ pub fn socket_recv(id: u32, buf: &mut [u8]) -> Result<usize, ()> {
 }
 
 pub fn socket_close(id: u32) {
+    // Snapshot under lock, then act unlocked: tcp_close() may transmit a
+    // FIN, whose send path must never run under SOCKET_MANAGER (#486).
+    // The direction is only flipped when the socket still exists below.
+    let tcp_id = {
+        let mgr = SOCKET_MANAGER.lock();
+        match mgr.get_socket(id) {
+            Some(s) if s.socket_type == SocketType::Tcp => s.tcp_conn_id,
+            Some(_) => None,
+            None => return,
+        }
+    };
+    if let Some(tcp_id) = tcp_id {
+        crate::net::tcp::tcp_close(tcp_id);
+    }
     let mut mgr = SOCKET_MANAGER.lock();
     if let Some(socket) = mgr.get_socket_mut(id) {
         socket.direction = SocketDirection::Closed;
-        if socket.socket_type == SocketType::Tcp {
-            if let Some(tcp_id) = socket.tcp_conn_id {
-                crate::net::tcp::tcp_close(tcp_id);
-            }
-        }
     }
 }
 
@@ -278,6 +295,24 @@ pub fn socket_get_type(id: u32) -> Option<SocketType> {
 pub fn socket_set_remote(id: u32, remote: SocketAddrV4) {
     if let Some(s) = SOCKET_MANAGER.lock().get_socket_mut(id) {
         s.remote = remote;
+    }
+}
+
+/// Pin a socket to a NIC for send-interface selection (#536 follow-up).
+/// Returns false when the socket does not exist or the NIC is not registered.
+pub fn socket_set_nic(id: u32, nic_id: u32) -> bool {
+    // Validate against registered NICs (loopback is not a registry NIC).
+    {
+        let mut reg = crate::net::nic::NIC_REGISTRY.lock();
+        if reg.get(nic_id).is_none() {
+            return false;
+        }
+    }
+    if let Some(s) = SOCKET_MANAGER.lock().get_socket_mut(id) {
+        s.nic_id = Some(nic_id);
+        true
+    } else {
+        false
     }
 }
 
@@ -315,7 +350,24 @@ pub fn socket_set_local(id: u32, local: SocketAddrV4) {
 /// Caller must NOT hold SOCKET_MANAGER lock (lock order: SOCKET_MANAGER → NIC_REGISTRY
 /// conflicts with incoming path NIC_REGISTRY → SOCKET_MANAGER).
 pub fn socket_send_udp_raw(local: SocketAddrV4, remote: SocketAddrV4, data: &[u8]) -> Result<usize, ()> {
-    let nic_id = nic_default_id().ok_or(())?;
+    socket_send_udp_raw_on(local, remote, data, None)
+}
+
+/// UDP send on an explicit NIC (#536 follow-up). `nic` overrides the default
+/// NIC for interface/MAC selection only; next-hop/ARP stay default-based
+/// (full bound-NIC routing is #317).
+pub fn socket_send_udp_raw_on(
+    local: SocketAddrV4,
+    remote: SocketAddrV4,
+    data: &[u8],
+    nic: Option<u32>,
+) -> Result<usize, ()> {
+    // Loopback (#484): 127.0.0.0/8 never touches a NIC or ARP, works with
+    // 0 NICs and leaves the default route untouched.
+    if remote.ip.is_loopback() {
+        return socket_send_udp_loopback(local, remote, data);
+    }
+    let nic_id = nic.or_else(nic_default_id).ok_or(())?;
 
     let src_mac = {
         let mut registry = NIC_REGISTRY.lock();
@@ -368,6 +420,39 @@ pub fn socket_send_udp_raw(local: SocketAddrV4, remote: SocketAddrV4, data: &[u8
     Ok(data.len())
 }
 
+/// Loopback UDP send path (#484): no NIC, no ARP, no gateway lookup.
+/// Builds the full Ethernet/IPv4/UDP frame with the synthetic loopback MAC
+/// and delivers it synchronously via `loopback_pump()`, so a back-to-back
+/// send+recv never observes `EAGAIN` for lack of scheduling.
+pub fn socket_send_udp_loopback(local: SocketAddrV4, remote: SocketAddrV4, data: &[u8]) -> Result<usize, ()> {
+    let mac = MacAddr::loopback();
+    // A loopback datagram must carry a loopback source (RFC 1122 §3.2.1.3).
+    let mut src_ip = local.ip;
+    if !src_ip.is_loopback() {
+        src_ip = Ipv4Addr::localhost();
+    }
+    let udp_data = crate::net::udp::build_udp_datagram(
+        src_ip.0, remote.ip.0,
+        local.port, remote.port,
+        data,
+    );
+    let ip_hdr = build_ipv4_header(src_ip, remote.ip, IPV4_PROTO_UDP, udp_data.len(), 0);
+    let ip_bytes = unsafe {
+        core::slice::from_raw_parts(
+            &ip_hdr as *const Ipv4Header as *const u8,
+            IPV4_HDR_MIN_LEN,
+        )
+    };
+    let mut ip_pkt = Vec::with_capacity(IPV4_HDR_MIN_LEN + udp_data.len());
+    ip_pkt.extend_from_slice(ip_bytes);
+    ip_pkt.extend_from_slice(&udp_data);
+
+    let frame = build_ethernet_frame(mac, mac, ETH_TYPE_IPV4, &ip_pkt);
+    crate::net::loopback::loopback_send(&frame)?;
+    crate::net::loopback::loopback_pump();
+    Ok(data.len())
+}
+
 /// Dispatch a received UDP datagram to a bound socket.
 pub fn udp_dispatch(_src_ip: Ipv4Addr, src_port: u16, dst_port: u16, data: &[u8]) {
     let mut mgr = SOCKET_MANAGER.lock();
@@ -399,36 +484,67 @@ pub fn udp_dispatch(_src_ip: Ipv4Addr, src_port: u16, dst_port: u16, data: &[u8]
 }
 
 /// Dispatch a received TCP segment to the matching connection.
+///
+/// Locking: the socket table is only held to LOCATE the socket. All protocol
+/// actions run through `tcp_*` helpers that take locks briefly themselves;
+/// holding SOCKET_MANAGER across them deadlocked SYN handling (#486), since
+/// the reply path locks it again.
 pub fn tcp_dispatch(src_ip: Ipv4Addr, dst_ip: Ipv4Addr, segment: &[u8]) {
+    use super::types::TcpState;
     let parsed = crate::net::tcp::parse_tcp_segment(segment);
-    let Some((src_port, dst_port, seq, ack, flags, _window, payload)) = parsed else { return };
-    let mut mgr = SOCKET_MANAGER.lock();
-    for i in 0..MAX_SOCKETS {
-        if i >= mgr.sockets.len() { break; }
-        let Some(ref mut socket) = mgr.sockets[i] else { continue };
-        if socket.socket_type == SocketType::Tcp
-            && socket.direction != SocketDirection::None
-            && socket.remote.port == src_port
-            && socket.local.port == dst_port
-        {
-            let tcp_id = match socket.tcp_conn_id {
-                Some(id) => id,
-                None => return,
+    let Some((src_port, dst_port, seq, ack, flags, window, payload)) = parsed else { return };
+    struct Hit {
+        idx: usize,
+        tcp_id: u32,
+    }
+    let hit = {
+        let mgr = SOCKET_MANAGER.lock();
+        let mut out = None;
+        for (i, slot) in mgr.sockets.iter().enumerate() {
+            let socket = match slot {
+                Some(s) => s,
+                None => continue,
             };
-            let conn = match crate::net::tcp::tcp_get_connection(tcp_id) {
-                Some(c) => c,
-                None => return,
-            };
-            if flags & crate::net::tcp::TCP_FLAG_SYN != 0 && conn.state == crate::net::types::TcpState::Listen {
-                crate::net::tcp::tcp_send_syn_ack(i, dst_port, src_port, seq, src_ip.0, dst_ip.0);
-            } else if flags & crate::net::tcp::TCP_FLAG_ACK != 0 && conn.state == crate::net::types::TcpState::SynSent {
-                crate::net::tcp::tcp_handle_ack(i, seq, ack);
-            } else if (flags & crate::net::tcp::TCP_FLAG_PSH != 0 || flags & crate::net::tcp::TCP_FLAG_ACK != 0)
-                && conn.state == crate::net::types::TcpState::Established
+            // Listening sockets wildcard the remote side (#486).
+            let remote_ok = socket.direction == SocketDirection::Listening
+                || socket.remote.port == src_port;
+            if socket.socket_type == SocketType::Tcp
+                && socket.direction != SocketDirection::None
+                && remote_ok
+                && socket.local.port == dst_port
             {
-                socket.recv_buf.extend_from_slice(payload);
+                match socket.tcp_conn_id {
+                    Some(tcp_id) => {
+                        out = Some(Hit { idx: i, tcp_id });
+                        break;
+                    }
+                    None => return,
+                }
             }
-            break;
+        }
+        out
+    };
+    let Some(hit) = hit else { return };
+    let state = crate::net::tcp::tcp_get_state(hit.tcp_id);
+    if flags & crate::net::tcp::TCP_FLAG_SYN != 0 && state == Some(TcpState::Listen) {
+        crate::net::tcp::tcp_send_syn_ack(hit.idx, dst_port, src_port, seq, src_ip.0, dst_ip.0);
+    } else {
+        if flags & crate::net::tcp::TCP_FLAG_ACK != 0 {
+            crate::net::tcp::tcp_handle_ack(hit.idx, seq, ack, window);
+        }
+        // Pure ACKs (no payload) must not trigger data ACKs: that would
+        // answer every ACK with another ACK.
+        if !payload.is_empty() && state == Some(TcpState::Established) {
+            crate::net::tcp::tcp_handle_data(
+                hit.tcp_id, seq, payload,
+                src_ip, dst_ip, src_port, dst_port,
+            );
+        }
+        if flags & crate::net::tcp::TCP_FLAG_FIN != 0 {
+            crate::net::tcp::tcp_handle_fin(
+                hit.tcp_id, seq,
+                src_ip, dst_ip, src_port, dst_port,
+            );
         }
     }
 }

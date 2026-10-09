@@ -697,6 +697,10 @@ fn load_file_mmap_page(virt: u64, region: &MmapRegion) -> bool {
             unsafe { core::slice::from_raw_parts_mut(phys_addr as *mut u8, bytes_to_read) };
 
         {
+            // Arch layer: `check-deps` forbids arch -> globals, and this path
+            // runs from the page-fault handler with interrupts already
+            // disabled, so a raw cache peek is safe here. The rest of the
+            // filesystem locks arch does not touch.
             let pc_lock = crate::globals::PAGE_CACHE.lock();
             if let Some(cached) = pc_lock.peek_inode(region.drive, region.inode, block_num as u32) {
                 let to_copy = bytes_to_read.min(4096);

@@ -1,5 +1,9 @@
 # Auditoría Arquitectónica: Componentes Candidatos a Repositorios Independientes
 
+> **Auditoría del producto SO (madurez, riesgos, docs vs código):** ver
+> [`system-audit-2026-10-07.md`](system-audit-2026-10-07.md) — documento canónico
+> oct-2026. Este archivo conserva solo el análisis de **separación de repositorios**.
+
 > **Versión del documento:** v1.0 (2026-07-18)
 > **Proyecto:** NeoDOS v0.50-dev
 > **Alcance:** Árbol completo del repositorio `neodos/`

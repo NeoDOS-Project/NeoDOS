@@ -71,7 +71,7 @@ Sin partición MSR ni Recovery.
 El límite de ~28 entradas por directorio **no viene del runtime**, sino del generador
 de imágenes:
 
-- **Runtime:** `neodos-kernel/src/fs/btree.rs` implementa un B-tree persistente con
+- **Runtime:** `neodos-kernel/src/fs/neofs/btree/` implementa un B-tree persistente con
   `NodeType::Internal`/`Leaf`, `split_node()` y `split_internal()`. Tests
   `btree_forced_split` y `btree_stress_insert_500` cubren el caso multi-hoja.
 - **Builder:** `neodev/src/image.rs::make_btree_leaf()` emite **una sola hoja** y hace
@@ -88,7 +88,7 @@ nodos internos y hojas encadenadas. **Es el prerrequisito bloqueante del redise�
 ```text
 C:\
 ├── NeoDOS\                              # ≈ C:\Windows
-│   ├── System32\                        # TODOS los .NXE de sistema
+│   ├── System\                        # TODOS los .NXE de sistema
 │   │   ├── config\                      # hives: SYSTEM.hiv (+ SOFTWARE/SAM/SECURITY/DEFAULT)
 │   │   ├── drivers\                     # .NEM SYSTEM
 │   │   │   └── BOOT\                    # .NEM boot-critical (ps2kbd, serial, rtc…)
@@ -115,13 +115,13 @@ C:\
 | NT | NeoDOS | Contenido |
 | --- | --- | --- |
 | `\Windows` | `\NeoDOS` | raíz del sistema |
-| `\Windows\System32` | `\NeoDOS\System32` | `.NXE` de sistema (hoy `Programs` + `System\Tools`) |
-| `\Windows\System32\config` | `\NeoDOS\System32\config` | hives del registro |
-| `\Windows\System32\drivers` | `\NeoDOS\System32\drivers` | drivers `.NEM` |
+| `\Windows\System32` | `\NeoDOS\System` | `.NXE` de sistema (hoy `Programs` + `System\Tools`) |
+| `\Windows\System32\config` | `\NeoDOS\System\config` | hives del registro |
+| `\Windows\System32\drivers` | `\NeoDOS\System\drivers` | drivers `.NEM` |
 | `\Windows\System32\*.dll` | `\NeoDOS\Libraries` | librerías `.NXL` |
-| `\Windows\Fonts` | `\NeoDOS\System32\Fonts` | fuentes |
-| `\Windows\INF` | `\NeoDOS\System32\INF` | metadatos de drivers |
-| `\Windows\Globalization` | `\NeoDOS\System32\Globalization` | localizaciones `.nlt` |
+| `\Windows\Fonts` | `\NeoDOS\System\Fonts` | fuentes |
+| `\Windows\INF` | `\NeoDOS\System\INF` | metadatos de drivers |
+| `\Windows\Globalization` | `\NeoDOS\System\Globalization` | localizaciones `.nlt` |
 | `\Program Files` | `\Program Files` | aplicaciones instaladas |
 | `\ProgramData` | `\ProgramData` | datos machine-wide |
 | `\Users\<u>\AppData` | `\Users\<u>\AppData` | perfil de usuario |
@@ -140,8 +140,8 @@ y `\Users` encaja con la seguridad SAM/SID/ACL ya existente.
 | --- | --- | --- |
 | Raíz del OS | `C:\NeoDOS` | Análogo a `\Windows`, identidad propia, sin choque con el namespace de objetos `\System`. |
 | Directorio de apps | `C:\Program Files\` (con espacio) | Fidelidad NT. **Requiere** quoting/`;` correctos en el shell y en el PATH. |
-| Hives | `\NeoDOS\System32\config\SYSTEM.hiv` | Equivale a `config\SYSTEM`. Valorar quitar la extensión para máxima fidelidad. |
-| Librerías | `\NeoDOS\Libraries\` separado de `System32` | Claridad; en NT las DLL viven en `System32`, pero aquí `.NXL` es una categoría propia. |
+| Hives | `\NeoDOS\System\config\SYSTEM.hiv` | Equivale a `config\SYSTEM`. Valorar quitar la extensión para máxima fidelidad. |
+| Librerías | `\NeoDOS\Libraries\` separado de `System` | Claridad; en NT las DLL viven en `System32`, pero aquí `.NXL` es una categoría propia. |
 | Datos de usuario | `\Users\<usuario>\AppData\{Local,Roaming}` | Alineado con SAM/SID. |
 | Particiones (futuro) | `ESP → MSR(16 MB) → NeoDOS → Recovery` | Orden NT. No urgente. |
 
@@ -154,13 +154,13 @@ exhaustivo:
 
 | Ruta | Consumidor |
 | --- | --- |
-| `C:\Programs\neoshell.nxe` | `neodos-kernel/src/main.rs`, `neodos-kernel/src/cm/init.rs`, libneodos |
-| `C:\Programs\neoinit.nxe` | `neodos-kernel/src/main.rs` |
+| `C:\Programs\neoshell.nxe` | `neodos-kernel/src/boot/mod.rs`, `neodos-kernel/src/cm/init.rs`, libneodos |
+| `C:\Programs\neoinit.nxe` | `neodos-kernel/src/boot/mod.rs` |
 | `C:\Programs` (PATH/recursos) | `userbin/neoshell/src/shell.rs`, `userbin/neoshell/src/completion.rs`, `userbin/corehelp/src/main.rs`, `libneodos/src/res.rs` |
 | `C:\System\Registry\*.hiv` | `neodos-kernel/src/cm/init.rs` |
-| `C:\System\Libraries\*.nxl` | `neodos-kernel/src/main.rs`, `libneodos/src/console.rs` |
+| `C:\System\Libraries\*.nxl` | `neodos-kernel/src/boot/mod.rs`, `libneodos/src/console.rs` |
 | `C:\System\Drivers\` | `docs/architecture/overview.md`, libneodos, boot_loader |
-| `C:\System\Keyboard\` | `neodos-kernel/src/main.rs` |
+| `C:\System\Keyboard\` | `neodos-kernel/src/boot/mod.rs` |
 | `C:\System\Locale\` | `libneodos/src/i18n.rs` |
 | `C:\System\Tools\dhcpd.nxe`, `netapplier.nxe` | `neodos-kernel` (servicios) |
 | `C:\Logs\WDT_*.dmp` | `neodos-kernel` |
@@ -188,7 +188,7 @@ ejecutable**, no en una ruta global.
 ### Fase 2 — Abstracción de raíz y PATH
 
 - Constante `ND_SYSTEM_ROOT` y eliminación de literales en kernel, `libneodos` y userbin.
-- `PATH` en el registro; default apuntando a `System32`, `System\Tools` retirado.
+- `PATH` en el registro; default apuntando a `System`, `System\Tools` retirado.
 - Asegurar quoting para `Program Files` (espacio) antes de escribir en esa ruta.
 - Independiente de la Fase 1; ambas desbloquean la Fase 3.
 

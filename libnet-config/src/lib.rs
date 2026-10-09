@@ -40,6 +40,22 @@ pub const VALUE_DHCP_BOUND: &str = "DHCPBound";
 pub const VALUE_DHCP_SERVER: &str = "DHCPServer";
 /// `LeaseTime` — lease duration in seconds.
 pub const VALUE_LEASE_TIME: &str = "LeaseTime";
+/// `LeaseObtained` — Unix seconds when the lease was granted (0 = unknown).
+pub const VALUE_LEASE_OBTAINED: &str = "LeaseObtained";
+/// `T1Renew` — renewal time (option 58) in seconds (0 = unset).
+pub const VALUE_T1_RENEW: &str = "T1Renew";
+/// `T2Rebind` — rebind time (option 59) in seconds (0 = unset).
+pub const VALUE_T2_REBIND: &str = "T2Rebind";
+/// `Domain` — connection-specific DNS suffix (option 15, REG_SZ).
+pub const VALUE_DOMAIN: &str = "Domain";
+/// `Broadcast` — subnet broadcast address (option 28, 0 = unset).
+pub const VALUE_BROADCAST: &str = "Broadcast";
+/// `NtpServer` — NTP servers (option 42, 0 = unset).
+pub const VALUE_NTP1: &str = "NtpServer";
+pub const VALUE_NTP2: &str = "NtpServer2";
+pub const VALUE_NTP3: &str = "NtpServer3";
+/// `MTU` — interface MTU (option 26, 0 = unset).
+pub const VALUE_MTU: &str = "MTU";
 
 /// `/24` (`255.255.255.0`), used when `SubnetMask` is absent or 0.
 ///
@@ -60,7 +76,24 @@ pub struct NetConfig {
     pub dhcp_bound: bool,
     pub dhcp_server: u32,
     pub lease_time: u32,
+    /// Unix seconds when the current lease was granted (0 = unknown).
+    pub lease_obtained: u32,
+    /// Renewal (T1, option 58) and rebind (T2, option 59) times in seconds
+    /// relative to `lease_obtained` (0 = server did not send; #316 defaults).
+    pub t1_renew: u32,
+    pub t2_rebind: u32,
+    /// Connection-specific DNS suffix (option 15), NUL-padded.
+    pub domain: [u8; 64],
+    /// Subnet broadcast address (option 28, 0 = unset).
+    pub broadcast: u32,
+    /// NTP servers (option 42, 0 = unset slot).
+    pub ntp: [u32; 3],
+    /// Interface MTU (option 26, 0 = unset).
+    pub mtu: u32,
 }
+
+/// Maximum bytes kept from the DHCP domain option (option 15).
+pub const DOMAIN_MAX: usize = 63;
 
 impl Default for NetConfig {
     fn default() -> Self {
@@ -73,6 +106,13 @@ impl Default for NetConfig {
             dhcp_bound: false,
             dhcp_server: 0,
             lease_time: 0,
+            lease_obtained: 0,
+            t1_renew: 0,
+            t2_rebind: 0,
+            domain: [0; 64],
+            broadcast: 0,
+            ntp: [0; 3],
+            mtu: 0,
         }
     }
 }
@@ -146,6 +186,50 @@ pub fn format_ip(ip: u32, buf: &mut [u8]) -> usize {
     pos
 }
 
+/// True when `ip` (big-endian u32) is in the APIPA range 169.254.0.0/16.
+/// Prefix length of a contiguous subnet mask (`None` if not contiguous).
+pub fn mask_to_prefix(mask: u32) -> Option<u8> {
+    let prefix = mask.leading_ones();
+    if prefix == 0 {
+        return if mask == 0 { Some(0) } else { None };
+    }
+    let expected = if prefix >= 32 { 0xFFFF_FFFF } else { !0u32 << (32 - prefix) };
+    if mask == expected { Some(prefix as u8) } else { None }
+}
+
+/// Seconds after `obtained` when the client must start unicast renewal (T1).
+/// Server T1 wins; RFC 2131 default is half the lease. Zero lease = infinite.
+pub fn renew_at(lease_time: u32, t1: u32) -> u64 {
+    if lease_time == 0 {
+        return u64::MAX;
+    }
+    if t1 != 0 {
+        return t1 as u64;
+    }
+    lease_time as u64 / 2
+}
+
+/// Seconds after `obtained` when the client must start broadcast rebind (T2).
+/// Server T2 wins; RFC 2131 default is 7/8 of the lease. Zero lease = infinite.
+pub fn rebind_at(lease_time: u32, t2: u32) -> u64 {
+    if lease_time == 0 {
+        return u64::MAX;
+    }
+    if t2 != 0 {
+        return t2 as u64;
+    }
+    lease_time as u64 * 7 / 8
+}
+
+/// Length of the NUL-terminated domain suffix in `domain`.
+pub fn domain_len(domain: &[u8; 64]) -> usize {
+    domain.iter().position(|&b| b == 0).unwrap_or(64)
+}
+
+pub fn is_apipa(ip: u32) -> bool {
+    ip & 0xFFFF_0000 == 0xA9FE_0000
+}
+
 /// Build the Registry path for interface `iface` into `buf` (no NUL).
 pub fn build_interface_path(iface: u32, buf: &mut [u8]) -> usize {
     let prefix = REG_NET_PREFIX.as_bytes();
@@ -177,8 +261,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parse_ip_valid_and_invalid() {
-        assert_eq!(parse_ip("10.0.1.1"), Some(0x0A00_0101));
+    fn parse_ip_valid_and_invalid() {        assert_eq!(parse_ip("10.0.1.1"), Some(0x0A00_0101));
         assert_eq!(parse_ip("255.255.255.0"), Some(0xFFFF_FF00));
         assert_eq!(parse_ip("0.0.0.0"), Some(0));
         assert_eq!(parse_ip("10.0.1"), None);
@@ -248,6 +331,45 @@ mod tests {
         assert_eq!(VALUE_DHCP_BOUND, "DHCPBound");
         assert_eq!(VALUE_DHCP_SERVER, "DHCPServer");
         assert_eq!(VALUE_LEASE_TIME, "LeaseTime");
+        assert_eq!(VALUE_LEASE_OBTAINED, "LeaseObtained");
+        assert_eq!(VALUE_T1_RENEW, "T1Renew");
+        assert_eq!(VALUE_T2_REBIND, "T2Rebind");
+        assert_eq!(VALUE_DOMAIN, "Domain");
+        assert_eq!(VALUE_BROADCAST, "Broadcast");
+        assert_eq!(VALUE_NTP1, "NtpServer");
+        assert_eq!(VALUE_MTU, "MTU");
+    }
+
+    #[test]
+    fn renewal_schedule_defaults() {
+        // 4000s lease like the VBox NAT server: T1 = 2000s, T2 = 3500s.
+        assert_eq!(renew_at(4000, 0), 2000);
+        assert_eq!(rebind_at(4000, 0), 3500);
+        // Explicit server T1/T2 win.
+        assert_eq!(renew_at(4000, 1800), 1800);
+        assert_eq!(rebind_at(4000, 3600), 3600);
+        // Zero lease = infinite: never renew.
+        assert_eq!(renew_at(0, 0), u64::MAX);
+        assert_eq!(rebind_at(0, 0), u64::MAX);
+    }
+
+    #[test]
+    fn mask_prefix_lengths() {
+        assert_eq!(mask_to_prefix(0xFFFF_FF00), Some(24));
+        assert_eq!(mask_to_prefix(0xFFFF_0000), Some(16));
+        assert_eq!(mask_to_prefix(0xFF00_0000), Some(8));
+        assert_eq!(mask_to_prefix(0xFFFF_FFFF), Some(32));
+        assert_eq!(mask_to_prefix(0), Some(0));
+        assert_eq!(mask_to_prefix(0xFF00_FF00), None);
+    }
+
+    #[test]
+    fn apipa_range_detection() {
+        assert!(is_apipa(0xA9FE_0101)); // 169.254.1.1
+        assert!(is_apipa(0xA9FE_FFFF));
+        assert!(!is_apipa(0x0A00_0105)); // 10.0.1.5
+        assert!(!is_apipa(0x7F00_0001)); // 127.0.0.1
+        assert!(!is_apipa(0));
     }
 
     #[test]

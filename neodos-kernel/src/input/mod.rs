@@ -1,5 +1,6 @@
 pub mod vt;
 pub mod manager;
+pub mod kbd;
 
 pub use vt::VtInputQueue;
 pub use manager::{init, active_vt, switch_vt, push_byte, pop_byte_from_vt, vt_active_occupancy_for};

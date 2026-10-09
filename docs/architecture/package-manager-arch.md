@@ -1,6 +1,6 @@
 # NeoDOS Package Manager — Architecture
 
-> **Document:** `docs/ARCHITECTURE_PACKAGE_MANAGER.md`
+> **Document:** `docs/architecture/package-manager-arch.md`
 > **Status:** Draft v1 — design complete, pending implementation
 > **Binary:** `neoget` — `userbin/neoget/`
 > **Library:** `libneopkg` — `libneopkg/` (new internal crate)
@@ -1170,7 +1170,7 @@ neoget verify --all --json
 | `libneopkg/src/recovery.rs` | Backup/restore for transactions |
 | `libneopkg/src/crypt.rs` | Ed25519 + CRC32 primitives |
 | `libneopkg/src/config.rs` | Default paths, keys |
-| `src/fs/neodos_dir.rs` | `MODE_DIR = 0x40`, `MODE_FILE = 0x80` kernel consts |
+| `src/fs/neofs/neodos_dir.rs` | `MODE_DIR = 0x40`, `MODE_FILE = 0x80` kernel consts |
 | `src/syscall/ob/` | CORE guard in `ob_destroy` |
 | `src/syscall/cm.rs` | CORE guard in `cm_delete_key` |
 

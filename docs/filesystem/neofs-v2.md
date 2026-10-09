@@ -53,14 +53,15 @@ Offset  Size  Campo            Descripción
 56      1     label_len        Longitud de la etiqueta del volumen (0-32)
 57      32    label            Etiqueta (hasta 32 caracteres UTF-8)
 89      4     flags            bit0=dirty, bit1=needs_fsck
-93      4     checksum_interval Frecuencia de verificación de checksums (0=desactivado)
-97      4     freelist_lba     LBA del primer nodo de freelist, 0 = usar bitmap implícito
-101     4     snapshot_count   Número de snapshots almacenados
-105     8     snapshot_table   LBA del nodo de tabla de snapshots
-113     399   reserved         0
+93      8     freelist_lba     LBA de la cabeza de la free list persistida (0 = recuperar al montar)
+101     8     snapshot_table_lba  LBA del nodo de tabla de snapshots (0 = vacía)
+109     403   reserved         checksum CRC32 del superblock en los primeros 4 bytes
 ```
 
 Total: 512 bytes.
+
+El checksum del superblock cubre los 512 bytes con el propio campo de
+checksum puesto a cero (así protege también `freelist_lba`).
 
 ### 2.3 B-tree Node (4KB)
 
@@ -121,17 +122,40 @@ Offset  Size  Campo            Descripción
 
 Caben ~340 regiones por nodo. Si se acaba el espacio, el nodo tiene `next_lba` al final (últimos 8 bytes del payload) apuntando a otro nodo freelist.
 
+La free list se persiste en disco **solo al formatear** (mkfs/imagen): una
+cadena de nodos tipo 3 con la cabeza en `freelist_lba`. En tiempo de ejecución
+la persistencia es **perezosa**: cada guardado (`save_sb`) **invalida** el
+puntero (`freelist_lba = 0`) en vez de reescribir la lista (evita ~4 KB de E/S
+por operación de metadatos), y los bloques de la cadena anterior se devuelven a
+la lista. Al montar, si `freelist_lba != 0` (volumen intacto) se carga y valida;
+si es 0, se **reconstruye** recorriendo el B-tree del directorio actual **y los
+árboles de todos los snapshots**, más el nodo de la tabla de snapshots y los
+bloques 0/1, marcando como libres los bloques no alcanzables. La reconstrucción
+es por tanto snapshot-aware y no libera bloques referenciados por un snapshot.
+
+Asignación **best-fit**: se elige la región libre más pequeña que quepa y se
+divide si es mayor de lo pedido. `free()` fusiona con las regiones adyacentes
+izquierda/derecha.
+
 ### 2.7 Node Type 4 — Snapshot Table
 
-Cada entrada = 16 bytes:
+Cada entrada = 24 bytes:
 
 ```text
 Offset  Size  Campo            Descripción
 0       8     root_btree_lba   Raíz del B-tree en ese snapshot
 8       8     timestamp        Cuándo se creó
+16      8     generation       Número de generación monótono (id estable)
 ```
 
-Caben ~255 entradas por nodo. Máximo 64 snapshots (anillo circular).
+Caben ~170 entradas por nodo. Máximo 64 snapshots (anillo circular). El `id` que
+usa la API es la **generación** (no se reutiliza al borrar/expulsar).
+
+La tabla **se persiste en disco** como un único nodo tipo 4: `save_sb` la
+serializa, guarda su LBA en `snapshot_table_lba` y libera el bloque anterior, de
+modo que los snapshots sobreviven a un remontaje/reinicio. La tabla vacía se
+representa con `snapshot_table_lba = 0` (no ocupa bloque). Al montar se carga si
+el puntero es distinto de cero.
 
 ---
 
@@ -168,6 +192,19 @@ path = "C:\DOCS\INFORME.TXT"
 ```
 
 **COW asegura consistencia:** Si el sistema se cae entre el paso 6 y 7, el superblock sigue apuntando a la raíz vieja. El archivo está intacto. No hay journal, no hay replay.
+
+**Reclamación COW:** los nodos B-tree y extents de datos reemplazados se
+registran como basura y se devuelven a la free list al guardar
+(`save_sb`). La reclamación solo ocurre con la tabla de snapshots vacía, ya que
+un snapshot puede seguir referenciando árboles/datos antiguos; con snapshots
+presentes la basura se retiene hasta `SNAPSHOT PURGE`. Los bloques 0 y 1 están
+reservados y nunca se reutilizan.
+
+**Enlace padre-hijo:** cuando cambia la raíz del B-tree de un directorio, su
+`DirEntry.extent_lba` se actualiza en el árbol del directorio padre (COW) y el
+cambio se propaga hacia arriba hasta la raíz (`propagate_dir_root`). Sin esto,
+un subdirectorio resolvería a una raíz obsoleta tras un remontaje y reclamar el
+bloque antiguo corrompería el FS.
 
 ### 3.3 Crear archivo
 
@@ -220,12 +257,23 @@ RD /F PROYECTO  (force: borra aunque tenga contenido)
 ```text
 SNAPSHOT CREATE
 1. Copiar (root_btree_lba, root_timestamp) a la snapshot table
-2. snapshot_count++ (circular, máximo 64)
+2. Asignar un número de generación monótono (id) — no se reutiliza
+3. Si ya hay 64, descartar el más viejo (circular)
 
 SNAPSHOT RESTORE N
 1. root_btree_lba = snapshot[N].root_btree_lba
 2. root_version++
 3. El FS ahora ve el árbol como estaba en el momento N
+
+SNAPSHOT DELETE N
+1. Eliminar el snapshot con generación N
+2. root_version++
+
+SNAPSHOT EXTRACT N <src> <dst>
+1. Resolver <src> en el árbol del snapshot N (root_btree_lba de N)
+2. Leer el fichero (inline o extents) — los bloques siguen vivos por COW
+3. Crear/escribir <dst> en el árbol actual
+4. No modifica el volumen: recuperación por fichero (estilo "Versiones anteriores")
 
 SNAPSHOT PURGE
 1. Vaciar snapshot table
@@ -246,6 +294,14 @@ accesibles. Solo PURGE libera espacio definitivamente.
 4. Verificar que freelist + used_blocks = total_blocks
 5. NO verificar checksums de datos (opcional con flag --deep)
 ```
+
+La comprobación es agnóstica al conjunto de archivos mediante el trait
+`FsckTrait` (`check()` / `repair()`) definido en `src/fs/fsck/`. NeoFS v2
+implementa el walker genérico de B-tree (`FsckIntegrity`) en `fsck/ne2.rs`;
+FAT32 implementa su propio analizador de cadenas FAT en `fsck/fat32.rs`.
+El VFS enruta `FileSystem::fsck()` hacia la implementación del volumen y el
+Object Manager lo expone a Ring 3 vía `ObInfoClass::FsckStatus` /
+`ObSetInfoClass::FsckRepair` (binario `fsck.nxe`).
 
 ---
 
@@ -289,8 +345,9 @@ impl NeoDosFsV2 {
 
 ```text
 RBX = fd (handle a la raíz del FS, ej: \Global\FileSystem\C:\)
-RCX = op: 0=CREATE, 1=RESTORE, 2=LIST, 3=PURGE
-RDX = buf (para LIST: buffer de salida; para RESTORE: snapshot_id u64)
+RCX = op: 0=CREATE, 1=RESTORE, 2=LIST, 3=PURGE, 4=DELETE, 5=EXTRACT
+RDX = buf (para LIST: buffer de salida; para RESTORE/DELETE: snapshot_id u64;
+           para EXTRACT: [id:u64][src_len:u32][dst_len:u32][src][dst])
 R8  = buf_size
 
 Returns:
@@ -298,6 +355,8 @@ Returns:
   RESTORE → 0 o error
   LIST → número de snapshots escritos en buf
   PURGE → 0 o error
+  DELETE → 0 o error
+  EXTRACT → bytes copiados o error
 
 Errors: -Inval, -NoEnt, -Io, -NoSys (si no es NeoFS)
 ```
@@ -369,6 +428,9 @@ neodos-kernel/src/
 | `neofs_v2_snapshot_restore` | Modificar, snapshot, modificar más, restaurar → datos del snapshot |
 | `neofs_v2_freelist_alloc_free` | Alocar bloque → usado. Liberar → libre |
 | `neofs_v2_freelist_merge_adjacent` | Liberar bloques adyacentes → una región |
+| `neofs_v2_freelist_survives_remount` | Free list persistida → remontar → misma lista y archivos |
+| `neofs_v2_freelist_recovers_without_persisted_list` | `freelist_lba=0` → reconstrucción desde el B-tree al montar |
+| `neofs_v2_freelist_multi_node_chain` | >340 regiones → cadena de varios nodos tipo 3 |
 | `neofs_v2_fsck_clean` | FS sin errores → fsck no reporta nada |
 | `neofs_v2_fsck_corrupt_btree` | Nodo B-tree corrupto → fsck lo detecta |
 | `neofs_v2_dir_10k_entries` | 10000 archivos en un directorio → DIR funciona |
@@ -380,10 +442,10 @@ neodos-kernel/src/
 
 ## 9. Plan de Implementación (por orden)
 
-1. `src/fs/btree.rs` — B-tree: insert, lookup, delete, walk, COW clone
-2. `src/fs/freelist.rs` — Free list: alloc, free, merge, save/load
-3. `src/fs/snapshot.rs` — Snapshot table: create, list, restore, purge
-4. `src/fs/neodos_v2.rs` — FileSystem trait impl con B-tree + extents + COW
+1. `src/fs/neofs/btree/` — B-tree: insert, lookup, delete, walk, COW clone
+2. `src/fs/neofs/freelist.rs` — Free list: alloc, free, merge, save/load
+3. `src/fs/neofs/snapshot.rs` — Snapshot table: create, list, restore, purge
+4. `src/fs/neofs/neodos_v2.rs` — FileSystem trait impl con B-tree + extents + COW
 5. `src/fs/fsck.rs` — Scrub de B-tree + checksums
 6. `src/syscall/ob/` — handler_ob_snapshot (RAX 48)
 7. Tests

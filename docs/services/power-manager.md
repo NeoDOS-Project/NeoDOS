@@ -32,8 +32,8 @@
 | ----------- | -------- |
 | `poweroff()` ✅ | QEMU debug ports + PS/2 reset. Also available via PowerManager Ob object. |
 | `reboot()` ✅ | `outb(0xCF9, 0x06)` + PS/2 reset. Available via PowerManager Ob object. |
-| `acpi_fadt()` ✅ | `src/power/acpi.rs` — RSDP→RSDT/XSDT→FADT parse. PM1a/b control block, S5 sleep type, reset register. |
-| `acpi_s5_write()` ✅ | `src/power/acpi.rs` — writes SLP_TYPa + SLP_EN to PM1a control register. |
+| `acpi_fadt()` ✅ | `src/services/power/acpi.rs` — RSDP→RSDT/XSDT→FADT parse. PM1a/b control block, S5 sleep type, reset register. |
+| `acpi_s5_write()` ✅ | `src/services/power/acpi.rs` — writes SLP_TYPa + SLP_EN to PM1a control register. |
 
 #### Object Manager
 
@@ -133,7 +133,7 @@ El Power Manager debe ser un **subsistema del kernel**, no un servicio Ring 3, p
                                 │ internal calls
                      ┌──────────▼───────────────┐
                      │  Power Manager (kernel)   │
-                     │  src/power/               │
+                     │  src/services/power/               │
                      │  ─────────────────────    │
                      │  PowerManager struct      │
                      │  ActivePlan               │
@@ -164,7 +164,7 @@ PowerManager = 21,  // Power Manager singleton object
 
 The singleton lives at `\System\PowerManager` in the Ob namespace, created at boot (Phase 3.883, after Service Manager).
 
-#### `src/power/mod.rs` — new module
+#### `src/services/power/mod.rs` — new module
 
 ```rust
 pub struct PowerManager {
@@ -281,11 +281,11 @@ These extend the existing class tables in `src/syscall/ob/`.
 
 | Path | Responsibility |
 | ------ | ---------------- |
-| `src/power/mod.rs` | `PowerManager` struct, `POWER_MANAGER` global, initialization |
-| `src/power/plan.rs` | `PowerPlan`, `PowerPolicies`, serialization/deserialization to/from Registry |
-| `src/power/coordinator.rs` | Shutdown/reboot coordination: notify services, drivers, flush, halt |
-| `src/power/acpi.rs` | ACPI FADT parsing, PM1a S5 write, reset register support |
-| `src/power/event.rs` | Event handlers for `EVENT_POWER_BUTTON`, `EVENT_LID_CLOSE`, etc. |
+| `src/services/power/mod.rs` | `PowerManager` struct, `POWER_MANAGER` global, initialization |
+| `src/services/power/plan.rs` | `PowerPlan`, `PowerPolicies`, serialization/deserialization to/from Registry |
+| `src/services/power/coordinator.rs` | Shutdown/reboot coordination: notify services, drivers, flush, halt |
+| `src/services/power/acpi.rs` | ACPI FADT parsing, PM1a S5 write, reset register support |
+| `src/services/power/event.rs` | Event handlers for `EVENT_POWER_BUTTON`, `EVENT_LID_CLOSE`, etc. |
 
 ### 3.6 Changes to existing files
 
@@ -298,7 +298,7 @@ These extend the existing class tables in `src/syscall/ob/`.
 | `src/syscall/mod.rs` | Update `MAX_VALID` and `ASSIGNED` arrays |
 | `src/syscall/ob/` | Add dispatch for new info classes 32–34 and 37–42 in Power Manager handle |
 | `src/eventbus/mod.rs` | Add new event types 19–26 |
-| `src/abi_freeze.rs` | Update frozen checks for new event types |
+| `src/infra/abi_freeze.rs` | Update frozen checks for new event types |
 | `main.rs` | Add PHASE 3.883 for Power Manager init (after Service Manager) |
 | `libneodos/src/syscall.rs` | Add `sys_reboot()`, `power_get_active_plan()`, `power_set_active_plan()`, `power_shutdown()` wrappers |
 | `userbin/neoshell/` | Add built-in `REBOOT`, update `POWEROFF` to use Power Manager |
@@ -613,16 +613,16 @@ pub extern "C" fn poweroff() -> !;  // Updated to try ACPI S5 first
 
 ### Step 2: Power Manager core (3 days)
 
-**Files:** `src/power/mod.rs`, `src/power/plan.rs`, `src/power/coordinator.rs`, `src/power/acpi.rs`
+**Files:** `src/services/power/mod.rs`, `src/services/power/plan.rs`, `src/services/power/coordinator.rs`, `src/services/power/acpi.rs`
 
-1. `src/power/acpi.rs`: wrap `acpi_parse_fadt()`, store `AcpiPowerState`
-2. `src/power/plan.rs`: `PowerPlan`, `PowerPolicies`, `PowerPlanName` enums
+1. `src/services/power/acpi.rs`: wrap `acpi_parse_fadt()`, store `AcpiPowerState`
+2. `src/services/power/plan.rs`: `PowerPlan`, `PowerPolicies`, `PowerPlanName` enums
    - `load_from_registry(index)`: read `\Registry\Machine\System\Power\Plans\<Name>\*`
    - `save_to_registry(index)`: write plan policies back to Registry
-3. `src/power/mod.rs`: `PowerManager` struct with `POWER_MANAGER` global
+3. `src/services/power/mod.rs`: `PowerManager` struct with `POWER_MANAGER` global
    - `init()`: parse ACPI, load active plan from Registry, create Ob object
    - `get_active_plan()`, `set_active_plan()`, `set_policy()`
-4. `src/power/coordinator.rs`: `shutdown()`, `reboot()` coordination logic
+4. `src/services/power/coordinator.rs`: `shutdown()`, `reboot()` coordination logic
 
 ### Step 3: ObType and namespace (0.5 day)
 
@@ -647,7 +647,7 @@ pub extern "C" fn poweroff() -> !;  // Updated to try ACPI S5 first
 
 ### Step 5: Event Bus + ABI freeze (0.5 day)
 
-**Files:** `src/eventbus/mod.rs`, `src/abi_freeze.rs`
+**Files:** `src/eventbus/mod.rs`, `src/infra/abi_freeze.rs`
 
 1. Add event types 19–26 to `eventbus/mod.rs`
 2. Update frozen type checks in `abi_freeze.rs`: verify new types not in 0–15 range
@@ -687,7 +687,7 @@ pub extern "C" fn poweroff() -> !;  // Updated to try ACPI S5 first
 
 ### Step 10: Tests (2 days)
 
-**Files:** `src/power/mod.rs` (add `#[test_case]` blocks)
+**Files:** `src/services/power/mod.rs` (add `#[test_case]` blocks)
 
 1. Implement tests from Section 7
 2. Add QEMU-based integration test for actual reboot/shutdown (manual test)
@@ -708,7 +708,7 @@ pub extern "C" fn poweroff() -> !;  // Updated to try ACPI S5 first
 ## Integration with existing invariants
 
 1. **No automatic builds.** All changes compilable with `cargo build` in `neodos-kernel/`.
-2. **Tests before commit.** All 754 existing tests must pass + new power tests.
+2. **Tests before commit.** All 825 existing tests must pass + new power tests.
 3. **No new Ring 0 shell commands.** Power commands (POWEROFF, REBOOT) remain built-in in neoshell, using public API.
 4. **RAX ≥ 77 → sys_ob_*.** Power operations use existing `ob_set_info`/`ob_query_info` with new info classes. No new RAX needed beyond existing 60–66.
 5. **Code is truth.** Update docs when architecture changes.

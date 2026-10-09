@@ -55,6 +55,12 @@ pub fn ob_socket_bind(fd: u8, ip: [u8; 4], port: u16) -> Result<(), i64> {
     sys_ob_set_info(fd, ObSetInfoClass::SocketBind, &buf)
 }
 
+/// ob_socket_bind_nic: pin a socket to a NIC for send-interface selection
+/// via ob_set_info(SocketBindNic = 29). Payload is the u32 LE nic id.
+pub fn ob_socket_bind_nic(fd: u8, nic_id: u32) -> Result<(), i64> {
+    sys_ob_set_info(fd, ObSetInfoClass::SocketBindNic, &nic_id.to_le_bytes())
+}
+
 /// ob_socket_listen: start listening via ob_set_info(SocketListen).
 pub fn ob_socket_listen(fd: u8) -> Result<(), i64> {
     sys_ob_set_info(fd, ObSetInfoClass::SocketListen, &[])

@@ -8,10 +8,15 @@ impl Scheduler {
         let mut found = false;
         for k in self.kthreads.iter_mut().flatten() {
             if k.pid == pid {
+                let old_prio = k.priority;
                 k.priority = priority;
                 let idx = priority as usize;
                 k.time_slice_remaining = TIME_SLICES[idx];
                 k.ticks_since_scheduled = 0;
+                if k.state == ThreadState::Ready && old_prio != priority {
+                    Self::remove_from_run_queue(k);
+                    Self::enqueue_to_cpu_run_queue(k);
+                }
                 found = true;
             }
         }
@@ -33,8 +38,10 @@ impl Scheduler {
             if !k.is_idle && k.state == ThreadState::Ready {
                 k.ticks_since_scheduled = k.ticks_since_scheduled.saturating_add(AGING_INTERVAL_TICKS);
                 if k.ticks_since_scheduled >= MAX_STARVATION_TICKS && k.priority > PRIORITY_HIGH {
+                    Self::remove_from_run_queue(k);
                     k.priority -= 1;
                     k.ticks_since_scheduled = 0;
+                    Self::enqueue_to_cpu_run_queue(k);
                 }
             }
         }

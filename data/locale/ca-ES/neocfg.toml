@@ -1,0 +1,63 @@
+[meta]
+app = "neocfg"
+language = "ca-ES"
+
+[ids]
+NEOCFG_TITLE = 1001
+NEOCFG_EXIT = 1002
+NEOCFG_BACK = 1003
+NEOCFG_SELECT_HINT = 1004
+MODULE_SYSTEM_NAME = 1005
+MODULE_SYSTEM_DESC = 1006
+MODULE_POWER_NAME = 1007
+MODULE_POWER_DESC = 1008
+MODULE_LOCALE_NAME = 1009
+MODULE_LOCALE_DESC = 1010
+MODULE_KEYBOARD_NAME = 1011
+MODULE_KEYBOARD_DESC = 1012
+MODULE_ABOUT_NAME = 1013
+MODULE_ABOUT_DESC = 1014
+MODULE_PENDING = 1015
+POWER_NOT_AVAILABLE = 1016
+LOCALE_NOT_AVAILABLE = 1017
+PRESS_KEY = 1018
+NEOCFG_YES = 1019
+NEOCFG_NO = 1020
+ABOUT_TITLE = 1021
+ABOUT_NEODOS = 1022
+ABOUT_ABI = 1023
+ABOUT_ARCH = 1024
+ABOUT_NEOFS = 1025
+ABOUT_LIBNEODOS = 1026
+ABOUT_BUILD = 1027
+ABOUT_UNAVAILABLE = 1028
+
+[strings]
+NEOCFG_TITLE = "NeoCfg - Panell de Control"
+NEOCFG_EXIT = "Sortir"
+NEOCFG_BACK = "Tornar"
+NEOCFG_SELECT_HINT = "Seleccioneu una opcio (1-5), Q per sortir"
+MODULE_SYSTEM_NAME = "Sistema"
+MODULE_SYSTEM_DESC = "Veure informacio del sistema"
+MODULE_POWER_NAME = "Energia"
+MODULE_POWER_DESC = "Gestionar plans d'energia"
+MODULE_LOCALE_NAME = "Idioma"
+MODULE_LOCALE_DESC = "Configurar l'idioma del sistema"
+MODULE_KEYBOARD_NAME = "Teclat"
+MODULE_KEYBOARD_DESC = "Canviar la distribucio del teclat"
+MODULE_ABOUT_NAME = "Quant a"
+MODULE_ABOUT_DESC = "Informacio de versio del sistema"
+MODULE_PENDING = "Aquest modul encara no esta implementat."
+POWER_NOT_AVAILABLE = "El Gestor d'Energia no esta disponible en aquest sistema."
+LOCALE_NOT_AVAILABLE = "La internacionalitzacio no esta disponible en aquest sistema."
+PRESS_KEY = "Premeu una tecla per tornar..."
+NEOCFG_YES = "Si"
+NEOCFG_NO = "No"
+ABOUT_TITLE = "Quant a NeoDOS"
+ABOUT_NEODOS = "Versio"
+ABOUT_ABI = "ABI de syscalls"
+ABOUT_ARCH = "Arquitectura"
+ABOUT_NEOFS = "Sistema de fitxers"
+ABOUT_LIBNEODOS = "ABI de libneodos"
+ABOUT_BUILD = "Data de compilacio"
+ABOUT_UNAVAILABLE = "La informacio de versio no esta disponible."

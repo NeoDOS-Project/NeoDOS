@@ -2,7 +2,7 @@
 
 ## TCP/IP Stack
 
-Directory: `src/net/` (12 files, ~2500 lines). Modular protocol stack with socket abstraction, NIC drivers, and ARP cache.
+Directory: `src/net/` (13 files, ~2700 lines). Modular protocol stack with socket abstraction, NIC drivers, and ARP cache.
 
 ### Module Overview
 
@@ -16,9 +16,10 @@ Directory: `src/net/` (12 files, ~2500 lines). Modular protocol stack with socke
 | `udp.rs` | ~150 | UDP header (8 bytes), pseudo-header checksum, `build_udp_datagram()` |
 | `tcp.rs` | ~800 | TCP state machine (11 states), connection lifecycle, send/recv buffers (16 KB sliding window), segment building |
 | `socket.rs` | ~700 | `SocketManager`, bind/connect/listen/send/recv/close, KWait wake, `udp_dispatch()`, `tcp_dispatch()` |
-| `nic.rs` | ~210 | `NetworkInterface` trait (9 methods), `NicRegistry` (4 slots), IP/next-hop/gateway, vendor/device/description per NIC. NICs registered via NEM bridge |
+| `nic.rs` | ~240 | `NetworkInterface` trait (9 methods), `NicRegistry` (4 slots), IP/next-hop/gateway, `Route` local-routing decision, vendor/device/description per NIC. NICs registered via NEM bridge |
+| `loopback.rs` | ~120 | Loopback interface (127.0.0.0/8, #484): TX queue, `LoopbackInterface`, `loopback_send/pump`, `\Device\Loopback` |
 | `net_bridge.rs` | ~100 | NEM network bridge: `hst_register_network_device`, wraps NEM callbacks as `NetworkInterface` |
-| `counters.rs` | ~45 | Per-protocol packet/byte counters (RX/TX, ARP, ICMP), periodic dump every 1000 ticks |
+| `counters.rs` | ~150 | Global + per-interface counters (RX/TX packets/bytes/errors per NIC slot + loopback), exposed via `NetStats` (28); periodic dump every 1000 ticks |
 | `tests.rs` | ~300 | 18+ integration tests |
 
 ### TCP State Machine
@@ -42,6 +43,16 @@ pub enum TcpState {
 ```
 
 Connection lifecycle: `build_tcp_segment()`, `send_tcp_segment()`, `tcp_send_syn_ack()`, `tcp_handle_ack()`. Send/recv buffers use a 16 KB sliding window.
+
+Data path (#486): `tcp_send()` buffers; `tcp_tick()` (from `net_tick`) flushes
+up to MSS per connection, tracks `send_base`/`send_next`, advances the window
+on ACKs, retransmits on a 200 ms TSC-based RTO (8 retries max), and drives
+FIN (`fin_pending` when closing with unsent data). Incoming data is stored in
+the connection buffer, ACKed, and wakes `SocketRead` waiters; incoming FINs
+park in CloseWait. `tcp_dispatch()` never holds `SOCKET_MANAGER` across
+protocol actions (nested locks deadlocked SYN handling). Covered by the
+`net_tcp_loopback_e2e` test (handshake + both directions + orderly close over
+loopback, no NIC). Off-subnet TCP still limited by next-hop/MAC scope (#315).
 
 ## ObType Integration
 
@@ -114,6 +125,25 @@ NIC (e1000)
                     -> KWait wake for SocketRead
 ```
 
+## Loopback (127.0.0.0/8, #484)
+
+Virtual interface **outside** `NicRegistry` (registering it would change
+`default_nic_id()` and consume a NIC slot). Frames to 127/8 are queued in
+`loopback.rs` and drained through the single dispatch path
+`net_handle_incoming_packet()`, both from `network_poll_all()` and
+synchronously on the send path (so back-to-back send+recv never sees `EAGAIN`).
+
+Rules: no NIC required (works with 0 NICs), no ARP, no gateway lookup, no new
+syscalls (sockets keep using `ObType::Socket`), `\Device\Loopback` in the Ob
+namespace. Synthetic MAC `02:00:00:00:00:01` (`MacAddr::loopback()`), never on
+the wire. `nic_route()` classifies destinations as
+`Route::{Loopback, OnLink, ViaGateway, Unreachable}`. `ping 127.0.0.1` answers
+through the real ICMP dispatch (request → echo reply → notify); RAX 36 reports
+a nominal 1 µs since 0 means failure. The interface is also enumerated by the
+`NicInfo` query (sentinel `nic_id`, read-only) and shown by `ipconfig` as the
+Loopback adapter. Validated in VirtualBox: 5 kernel tests
+(`net_loopback_*`) green plus a Ring-3 `ping 127.0.0.1` check in `cmdtest.nxe`.
+
 ## NIC Initialization (Phase 3.88)
 
 1. Create `\Device\Tcp` and `\Device\Udp` namespace entries in Ob
@@ -126,13 +156,16 @@ NIC (e1000)
 ### Link state (`is_link_up`)
 
 NIC drivers run as NEM modules (`drivers/e1000`). The kernel NEM bridge
-(`src/drivers/nem/net_bridge.rs`) registers a bootstrap `NetworkInterface` at
+(`src/drivers/nem/loader/net_bridge.rs`) registers a bootstrap `NetworkInterface` at
 driver-load time, so it cannot call back into a driver that is still loading.
 Instead:
 
 - The e1000 driver exports `driver_link_up()`, which reads `STATUS.LU`
   (with a link-ready flag cached during `init_e1000_hw`) and publishes the
-  state through `hst_set_network_link_state`.
+  state through `hst_set_network_link_state`. Since the NEM bridge has no
+  link-query slot, the driver also re-publishes from its RX `poll` entry
+  (throttled: 1 MMIO read per 512 polls, #529); unload publishes down via
+  `driver_fini`.
 - The Ring-0 `netpump` kernel thread calls `nic::nic_poll_link_state()` once per `network_poll_all()` and
   stores the result in `NicSlot::link_up`; the `NicInfo` query and the
   `netapplier` link-up edge detection read that cached value.
@@ -141,7 +174,7 @@ Instead:
 The e1000 is polled, not interrupt-driven: RX is drained by `network_poll_all()`
 from the Ring-0 `netpump` worker and from the `sys_yield` syscall path. (`netd`
 is now the Ring 3 network service — see `userland.md` — not the RX pump.)
-#339 established that this
+Issue #339 established that this
 polling (not driver link/ring bring-up) is the relevant variable for the first
 DHCP `DISCOVER`.
 
@@ -174,7 +207,8 @@ dhcpd.nxe (Ring 3 user service)
   │   └─ On ACK: publish IP/mask/gw/DNS to the Registry
   │              (the netapplier service applies it to the NIC)
   │
-  ├─ Manages lease renewal at 50% of lease time
+  ├─ Supervises the lease (#316): unicast renew at server T1 (default 50%),
+  │            broadcast rebind at server T2 (default 87.5%), DORA restart on NAK/expiry
   ├─ Falls back to APIPA (169.254.1.1) if DHCP fails
   └─ Publishes IP configuration to the Registry (never applies it directly)
 
@@ -323,7 +357,7 @@ Useful when the guest needs direct network access (e.g., DHCP from a real LAN se
 | socket.rs | `src/net/socket.rs` |
 | nic.rs | `src/net/nic.rs` |
 | e1000 | `drivers/e1000/` (NEM) |
-| tests.rs | `src/net/tests.rs` |
+| tests/ | `src/net/tests/` |
 
 User-mode DHCP service: `userbin/dhcpd/src/main.rs`
 
@@ -372,6 +406,6 @@ When a packet needs to be sent to an IP address (e.g., ICMP ping), the ARP resol
 
 ## Tests
 
-17+ tests in `src/net/tests.rs` covering: MAC address formatting, IPv4 header checksum, ARP cache operations, TCP state machine transitions, TCP full lifecycle (listen -> connect -> established -> close), ICMP echo request/reply, socket creation/lookup/bind/connect, UDP header construction, NIC registry add/remove.
+17+ tests in `src/net/tests/` covering: MAC address formatting, IPv4 header checksum, ARP cache operations, TCP state machine transitions, TCP full lifecycle (listen -> connect -> established -> close), ICMP echo request/reply, socket creation/lookup/bind/connect, UDP header construction, NIC registry add/remove.
 
 Kernel DHCP tests removed (DHCP is now a userspace service).

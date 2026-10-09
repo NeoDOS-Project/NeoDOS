@@ -213,8 +213,15 @@ impl Scheduler {
 /// The `SCHEDULER` lock is released before this returns.
 pub fn kernel_snapshot_into(out: &mut ProcSnapshot) {
     let s = crate::scheduler::current_scheduler();
-    let lock = s.lock();
-    lock.snapshot_into(out);
+    // The per-CPU timer IRQ handler (`timer_handler_inner`) takes this same
+    // SCHEDULER lock. Acquiring it with interrupts enabled self-deadlocks the
+    // CPU on the non-reentrant spin::Mutex: the timer handler then spins on a
+    // lock its own CPU already holds. Mask interrupts for the duration the lock
+    // is held (the snapshot is a short, one-shot read).
+    crate::hal::without_interrupts(|| {
+        let lock = s.lock();
+        lock.snapshot_into(out);
+    });
 }
 
 fn state_name(s: ThreadState) -> &'static str {

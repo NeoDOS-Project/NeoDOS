@@ -70,7 +70,7 @@
 
 - **B4 — GDT no forzado a `.data` (`src/arch/x64/gdt.rs:9-22`):** solo `TSS:17` está en `.data`. `GDT:22` `lazy_static` puede ir a `.rodata` bajo LTO. Recomendado `#[link_section=".data"]` también para GDT. Misma clase que bug TSS previo.
 
-- **B5 — Detección slab por magic en `dealloc` (`src/slab.rs:413-416`):** `page_base = ptr & !0xFFF; magic == 0x534C4142` decide si `ptr` es slab. El heap `linked_list_allocator` en `[0x2400000,0x3400000)` puede tener header cuyo `u32` coincida casualmente → `dealloc` interpreta heap ptr como slab y corrompe `free_list`.
+- **B5 — Detección slab por magic en `dealloc` (`src/memory/slab.rs:413-416`):** `page_base = ptr & !0xFFF; magic == 0x534C4142` decide si `ptr` es slab. El heap `linked_list_allocator` en `[0x2400000,0x3400000)` puede tener header cuyo `u32` coincida casualmente → `dealloc` interpreta heap ptr como slab y corrompe `free_list`.
 
 - **B6 — Sin guard page en `AlignedKStack` (`src/scheduler/mod.rs:43-57`):** canary solo en `base`. Overflow progresivo sobrescribe `RIP/CS` antes del canary. Falta `PAGE_FLAGS` `NO_PRESENT`.
 
@@ -432,7 +432,7 @@ src/hal/x64/irql.rs
 src/hal/raw/cpu.rs
 src/hal/x64/mem.rs
 src/memory/mod.rs
-src/slab.rs
+src/memory/slab.rs
 src/main.rs
 src/syscall/mod.rs
 neodos-kernel/kernel.ld

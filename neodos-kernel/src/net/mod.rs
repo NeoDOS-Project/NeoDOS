@@ -9,6 +9,7 @@ pub mod socket;
 pub mod nic;
 pub mod dns;
 pub mod counters;
+pub mod loopback;
 mod tests;
 
 use crate::log::LogSubsys;
@@ -40,6 +41,9 @@ pub fn init_networking() {
     }
 
     crate::object::namespace::ob_create_directory("\\Device\\Nic").unwrap_or(());
+
+    // Loopback (#484): virtual interface outside NicRegistry.
+    loopback::init_loopback();
 
     // NICs are registered by NEM drivers (e.g. e1000.nem) via hst_register_network_device
     let nic_count = crate::net::nic::nic_count();
@@ -127,6 +131,7 @@ pub fn net_tick() {
     network_poll_all();
     arp::arp_tick();
     dns::dns_tick();
+    tcp::tcp_tick();
 
     let t = TICK_COUNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
     // Heartbeat every ~100 ticks: proves netd is actually scheduled and running.
@@ -138,8 +143,17 @@ pub fn net_tick() {
     }
 }
 
-pub fn net_handle_incoming_packet(_nic_id: u32, nic: &mut dyn crate::net::nic::NetworkInterface, packet: &[u8]) {
-    if packet.len() < crate::net::ethernet::ETH_HDR_LEN { return; }
+pub fn net_handle_incoming_packet(nic_id: u32, nic: &mut dyn crate::net::nic::NetworkInterface, packet: &[u8]) {
+    let slot = crate::net::counters::stats_slot_for_nic(nic_id);
+    if packet.len() < crate::net::ethernet::ETH_HDR_LEN {
+        if let Some(slot) = slot {
+            crate::net::counters::note_rx_err(slot);
+        }
+        return;
+    }
+    if let Some(slot) = slot {
+        crate::net::counters::note_rx(slot, packet.len());
+    }
 
     let eth_hdr: &crate::net::ethernet::EthernetHeader = unsafe {
         &*(packet.as_ptr() as *const crate::net::ethernet::EthernetHeader)
@@ -319,6 +333,9 @@ pub fn network_poll_all() {
         }
     });
     drop(registry);
+    // Drain loopback outside the NIC_REGISTRY lock: replies re-enter through
+    // LoopbackInterface::send_packet and must not deadlock (#484).
+    loopback::loopback_pump();
     crate::scheduler::preempt_enable();
 }
 

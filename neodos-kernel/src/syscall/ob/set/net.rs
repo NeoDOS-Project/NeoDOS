@@ -12,6 +12,7 @@ pub(super) fn handles(info_class: u32) -> bool {
         || info_class == ObSetInfoClass::SocketClose as u32
         || info_class == ObSetInfoClass::SetNicIp as u32
         || info_class == ObSetInfoClass::SetNicGateway as u32
+        || info_class == ObSetInfoClass::SocketBindNic as u32
         || info_class == ObSetInfoClass::SetHostname as u32
 }
 
@@ -65,6 +66,24 @@ pub(super) fn dispatch(
             );
             if crate::net::socket::socket_bind(socket_id, local) { 0 }
             else { err_to_u64(SyscallError::Inval) }
+        }
+        _ if info_class == ObSetInfoClass::SocketBindNic as u32 => {
+            if buf_size < 4 { return err_to_u64(SyscallError::Inval); }
+            if entry.object_id == 0 { return err_to_u64(SyscallError::BadF); }
+            let obj = match crate::object::ob_lookup(entry.object_id) {
+                Some(o) => o,
+                None => return err_to_u64(SyscallError::BadF),
+            };
+            if obj.obj_type != crate::object::ObType::Socket {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let socket_id = obj.native_id as u32;
+            let nic_id = u32::from_le_bytes(unsafe {
+                [*(buf_ptr as *const u8), *((buf_ptr + 1) as *const u8),
+                 *((buf_ptr + 2) as *const u8), *((buf_ptr + 3) as *const u8)]
+            });
+            if crate::net::socket::socket_set_nic(socket_id, nic_id) { 0 }
+            else { err_to_u64(SyscallError::NoEnt) }
         }
         _ if info_class == ObSetInfoClass::SocketListen as u32 => {
             if entry.object_id == 0 { return err_to_u64(SyscallError::BadF); }

@@ -9,7 +9,7 @@ layer), FAT32 (ESP compat), IoStack (unified block I/O), and cache layers.
 
 NeoFS v2 (NE2) is the only native filesystem format supported by NeoDOS.
 
-Source: `src/fs/neodos_v2.rs`. Native on-disk format for NeoDOS partitions.
+Source: `src/fs/neofs/neodos_v2.rs`. Native on-disk format for NeoDOS partitions.
 All multi-byte integers are little-endian.
 
 ### Superblock v2
@@ -41,18 +41,20 @@ Located at LBA 0, exactly 512 bytes. Magic value: `0x0032454E` ("NE2\0").
 - **Copy-on-Write**: B-tree updates use COW semantics for crash safety.
 - **Freelist**: A dedicated free block allocator replaces the old bitmap approach.
 - **Snapshots**: Up to 64 snapshot entries in a circular table.
+- **FSCK**: Trait-based integrity checking (`FsckTrait`) shared by NeoFS v2 and FAT32.
 - **Feature flags**: The superblock `flags` field enables forward-compatible format evolution.
 
 ### Files
 
 | File | Purpose |
 | ------ | --------- |
-| `src/fs/neodos_v2.rs` | NeoFS v2 implementation (`FileSystem` trait) |
-| `src/fs/neodos_dir.rs` | B-tree directory operations (`DirEntryV2`) |
-| `src/fs/neodos_io.rs` | Extent-based read/write + inline data |
-| `src/fs/btree.rs` | Generic persistent B-tree with COW |
-| `src/fs/freelist.rs` | Free block allocator |
-| `src/fs/snapshot.rs` | Snapshot table |
+| `src/fs/neofs/neodos_v2.rs` | NeoFS v2 implementation (`FileSystem` trait) |
+| `src/fs/neofs/neodos_dir.rs` | B-tree directory operations (`DirEntryV2`) |
+| `src/fs/neofs/neodos_io.rs` | Extent-based read/write + inline data |
+| `src/fs/neofs/btree/` | Generic persistent B-tree with COW |
+| `src/fs/neofs/freelist.rs` | Free block allocator |
+| `src/fs/neofs/snapshot.rs` | Snapshot table |
+| `src/fs/fsck/` | Trait-based integrity checkers (`FsckTrait`) |
 
 ### Permission Flags
 
@@ -130,12 +132,12 @@ then walks each component with `.` and `..` resolution, traversing mount points.
 
 ### Mount Manager
 
-Source: `src/vfs/mount.rs`. Creates ObObject entries for mounted filesystems
+Source: `src/fs/vfs/mount.rs`. Creates ObObject entries for mounted filesystems
 and `\DosDevices\` symlinks for drive letters in the Object Manager namespace.
 
 ## IoStack
 
-Source: `src/vfs/io.rs`, `src/vfs/partition.rs`. Unified block I/O abstraction.
+Source: `src/fs/vfs/io.rs`, `src/fs/vfs/partition.rs`. Unified block I/O abstraction.
 
 ```rust
 pub struct IoStack {
@@ -164,8 +166,31 @@ GPT parsing identifies `PART_TYPE_ESP` and `PART_TYPE_NEODOS` GUIDs.
 
 ## FAT32
 
-Source: `src/drivers/fat32.rs`. ESP partition mounted on `A:` for UEFI boot
+Source: `src/fs/fat32.rs`. ESP partition mounted on `A:` for UEFI boot
 compatibility. Uses the same IoStack layer for block I/O. Supports long filenames.
+
+## FSCK
+
+Source: `src/fs/fsck/`. Filesystem integrity checking is pluggable through the
+`FsckTrait` interface:
+
+```rust
+pub trait FsckTrait {
+    fn check(&self) -> FsckStats;   // read-only
+    fn repair(&self) -> FsckStats;  // fixes what can be fixed safely
+}
+```
+
+| Module | Filesystem | Checks |
+| -------- | ----------- | -------- |
+| `fsck/ne2.rs` | NeoFS v2 (NE2) | superblock magic + checksum, B-tree node CRC32, freelist coherency; repair rebuilds the superblock counters/freelist |
+| `fsck/fat32.rs` | FAT32 | BPB geometry, FAT chain validity, cross-linked clusters, orphaned clusters; repair frees orphans |
+
+Each filesystem hooks into the VFS `FileSystem::fsck()` method, which the
+Object Manager exposes through `ObInfoClass::FsckStatus` (read-only check) and
+`ObSetInfoClass::FsckRepair` (repair). The Ring 3 `fsck.nxe` binary drives both.
+`FsckStats` reports total/used/free blocks, node/dir/file counts, errors,
+warnings and the number of repaired issues.
 
 ## Cache Layers
 

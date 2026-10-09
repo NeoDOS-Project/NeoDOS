@@ -27,6 +27,36 @@ pub use libnet_config::*;
 
 use crate::NetIfaceInfo;
 
+/// Ensure the Registry key for interface `iface` exists, creating
+/// `Interfaces\<iface>` under the Network key when missing.
+pub fn ensure_interface(iface: u32) -> Result<(), i64> {
+    if open_interface(iface).is_ok() {
+        return Ok(());
+    }
+    let parent = "\\Registry\\Machine\\System\\CurrentControlSet\\Services\\Network\\Interfaces";
+    let pfd = syscall::sys_cm_open_key(parent)?;
+    let mut num = [b'0'; 10];
+    let mut n = 0usize;
+    let mut v = iface;
+    loop {
+        num[n] = b'0' + (v % 10) as u8;
+        n += 1;
+        v /= 10;
+        if v == 0 { break; }
+    }
+    let mut name = [0u8; 10];
+    for j in 0..n {
+        name[j] = num[n - 1 - j];
+    }
+    let s = core::str::from_utf8(&name[..n]).map_err(|_| -1i64)?;
+    // Exist is fine: the key is there either way afterwards.
+    let _ = syscall::sys_cm_create_key(pfd, s);
+    let _ = syscall::sys_close(pfd);
+    open_interface(iface).map(|fd| {
+        let _ = syscall::sys_close(fd);
+    })
+}
+
 /// Open the Registry key for interface `iface`.
 pub fn open_interface(iface: u32) -> Result<u8, i64> {
     let mut buf = [0u8; 128];
@@ -54,6 +84,62 @@ pub fn write_dword(key_fd: u8, name: &str, val: u32) {
     let _ = syscall::sys_cm_set_value(key_fd, name, syscall::REG_DWORD, &val.to_le_bytes());
 }
 
+/// Read a REG_SZ value into `buf`, returning the byte length (without NUL).
+pub fn read_string(key_fd: u8, name: &str, buf: &mut [u8]) -> usize {
+    let mut reg = [0u8; 264];
+    let total = match syscall::sys_cm_query_value(key_fd, name, &mut reg) {
+        Ok(n) => n,
+        Err(_) => return 0,
+    };
+    if total < 8 {
+        return 0;
+    }
+    let data_len = u32::from_le_bytes([reg[4], reg[5], reg[6], reg[7]]) as usize;
+    let available = total.saturating_sub(8).min(reg.len() - 8);
+    let src = &reg[8..8 + data_len.min(available)];
+    let end = src.iter().position(|&b| b == 0).unwrap_or(src.len());
+    let n = end.min(buf.len());
+    buf[..n].copy_from_slice(&src[..n]);
+    n
+}
+
+/// Write a REG_SZ value (raw bytes, no NUL added).
+pub fn write_string(key_fd: u8, name: &str, val: &[u8]) {
+    let _ = syscall::sys_cm_set_value(key_fd, name, syscall::REG_SZ, val);
+}
+
+/// Current time as Unix seconds (0 = unknown).
+///
+/// Shared by `dhcpd` (lease stamps) and `ipconfig` (expiry checks).
+pub fn now_unix() -> u32 {
+    use libneodos::syscall::{DateTime, ObInfoClass};
+    let fd = match syscall::sys_ob_open("\\Global\\Info\\DateTime", 1) {
+        Ok(fd) => fd,
+        Err(_) => return 0,
+    };
+    let mut dt = DateTime {
+        second: 0, minute: 0, hour: 0,
+        day: 0, month: 0, year: 0, valid: 0,
+    };
+    let sz = core::mem::size_of::<DateTime>();
+    let buf = unsafe {
+        core::slice::from_raw_parts_mut(&mut dt as *mut DateTime as *mut u8, sz)
+    };
+    let n = syscall::sys_ob_query_info(fd, ObInfoClass::DateTime, buf);
+    let _ = syscall::sys_close(fd);
+    if n.ok().unwrap_or(0) < sz || dt.valid == 0 {
+        return 0;
+    }
+    let utc = libntp::UtcDateTime {
+        second: dt.second, minute: dt.minute, hour: dt.hour,
+        day: dt.day, month: dt.month, year: dt.year,
+    };
+    if !libntp::is_valid_datetime(&utc) {
+        return 0;
+    }
+    libntp::utc_to_unix_secs(&utc).clamp(0, u32::MAX as i64) as u32
+}
+
 /// Load the full interface configuration from the Registry.
 ///
 /// Returns `None` when the interface key cannot be opened.
@@ -79,6 +165,21 @@ pub fn load_fd(fd: u8) -> NetConfig {
         dhcp_bound: read_dword(fd, VALUE_DHCP_BOUND).unwrap_or(0) != 0,
         dhcp_server: read_dword(fd, VALUE_DHCP_SERVER).unwrap_or(0),
         lease_time: read_dword(fd, VALUE_LEASE_TIME).unwrap_or(0),
+        lease_obtained: read_dword(fd, VALUE_LEASE_OBTAINED).unwrap_or(0),
+        t1_renew: read_dword(fd, VALUE_T1_RENEW).unwrap_or(0),
+        t2_rebind: read_dword(fd, VALUE_T2_REBIND).unwrap_or(0),
+        domain: {
+            let mut d = [0u8; 64];
+            read_string(fd, VALUE_DOMAIN, &mut d);
+            d
+        },
+        broadcast: read_dword(fd, VALUE_BROADCAST).unwrap_or(0),
+        ntp: [
+            read_dword(fd, VALUE_NTP1).unwrap_or(0),
+            read_dword(fd, VALUE_NTP2).unwrap_or(0),
+            read_dword(fd, VALUE_NTP3).unwrap_or(0),
+        ],
+        mtu: read_dword(fd, VALUE_MTU).unwrap_or(0),
     }
 }
 
@@ -94,6 +195,15 @@ pub fn store_fd(fd: u8, cfg: &NetConfig) {
     write_dword(fd, VALUE_DHCP_BOUND, cfg.dhcp_bound as u32);
     write_dword(fd, VALUE_DHCP_SERVER, cfg.dhcp_server);
     write_dword(fd, VALUE_LEASE_TIME, cfg.lease_time);
+    write_dword(fd, VALUE_LEASE_OBTAINED, cfg.lease_obtained);
+    write_dword(fd, VALUE_T1_RENEW, cfg.t1_renew);
+    write_dword(fd, VALUE_T2_REBIND, cfg.t2_rebind);
+    write_string(fd, VALUE_DOMAIN, &cfg.domain[..libnet_config::domain_len(&cfg.domain)]);
+    write_dword(fd, VALUE_BROADCAST, cfg.broadcast);
+    write_dword(fd, VALUE_NTP1, cfg.ntp[0]);
+    write_dword(fd, VALUE_NTP2, cfg.ntp[1]);
+    write_dword(fd, VALUE_NTP3, cfg.ntp[2]);
+    write_dword(fd, VALUE_MTU, cfg.mtu);
 }
 
 /// Write the full interface configuration and flush it to disk.
@@ -118,6 +228,15 @@ pub fn publish_lease(iface: u32, cfg: &NetConfig) -> Result<(), i64> {
     write_dword(fd, VALUE_DNS2, cfg.dns[1]);
     write_dword(fd, VALUE_DNS3, cfg.dns[2]);
     write_dword(fd, VALUE_LEASE_TIME, cfg.lease_time);
+    write_dword(fd, VALUE_LEASE_OBTAINED, cfg.lease_obtained);
+    write_dword(fd, VALUE_T1_RENEW, cfg.t1_renew);
+    write_dword(fd, VALUE_T2_REBIND, cfg.t2_rebind);
+    write_string(fd, VALUE_DOMAIN, &cfg.domain[..libnet_config::domain_len(&cfg.domain)]);
+    write_dword(fd, VALUE_BROADCAST, cfg.broadcast);
+    write_dword(fd, VALUE_NTP1, cfg.ntp[0]);
+    write_dword(fd, VALUE_NTP2, cfg.ntp[1]);
+    write_dword(fd, VALUE_NTP3, cfg.ntp[2]);
+    write_dword(fd, VALUE_MTU, cfg.mtu);
     write_dword(fd, VALUE_DHCP_BOUND, cfg.dhcp_bound as u32);
     if cfg.dhcp_server != 0 {
         write_dword(fd, VALUE_DHCP_SERVER, cfg.dhcp_server);

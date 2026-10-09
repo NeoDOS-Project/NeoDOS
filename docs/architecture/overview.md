@@ -40,13 +40,13 @@ NeoDOS Kernel (x86_64-unknown-none)
    - I/O APIC: detect from MADT, disable PIC, route ISA IRQs 0/1/4/12 (PHASE 2.91)
    - enable interrupts (STI)
    - custom page tables (4 GiB identity map + user window + demand-paging heap/mmap split)
-   - heap/mmap demand-paging split (PHASE 3.0): 16×2 MB huge pages → 4 KB PTEs
+   - heap/mmap demand-paging split (PHASE 6 / PHASE 3): 16×2 MB huge pages → 4 KB PTEs
    - TEB page mapping at 0x7000 USER_ACCESSIBLE for SEH (PHASE 6.1)
    - PCIe ECAM init: read MCFG → map MMIO as UC- → activate ECAM (PIO fallback) (PHASE 2.3)
    - ATA boot stub (BootAta) + AHCI probe + NVMe probe + VirtIO probe (PHASE 3)
-   - Page Cache init (128×4 KB = 512 KB, hash + LRU) + GPT scan → IoStacks for NeoDOS + ESP (PHASE 3.4)
-   - NeoDOS FS mount on `\Device\NeoDosVolume0` → C: (PHASE 3.4b)
-   - FAT32 ESP mount on `\Device\EspVolume0` → A: (PHASE 3.4c)
+   - Page Cache init (128×4 KB = 512 KB, hash + LRU) + GPT scan → IoStacks for NeoDOS + ESP (PHASE 3)
+   - NeoDOS FS mount on `\Device\NeoDosVolume0` → C: (PHASE 3)
+   - FAT32 ESP mount on `\Device\EspVolume0` → A: (PHASE 3)
    - Input Manager init (VT subsystem, A4.4)
    - Keyboard Manager init (PHASE 3.875): NeoKBD loads layouts, creates \Device\Keyboard
    - Driver Isolation Layer (PHASE 3.80, X4): 16×1 MB slots @ 0x30000000
@@ -60,9 +60,9 @@ NeoDOS Kernel (x86_64-unknown-none)
    - Service Manager init (PHASE 3.882): load service definitions from Registry, create \Service\ namespace, resolve dependencies
    - Power Manager runtime init (PHASE 3.883): load plans and policies from Registry
    - ABI validation + ABI freeze check (PHASE 3.9)
-   - Kernel self-tests (805 tests) + netpump kernel-thread spawn + benchmarks (PHASE 4)
+   - Kernel self-tests (825 tests) + netpump kernel-thread spawn + benchmarks (PHASE 4)
    - Auto-start services (PHASE 4): start System/Auto services in dependency order
-   - Ring 3 shell via NeoInit PID 1 (neoshell.nxe, 754 kernel tests + user commands)
+   - Ring 3 shell via NeoInit PID 1 (neoshell.nxe, 825 kernel tests + user commands)
 ```
 
 ## Disco único GPT
@@ -84,7 +84,7 @@ Todo el sistema cabe en una sola imagen de disco con tabla de particiones GUID (
 La imagen se genera con NeoDev (`neodev build --image`, implementado en `neodev/src/image.rs`),
 que utiliza `sfdisk` (util-linux) para crear la tabla GPT y luego copia los datos de cada
 partición en su offset correcto.
-El kernel incluye `drivers/gpt.rs` que parsea la tabla y encuentra la partición NeoDOS
+El kernel incluye `drivers/storage/gpt.rs` que parsea la tabla y encuentra la partición NeoDOS
 por su GUID de tipo (`EBD0A0A2-B9E5-4433-87C0-68B6B72699C7`).
 
 > **Propuesta de rediseño:** el layout interno de `C:` y su migración a una
@@ -94,7 +94,7 @@ por su GUID de tipo (`EBD0A0A2-B9E5-4433-87C0-68B6B72699C7`).
 
 El kernel usa una arquitectura de dos niveles para ATA:
 
-### Boot stub (`neodos-kernel/src/drivers/ata.rs`)
+### Boot stub (`neodos-kernel/src/drivers/hw/ata.rs`)
 
 `BootAta` — PIO only, primary channel only. Used during early boot (PHASE 3.6–3.8) for GPT
 parsing, NeoDOS superblock read, and block cache warmup before NEM drivers are loaded.
@@ -192,13 +192,13 @@ Unified object manager system for creating, tracking, referencing, and enumerati
 | **ObType** | `src/object/types.rs` | Enum (u32): Unknown(0), Process(1), Driver(2), Device(3), Pipe(4), EventBus(5), BlockDevice(6), Filesystem(7), MemoryRegion(8), Symlink(9), MountPoint(10), Directory(11), Key(12), Event(13), Semaphore(14), Timer(15), Thread(16), Section(17), Socket(18), Service(20), PowerManager(21), KeyboardDevice(22) |
 | **Namespace** | `src/object/namespace.rs` | Hierarchical `\`-rooted tree with `DirectoryObject` nodes, `BTreeMap`-backed children, case-insensitive keys. Standard dirs: `\Device`, `\DosDevices`, `\Global`, `\Driver`, `\FileSystem`, `\Ob`, `\Registry`, `\Process` |
 | **Symlinks** | `src/object/namespace.rs` | `SymlinkEntry` in namespace nodes, max 10 hop resolution with loop detection |
-| **Mount points** | `src/vfs/mount.rs` | `MountManager` with `MountPoint` struct, `FilesystemType` enum, DosDevices symlink creation, global `MOUNT_MANAGER` |
+| **Mount points** | `src/fs/vfs/mount.rs` | `MountManager` with `MountPoint` struct, `FilesystemType` enum, DosDevices symlink creation, global `MOUNT_MANAGER` |
 | **Public API** | `src/object/mod.rs` | `ob_create_object()`, `ob_destroy_object()`, `ob_lookup()`, `ob_open_object(id)`, `ob_close_object(id)`, `ob_reference()`, `ob_dereference()`, `ob_count()`, `ob_enum_snapshot()`, `ob_open_path(path, token, access)` |
 | **Namespace API** | `src/object/namespace.rs` | `ob_insert_object()`/`ob_remove_object()`, `ob_lookup_path()`, `ob_create_directory()`, `ob_enumerate_namespace()`, `ob_insert_symlink()`, `ob_find_path_by_id()`, `normalize_path()`, `ob_insert_object_auto()`/`ob_remove_object_auto()` |
 | **Integration** | | Processes, drivers, pipes, timers, semaphores, sections auto-register on creation and auto-unregister on destruction. Mount points register via `vfs_mount()` during boot |
 | **CLI** | | `KOBJ` via Ring 3 `kobj.nxe` (ob_enum RAX=44) — lists all namespace objects |
 
-The Ob registry is populated at boot by driver loading and at runtime by process/pipe/timer/semaphore/section creation. Objects are automatically removed when their lifecycle ends (process exit, driver unload, pipe close, timer/semaphore free). Directory entries for `\Device`, `\DosDevices`, `\Global`, `\Driver`, `\FileSystem`, `\Ob`, `\Registry`, `\Process` are created at boot via `init_object_namespace()`. MountPoints for `C:` (NeoDOS FS) and `A:` (FAT32 ESP) are registered during PHASE 3.6.
+The Ob registry is populated at boot by driver loading and at runtime by process/pipe/timer/semaphore/section creation. Objects are automatically removed when their lifecycle ends (process exit, driver unload, pipe close, timer/semaphore free). Directory entries for `\Device`, `\DosDevices`, `\Global`, `\Driver`, `\FileSystem`, `\Ob`, `\Registry`, `\Process` are created at boot via `init_object_namespace()`. MountPoints for `C:` (NeoDOS FS) and `A:` (FAT32 ESP) are registered during PHASE 3.
 
 ---
 
@@ -290,7 +290,7 @@ struct Event {
 
 ---
 
-### 3. NEM v3 — Driver Format (`src/nem/mod.rs`)
+### 3. NEM v3 — Driver Format (`src/drivers/nem/format.rs`)
 
 NeoDOS Driver Format v3. 80-byte header + sections (text, rodata, data, bss) + relocation table + symbol table + string table.
 
@@ -345,7 +345,7 @@ ABI constants: `ABI_MIN_VALID=1`, `ABI_TARGET=1`, `ABI_MAX_VALID=2`
 
 ---
 
-### 4. NEM v3 Loader (`src/drivers/nem/v3loader.rs`)
+### 4. NEM v3 Loader (`src/drivers/nem/loader/v3loader.rs`)
 
 Standalone NEM v3 binary driver loader. Loads a `.nem` from NeoFS or raw data, applies relocations, and resolves symbols against the **Kernel Export Table (KET)**.
 
@@ -377,7 +377,7 @@ Standalone NEM v3 binary driver loader. Loads a `.nem` from NeoFS or raw data, a
 
 ---
 
-### 5. Driver Certification Pipeline (`src/drivers/driver_runtime.rs`)
+### 5. Driver Certification Pipeline (`src/drivers/nem/runtime/mod.rs`)
 
 Strict **7-state state machine** for driver lifecycle management.
 
@@ -419,7 +419,7 @@ Any state → Faulted(5) | Unloaded(6)
 
 **Global driver runtime:** `lazy_static! { DRIVER_RUNTIME: Mutex<DriverRuntime> }` with 16 slots max.
 
-#### 5.5. X3 Capability System (`src/drivers/caps.rs`)
+#### 5.5. X3 Capability System (`src/drivers/nem/management/caps.rs`)
 
 Fine-grained resource access control for NEM drivers. Each driver inherits a 64-bit capability bitmap at load time based on its category:
 
@@ -437,7 +437,7 @@ See `docs/drivers/overview.md` for the complete capability flag table and `docs/
 
 ---
 
-### 6. Boot Driver Loader (`src/drivers/boot_loader/mod.rs`)
+### 6. Boot Driver Loader (`src/drivers/nem/management/boot_loader/mod.rs`)
 
 Automatic NEM v3 driver loading orchestrator at system startup (PHASE 3.85 in `main.rs`).
 
@@ -492,7 +492,7 @@ The underlying kernel loading path is `nem/loader.rs::load_nem()` → v3loader.
 
 ---
 
-### 8.5. NXL System (`src/nxl.rs`)
+### 8.5. NXL System (`src/infra/nxl.rs`)
 
 Shared library (NXL) loading subsystem for user-mode processes.
 
@@ -535,14 +535,14 @@ Beyond the NEM driver framework, the kernel includes integrated hardware drivers
 | ATA (NEM v3) | `drivers/ata/` (standalone) | DMA + PIO, primary + secondary, ~137 GB, registered via NemBlockDevice |
 | AHCI (boot + NEM) | `drivers/boot_ahci.rs` + `drivers/ahci/` (NEM) | DMA polling + NCQ (v0.46.2), per-port, ATA + ATAPI, PRDT scatter-gather |
 | PS/2 | `drivers/ps2.rs` | IRQ1, raw scancode → Event Bus → NeoKBD translates via .kbd layouts |
-| PCI | `drivers/pci.rs` | Config space primitives via ECAM MMIO with legacy PIO fallback (0xCF8/0xCFC). Init at Phase 2.3 from ACPI MCFG. BAR read/map utilities. |
-| GPT | `drivers/gpt.rs` | GUID partition table parser |
+| PCI | `drivers/hw/pci.rs` | Config space primitives via ECAM MMIO with legacy PIO fallback (0xCF8/0xCFC). Init at Phase 2.3 from ACPI MCFG. BAR read/map utilities. |
+| GPT | `drivers/storage/gpt.rs` | GUID partition table parser |
 | FAT32 | `drivers/fat32.rs` | ESP partition, absolute LBAs |
 | RTC | `drivers/rtc_bridge.rs` + `drivers/rtc/` (NEM) | CMOS RTC via NEM driver |
-| ACPI | `src/power/acpi.rs` + `drivers/acpi/` (NEM) | RSDP/XSDT, poweroff via PM1a |
+| ACPI | `src/services/power/acpi.rs` + `drivers/acpi/` (NEM) | RSDP/XSDT, poweroff via PM1a |
 | NVMe | `drivers/nvme.rs` | NVMe probe + read/write sectors |
 | Storage Manager | `drivers/storage_manager.rs` | Unifies NVMe / AHCI / ATA (boot stub) |
-| Block Device | `drivers/block.rs` | Trait + block device manager |
+| Block Device | `drivers/storage/block.rs` | Trait + block device manager |
 | e1000 NIC | `drivers/e1000/` (NEM) | Intel e1000 NIC driver (82540EM/82543GC/82545EM/82574L) |
 | ECAM PCIe | `hal/pci.rs` | MMIO ECAM config space: set_ecam_base, ecam_is_active, ecam_read/write_config_dword/word/byte |
 | IOAPIC | `interrupts/ioapic.rs` | MADT-detected I/O APIC: init, mask/unmask, ISA IRQ routing, PIC disable |
@@ -552,7 +552,7 @@ Beyond the NEM driver framework, the kernel includes integrated hardware drivers
 
 ### 11. Test Coverage
 
-The kernel testing framework includes **805 tests** (200+ test_case! macros) with suites dedicated to the driver architecture:
+The kernel testing framework includes **825 tests** (200+ test_case! macros) with suites dedicated to the driver architecture:
 
 | Suite | Tests | Description |
 | ------- | ------- | ------------- |
@@ -584,7 +584,7 @@ The kernel testing framework includes **805 tests** (200+ test_case! macros) wit
 | Security | 23 | NT6 Security: SID format, Token (groups/privileges/session_id), ACL allow/deny, SeAccessCheck, admin bypass, SAM database (parse/serialize, 64 entries) |
 | URN | 15 | NT5.5 Unified Resource Namespace: parse schemes, resolve file/device, Ob frontend (OB-025) |
 
-Tests run automatically at boot. The kernel runs 805 tests (200+ test_case! registrations). After boot, NeoInit spawns its user-mode test binaries when enabled via the registry (`userbin/neoinit/src/main.rs`), including the network test `C:\System\Tools\dhcptest.nxe`. Additional boot stress testing via `scripts/stress_boot.sh`.
+Tests run automatically at boot. The kernel runs 837 tests (200+ test_case! registrations). After boot, NeoInit spawns its user-mode test binaries when enabled via the registry (`userbin/neoinit/src/main.rs`), including the network test `C:\System\Tools\dhcptest.nxe`. Additional boot stress testing via `scripts/stress_boot.sh`.
 
 ---
 
@@ -601,8 +601,8 @@ Tests run automatically at boot. The kernel runs 805 tests (200+ test_case! regi
 
 - **apc**: `src/apc/mod.rs` — Asynchronous Procedure Call engine. Per-thread kernel/user APC queues (max 64 each). Kernel APCs dispatched at PASSIVE_LEVEL on syscall return. User APCs dispatched one-at-a-time before IRETQ to Ring 3. Used for IRP completion delivery (DIRQL→DPC→APC flow) and deferred callback execution.
 - **object**: `src/object/` — Object Manager (Ob). Unified object tracking with reference counting, type identification (ObType = 22 variants), Hierarchical object namespace with Directory entries, case-insensitive path lookup, symlinks, and security descriptors. Objects auto-register for lifecycle via `ObOperations::on_destroy`. `KOBJ` via Ring 3 `kobj.nxe` lists all live objects.
-- **kbd**: `src/kbd/` — Keyboard Manager (NeoKBD): layout engine, Unicode composition, dead key compose, hotkey dispatch, auto-repeat, Registry-backed config, `ObType::KeyboardDevice(22)`, `\Device\Keyboard` namespace object
-- **power**: `src/power/` — Power Manager subsystem: `PowerManager` struct with 3 power plans (Balanced/Performance/PowerSaver), `PowerPlan`/`PowerPolicies`/`CpuPolicy`/`PowerAction` data structures, Registry-backed plan persistence, `coordinator::shutdown()`/`reboot()` for power lifecycle, plus ACPI HAL layer (RSDP discovery, RSDT/XSDT parsing, FADT extraction, S5 sleep, reset register)
+- **kbd**: `src/input/kbd/` — Keyboard Manager (NeoKBD): layout engine, Unicode composition, dead key compose, hotkey dispatch, auto-repeat, Registry-backed config, `ObType::KeyboardDevice(22)`, `\Device\Keyboard` namespace object
+- **power**: `src/services/power/` — Power Manager subsystem: `PowerManager` struct with 3 power plans (Balanced/Performance/PowerSaver), `PowerPlan`/`PowerPolicies`/`CpuPolicy`/`PowerAction` data structures, Registry-backed plan persistence, `coordinator::shutdown()`/`reboot()` for power lifecycle, plus ACPI HAL layer (RSDP discovery, RSDT/XSDT parsing, FADT extraction, S5 sleep, reset register)
 - **arch/x64**: GDT, IDT, PIC, paging (4-level, 2 MB huge pages + 4 KB demand-paging), interrupt handlers (timer IRQ0, keyboard IRQ1, syscall INT 0x80)
 - **drivers**: ATA (PIO boot stub + NEM v3 standalone DMA driver), AHCI, PS/2 keyboard, USB HID, PCI NEM driver (bus scan + Event Bus service), device event infrastructure
 - **buffer**: `buffer/page_cache.rs` — page cache (`CACHE_SIZE = 128` slots, 512 KB; hash map O(1) + LRU for file data I/O, dirty write-back with `flush_batch()`, timer-driven via `NEED_PAGE_CACHE_FLUSH`)
