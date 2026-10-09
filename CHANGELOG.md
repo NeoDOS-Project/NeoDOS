@@ -2,7 +2,7 @@
 
 <!-- markdownlint-disable MD013 MD024 MD056 -->
 
-## Unreleased
+## v0.51.5 — 2026-10-09
 
 ### Added
 
@@ -157,6 +157,20 @@
 
 ### Changed
 
+- **VFS lock-contention reduction and synchronization hardening (#83, #519).**
+  `MOUNT_MANAGER` joins the enforced filesystem lock hierarchy
+  (`VFS -> MOUNT_MANAGER -> PAGE_CACHE -> BLOCK_DEVICES`); every production
+  `PAGE_CACHE`/`BLOCK_DEVICES` acquisition in the filesystem stack now goes
+  through the preempt-disabling, order-checked `with_page_cache`/
+  `with_block_devices` helpers; `flush_cache_if_needed` writes back one page per
+  lock acquisition (bounded, flag re-armed while dirty) instead of holding both
+  locks across a multi-page burst; path resolution no longer allocates under the
+  `VFS` lock; and the boot storage probe runs outside the block-device registry
+  lock. The global `VFS` and `BLOCK_DEVICES` locks remain (per-drive
+  synchronization is future work) and no throughput claim is made. Design,
+  baseline and readiness report:
+  `docs/investigation/vfs-lock-contention-83-{baseline,report}.md`.
+
 - **#18 / VFS-2.2: trait-based FSCK (`FsckTrait`).** Filesystem integrity
   checking is now a pluggable trait (`check`/`repair`) implemented per
   filesystem, replacing the single NeoFS-only path. `src/fs/fsck/` holds the
@@ -212,6 +226,13 @@
   `drivers/` deliberately untouched. No behavior change.
 
 ### Fixed
+
+- **#519: raw `VFS.lock()`/`MOUNT_MANAGER.lock()` on the unified mount/unmount
+  paths.** `vfs_mount_filesystem`/`vfs_unmount_filesystem` bypassed the
+  preempt-disable and lock-order guard; they now use `with_vfs` plus the new
+  `with_mount_manager`, and update `Vfs.drives[]` and `MountManager` under a
+  single `VFS` critical section so a concurrent lookup cannot observe a
+  half-mounted drive. Regression tests added for the `MOUNT_MANAGER` lock rank.
 
 - **Filesystem: persist subdirectory B-tree root changes to the parent, and
   re-enable COW reclamation (#563, #553).** `NeoDosFsV2` now tracks each
