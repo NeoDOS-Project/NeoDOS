@@ -6,7 +6,6 @@ pub mod partition;
 
 use alloc::boxed::Box;
 use alloc::string::String;
-use alloc::vec::Vec;
 use core::fmt;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -114,6 +113,27 @@ pub trait FileSystem: Send {
 
 const MAX_SUBDIR_MOUNTS: usize = 8;
 
+/// Maximum number of path components handled without heap allocation.
+/// Path resolution runs while the VFS spinlock is held, so it must not
+/// allocate (allocation under the lock is a documented deadlock risk and
+/// lengthens the global critical section). Paths deeper than this are rejected
+/// with `InvalidPath`; NeoDOS paths are short (Windows-style MAX_PATH).
+const MAX_PATH_COMPONENTS: usize = 32;
+
+/// Split a volume-relative path (`\A\B` or `A\B`) into components on the stack.
+fn split_components(path: &str) -> Result<([&str; MAX_PATH_COMPONENTS], usize), VfsError> {
+    let mut arr: [&str; MAX_PATH_COMPONENTS] = [""; MAX_PATH_COMPONENTS];
+    let mut n = 0usize;
+    for c in path.split(['\\', '/']) {
+        if n >= MAX_PATH_COMPONENTS {
+            return Err(VfsError::InvalidPath);
+        }
+        arr[n] = c;
+        n += 1;
+    }
+    Ok((arr, n))
+}
+
 #[derive(Debug, Clone, Copy)]
 struct Mount {
     parent_drive: usize,
@@ -180,20 +200,25 @@ impl Vfs {
     }
 
     fn walk_components(&mut self, mut drive_idx: usize, mut inode: u32, components: &[&str]) -> Result<(usize, u32), VfsError> {
-        let mut stack: Vec<(usize, u32)> = Vec::new();
+        // Fixed-size stack: path resolution must not allocate under the VFS
+        // lock. Depth is bounded by MAX_PATH_COMPONENTS (+1 root, +1 per mount
+        // crossing); we check before every push.
+        let mut stack: [(usize, u32); MAX_PATH_COMPONENTS + 2] = [(0, 0); MAX_PATH_COMPONENTS + 2];
+        let mut depth = 0usize;
 
         if let Some(mounted) = Self::find_mount(&self.mounts, self.mount_count, drive_idx, inode) {
             drive_idx = mounted;
         }
-        stack.push((drive_idx, inode));
+        stack[depth] = (drive_idx, inode);
+        depth += 1;
 
         for &comp in components {
             match comp {
                 "" | "." => continue,
                 ".." => {
-                    if stack.len() > 1 {
-                        stack.pop();
-                        let (d, i) = stack[stack.len() - 1];
+                    if depth > 1 {
+                        depth -= 1;
+                        let (d, i) = stack[depth - 1];
                         drive_idx = d;
                         inode = i;
                     }
@@ -207,12 +232,16 @@ impl Vfs {
                 fs.lookup(inode, comp)?
             };
             inode = node.inode;
-            stack.push((drive_idx, inode));
+            if depth >= stack.len() { return Err(VfsError::InvalidPath); }
+            stack[depth] = (drive_idx, inode);
+            depth += 1;
 
             if let Some(mounted) = Self::find_mount(&self.mounts, self.mount_count, drive_idx, inode) {
                 drive_idx = mounted;
                 inode = 0;
-                stack.push((drive_idx, inode));
+                if depth >= stack.len() { return Err(VfsError::InvalidPath); }
+                stack[depth] = (drive_idx, inode);
+                depth += 1;
             }
         }
 
@@ -223,11 +252,9 @@ impl Vfs {
         let (drive_letter, rest) = Self::split_drive(path)?;
         let drive_idx = Self::drive_index(drive_letter).ok_or(VfsError::InvalidPath)?;
 
-        let components: Vec<&str> = rest
-            .split(['\\', '/'])
-            .collect();
+        let (components, n) = split_components(rest)?;
 
-        let (drive_idx, inode) = self.walk_components(drive_idx, 0, &components)?;
+        let (drive_idx, inode) = self.walk_components(drive_idx, 0, &components[..n])?;
 
         let fs = self.drives[drive_idx].as_mut().ok_or(VfsError::NotFound)?;
         let node = fs.stat(inode)?;
@@ -280,11 +307,9 @@ impl Vfs {
         let drive_idx = Self::drive_index(drive_letter).ok_or(VfsError::InvalidPath)?;
         let mounted_idx = Self::drive_index(mounted_drive).ok_or(VfsError::InvalidPath)?;
 
-        let components: Vec<&str> = rest
-            .split(['\\', '/'])
-            .collect();
+        let (components, n) = split_components(rest)?;
 
-        let (resolved_drive, resolved_inode) = self.walk_components(drive_idx, 0, &components)?;
+        let (resolved_drive, resolved_inode) = self.walk_components(drive_idx, 0, &components[..n])?;
 
         {
             let fs = self.drives[resolved_drive].as_mut().ok_or(VfsError::NotFound)?;
@@ -323,11 +348,9 @@ impl Vfs {
         let (drive_letter, rest) = Self::split_drive(path)?;
         let drive_idx = Self::drive_index(drive_letter).ok_or(VfsError::InvalidPath)?;
 
-        let components: Vec<&str> = rest
-            .split(['\\', '/'])
-            .collect();
+        let (components, n) = split_components(rest)?;
 
-        let (resolved_drive, resolved_inode) = self.walk_components(drive_idx, 0, &components)?;
+        let (resolved_drive, resolved_inode) = self.walk_components(drive_idx, 0, &components[..n])?;
 
         for i in 0..self.mount_count {
             if let Some(ref m) = self.mounts[i] {
@@ -357,11 +380,9 @@ impl Vfs {
 
         let (parent_path, leaf) = Self::split_parent_leaf(rest);
 
-        let parent_components: Vec<&str> = parent_path
-            .split(['\\', '/'])
-            .collect();
+        let (parent_components, n) = split_components(parent_path)?;
 
-        let (drive_idx, parent_inode) = self.walk_components(drive_idx, 0, &parent_components)?;
+        let (drive_idx, parent_inode) = self.walk_components(drive_idx, 0, &parent_components[..n])?;
 
         let fs = self.drives[drive_idx].as_mut().ok_or(VfsError::NotFound)?;
         fs.mkdir(parent_inode, leaf)
@@ -373,11 +394,9 @@ impl Vfs {
 
         let (parent_path, leaf) = Self::split_parent_leaf(rest);
 
-        let parent_components: Vec<&str> = parent_path
-            .split(['\\', '/'])
-            .collect();
+        let (parent_components, n) = split_components(parent_path)?;
 
-        let (drive_idx, parent_inode) = self.walk_components(drive_idx, 0, &parent_components)?;
+        let (drive_idx, parent_inode) = self.walk_components(drive_idx, 0, &parent_components[..n])?;
 
         let fs = self.drives[drive_idx].as_mut().ok_or(VfsError::NotFound)?;
         fs.create(parent_inode, leaf)
@@ -389,11 +408,9 @@ impl Vfs {
 
         let (parent_path, leaf) = Self::split_parent_leaf(rest);
 
-        let parent_components: Vec<&str> = parent_path
-            .split(['\\', '/'])
-            .collect();
+        let (parent_components, n) = split_components(parent_path)?;
 
-        let (drive_idx, parent_inode) = self.walk_components(drive_idx, 0, &parent_components)?;
+        let (drive_idx, parent_inode) = self.walk_components(drive_idx, 0, &parent_components[..n])?;
 
         let fs = self.drives[drive_idx].as_mut().ok_or(VfsError::NotFound)?;
         fs.remove_file(parent_inode, leaf)
@@ -405,11 +422,9 @@ impl Vfs {
 
         let (parent_path, leaf) = Self::split_parent_leaf(rest);
 
-        let parent_components: Vec<&str> = parent_path
-            .split(['\\', '/'])
-            .collect();
+        let (parent_components, n) = split_components(parent_path)?;
 
-        let (drive_idx, parent_inode) = self.walk_components(drive_idx, 0, &parent_components)?;
+        let (drive_idx, parent_inode) = self.walk_components(drive_idx, 0, &parent_components[..n])?;
 
         let fs = self.drives[drive_idx].as_mut().ok_or(VfsError::NotFound)?;
         fs.remove_dir(parent_inode, leaf)
@@ -421,11 +436,9 @@ impl Vfs {
 
         let (parent_path, leaf) = Self::split_parent_leaf(rest);
 
-        let parent_components: Vec<&str> = parent_path
-            .split(['\\', '/'])
-            .collect();
+        let (parent_components, n) = split_components(parent_path)?;
 
-        let (drive_idx, parent_inode) = self.walk_components(drive_idx, 0, &parent_components)?;
+        let (drive_idx, parent_inode) = self.walk_components(drive_idx, 0, &parent_components[..n])?;
 
         // Extract just the leaf name from new_name (user may pass full path)
         let new_leaf = new_name.rsplit(['\\', '/']).next().unwrap_or(new_name);

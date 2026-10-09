@@ -127,16 +127,13 @@ impl crate::drivers::block::BlockDevice for TestBlockDevice {
 /// Register an in-memory device and return its index.
 pub(crate) fn register_test_device(sectors: alloc::vec::Vec<[u8; 512]>) -> usize {
     let dev = TestBlockDevice { sectors };
-    let id = {
-        let mut bdevs = crate::globals::BLOCK_DEVICES.lock();
+    let id = crate::globals::with_block_devices(|bdevs| {
         bdevs.register(alloc::boxed::Box::new(dev)).unwrap()
-    };
+    });
     // Device indices are reused after `force_remove`; drop any pages the
     // previous device at this index left behind.
-    {
-        let _ord_pc = crate::lock_order::Guard::new(crate::lock_order::PAGE_CACHE);
-        let mut pc = crate::globals::PAGE_CACHE.lock();
+    crate::globals::with_page_cache(|pc| {
         pc.invalidate_device(id as u64);
-    }
+    });
     id
 }

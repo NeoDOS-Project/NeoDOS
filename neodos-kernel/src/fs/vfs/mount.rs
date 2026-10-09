@@ -124,16 +124,34 @@ lazy_static! {
     pub static ref MOUNT_MANAGER: Mutex<MountManager> = Mutex::new(MountManager::new());
 }
 
+/// Acquire `MOUNT_MANAGER` with the same discipline as the other filesystem
+/// locks: preemption is disabled for the critical section so the timer cannot
+/// deschedule a thread holding the lock (#376 class), and the acquisition is
+/// tagged in the lock-order graph (`VFS -> MOUNT_MANAGER -> ...`, #343/#519).
+///
+/// Must not be nested with `PAGE_CACHE`/`BLOCK_DEVICES`: the canonical order is
+/// `VFS -> MOUNT_MANAGER -> PAGE_CACHE -> BLOCK_DEVICES`.
+pub fn with_mount_manager<F, R>(f: F) -> R
+where
+    F: FnOnce(&mut MountManager) -> R,
+{
+    crate::scheduler::preempt_disable();
+    let _order = crate::lock_order::Guard::new(crate::lock_order::MOUNT_MANAGER);
+    let res = f(&mut MOUNT_MANAGER.lock());
+    crate::scheduler::preempt_enable();
+    res
+}
+
 pub fn vfs_mount(device_path: &str, drive_letter: char, fs_type: FilesystemType) -> Result<usize, &'static str> {
-    MOUNT_MANAGER.lock().mount(device_path, drive_letter, fs_type)
+    with_mount_manager(|mgr| mgr.mount(device_path, drive_letter, fs_type))
 }
 
 pub fn vfs_unmount(index: usize) -> bool {
-    MOUNT_MANAGER.lock().unmount(index)
+    with_mount_manager(|mgr| mgr.unmount(index))
 }
 
 pub fn vfs_get_mount(index: usize) -> Option<MountPoint> {
-    MOUNT_MANAGER.lock().get(index).cloned()
+    with_mount_manager(|mgr| mgr.get(index).cloned())
 }
 
 /// Unified mount: registers filesystem on the VFS drive letter AND
@@ -146,56 +164,64 @@ pub fn vfs_mount_filesystem(
     fs_type: FilesystemType,
 ) -> Result<usize, &'static str> {
     let letter_upper = drive_letter.to_ascii_uppercase();
-    // Step 1: Register in Vfs.drives[]
-    let mut vfs = crate::globals::VFS.lock();
-    if vfs.drives[crate::fs::vfs::Vfs::drive_index(letter_upper).ok_or("invalid drive")?].is_some() {
-        return Err("drive already mounted");
-    }
-    vfs.mount(letter_upper, fs).map_err(|_| "Vfs::mount failed")?;
-    drop(vfs);
+    let idx = crate::fs::vfs::Vfs::drive_index(letter_upper).ok_or("invalid drive")?;
 
-    // Step 2: Create Ob MountPoint + namespace entries
-    let mut mgr = MOUNT_MANAGER.lock();
-    if mgr.find_by_letter(letter_upper).is_some() {
-        // Rollback VFS mount
-        let _ = crate::globals::VFS.lock().unmount(letter_upper);
-        return Err("MountManager: drive already mounted");
-    }
-    let result = mgr.mount(device_path, letter_upper, fs_type);
-    if result.is_err() {
-        let _ = crate::globals::VFS.lock().unmount(letter_upper);
-    }
-    result
+    // Both `Vfs.drives[]` and `MountManager` are updated while the VFS lock is
+    // held, so a concurrent mount/unmount/lookup cannot observe a half-mounted
+    // drive. `with_vfs` supplies the preempt-disable + lock-order discipline
+    // that the previous raw `VFS.lock()` calls bypassed (#519).
+    crate::globals::with_vfs(|vfs| {
+        // Step 1: Register in Vfs.drives[]
+        if vfs.drives[idx].is_some() {
+            return Err("drive already mounted");
+        }
+        vfs.mount(letter_upper, fs).map_err(|_| "Vfs::mount failed")?;
+
+        // Step 2: Create Ob MountPoint + namespace entries.
+        let result = with_mount_manager(|mgr| {
+            if mgr.find_by_letter(letter_upper).is_some() {
+                return Err("MountManager: drive already mounted");
+            }
+            mgr.mount(device_path, letter_upper, fs_type)
+        });
+
+        if result.is_err() {
+            // Rollback the VFS mount so both registries stay consistent.
+            let _ = vfs.unmount(letter_upper);
+        }
+        result
+    })
 }
 
 /// Unified unmount: removes from Vfs.drives[] AND cleans up MountManager.
 pub fn vfs_unmount_filesystem(drive_letter: char) -> Result<(), &'static str> {
     let letter_upper = drive_letter.to_ascii_uppercase();
-    // Step 1: Remove from Vfs.drives[]
-    let mut vfs = crate::globals::VFS.lock();
     let idx = crate::fs::vfs::Vfs::drive_index(letter_upper).ok_or("invalid drive")?;
-    if vfs.drives[idx].is_none() {
-        return Err("drive not mounted in VFS");
-    }
-    vfs.unmount(letter_upper).map_err(|_| "Vfs::unmount failed")?;
-    drop(vfs);
 
-    // Step 2: Remove from MountManager (Ob MountPoint + DosDevices symlink)
-    let mut mgr = MOUNT_MANAGER.lock();
-    if !mgr.unmount_by_letter(letter_upper) {
-        return Err("drive not found in MountManager");
-    }
-    Ok(())
+    crate::globals::with_vfs(|vfs| {
+        // Step 1: Remove from Vfs.drives[]
+        if vfs.drives[idx].is_none() {
+            return Err("drive not mounted in VFS");
+        }
+        vfs.unmount(letter_upper).map_err(|_| "Vfs::unmount failed")?;
+
+        // Step 2: Remove from MountManager (Ob MountPoint + DosDevices symlink)
+        if !with_mount_manager(|mgr| mgr.unmount_by_letter(letter_upper)) {
+            return Err("drive not found in MountManager");
+        }
+        Ok(())
+    })
 }
 
 pub fn vfs_path_to_mount(path: &str) -> Option<(usize, MountPoint)> {
-    let mgr = MOUNT_MANAGER.lock();
-    for (i, m) in mgr.mounts.iter().enumerate() {
-        if path.starts_with(&m.volume_path) || path.starts_with(&m.name) {
-            return Some((i, m.clone()));
+    with_mount_manager(|mgr| {
+        for (i, m) in mgr.mounts.iter().enumerate() {
+            if path.starts_with(&m.volume_path) || path.starts_with(&m.name) {
+                return Some((i, m.clone()));
+            }
         }
-    }
-    None
+        None
+    })
 }
 
 pub fn register_mount_tests() {

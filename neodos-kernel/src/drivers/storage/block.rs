@@ -442,8 +442,7 @@ impl BlockDevice for NemBlockDevice {
 
 /// Register a NemBlockDevice by adding it to the global BlockDeviceManager.
 pub fn register_nem_block_device(dev: NemBlockDevice) -> i32 {
-    let mut bdevs = crate::globals::BLOCK_DEVICES.lock();
-    match bdevs.register(alloc::boxed::Box::new(dev)) {
+    match crate::globals::with_block_devices(|bdevs| bdevs.register(alloc::boxed::Box::new(dev))) {
         Some(idx) => {
             kinfo!(LogSubsys::Driver, "NEM block device registered at idx={}", idx);
             idx as i32
@@ -455,24 +454,24 @@ pub fn register_nem_block_device(dev: NemBlockDevice) -> i32 {
 /// Unregister a NemBlockDevice by its index.
 /// Only succeeds if the device's refcount is 0 (no active IoStacks).
 pub fn unregister_nem_block_device(idx: usize) -> bool {
-    let mut bdevs = crate::globals::BLOCK_DEVICES.lock();
-    if bdevs.refcount(idx) > 0 {
-        kinfo!(LogSubsys::Driver, "Cannot unregister device at idx={}: refcount={}", idx, bdevs.refcount(idx));
-        return false;
-    }
-    if bdevs.remove(idx).is_some() {
-        kinfo!(LogSubsys::Driver, "NEM block device unregistered at idx={}", idx);
-        true
-    } else {
-        false
-    }
+    crate::globals::with_block_devices(|bdevs| {
+        if bdevs.refcount(idx) > 0 {
+            kinfo!(LogSubsys::Driver, "Cannot unregister device at idx={}: refcount={}", idx, bdevs.refcount(idx));
+            return false;
+        }
+        if bdevs.remove(idx).is_some() {
+            kinfo!(LogSubsys::Driver, "NEM block device unregistered at idx={}", idx);
+            true
+        } else {
+            false
+        }
+    })
 }
 
 /// Force-unregister a NemBlockDevice, bypassing refcount check.
 /// Used by hot-unload with /F flag.
 pub fn force_unregister_nem_block_device(idx: usize) -> bool {
-    let mut bdevs = crate::globals::BLOCK_DEVICES.lock();
-    if bdevs.force_remove(idx).is_some() {
+    if crate::globals::with_block_devices(|bdevs| bdevs.force_remove(idx)).is_some() {
         kinfo!(LogSubsys::Driver, "NEM block device FORCE unregistered at idx={}", idx);
         true
     } else {
