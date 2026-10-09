@@ -207,6 +207,32 @@ pub fn format_size(bytes: u64, buf: &mut [u8]) -> usize {
     pos.min(buf.len())
 }
 
+/// Compact human size for fixed-width UI columns: `whole.frac<unit>` with a
+/// single decimal and a minimum unit of K (KiB), e.g. `0.0K`, `1.5K`, `3.5M`.
+/// No padding — column alignment is a UI concern.
+pub fn format_size_compact(bytes: u64, buf: &mut [u8]) -> usize {
+    const KIB: u64 = 1024;
+    const MIB: u64 = 1024 * KIB;
+    const GIB: u64 = 1024 * MIB;
+    const TIB: u64 = 1024 * GIB;
+    let (base, unit): (u64, u8) = if bytes >= TIB {
+        (TIB, b'T')
+    } else if bytes >= GIB {
+        (GIB, b'G')
+    } else if bytes >= MIB {
+        (MIB, b'M')
+    } else {
+        (KIB, b'K')
+    };
+    let val10 = ((bytes as u128) * 10 / base as u128) as u64;
+    let mut pos = 0usize;
+    put_dec(val10 / 10, buf, &mut pos);
+    put_str(b".", buf, &mut pos);
+    put_dec(val10 % 10, buf, &mut pos);
+    put_str(&[unit], buf, &mut pos);
+    pos.min(buf.len())
+}
+
 // ── Export table type ──
 
 #[repr(C)]
@@ -236,5 +262,6 @@ pub struct MathAbiTable {
     pub bytes_to_kib: extern "C" fn(u64) -> u64,
     pub scale_size: extern "C" fn(u64) -> u64,
     pub format_size: extern "C" fn(u64, *mut u8, usize) -> usize,
+    pub format_size_compact: extern "C" fn(u64, *mut u8, usize) -> usize,
     pub _reserved: [u64; 4],
 }

@@ -56,6 +56,12 @@ pub extern "C" fn math_format_size(bytes: u64, buf: *mut u8, len: usize) -> usiz
     let slice = unsafe { core::slice::from_raw_parts_mut(buf, len) };
     math::format_size(bytes, slice)
 }
+#[no_mangle]
+pub extern "C" fn math_format_size_compact(bytes: u64, buf: *mut u8, len: usize) -> usize {
+    if buf.is_null() || len == 0 { return 0; }
+    let slice = unsafe { core::slice::from_raw_parts_mut(buf, len) };
+    math::format_size_compact(bytes, slice)
+}
 
 // ============================================================
 // Export Table — placed in .export_table section at known offset
@@ -66,7 +72,7 @@ use math::MathAbiTable;
 #[no_mangle]
 #[link_section = ".export_table"]
 pub static MATH_EXPORT_TABLE: MathAbiTable = MathAbiTable {
-    version: 2,
+    version: 3,
     add: math_add,
     sub: math_sub,
     mul: math_mul,
@@ -90,6 +96,7 @@ pub static MATH_EXPORT_TABLE: MathAbiTable = MathAbiTable {
     bytes_to_kib: math_bytes_to_kib,
     scale_size: math_scale_size,
     format_size: math_format_size,
+    format_size_compact: math_format_size_compact,
     _reserved: [0; 4],
 };
 

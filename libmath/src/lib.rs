@@ -42,6 +42,7 @@ pub struct MathAbiTable {
     pub bytes_to_kib: extern "C" fn(u64) -> u64,
     pub scale_size: extern "C" fn(u64) -> u64,
     pub format_size: extern "C" fn(u64, *mut u8, usize) -> usize,
+    pub format_size_compact: extern "C" fn(u64, *mut u8, usize) -> usize,
     pub _reserved: [u64; 4],
 }
 
@@ -98,6 +99,14 @@ pub fn scale_size(bytes: u64) -> u64 {
 pub fn format_size(bytes: u64, buf: &mut [u8]) -> usize {
     match get_table() {
         Some(t) => (t.format_size)(bytes, buf.as_mut_ptr(), buf.len()),
+        None => 0,
+    }
+}
+
+/// Compact human size (`1.5K`, min unit K, one decimal) into `buf`.
+pub fn format_size_compact(bytes: u64, buf: &mut [u8]) -> usize {
+    match get_table() {
+        Some(t) => (t.format_size_compact)(bytes, buf.as_mut_ptr(), buf.len()),
         None => 0,
     }
 }

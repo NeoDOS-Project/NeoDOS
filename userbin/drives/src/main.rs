@@ -45,42 +45,13 @@ fn label_str(label: &[u8; 32]) -> &str {
     core::str::from_utf8(&label[..end]).unwrap_or("")
 }
 
-fn write_num(n: u64) {
-    if n == 0 {
-        write_str(b"0");
-        return;
-    }
-    let mut buf = [0u8; 20];
-    let mut i = 20;
-    let mut v = n;
-    while v > 0 {
-        i -= 1;
-        buf[i] = b'0' + (v % 10) as u8;
-        v /= 10;
-    }
-    write_str(&buf[i..]);
-}
-
+/// Format a sector count as a human-readable size via the shared units
+/// service in `math.nxl` (`libmath`).
 fn write_size(sectors: u64) {
-    let bytes = sectors * 512;
-    if bytes >= 1024 * 1024 * 1024 {
-        let gb = bytes / (1024 * 1024 * 1024);
-        let rem = (bytes % (1024 * 1024 * 1024)) * 100 / (1024 * 1024 * 1024);
-        write_num(gb);
-        write_str(b".");
-        if rem < 10 { write_str(b"0"); }
-        write_num(rem);
-        write_str(b" GB");
-    } else if bytes >= 1024 * 1024 {
-        let mb = bytes / (1024 * 1024);
-        write_num(mb);
-        write_str(b" MB");
-    } else if bytes >= 1024 {
-        let kb = bytes / 1024;
-        write_num(kb);
-        write_str(b" KB");
-    } else {
-        write_str(b"0 B");
+    let mut buf = [0u8; 32];
+    let n = libmath::format_size(sectors.saturating_mul(512), &mut buf);
+    if n > 0 {
+        write_str(&buf[..n]);
     }
 }
 

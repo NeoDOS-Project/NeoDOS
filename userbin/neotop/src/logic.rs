@@ -85,43 +85,20 @@ pub fn pad_width(len: usize, width: usize) -> usize {
 /// `out` must be at least 8 bytes. The result is deterministic so the column
 /// width stays stable across frames.
 pub fn format_bytes(out: &mut [u8], bytes: u64) -> &[u8] {
-    const KIB: u64 = 1024;
-    const MIB: u64 = 1024 * KIB;
-    const GIB: u64 = 1024 * MIB;
-    let (val10, unit): (u64, u8) = if bytes >= GIB {
-        (bytes.saturating_mul(10) / GIB, b'G')
-    } else if bytes >= MIB {
-        (bytes.saturating_mul(10) / MIB, b'M')
-    } else if bytes >= KIB {
-        (bytes.saturating_mul(10) / KIB, b'K')
-    } else if bytes > 0 {
-        (bytes.saturating_mul(10) / KIB, b'K') // < 1 KiB → 0.0K..0.9K
-    } else {
-        (0, b'K')
-    };
-    let whole = val10 / 10;
-    let frac = val10 % 10;
-    // Write "whole.frac<unit>" right-aligned to width 7, e.g. "  1.5M".
-    let mut tmp = [0u8; 8];
-    let mut n = 0usize;
-    // whole
-    let mut digits = [0u8; 20];
-    let mut dn = 0usize;
-    let mut w = whole;
-    if w == 0 { digits[0] = b'0'; dn = 1; } else {
-        while w > 0 { digits[dn] = b'0' + (w % 10) as u8; dn += 1; w /= 10; }
-    }
-    let mut di = dn;
-    while di > 0 { di -= 1; tmp[n] = digits[di]; n += 1; }
-    tmp[n] = b'.'; n += 1;
-    tmp[n] = b'0' + frac as u8; n += 1;
-    tmp[n] = unit; n += 1;
-    // right-align into a fixed inner width of 6
+    // Unit scaling and decimal formatting come from the shared service in
+    // `math.nxl` (`libmath`); column padding stays here (UI concern).
+    let mut tmp = [0u8; 12];
+    let n = libmath::format_size_compact(bytes, &mut tmp);
+    // Right-align "whole.frac<unit>" into a fixed inner width of 6.
     let inner = 6usize;
     let mut total = 0usize;
     let pad = inner.saturating_sub(n);
-    for i in 0..pad { out[total] = b' '; total += 1; let _ = i; }
-    for i in 0..n { out[total] = tmp[i]; total += 1; }
+    for _ in 0..pad {
+        if total < out.len() { out[total] = b' '; total += 1; }
+    }
+    for i in 0..n {
+        if total < out.len() { out[total] = tmp[i]; total += 1; }
+    }
     &out[..total]
 }
 
