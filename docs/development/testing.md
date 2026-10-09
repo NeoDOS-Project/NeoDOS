@@ -2,7 +2,7 @@
 
 ## Overview
 
-In-kernel test harness. No external test runner required. 837 tests across 50+ suites compiled directly into the kernel image. Tests execute in kernel mode and can exercise all subsystems including privileged operations.
+In-kernel test harness. No external test runner required. 861 tests across 50+ suites compiled directly into the kernel image. Tests execute in kernel mode and can exercise all subsystems including privileged operations.
 
 Two execution paths:
 
@@ -25,11 +25,11 @@ test_case!("my_test", {
 });
 ```
 
-- `test_case!(name, { body })`: Registers a named test. Panic in body = FAIL. Clean exit = PASS.
-- `test_eq!(a, b)`: Asserts a == b, panics with values on mismatch.
-- `test_ne!(a, b)`: Asserts a != b, panics on equality.
+- `test_case!(name, { body })`: Registers a named test. Clean completion = PASS; an assertion returns `Err` = FAIL.
+- `test_eq!(a, b)`: Asserts a == b; returns `Err` with both values on mismatch.
+- `test_ne!(a, b)`: Asserts a != b; returns `Err` on equality.
 - `test_true!(cond)`: Asserts condition is true.
-- `test_fail!(msg)`: Always panics with formatted message (for testing error paths).
+- `test_fail!(msg)`: Always returns `Err` with the formatted message (for testing error paths).
 
 ## Execution
 
@@ -50,7 +50,7 @@ test_case!("my_test", {
   neodev test
   ```
 
-  Expected result is `820/820 PASS`.
+  Expected result is all tests passing (e.g. `861/861 PASS`); any failure is a regression.
 - **Serial log growth.** `neodev test` writes `qemu_output.log` (gitignored). Very
   large logs (hundreds of MB) can destabilise the run; rotate/delete it if a run
   exits early.

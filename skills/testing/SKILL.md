@@ -36,9 +36,9 @@ boots QEMU headless and parses PASS/FAIL counts from the serial console. See
    });
    ```
 
-   API: `test_case!(name, { body })` registers a named test (a panic = FAIL, a
-   clean exit = PASS); `test_eq!`, `test_ne!`, `test_true!` assert;
-   `test_fail!` always panics (for error paths).
+   API: `test_case!(name, { body })` registers a named test (clean completion =
+   PASS; an assertion returns `Err` = FAIL); `test_eq!`, `test_ne!`, `test_true!`
+   assert; `test_fail!` always returns `Err` (for error paths).
 
 2. **Export a registration function** from that module, one `test_case!` per
    test:
