@@ -247,6 +247,15 @@ pub fn register_cm_tests() {
         test_eq!(hive.value_count(ctrl), 1);
     });
 
+    // KnownDlls-style NXL paths created by `ensure_boot_defaults`.
+    test_case!("cm_library_paths_defaulted", {
+        let fd = crate::cm::cm_open_key(0, "CurrentControlSet\\Control\\Library")
+            .map_err(|_| "Library key missing")?;
+        for name in ["math", "net", "console"] {
+            test_true!(crate::cm::cm_query_value(fd, name).is_ok());
+        }
+    });
+
     test_case!("cm_set_value_persist_roundtrip", {
         let mut original = Hive::new("TestRoundtrip");
         let root = original.root_cell();
