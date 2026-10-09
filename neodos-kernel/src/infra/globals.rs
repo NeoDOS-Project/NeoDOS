@@ -149,23 +149,46 @@ where
     res
 }
 
+/// Maximum number of dirty pages written back per `flush_cache_if_needed`
+/// call. Bounds the time `PAGE_CACHE` + `BLOCK_DEVICES` can be held when the
+/// flush is triggered from the syscall-return path.
+const MAX_FLUSHES_PER_CALL: usize = 16;
+
 pub fn flush_cache_if_needed() {
-    if NEED_CACHE_FLUSH.swap(false, Ordering::Relaxed) {
-        crate::scheduler::preempt_disable();
-        if let Some(mut pc_lock) = PAGE_CACHE.try_lock() {
-            let _ord_pc = crate::lock_order::Guard::new(crate::lock_order::PAGE_CACHE);
-            let _ord_bd = crate::lock_order::Guard::new(crate::lock_order::BLOCK_DEVICES);
-            let mut bdev_lock = BLOCK_DEVICES.lock();
-            bdev_lock.for_each_present(|i, dev| {
-                // Flush only this device's dirty pages (per-device cache tag).
-                let batch_size = core::cmp::min(pc_lock.dirty_count(), 8);
-                if batch_size > 0 {
-                    let _ = pc_lock.flush_batch(i as u64, dev, batch_size);
-                }
-            });
-        }
-        crate::scheduler::preempt_enable();
-        let current = crate::hal::get_ticks();
-        LAST_FLUSH_TICK.store(current, Ordering::Relaxed);
+    if !NEED_CACHE_FLUSH.swap(false, Ordering::Relaxed) {
+        return;
     }
+
+    // Bounded writeback: flush one cached page per `PAGE_CACHE` +
+    // `BLOCK_DEVICES` acquisition instead of holding both locks across a whole
+    // multi-page burst. This keeps the critical section to a single 4 KB
+    // device write, shrinking the window that made the #343/#376 SMP boot
+    // deadlocks possible. If pages remain dirty when the per-call budget is
+    // exhausted, re-arm the flag so the next call continues the writeback.
+    let mut budget = MAX_FLUSHES_PER_CALL;
+    loop {
+        let flushed = with_page_cache(|pc_lock| {
+            with_block_devices(|bdev_lock| {
+                let mut flushed = 0usize;
+                bdev_lock.for_each_present(|i, dev| {
+                    if flushed > 0 { return; }
+                    // Flush only this device's dirty pages (per-device tag).
+                    flushed += pc_lock.flush_batch(i as u64, dev, 1);
+                });
+                flushed
+            })
+        });
+        if flushed == 0 {
+            break;
+        }
+        budget -= 1;
+        if budget == 0 {
+            if with_page_cache(|pc| pc.dirty_count()) > 0 {
+                NEED_CACHE_FLUSH.store(true, Ordering::Relaxed);
+            }
+            break;
+        }
+    }
+    let current = crate::hal::get_ticks();
+    LAST_FLUSH_TICK.store(current, Ordering::Relaxed);
 }
