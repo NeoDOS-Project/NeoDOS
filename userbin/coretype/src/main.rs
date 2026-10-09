@@ -102,14 +102,7 @@ pub extern "C" fn _start() -> ! {
                 write_err(b"\r\n");
                 write_err(tr_id!(IDS_READ_ERROR).as_bytes());
                 write_err(b": ");
-                let err_str: &[u8] = match e {
-                    -1 => b"EINVAL" as &[u8],
-                    -2 => b"ENOENT" as &[u8],
-                    -3 => b"ENOMEM" as &[u8],
-                    -4 => b"EACCES" as &[u8],
-                    -5 => b"EBADF" as &[u8],
-                    _ => b"UNKNOWN" as &[u8],
-                };
+                let err_str: &[u8] = libneoutil::errno_str(e).as_bytes();
                 write_err(err_str);
                 write_err(b"\r\n");
                 failed = true;
