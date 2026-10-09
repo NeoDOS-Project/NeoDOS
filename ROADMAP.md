@@ -2,7 +2,7 @@
 
 > **Versión del documento:** v2.0
 > **Fecha:** 2026-07-15
-> **Versión del proyecto:** v0.51.3
+> **Versión del proyecto:** v0.51.5
 > **Documentos relacionados:** [`docs/architecture/vision.md`](docs/architecture/vision.md),
 > [`docs/architecture/source-of-truth.md`](docs/architecture/source-of-truth.md),
 > [`docs/README.md`](docs/README.md) (índice completo de documentación)
