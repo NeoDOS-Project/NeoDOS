@@ -43,14 +43,12 @@ impl IoStack {
 
     /// Acquire a reference on the underlying device (increments refcount).
     pub fn acquire_ref(&self) {
-        let mut bdevs = crate::globals::BLOCK_DEVICES.lock();
-        bdevs.acquire(self.device_id);
+        crate::globals::with_block_devices(|bdevs| { bdevs.acquire(self.device_id); });
     }
 
     /// Release a reference on the underlying device (decrements refcount).
     pub fn release_ref(&self) {
-        let mut bdevs = crate::globals::BLOCK_DEVICES.lock();
-        bdevs.release(self.device_id);
+        crate::globals::with_block_devices(|bdevs| { bdevs.release(self.device_id); });
     }
 
     /// Mark this IoStack as stale (device was removed).
@@ -60,10 +58,7 @@ impl IoStack {
 
     /// Check if the underlying device is still alive.
     pub fn is_valid(&self) -> bool {
-        !self.stale && {
-            let mut bdevs = crate::globals::BLOCK_DEVICES.lock();
-            bdevs.get(self.device_id).is_some()
-        }
+        !self.stale && crate::globals::with_block_devices(|bdevs| bdevs.get(self.device_id).is_some())
     }
 
     /// Translate a partition-relative LBA to an absolute device LBA.
@@ -89,21 +84,24 @@ impl IoStack {
         let abs_lba = self.translate_lba(lba);
 
         if self.cache_level != PageCacheLevel::None && count == 1 && buf.len() >= 512 {
-            let _ord_pc = crate::lock_order::Guard::new(crate::lock_order::PAGE_CACHE);
-            let mut cache_lock = crate::globals::PAGE_CACHE.lock();
-            let _ord_bd = crate::lock_order::Guard::new(crate::lock_order::BLOCK_DEVICES);
-            let mut bdevs_lock = crate::globals::BLOCK_DEVICES.lock();
-            if let Some(dev) = bdevs_lock.get(self.device_id) {
-                if let Ok(sector) = cache_lock.get_sector(abs_lba as u32, self.device_id as u64, dev) {
-                    buf[..512].copy_from_slice(sector);
-                    return Ok(());
-                }
-            }
+            let hit = crate::globals::with_page_cache(|cache_lock| {
+                crate::globals::with_block_devices(|bdevs_lock| {
+                    if let Some(dev) = bdevs_lock.get(self.device_id) {
+                        if let Ok(sector) = cache_lock.get_sector(abs_lba as u32, self.device_id as u64, dev) {
+                            buf[..512].copy_from_slice(sector);
+                            return true;
+                        }
+                    }
+                    false
+                })
+            });
+            if hit { return Ok(()); }
         }
 
-        let mut bdevs_lock = crate::globals::BLOCK_DEVICES.lock();
-        let dev = bdevs_lock.get(self.device_id).ok_or(())?;
-        dev.read_blocks(abs_lba, count as u8, buf)
+        crate::globals::with_block_devices(|bdevs_lock| {
+            let dev = bdevs_lock.get(self.device_id).ok_or(())?;
+            dev.read_blocks(abs_lba, count as u8, buf)
+        })
     }
 
     /// Write sectors through the unified I/O path.
@@ -116,32 +114,33 @@ impl IoStack {
         let abs_lba = self.translate_lba(lba);
 
         if self.cache_level == PageCacheLevel::L2 && count == 1 && buf.len() >= 512 {
-            let _ord_pc = crate::lock_order::Guard::new(crate::lock_order::PAGE_CACHE);
-            let mut cache_lock = crate::globals::PAGE_CACHE.lock();
-            let _ord_bd = crate::lock_order::Guard::new(crate::lock_order::BLOCK_DEVICES);
-            let mut bdevs_lock = crate::globals::BLOCK_DEVICES.lock();
-            if let Some(dev) = bdevs_lock.get(self.device_id) {
-                if let Ok(sector) = cache_lock.get_sector_mut(abs_lba as u32, self.device_id as u64, dev) {
-                    sector.copy_from_slice(&buf[..512]);
-                    crate::globals::NEED_CACHE_FLUSH.store(true, core::sync::atomic::Ordering::Relaxed);
-                    return Ok(());
-                }
-            }
+            let hit = crate::globals::with_page_cache(|cache_lock| {
+                crate::globals::with_block_devices(|bdevs_lock| {
+                    if let Some(dev) = bdevs_lock.get(self.device_id) {
+                        if let Ok(sector) = cache_lock.get_sector_mut(abs_lba as u32, self.device_id as u64, dev) {
+                            sector.copy_from_slice(&buf[..512]);
+                            crate::globals::NEED_CACHE_FLUSH.store(true, core::sync::atomic::Ordering::Relaxed);
+                            return true;
+                        }
+                    }
+                    false
+                })
+            });
+            if hit { return Ok(()); }
         }
 
-        let res = {
-            let mut bdevs_lock = crate::globals::BLOCK_DEVICES.lock();
+        let res = crate::globals::with_block_devices(|bdevs_lock| {
             let dev = bdevs_lock.get(self.device_id).ok_or(())?;
             dev.write_blocks(abs_lba, count as u8, buf)
-        };
+        });
 
         // L1 is read-cached: direct writes bypass the page cache, so evict any
         // overlapping cached page or a later read would observe stale bytes
         // (e.g. FSCK repairing a block that was just written to the device).
         if self.cache_level == PageCacheLevel::L1 {
-            let _ord_pc = crate::lock_order::Guard::new(crate::lock_order::PAGE_CACHE);
-            let mut cache_lock = crate::globals::PAGE_CACHE.lock();
-            cache_lock.invalidate_range(abs_lba, abs_lba + count);
+            crate::globals::with_page_cache(|cache_lock| {
+                cache_lock.invalidate_range(abs_lba, abs_lba + count);
+            });
         }
 
         res
@@ -166,9 +165,10 @@ impl IoStack {
         F: FnOnce(&mut dyn BlockDevice) -> R,
     {
         if self.stale { return Err(()); }
-        let mut bdevs_lock = crate::globals::BLOCK_DEVICES.lock();
-        let dev = bdevs_lock.get(self.device_id).ok_or(())?;
-        Ok(f(dev))
+        crate::globals::with_block_devices(|bdevs_lock| {
+            let dev = bdevs_lock.get(self.device_id).ok_or(())?;
+            Ok(f(dev))
+        })
     }
 }
 
@@ -205,16 +205,22 @@ fn test_iostack_cache_levels() -> Result<(), &'static str> {
 fn test_iostack_partition_read_device() -> Result<(), &'static str> {
     // Test that reading through IoStack with partition offset
     // correctly reads the device. Device 0 must be available.
-    let mut bdevs = crate::globals::BLOCK_DEVICES.lock();
-    if bdevs.count() == 0 {
-        return Ok(());
-    }
-    let dev = bdevs.get(0).ok_or("No device 0")?;
-    let saved = dev.base_lba();
-    dev.set_base_lba(0);
-    let sector0 = dev.read_sector(0).map_err(|_| "Failed to read sector 0")?;
-    dev.set_base_lba(saved);
-    drop(bdevs);
+    let sector0 = crate::globals::with_block_devices(|bdevs| -> Result<[u8; 512], &'static str> {
+        if bdevs.count() == 0 {
+            return Err("NO_DEVICE");
+        }
+        let dev = bdevs.get(0).ok_or("No device 0")?;
+        let saved = dev.base_lba();
+        dev.set_base_lba(0);
+        let s = dev.read_sector(0).map_err(|_| "Failed to read sector 0")?;
+        dev.set_base_lba(saved);
+        Ok(s)
+    });
+    let sector0 = match sector0 {
+        Ok(s) => s,
+        Err("NO_DEVICE") => return Ok(()),
+        Err(e) => return Err(e),
+    };
 
     // Use IoStack without cache to avoid stale cache from boot-time GPT reads
     let stack = IoStack {

@@ -71,15 +71,16 @@ impl BTreeIO for NeoDosFsV2 {
     fn read_node(&self, block_lba: u64) -> Option<BTreeNode> {
         let sector_lba = block_lba * 8;
         let abs_sector = self.io_stack.translate_lba(sector_lba);
-        let mut bdevs = crate::globals::BLOCK_DEVICES.lock();
-        let dev = bdevs.get(self.io_stack.device_id)?;
-        let mut buf = [0u8; NODE_SIZE];
-        for i in 0..8usize {
-            let s = dev.read_sector(abs_sector + i as u64).ok()?;
-            buf[i * 512..(i + 1) * 512].copy_from_slice(&s);
-        }
-        drop(bdevs);
-        BTreeNode::deserialize(&buf)
+        let dev_id = self.io_stack.device_id;
+        crate::globals::with_block_devices(|bdevs| {
+            let dev = bdevs.get(dev_id)?;
+            let mut buf = [0u8; NODE_SIZE];
+            for i in 0..8usize {
+                let s = dev.read_sector(abs_sector + i as u64).ok()?;
+                buf[i * 512..(i + 1) * 512].copy_from_slice(&s);
+            }
+            BTreeNode::deserialize(&buf)
+        })
     }
 
     fn write_node(&mut self, node: &BTreeNode) -> u64 {
@@ -87,28 +88,31 @@ impl BTreeIO for NeoDosFsV2 {
         if block_lba == 0 { return 0; }
         let sector_lba = block_lba * 8;
         let abs_sector = self.io_stack.translate_lba(sector_lba);
+        let dev_id = self.io_stack.device_id;
         // Lock order: PAGE_CACHE before BLOCK_DEVICES. This matches
         // `IoStack::read_sectors`/`write_sectors` and
         // `globals::flush_cache_if_needed`. Taking BLOCK_DEVICES first here
         // (as the code used to) is the inverse order and deadlocks against
-        // those paths under SMP (#343).
-        let _ord_pc = crate::lock_order::Guard::new(crate::lock_order::PAGE_CACHE);
-        let mut pc = crate::globals::PAGE_CACHE.lock();
-        let _ord_bd = crate::lock_order::Guard::new(crate::lock_order::BLOCK_DEVICES);
-        let mut bdevs = crate::globals::BLOCK_DEVICES.lock();
-        let dev = match bdevs.get(self.io_stack.device_id) { Some(d) => d, None => return 0 };
-        let mut buf = [0u8; NODE_SIZE];
-        node.serialize(&mut buf);
-        for i in 0..8usize {
-            let mut sec = [0u8; 512];
-            sec.copy_from_slice(&buf[i * 512..(i + 1) * 512]);
-            if dev.write_sector(abs_sector + i as u64, &sec).is_err() { return 0; }
-        }
-        // Invalidate page cache for these sectors — a freed data block
-        // may have dirty pages left over from file_write, which would
-        // overwrite B-tree metadata on flush.
-        pc.invalidate_range(abs_sector, abs_sector + 8);
-        block_lba
+        // those paths under SMP (#343). The `with_*` helpers also disable
+        // preemption and instrument the acquisition order.
+        let ok = crate::globals::with_page_cache(|pc| {
+            crate::globals::with_block_devices(|bdevs| {
+                let dev = match bdevs.get(dev_id) { Some(d) => d, None => return false };
+                let mut buf = [0u8; NODE_SIZE];
+                node.serialize(&mut buf);
+                for i in 0..8usize {
+                    let mut sec = [0u8; 512];
+                    sec.copy_from_slice(&buf[i * 512..(i + 1) * 512]);
+                    if dev.write_sector(abs_sector + i as u64, &sec).is_err() { return false; }
+                }
+                // Invalidate page cache for these sectors — a freed data block
+                // may have dirty pages left over from file_write, which would
+                // overwrite B-tree metadata on flush.
+                pc.invalidate_range(abs_sector, abs_sector + 8);
+                true
+            })
+        });
+        if ok { block_lba } else { 0 }
     }
 }
 
@@ -149,15 +153,16 @@ impl NeoDosFsV2 {
             let mut node_buf = [0u8; NODE_SIZE];
             let sector_lba = sb.snapshot_table_lba * 8;
             let abs_sector = io_stack.translate_lba(sector_lba);
-            let mut bdevs = crate::globals::BLOCK_DEVICES.lock();
-            if let Some(dev) = bdevs.get(io_stack.device_id) {
-                for i in 0..8usize {
-                    if let Ok(s) = dev.read_sector(abs_sector + i as u64) {
-                        node_buf[i * 512..(i + 1) * 512].copy_from_slice(&s);
+            let dev_id = io_stack.device_id;
+            crate::globals::with_block_devices(|bdevs| {
+                if let Some(dev) = bdevs.get(dev_id) {
+                    for i in 0..8usize {
+                        if let Ok(s) = dev.read_sector(abs_sector + i as u64) {
+                            node_buf[i * 512..(i + 1) * 512].copy_from_slice(&s);
+                        }
                     }
                 }
-            }
-            drop(bdevs);
+            });
             SnapshotTable::deserialize(&node_buf).unwrap_or_else(|| SnapshotTable::new())
         } else {
             SnapshotTable::new()
@@ -190,33 +195,36 @@ impl NeoDosFsV2 {
     /// coherente con `BTreeIO::read_node`.
     fn read_block_raw(&self, block_lba: u64, buf: &mut [u8; NODE_SIZE]) -> bool {
         let sector_lba = self.io_stack.translate_lba(block_lba * 8);
-        let mut bdevs = crate::globals::BLOCK_DEVICES.lock();
-        let dev = match bdevs.get(self.io_stack.device_id) { Some(d) => d, None => return false };
-        for i in 0..8usize {
-            match dev.read_sector(sector_lba + i as u64) {
-                Ok(s) => buf[i * 512..(i + 1) * 512].copy_from_slice(&s),
-                Err(_) => return false,
+        let dev_id = self.io_stack.device_id;
+        crate::globals::with_block_devices(|bdevs| {
+            let dev = match bdevs.get(dev_id) { Some(d) => d, None => return false };
+            for i in 0..8usize {
+                match dev.read_sector(sector_lba + i as u64) {
+                    Ok(s) => buf[i * 512..(i + 1) * 512].copy_from_slice(&s),
+                    Err(_) => return false,
+                }
             }
-        }
-        true
+            true
+        })
     }
 
     /// Escribir un bloque de 4KB directamente al dispositivo e invalidar el
     /// page cache de sus sectores (igual que `BTreeIO::write_node`).
     fn write_block_raw(&self, block_lba: u64, buf: &[u8; NODE_SIZE]) -> bool {
         let sector_lba = self.io_stack.translate_lba(block_lba * 8);
-        let _ord_pc = crate::lock_order::Guard::new(crate::lock_order::PAGE_CACHE);
-        let mut pc = crate::globals::PAGE_CACHE.lock();
-        let _ord_bd = crate::lock_order::Guard::new(crate::lock_order::BLOCK_DEVICES);
-        let mut bdevs = crate::globals::BLOCK_DEVICES.lock();
-        let dev = match bdevs.get(self.io_stack.device_id) { Some(d) => d, None => return false };
-        for i in 0..8usize {
-            let mut sec = [0u8; 512];
-            sec.copy_from_slice(&buf[i * 512..(i + 1) * 512]);
-            if dev.write_sector(sector_lba + i as u64, &sec).is_err() { return false; }
-        }
-        pc.invalidate_range(sector_lba, sector_lba + 8);
-        true
+        let dev_id = self.io_stack.device_id;
+        crate::globals::with_page_cache(|pc| {
+            crate::globals::with_block_devices(|bdevs| {
+                let dev = match bdevs.get(dev_id) { Some(d) => d, None => return false };
+                for i in 0..8usize {
+                    let mut sec = [0u8; 512];
+                    sec.copy_from_slice(&buf[i * 512..(i + 1) * 512]);
+                    if dev.write_sector(sector_lba + i as u64, &sec).is_err() { return false; }
+                }
+                pc.invalidate_range(sector_lba, sector_lba + 8);
+                true
+            })
+        })
     }
 
     /// Cargar la cadena de nodos de free list a partir de su cabeza.
@@ -443,15 +451,17 @@ impl NeoDosFsV2 {
     /// extracción desde snapshots.
     fn read_entry_bytes(&mut self, entry: &DirEntryV2, offset: u64, buf: &mut [u8]) -> Result<usize, VfsError> {
         let abs_lba = self.io_stack.translate_lba(entry.extent_lba * 8);
-        // Lock order: PAGE_CACHE before BLOCK_DEVICES (#343).
-        let _ord_pc = crate::lock_order::Guard::new(crate::lock_order::PAGE_CACHE);
-        let mut pc = crate::globals::PAGE_CACHE.lock();
-        let _ord_bd = crate::lock_order::Guard::new(crate::lock_order::BLOCK_DEVICES);
-        let mut bdevs = crate::globals::BLOCK_DEVICES.lock();
-        let dev = bdevs.get(self.io_stack.device_id).ok_or(VfsError::IOError)?;
+        let dev_id = self.io_stack.device_id;
         let mut adj_entry = entry.clone();
         adj_entry.extent_lba = abs_lba;
-        file_read(&adj_entry, offset, buf, &mut *pc, self.io_stack.device_id as u64, dev).map_err(|_| VfsError::IOError)
+        // Lock order: PAGE_CACHE before BLOCK_DEVICES (#343). The `with_*`
+        // helpers add preempt-disable + lock-order instrumentation.
+        crate::globals::with_page_cache(|pc| {
+            crate::globals::with_block_devices(|bdevs| {
+                let dev = bdevs.get(dev_id).ok_or(VfsError::IOError)?;
+                file_read(&adj_entry, offset, buf, &mut *pc, dev_id as u64, dev).map_err(|_| VfsError::IOError)
+            })
+        })
     }
 
     /// Resolver `path` (relativo al volumen, con o sin `X:` inicial) dentro del
@@ -526,17 +536,19 @@ fn superblock_crc(sb: &SuperblockNE2) -> u32 {
 /// Leer el sector 0 directamente del dispositivo, sin pasar por el page cache.
 fn read_superblock_raw(io_stack: &IoStack) -> Result<[u8; 512], ()> {
     let abs_sector = io_stack.translate_lba(0);
-    let mut bdevs = crate::globals::BLOCK_DEVICES.lock();
-    let dev = bdevs.get(io_stack.device_id).ok_or(())?;
-    dev.read_sector(abs_sector)
+    let dev_id = io_stack.device_id;
+    crate::globals::with_block_devices(|bdevs| {
+        let dev = bdevs.get(dev_id).ok_or(())?;
+        dev.read_sector(abs_sector)
+    })
 }
 
 /// Invalidar en el page cache un rango de sectores absolutos.
 fn invalidate_cache(io_stack: &IoStack, start_sector: u64, count: u64) {
     let abs = io_stack.translate_lba(start_sector);
-    let _ord_pc = crate::lock_order::Guard::new(crate::lock_order::PAGE_CACHE);
-    let mut pc = crate::globals::PAGE_CACHE.lock();
-    pc.invalidate_range(abs, abs + count);
+    crate::globals::with_page_cache(|pc| {
+        pc.invalidate_range(abs, abs + count);
+    });
 }
 
 impl FileSystem for NeoDosFsV2 {
@@ -548,18 +560,17 @@ impl FileSystem for NeoDosFsV2 {
     fn write(&mut self, inode: u32, offset: u64, buf: &[u8]) -> Result<usize, VfsError> {
         let (btree_root, entry, parent) = self.inode_cache.get(inode as usize).and_then(|x| x.as_ref())
             .map(|c| (c.root, c.entry.clone(), c.parent)).ok_or(VfsError::NotFound)?;
-        // Lock order: PAGE_CACHE before BLOCK_DEVICES (#343).
-        let _ord_pc = crate::lock_order::Guard::new(crate::lock_order::PAGE_CACHE);
-        let mut pc = crate::globals::PAGE_CACHE.lock();
-        let _ord_bd = crate::lock_order::Guard::new(crate::lock_order::BLOCK_DEVICES);
-        let mut bdevs = crate::globals::BLOCK_DEVICES.lock();
-        let dev = bdevs.get(self.io_stack.device_id).ok_or(VfsError::IOError)?;
+        let dev_id = self.io_stack.device_id;
         let part_base = self.io_stack.translate_lba(0);
-        let new_entry = file_write(&entry, offset, buf, &mut self.freelist, &mut *pc, self.io_stack.device_id as u64, dev, part_base).map_err(|_| VfsError::IOError)?;
-        drop(bdevs);
-        drop(_ord_bd);
-        drop(pc);
-        drop(_ord_pc);
+        // Lock order: PAGE_CACHE before BLOCK_DEVICES (#343); the `with_*`
+        // helpers also disable preemption and instrument the acquisition.
+        let new_entry = crate::globals::with_page_cache(|pc| {
+            crate::globals::with_block_devices(|bdevs| {
+                let dev = bdevs.get(dev_id).ok_or(VfsError::IOError)?;
+                file_write(&entry, offset, buf, &mut self.freelist, &mut *pc, dev_id as u64, dev, part_base)
+                    .map_err(|_| VfsError::IOError)
+            })
+        })?;
 
         // Los extents antiguos del archivo quedan reemplazados por los nuevos
         // bloques COW; se reclamarán cuando no haya snapshots.
