@@ -312,6 +312,24 @@ version 8, version-first.
 Fixed-base (legacy) libraries occupy their designated slot; PIE libraries take
 the first free slot at load time.
 
+### NXL path resolution
+
+Userland thin clients (`libmath`, `libnet`, `libneodos::console`) resolve the
+library path with `libneodos::nxl::library_path(name, buf)`: a `KnownDlls`-style
+Registry value first, then a built-in fallback.
+
+```text
+\Registry\Machine\System\CurrentControlSet\Control\Library\<name>   REG_SZ
+    math      C:\System\Libraries\math.nxl
+    net       C:\System\Libraries\net.nxl
+    console   C:\System\Libraries\console.nxl
+```
+
+Defaults are created at boot by `cm::init::ensure_boot_defaults`. The kernel
+itself never reads these values: `math.nxl`/`net.nxl`/`console.nxl` are userland
+libraries and are loaded on demand. Only `fs.nxl` (the syscall gateway) is
+boot-loaded, at a fixed path.
+
 ## ABI Table (Version 8)
 
 Current ABI is **v8**. Key ABI structs (all `#[repr(C)]`, defined in `libneodos/src/syscall.rs`):

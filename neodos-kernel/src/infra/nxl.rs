@@ -999,6 +999,16 @@ pub fn register_nxl_tests() {
         test_eq!(v, 1);
     });
 
+    // KnownDlls-style NXL paths exist as boot defaults under
+    // `\Registry\Machine\System\CurrentControlSet\Control\Library`.
+    test_case!("nxl_library_registry_defaults", {
+        let fd = crate::cm::cm_open_key(0, "CurrentControlSet\\Control\\Library")
+            .map_err(|_| "Library key missing")?;
+        for name in ["math", "net", "console"] {
+            test_true!(crate::cm::cm_query_value(fd, name).is_ok());
+        }
+    });
+
     // Units service exported by math.nxl and reused at runtime via `libmath`
     // (neomem et al.). 12.75 GiB == 13_690_208_256 bytes.
     test_case!("nxl_math_units_service", {

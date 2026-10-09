@@ -122,6 +122,25 @@ pub fn ensure_boot_defaults() {
         Ok(k) => k,
         Err(_) => return,
     };
+
+    // ── CurrentControlSet\Control\Library — NXL paths (KnownDlls-style) ──
+    // Userland clients (libmath / libnet / console) resolve these; the kernel
+    // does not read them (it boot-loads only the fs.nxl syscall gateway).
+    let library = crate::cm::cm_open_key(ctrl, "Library")
+        .or_else(|_| crate::cm::cm_create_key(ctrl, "Library"));
+    if let Ok(library) = library {
+        let defaults: [(&str, &[u8]); 3] = [
+            ("math", &b"C:\\System\\Libraries\\math.nxl"[..]),
+            ("net", &b"C:\\System\\Libraries\\net.nxl"[..]),
+            ("console", &b"C:\\System\\Libraries\\console.nxl"[..]),
+        ];
+        for (name, path) in defaults {
+            if crate::cm::cm_query_value(library, name).is_err() {
+                let _ = crate::cm::cm_set_value(library, name, hive::REG_SZ, path);
+            }
+        }
+    }
+
     let locale = crate::cm::cm_open_key(ctrl, "Locale")
         .or_else(|_| crate::cm::cm_create_key(ctrl, "Locale"));
     if let Ok(locale) = locale {
