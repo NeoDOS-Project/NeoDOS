@@ -7,10 +7,6 @@ use spin::Mutex;
 use lazy_static::lazy_static;
 use alloc::vec::Vec;
 
-/// Export-table address of the relocatable (PIE) `math.nxl`, for the NXL test.
-pub static MATH_EXPORT_BASE: AtomicU64 = AtomicU64::new(0);
-/// Export-table address of the PIE `libarith.nxl` (imports `math_add`).
-pub static ARITH_EXPORT_BASE: AtomicU64 = AtomicU64::new(0);
 /// Export-table address of the core `libneodos.nxl` (legacy, slot 0).
 pub static CORE_EXPORT_BASE: AtomicU64 = AtomicU64::new(0);
 
@@ -110,26 +106,10 @@ pub fn load_nxl() -> bool {
         }
     };
 
-    // B1 spike: load the relocatable (PIE) math library at boot so the
-    // R_X86_64_RELATIVE path is exercised and available to the NXL tests.
-    match nxl_load("C:\\System\\Libraries\\math.nxl") {
-        Some(base) => {
-            MATH_EXPORT_BASE.store(base, Ordering::Relaxed);
-            kinfo!(LogSubsys::Nxl, "PIE math.nxl export table at 0x{:x}", base);
-        }
-        None => kwarn!(LogSubsys::Nxl, "math.nxl not found"),
-    }
-
-    // B2 end-to-end: load libarith.nxl, which imports `math_add` from math.nxl
-    // (resolved by `resolve_nxl_imports` from the registry above).
-    match nxl_load("C:\\System\\Libraries\\libarith.nxl") {
-        Some(base) => {
-            ARITH_EXPORT_BASE.store(base, Ordering::Relaxed);
-            kinfo!(LogSubsys::Nxl, "PIE libarith.nxl export table at 0x{:x}", base);
-        }
-        None => kwarn!(LogSubsys::Nxl, "libarith.nxl not found"),
-    }
-
+    // `math.nxl`, `console.nxl`, `net.nxl` and `libarith.nxl` are userland
+    // libraries: their thin clients (libmath / console / libnet) or the NXL
+    // tests load them on demand. Only the core syscall gateway (`fs.nxl`) is
+    // boot-loaded by the kernel.
     ok
 }
 
@@ -889,11 +869,12 @@ pub fn register_nxl_tests() {
     use crate::test_eq;
     use crate::test_true;
 
-    // `math.nxl` is built as PIE and loaded at boot through the relocatable
-    // path (R_X86_64_RELATIVE). Verify the relocated export table is callable.
+    // `math.nxl` is a userland (PIE) library; tests load it on demand.
     test_case!("nxl_pie_math_export_table", {
-        let base = MATH_EXPORT_BASE.load(Ordering::Relaxed);
-        test_true!(base != 0);
+        let base = match nxl_load("C:\\System\\Libraries\\math.nxl") {
+            Some(b) => b,
+            None => return Err("math.nxl not loaded"),
+        };
 
         // MathAbiTable: version: u32 @ 0, add: fn(i64,i64)->i64 @ 8.
         let add: extern "C" fn(i64, i64) -> i64 = unsafe {
@@ -905,6 +886,10 @@ pub fn register_nxl_tests() {
 
     // B2: named symbol resolution from the library's `.dynsym`.
     test_case!("nxl_symbol_lookup_math_add", {
+        let base = match nxl_load("C:\\System\\Libraries\\math.nxl") {
+            Some(b) => b,
+            None => return Err("math.nxl not loaded"),
+        };
         let addr = match nxl_lookup_symbol("math_add") {
             Some(a) => a,
             None => return Err("math_add not exported in .dynsym"),
@@ -914,8 +899,7 @@ pub fn register_nxl_tests() {
         test_eq!(add(40, 2), 42);
 
         // The exported object symbol must match the export-table address.
-        let exported = nxl_lookup_symbol("MATH_EXPORT_TABLE");
-        test_eq!(exported, Some(MATH_EXPORT_BASE.load(Ordering::Relaxed)));
+        test_eq!(nxl_lookup_symbol("MATH_EXPORT_TABLE"), Some(base));
     });
 
     // B2: import resolution writes the registry address into the target slot.
@@ -941,6 +925,10 @@ pub fn register_nxl_tests() {
     // `math.nxl` and call it. The loader must resolve the cross-library
     // GLOB_DAT + the R_X86_64_64 export-table pointer from the registry.
     test_case!("nxl_cross_library_import_end_to_end", {
+        // Provider must be loaded so `math_add` is in the registry.
+        if nxl_load("C:\\System\\Libraries\\math.nxl").is_none() {
+            return Err("math.nxl not loaded");
+        }
         static ARITH: &[u8] = include_bytes!(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/testdata/arith_nxl_fixture.dat"
@@ -972,11 +960,16 @@ pub fn register_nxl_tests() {
         test_true!(sys_write >= 0x1e00_0000 && sys_write < 0x1e20_0000);
     });
 
-    // B2 from the real image: `libarith.nxl` is packaged by the (data-driven)
-    // image builder and loaded at boot; its `math_add` import must resolve.
+    // B2 from the real image: `libarith.nxl` is packaged and loaded on demand;
+    // its `math_add` import must resolve from the provider loaded first.
     test_case!("nxl_cross_library_import_from_image", {
-        let base = ARITH_EXPORT_BASE.load(Ordering::Relaxed);
-        test_true!(base != 0);
+        if nxl_load("C:\\System\\Libraries\\math.nxl").is_none() {
+            return Err("math.nxl not loaded");
+        }
+        let base = match nxl_load("C:\\System\\Libraries\\libarith.nxl") {
+            Some(b) => b,
+            None => return Err("libarith.nxl not loaded"),
+        };
         // The export table must declare ABI version 1 (#584).
         let version = unsafe { core::ptr::read_volatile(base as *const u32) };
         test_eq!(version, 1);
@@ -1004,5 +997,39 @@ pub fn register_nxl_tests() {
         };
         let v = unsafe { core::ptr::read_volatile(base as *const u32) };
         test_eq!(v, 1);
+    });
+
+    // Units service exported by math.nxl and reused at runtime via `libmath`
+    // (neomem et al.). 12.75 GiB == 13_690_208_256 bytes.
+    test_case!("nxl_math_units_service", {
+        if nxl_load("C:\\System\\Libraries\\math.nxl").is_none() {
+            return Err("math.nxl not loaded");
+        }
+        let kib_to_bytes: extern "C" fn(u64) -> u64 = unsafe {
+            core::mem::transmute(
+                nxl_lookup_symbol("math_kib_to_bytes").ok_or("math_kib_to_bytes missing")?,
+            )
+        };
+        test_eq!(kib_to_bytes(2), 2048);
+        test_eq!(kib_to_bytes(0), 0);
+
+        let bytes = 13_690_208_256u64;
+        let scale: extern "C" fn(u64) -> u64 = unsafe {
+            core::mem::transmute(
+                nxl_lookup_symbol("math_scale_size").ok_or("math_scale_size missing")?,
+            )
+        };
+        let packed = scale(bytes);
+        test_eq!(packed >> 32, 3); // GB
+        test_eq!(packed & 0xFFFF_FFFF, 1275); // 12.75 * 100
+
+        let fmt: extern "C" fn(u64, *mut u8, usize) -> usize = unsafe {
+            core::mem::transmute(
+                nxl_lookup_symbol("math_format_size").ok_or("math_format_size missing")?,
+            )
+        };
+        let mut buf = [0u8; 16];
+        let n = fmt(bytes, buf.as_mut_ptr(), buf.len());
+        test_eq!(&buf[..n], &b"12.75 GB"[..]);
     });
 }

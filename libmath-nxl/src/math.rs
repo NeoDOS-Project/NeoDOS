@@ -122,6 +122,91 @@ pub fn exp(x: f64) -> f64 {
     if k < 0 { result / pow2 } else { result * pow2 }
 }
 
+// ── Units of measurement ──
+//
+// Shared by userland tools (neomem, neotop, drives, ipconfig) so the
+// bytes→human-readable-size logic lives in one place and is reused at runtime
+// through `math.nxl` (see `libmath`).
+
+/// Bytes per unit for B, KB, MB, GB, TB (binary multiples).
+const UNIT_BASES: [u64; 5] = [
+    1,
+    1024,
+    1024 * 1024,
+    1024 * 1024 * 1024,
+    1024 * 1024 * 1024 * 1024,
+];
+
+pub const UNIT_B: u32 = 0;
+pub const UNIT_KB: u32 = 1;
+pub const UNIT_MB: u32 = 2;
+pub const UNIT_GB: u32 = 3;
+pub const UNIT_TB: u32 = 4;
+
+pub fn kib_to_bytes(kib: u64) -> u64 { kib.saturating_mul(1024) }
+pub fn bytes_to_kib(bytes: u64) -> u64 { bytes / 1024 }
+
+/// Choose the largest unit for `bytes` and return `(unit << 32) | value_x100`,
+/// i.e. the value scaled by 100 (two decimals) packed with the unit index.
+pub fn scale_size(bytes: u64) -> u64 {
+    let mut unit: usize = 0;
+    let mut i = UNIT_BASES.len() - 1;
+    while i > 0 {
+        if bytes >= UNIT_BASES[i] {
+            unit = i;
+            break;
+        }
+        i -= 1;
+    }
+    let value_x100 = ((bytes as u128) * 100 / UNIT_BASES[unit] as u128) as u64;
+    ((unit as u64) << 32) | (value_x100 & 0xFFFF_FFFF)
+}
+
+fn put_dec(mut v: u64, buf: &mut [u8], pos: &mut usize) {
+    if v == 0 {
+        if *pos < buf.len() { buf[*pos] = b'0'; *pos += 1; }
+        return;
+    }
+    let mut tmp = [0u8; 20];
+    let mut n = 0;
+    while v > 0 {
+        tmp[n] = b'0' + (v % 10) as u8;
+        n += 1;
+        v /= 10;
+    }
+    while n > 0 {
+        n -= 1;
+        if *pos < buf.len() { buf[*pos] = tmp[n]; *pos += 1; }
+    }
+}
+
+fn put_str(s: &[u8], buf: &mut [u8], pos: &mut usize) {
+    for &b in s {
+        if *pos < buf.len() { buf[*pos] = b; *pos += 1; }
+    }
+}
+
+/// Format `bytes` as a human-readable size into `buf`, returning bytes written
+/// (truncated to `buf.len()`). Policy: two decimals for GB/TB, integer else.
+pub fn format_size(bytes: u64, buf: &mut [u8]) -> usize {
+    let packed = scale_size(bytes);
+    let unit = (packed >> 32) as usize;
+    let value_x100 = (packed & 0xFFFF_FFFF) as u64;
+    let mut pos = 0usize;
+    if unit >= UNIT_GB as usize {
+        put_dec(value_x100 / 100, buf, &mut pos);
+        put_str(b".", buf, &mut pos);
+        let frac = value_x100 % 100;
+        if frac < 10 { put_str(b"0", buf, &mut pos); }
+        put_dec(frac, buf, &mut pos);
+    } else {
+        put_dec(value_x100 / 100, buf, &mut pos);
+    }
+    const SUFFIX: [&[u8]; 5] = [b" B", b" KB", b" MB", b" GB", b" TB"];
+    put_str(SUFFIX[unit], buf, &mut pos);
+    pos.min(buf.len())
+}
+
 // ── Export table type ──
 
 #[repr(C)]
@@ -146,5 +231,10 @@ pub struct MathAbiTable {
     pub log2: extern "C" fn(f64) -> f64,
     pub log: extern "C" fn(f64) -> f64,
     pub exp: extern "C" fn(f64) -> f64,
-    pub _reserved: [u64; 8],
+    // Units of measurement
+    pub kib_to_bytes: extern "C" fn(u64) -> u64,
+    pub bytes_to_kib: extern "C" fn(u64) -> u64,
+    pub scale_size: extern "C" fn(u64) -> u64,
+    pub format_size: extern "C" fn(u64, *mut u8, usize) -> usize,
+    pub _reserved: [u64; 4],
 }

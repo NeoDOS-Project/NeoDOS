@@ -1,0 +1,23 @@
+[package]
+name = "libmath"
+version = "0.1.0"
+edition = "2021"
+description = "NeoDOS math.nxl client — thin wrapper for the reusable math/units service"
+
+[lib]
+name = "libmath"
+path = "src/lib.rs"
+crate-type = ["lib"]
+test = false
+
+[dependencies]
+libneodos = { path = "../libneodos" }
+
+[profile.release]
+panic = "abort"
+opt-level = 3
+lto = true
+debug = false
+
+[profile.dev]
+panic = "abort"

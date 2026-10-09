@@ -45,31 +45,18 @@ fn write_num(n: u64) {
     write_str(&buf[i..]);
 }
 
+/// Human-readable size, delegated to the shared units service in `math.nxl`.
 fn write_size(bytes: u64) {
-    if bytes >= 1024 * 1024 * 1024 {
-        let gb = bytes / (1024 * 1024 * 1024);
-        let rem = (bytes % (1024 * 1024 * 1024)) * 100 / (1024 * 1024 * 1024);
-        write_num(gb);
-        write_str(b".");
-        if rem < 10 { write_str(b"0"); }
-        write_num(rem);
-        write_str(b" GB");
-    } else if bytes >= 1024 * 1024 {
-        let mb = bytes / (1024 * 1024);
-        write_num(mb);
-        write_str(b" MB");
-    } else if bytes >= 1024 {
-        let kb = bytes / 1024;
-        write_num(kb);
-        write_str(b" KB");
-    } else {
-        write_num(bytes);
-        write_str(b" B");
+    let mut buf = [0u8; 32];
+    let n = libmath::format_size(bytes, &mut buf);
+    if n > 0 {
+        write_str(&buf[..n]);
     }
 }
 
+/// KiB→bytes, delegated to the shared units service in `math.nxl`.
 fn kib_to_bytes(kib: u64) -> u64 {
-    kib.saturating_mul(1024)
+    libmath::kib_to_bytes(kib)
 }
 
 /// Print `Total / Used / Free` for a KiB-valued triple (kernel `MemoryStats`).
