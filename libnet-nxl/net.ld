@@ -1,7 +1,8 @@
 ENTRY(nxl_entry)
 SECTIONS
 {
-    . = 0x1e0c0000;
+    /* PIE: link at virtual 0; the loader relocates it to any free slot. */
+    . = 0;
     __nxl_start = .;
 
     .export_table : {

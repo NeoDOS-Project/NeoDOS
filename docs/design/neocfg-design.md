@@ -335,7 +335,7 @@ tr!("about.kernel"):          neodos-kernel v0.51.3
 tr!("about.abi"):             v8 (syscall ABI)
 tr!("about.arch"):            x86_64
 tr!("about.neofs"):           NE2 v2
-tr!("about.libneodos"):       v7 (NXL ABI table)
+tr!("about.libneodos"):       v8 (NXL ABI table)
 tr!("about.build"):           2026-07-11
 
 [Esc] tr!("neocfg.back")
@@ -345,7 +345,7 @@ tr!("about.build"):           2026-07-11
 
 - Version → `ob_open("\Global\Info\Version")` + `ob_query_info(Version=8)` → string del kernel
 - Valores fijos compilados: Syscall ABI (v8), arch, NeoFS version
-- `libneodos::export::ABI_VERSION` (v7) para la NXL ABI table de libneodos
+- `libneodos::export::ABI_VERSION` (v8) para la NXL ABI table de libneodos
 
 > **Nota:** el kernel no expone una *fecha de compilación* por el namespace Ob,
 > así que la fila "Build date" se omite hasta que exista esa fuente. La versión

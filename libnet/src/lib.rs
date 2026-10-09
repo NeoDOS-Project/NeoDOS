@@ -9,7 +9,6 @@ pub mod dns;
 use core::sync::atomic::{AtomicU64, Ordering};
 use libneodos::loadlib;
 
-const NET_NXL_PATH: &str = "C:\\System\\Libraries\\net.nxl\0";
 const EXPORT_TABLE_OFFSET: u64 = 0x00;
 
 static NET_BASE: AtomicU64 = AtomicU64::new(0);
@@ -67,7 +66,11 @@ pub(crate) fn get_table() -> Option<&'static NetAbiTable> {
     if base != 0 {
         return Some(unsafe { &*((base + EXPORT_TABLE_OFFSET) as *const NetAbiTable) });
     }
-    match loadlib(NET_NXL_PATH) {
+    // Path from the Registry (KnownDlls-style) with fallback (libneodos::nxl).
+    let mut pbuf = [0u8; 260];
+    let n = libneodos::nxl::library_path("net", &mut pbuf)?;
+    let path = core::str::from_utf8(&pbuf[..n]).ok()?;
+    match loadlib(path) {
         Ok(base) => {
             NET_BASE.store(base, Ordering::Relaxed);
             Some(unsafe { &*((base + EXPORT_TABLE_OFFSET) as *const NetAbiTable) })

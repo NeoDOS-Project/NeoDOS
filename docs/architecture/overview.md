@@ -496,21 +496,24 @@ The underlying kernel loading path is `nem/loader.rs::load_nem()` → v3loader.
 
 Shared library (NXL) loading subsystem for user-mode processes.
 
-**NXL region**: `0x1e000000..0x1e200000` (2 MB, 8 slots of 256 KB each). Split into 4 KB page tables during boot (PHASE 3.87).
+**NXL region**: `0x1e000000..0x1e200000` (2 MB, 8 slots of 256 KB each). Split into 4 KB page tables during boot (PHASE 3.87). Maximum library size is one slot (256 KB).
 
-**Available NXLs**:
+**NXL models**:
 
-| NXL | Slot | Address | Load |
-| ----- | ------ | --------- | ------ |
-| `libneodos.nxl` | 0 | `0x1e000000` | Auto-loaded at boot |
-| `libmath.nxl` | 1 | `0x1e040000` | Manual via `LOADLIB` |
-| `console.nxl` | 2 | `0x1e080000` | Auto-loaded on first use by libneodos |
+- **Legacy (`ET_EXEC`, fixed base):** linked to its slot base and loaded without relocation. Only `libneodos.nxl` (the syscall gateway) remains on this model.
+- **Relocatable (`ET_DYN` / PIE):** linked at virtual 0 and loaded into any free slot; `R_X86_64_RELATIVE` relocations are applied and the loader returns the `.export_table` address. A PIE NXL may import symbols from already-loaded libraries (`GLOB_DAT` / `JUMP_SLOT` / `R_X86_64_64`), resolved by name from a loader symbol registry built from each library's `.dynsym`.
 
-**sys_loadlib (RAX=25)**: Loads a NeoDOS NXL from NeoFS into the next free slot. Returns base address. The NXL ELF is parsed, sections mapped as USER_ACCESSIBLE (read-only), and the export table (`AbiTable`) becomes accessible at the base address.
+| NXL | Model | Load |
+| ----- | ------- | ------ |
+| `libneodos.nxl` (`fs.nxl`) | Legacy, slot 0 @ `0x1e000000` | Auto-loaded at boot |
+| `libmath.nxl` | PIE | Auto-loaded at boot |
+| `libarith.nxl` | PIE | Auto-loaded at boot |
+| `console.nxl` | PIE | Lazy-loaded on first use by libneodos |
+| `net.nxl` | PIE | Lazy-loaded by `libnet` |
 
-**Shell command**: `LOADLIB C:\System\Libraries\fs.nxl` loads a shared library (e.g., `LOADLIB C:\System\Libraries\math.nxl` for the math library).
+**sys_loadlib (RAX=25)**: loads a NeoDOS NXL from NeoFS into a free slot and returns the export-table address. Every export table starts with `version: u32` (uniform; fail-closed on 0); the loader validates it and applies relocations/import resolution for PIE libraries.
 
-**libneodos wrapper**: `libneodos::loadlib(path)` invokes `sys_loadlib` and returns the NXL base address for user-mode `extern "C"` function dispatch.
+**libneodos wrapper**: `libneodos::loadlib(path)` invokes `sys_loadlib` and returns the export-table address for user-mode `extern "C"` dispatch.
 
 ---
 

@@ -45,6 +45,24 @@ pub extern "C" fn nxl_entry() -> ! {
 #[no_mangle] pub extern "C" fn math_log(x: f64) -> f64 { math::log(x) }
 #[no_mangle] pub extern "C" fn math_exp(x: f64) -> f64 { math::exp(x) }
 
+// ── Units of measurement ──
+
+#[no_mangle] pub extern "C" fn math_kib_to_bytes(kib: u64) -> u64 { math::kib_to_bytes(kib) }
+#[no_mangle] pub extern "C" fn math_bytes_to_kib(bytes: u64) -> u64 { math::bytes_to_kib(bytes) }
+#[no_mangle] pub extern "C" fn math_scale_size(bytes: u64) -> u64 { math::scale_size(bytes) }
+#[no_mangle]
+pub extern "C" fn math_format_size(bytes: u64, buf: *mut u8, len: usize) -> usize {
+    if buf.is_null() || len == 0 { return 0; }
+    let slice = unsafe { core::slice::from_raw_parts_mut(buf, len) };
+    math::format_size(bytes, slice)
+}
+#[no_mangle]
+pub extern "C" fn math_format_size_compact(bytes: u64, buf: *mut u8, len: usize) -> usize {
+    if buf.is_null() || len == 0 { return 0; }
+    let slice = unsafe { core::slice::from_raw_parts_mut(buf, len) };
+    math::format_size_compact(bytes, slice)
+}
+
 // ============================================================
 // Export Table — placed in .export_table section at known offset
 // ============================================================
@@ -54,7 +72,7 @@ use math::MathAbiTable;
 #[no_mangle]
 #[link_section = ".export_table"]
 pub static MATH_EXPORT_TABLE: MathAbiTable = MathAbiTable {
-    version: 1,
+    version: 3,
     add: math_add,
     sub: math_sub,
     mul: math_mul,
@@ -74,7 +92,12 @@ pub static MATH_EXPORT_TABLE: MathAbiTable = MathAbiTable {
     log2: math_log2,
     log: math_log,
     exp: math_exp,
-    _reserved: [0; 8],
+    kib_to_bytes: math_kib_to_bytes,
+    bytes_to_kib: math_bytes_to_kib,
+    scale_size: math_scale_size,
+    format_size: math_format_size,
+    format_size_compact: math_format_size_compact,
+    _reserved: [0; 4],
 };
 
 // ============================================================

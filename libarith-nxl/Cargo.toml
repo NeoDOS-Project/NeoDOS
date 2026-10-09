@@ -1,16 +1,13 @@
 [package]
-name = "neomem"
+name = "libarith-nxl"
 version = "0.1.0"
 edition = "2021"
+description = "NeoDOS arith library (NXL) — PIE, imports math_add from math.nxl (B2 spike)"
 
 [[bin]]
-name = "neomem"
+name = "libarith-nxl"
 path = "src/main.rs"
 test = false
-
-[dependencies]
-libneodos = { path = "../../libneodos" }
-libmath = { path = "../../libmath" }
 
 [profile.release]
 panic = "abort"

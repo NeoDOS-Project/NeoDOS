@@ -7,7 +7,6 @@
 
 use core::sync::atomic::{AtomicU64, Ordering};
 
-const CONSOLE_NXL_PATH: &str = "C:\\System\\Libraries\\console.nxl\0";
 const EXPORT_TABLE_OFFSET: u64 = 0x00;
 
 static CONSOLE_BASE: AtomicU64 = AtomicU64::new(0);
@@ -52,7 +51,11 @@ fn get_table() -> Option<&'static ConsoleAbiTable> {
     if base != 0 {
         return Some(unsafe { &*((base + EXPORT_TABLE_OFFSET) as *const ConsoleAbiTable) });
     }
-    match crate::loadlib(CONSOLE_NXL_PATH) {
+    // Path from the Registry (KnownDlls-style) with fallback (crate::nxl).
+    let mut pbuf = [0u8; 260];
+    let n = crate::nxl::library_path("console", &mut pbuf)?;
+    let path = core::str::from_utf8(&pbuf[..n]).ok()?;
+    match crate::loadlib(path) {
         Ok(base) => {
             CONSOLE_BASE.store(base, Ordering::Relaxed);
             Some(unsafe { &*((base + EXPORT_TABLE_OFFSET) as *const ConsoleAbiTable) })

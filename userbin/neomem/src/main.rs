@@ -11,7 +11,7 @@ fn noop_test_runner(_tests: &[&dyn Fn()]) {
 
 use libneodos::i18n;
 use libneodos::syscall;
-use libneodos::syscall::{ObInfoClass, ob_access};
+use libneodos::syscall::{MemInfo, ObInfoClass, ob_access};
 use libneodos::tr_id;
 
 const APP_NAME: &str = "neomem";
@@ -22,10 +22,6 @@ const IDS_PHYSICAL: u32 = 1007;
 const IDS_KERNEL: u32 = 1008;
 const IDS_USER: u32 = 1009;
 const IDS_PAGING: u32 = 1010;
-const IDS_HEAP: u32 = 1011;
-const IDS_SLAB: u32 = 1012;
-const IDS_PAGE_TABLES: u32 = 1013;
-const IDS_CACHED: u32 = 1014;
 const IDS_UNAVAIL: u32 = 1015;
 const IDS_READ_FAIL: u32 = 1016;
 
@@ -49,63 +45,50 @@ fn write_num(n: u64) {
     write_str(&buf[i..]);
 }
 
+/// Human-readable size, delegated to the shared units service in `math.nxl`.
 fn write_size(bytes: u64) {
-    if bytes >= 1024 * 1024 * 1024 {
-        let gb = bytes / (1024 * 1024 * 1024);
-        let rem = (bytes % (1024 * 1024 * 1024)) * 100 / (1024 * 1024 * 1024);
-        write_num(gb);
-        write_str(b".");
-        if rem < 10 { write_str(b"0"); }
-        write_num(rem);
-        write_str(b" GB");
-    } else if bytes >= 1024 * 1024 {
-        let mb = bytes / (1024 * 1024);
-        write_num(mb);
-        write_str(b" MB");
-    } else if bytes >= 1024 {
-        let kb = bytes / 1024;
-        write_num(kb);
-        write_str(b" KB");
-    } else {
-        write_num(bytes);
-        write_str(b" B");
+    let mut buf = [0u8; 32];
+    let n = libmath::format_size(bytes, &mut buf);
+    if n > 0 {
+        write_str(&buf[..n]);
     }
 }
 
-fn print_field(label: &[u8], total: u64, used: u64) {
+/// KiB→bytes, delegated to the shared units service in `math.nxl`.
+fn kib_to_bytes(kib: u64) -> u64 {
+    libmath::kib_to_bytes(kib)
+}
+
+/// Print `Total / Used / Free` for a KiB-valued triple (kernel `MemoryStats`).
+fn print_field_kib(label: &[u8], total_kib: u64, used_kib: u64, free_kib: u64) {
     write_str(b"  ");
     write_str(label);
-    write_str(tr_id!(IDS_TOTAL).as_bytes());
-    write_size(total);
+    write_size(kib_to_bytes(total_kib));
     write_str(b", ");
     write_str(tr_id!(IDS_USED).as_bytes());
-    write_size(used);
+    write_size(kib_to_bytes(used_kib));
     write_str(b", ");
     write_str(tr_id!(IDS_FREE).as_bytes());
-    write_size(total.saturating_sub(used));
+    write_size(kib_to_bytes(free_kib));
+    write_str(b"\r\n");
+}
+
+/// Print `Total / Used / Free` for a page-count triple.
+fn print_field_pages(total: u64, used: u64, free: u64) {
+    write_str(b"  ");
+    write_str(tr_id!(IDS_TOTAL).as_bytes());
+    write_num(total);
+    write_str(b", ");
+    write_str(tr_id!(IDS_USED).as_bytes());
+    write_num(used);
+    write_str(b", ");
+    write_str(tr_id!(IDS_FREE).as_bytes());
+    write_num(free);
     write_str(b"\r\n");
 }
 
 fn print_help() {
     write_str(b"\r\nNEOMEM\r\n  Display system memory information.\r\n  Shows physical, kernel, user, and paging memory.\r\n\r\n");
-}
-
-#[repr(C)]
-#[derive(Clone, Copy)]
-struct MemInfo {
-    physical_total: u64,
-    physical_used: u64,
-    kernel_total: u64,
-    kernel_used: u64,
-    user_total: u64,
-    user_used: u64,
-    page_total: u64,
-    page_used: u64,
-    heap_total: u64,
-    heap_used: u64,
-    slab_used: u64,
-    page_table_used: u64,
-    cached: u64,
 }
 
 #[no_mangle]
@@ -127,8 +110,15 @@ pub extern "C" fn _start() -> ! {
         }
     };
 
-    let mut buf = [0u8; core::mem::size_of::<MemInfo>()];
-    let n = match syscall::sys_ob_query_info(fd, ObInfoClass::Memory, &mut buf) {
+    // Query straight into the shared `libneodos::syscall::MemInfo` so the layout
+    // always matches the kernel's `MemoryStats` (15 fields / 120 bytes). The
+    // previous private 13-field struct drifted from the ABI and produced garbage.
+    let size = core::mem::size_of::<MemInfo>();
+    let mut info: MemInfo = unsafe { core::mem::zeroed() };
+    let buf = unsafe {
+        core::slice::from_raw_parts_mut(&mut info as *mut MemInfo as *mut u8, size)
+    };
+    let n = match syscall::sys_ob_query_info(fd, ObInfoClass::Memory, buf) {
         Ok(n) => n,
         Err(_) => {
             let _ = syscall::sys_close(fd);
@@ -140,58 +130,43 @@ pub extern "C" fn _start() -> ! {
     };
     let _ = syscall::sys_close(fd);
 
-    if n < core::mem::size_of::<MemInfo>() {
+    if n < size {
         write_str(b"\r\n");
         write_str(tr_id!(IDS_READ_FAIL).as_bytes());
         write_str(b"\r\n\r\n");
         syscall::sys_exit(1);
     }
 
-    let info: MemInfo = unsafe { core::ptr::read_unaligned(buf.as_ptr() as *const MemInfo) };
-
     write_str(b"\r\n");
     write_str(tr_id!(IDS_PHYSICAL).as_bytes());
     write_str(b"\r\n");
-    print_field(tr_id!(IDS_TOTAL).as_bytes(), info.physical_total, info.physical_used);
+    print_field_kib(tr_id!(IDS_TOTAL).as_bytes(), info.total_kib, info.used_kib, info.free_kib);
 
     write_str(b"\r\n");
     write_str(tr_id!(IDS_KERNEL).as_bytes());
     write_str(b"\r\n");
-    print_field(tr_id!(IDS_TOTAL).as_bytes(), info.kernel_total, info.kernel_used);
+    print_field_kib(
+        tr_id!(IDS_TOTAL).as_bytes(),
+        info.kernel_heap_total_kib,
+        info.kernel_heap_used_kib,
+        info.kernel_heap_free_kib,
+    );
 
     write_str(b"\r\n");
     write_str(tr_id!(IDS_USER).as_bytes());
     write_str(b"\r\n");
-    print_field(tr_id!(IDS_TOTAL).as_bytes(), info.user_total, info.user_used);
+    print_field_kib(
+        tr_id!(IDS_TOTAL).as_bytes(),
+        info.user_memory_total_kib,
+        info.user_memory_used_kib,
+        info.user_memory_free_kib,
+    );
 
     write_str(b"\r\n");
     write_str(tr_id!(IDS_PAGING).as_bytes());
     write_str(b"\r\n");
-    print_field(tr_id!(IDS_TOTAL).as_bytes(), info.page_total, info.page_used);
+    print_field_pages(info.total_pages, info.used_pages, info.free_pages);
 
-    write_str(b"\r\n");
-    write_str(tr_id!(IDS_HEAP).as_bytes());
-    write_str(b": ");
-    write_size(info.heap_total);
-    write_str(b" (");
-    write_str(tr_id!(IDS_USED).as_bytes());
-    write_size(info.heap_used);
-    write_str(b")\r\n");
-
-    write_str(tr_id!(IDS_SLAB).as_bytes());
-    write_str(b": ");
-    write_size(info.slab_used);
-    write_str(b"\r\n");
-
-    write_str(tr_id!(IDS_PAGE_TABLES).as_bytes());
-    write_str(b": ");
-    write_size(info.page_table_used);
-    write_str(b"\r\n");
-
-    write_str(tr_id!(IDS_CACHED).as_bytes());
-    write_str(b": ");
-    write_size(info.cached);
     write_str(b"\r\n\r\n");
-
     syscall::sys_exit(0)
 }

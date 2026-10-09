@@ -103,7 +103,15 @@ Root path: `\Registry\Machine` maps to an `ObType::Key` object in the Ob namespa
         DaylightStartDay
         DaylightEndMonth
         DaylightEndDay
+      \Library
+        math      C:\System\Libraries\math.nxl
+        net       C:\System\Libraries\net.nxl
+        console   C:\System\Libraries\console.nxl
 ```
+
+The `\Control\Library` key is the `KnownDlls`-style source of userland NXL
+paths (see [libneodos](../userland/libneodos.md#nxl-path-resolution)). Clients
+resolve it with `libneodos::nxl::library_path`.
 
 ### CmManager
 
