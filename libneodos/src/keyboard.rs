@@ -187,10 +187,10 @@ impl<'a> Iterator for LayoutListIter<'a> {
 }
 
 pub fn kbd_get_repeat() -> Result<(u32, u32), i64> {
-    let reg_fd = syscall::sys_cm_open_key("\\Registry\\Machine\\System\\Keyboard")?;
-    let delay = read_reg_dword(reg_fd, "RepeatDelay").unwrap_or(500);
-    let rate = read_reg_dword(reg_fd, "RepeatRate").unwrap_or(30);
-    let _ = syscall::sys_close(reg_fd);
+    use crate::registry::RegistryKey;
+    let key = RegistryKey::open("\\Registry\\Machine\\System\\Keyboard")?;
+    let delay = key.query_dword("RepeatDelay").unwrap_or(500);
+    let rate = key.query_dword("RepeatRate").unwrap_or(30);
     Ok((delay, rate))
 }
 
@@ -225,17 +225,4 @@ pub fn kbd_set_leds(leds: u8) -> Result<(), i64> {
     r
 }
 
-fn read_reg_dword(fd: u8, name: &str) -> Option<u32> {
-    let mut buf = [0u8; 12];
-    match syscall::sys_cm_query_value(fd, name, &mut buf) {
-        Ok(n) if n >= 12 => {
-            let data_type = u32::from_le_bytes(buf[0..4].try_into().unwrap());
-            if data_type == 2 {
-                Some(u32::from_le_bytes(buf[8..12].try_into().unwrap()))
-            } else {
-                None
-            }
-        }
-        _ => None,
-    }
-}
+
