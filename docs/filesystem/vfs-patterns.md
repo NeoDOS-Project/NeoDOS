@@ -409,22 +409,63 @@ crate::globals::with_vfs(|vfs| {
 
 ## Synchronization Model
 
-The VFS is protected by a `spin::Mutex` in `globals.rs`:
+The filesystem stack is protected by three global spinlocks declared in
+`infra/globals.rs`:
 
 ```rust
-pub static VFS: Mutex<crate::fs::vfs::Vfs> = Mutex::new(crate::fs::vfs::Vfs::new());
+pub static BLOCK_DEVICES: Mutex<BlockDeviceManager> = ...;
+pub static PAGE_CACHE: Mutex<PageCache> = ...;
+pub static VFS: Mutex<crate::fs::vfs::Vfs> = ...;
 ```
 
-**Safe access patterns**:
+The canonical acquisition order is enforced by the diagnostic lock-order
+checker (`infra/lock_order.rs`) and must be respected by every caller:
 
-1. ✅ Use `with_vfs()` helper (auto-locks/unlocks)
-2. ✅ Lock directly with `VFS.lock()` if performing multiple operations
+```text
+VFS  ->  MOUNT_MANAGER  ->  PAGE_CACHE  ->  BLOCK_DEVICES
+```
 
-**Unsafe patterns**:
+`MOUNT_MANAGER` (`fs/vfs/mount.rs`) is acquired only under `VFS` (unified
+mount/unmount) or on its own.
 
-1. ❌ Hold the lock across syscall boundaries
-2. ❌ Allocate memory while holding the lock (deadlock risk)
-3. ❌ Call blocking functions while locked
+### Guarded access (required)
+
+Always acquire the locks through the helpers, never with a raw `.lock()`:
+
+- `globals::with_vfs(|vfs| ...)`
+- `globals::with_page_cache(|pc| ...)`
+- `globals::with_block_devices(|bdevs| ...)`
+- `vfs::mount::with_mount_manager(|mgr| ...)`
+
+Each helper disables preemption for the critical section (required: the timer
+must not deschedule a thread holding a filesystem spinlock — #376) and tags the
+acquisition in the lock-order graph (#343). Use `with_vfs_site(site, ...)` to
+tag a caller for the #345 VFS owner/waiter diagnostics.
+
+### Rules
+
+1. ✅ Use the guarded helpers (`with_vfs`, `with_page_cache`,
+   `with_block_devices`, `with_mount_manager`).
+2. ✅ Keep the critical section bounded: do not hold `VFS` across heap
+   allocation or across an unbounded number of block writes.
+3. ❌ Do not acquire a lock in the inverse order (see the order above).
+4. ❌ Do not call a raw `VFS.lock()` / `PAGE_CACHE.lock()` /
+   `BLOCK_DEVICES.lock()` in production code; only boot-time one-shot setup and
+   the in-kernel test harness may do so, and only before APs / interrupts can
+   observe the lock.
+5. ❌ Do not hold a filesystem lock across syscall boundaries or across a
+   blocking wait.
+
+### Status of the global `VFS` lock (#83)
+
+The single `VFS` mutex is retained in v0.51 after review: the `FileSystem`
+trait is `&mut self` and `Vfs` owns the drive objects, so per-drive locking
+requires a `with_drive` API change plus compound-operation atomicity rules.
+Moreover, every file operation still funnels through the single global
+`BLOCK_DEVICES` and one synchronous device, so removing the `VFS` lock alone
+would not increase throughput. The design and evidence are recorded in
+`docs/investigation/vfs-lock-contention-83-report.md`; the per-drive split is
+the v0.52 follow-up.
 
 ---
 

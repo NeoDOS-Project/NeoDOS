@@ -150,6 +150,8 @@
 | [Revisión issues `type/bug` — 2026-10-01](investigation/issue-review-type-bug-2026-10-01.md) | Issue triage on `investigate/376-phase2` |
 | [Scheduler state-invariant audit](investigation/scheduler-state-invariants-2026-09-29.md) | Scheduler invariants (2026-09-29) |
 | [Code Health Audit — 2026-09](investigation/audit-code-health-2026-09.md) | Code health audit |
+| [VFS concurrency baseline (#83/#519)](investigation/vfs-lock-contention-83-baseline.md) | Lock topology, order graph, contention hot spots, baseline |
+| [VFS lock stabilization report (#83/#519)](investigation/vfs-lock-contention-83-report.md) | Implemented locking discipline, tests, readiness |
 
 ## Design Proposals
 
