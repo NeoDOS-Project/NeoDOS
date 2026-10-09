@@ -12,6 +12,23 @@
 
 use crate::syscall::{self, REG_DWORD, REG_SZ};
 
+/// Registry (Cm) error — the negative errno returned by the kernel Cm syscall.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RegistryError(pub i64);
+
+impl From<i64> for RegistryError {
+    fn from(code: i64) -> Self {
+        RegistryError(code)
+    }
+}
+
+impl RegistryError {
+    /// Raw negative errno.
+    pub fn code(self) -> i64 {
+        self.0
+    }
+}
+
 /// Owning handle to an open Registry key. Closes the key on drop.
 pub struct RegistryKey {
     fd: u8,
@@ -88,6 +105,50 @@ impl RegistryKey {
     /// Write a `REG_SZ` value (raw bytes, no NUL added).
     pub fn set_string(&self, name: &str, value: &[u8]) -> Result<(), i64> {
         syscall::sys_cm_set_value(self.fd, name, REG_SZ, value)
+    }
+
+    /// Delete a subkey `name` under this key.
+    pub fn delete_key(&self, name: &str) -> Result<(), RegistryError> {
+        syscall::sys_ob_set_info(
+            self.fd,
+            syscall::ObSetInfoClass::RegistryDeleteKey,
+            name.as_bytes(),
+        )
+        .map_err(RegistryError)
+    }
+
+    /// Delete a value `name` under this key.
+    pub fn delete_value(&self, name: &str) -> Result<(), RegistryError> {
+        syscall::sys_ob_set_info(
+            self.fd,
+            syscall::ObSetInfoClass::RegistryDeleteValue,
+            name.as_bytes(),
+        )
+        .map_err(RegistryError)
+    }
+
+    /// Read a `REG_MULTI_SZ` value (NUL-separated strings) into `buf`; returns
+    /// the raw byte length (internal NULs preserved, final terminator dropped).
+    pub fn query_multi_string(&self, name: &str, buf: &mut [u8]) -> usize {
+        let mut raw = [0u8; 260];
+        let total = match syscall::sys_cm_query_value(self.fd, name, &mut raw) {
+            Ok(n) => n,
+            Err(_) => return 0,
+        };
+        if total < 8 {
+            return 0;
+        }
+        let data_len = u32::from_le_bytes([raw[4], raw[5], raw[6], raw[7]]) as usize;
+        let avail = total.saturating_sub(8).min(raw.len() - 8);
+        let src = &raw[8..8 + data_len.min(avail)];
+        let end = src
+            .iter()
+            .rposition(|&b| b != 0)
+            .map(|i| i + 1)
+            .unwrap_or(0);
+        let n = end.min(buf.len());
+        buf[..n].copy_from_slice(&src[..n]);
+        n
     }
 
     /// Flush this key's hive to disk.
