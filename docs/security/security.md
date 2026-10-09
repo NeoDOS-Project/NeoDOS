@@ -43,19 +43,36 @@ pub struct Token {
     pub groups: Vec<Sid>,        // group memberships
     pub privileges: u64,         // 12-bit privilege bitmap
     pub session_id: u32,         // terminal session identifier
+    pub integrity_level: IntegrityLevel, // Mandatory Integrity Control
+    pub creation_time: u64,      // TSC ticks at creation
 }
 ```
 
+### Integrity levels (`IntegrityLevel`, `#[repr(u8)]`)
+
+| Level | Value | Typical |
+| ------- | ------- | --------- |
+| `Untrusted` | 0 | untrusted |
+| `Low` | 1 | sandboxed |
+| `Medium` | 2 | standard user |
+| `High` | 3 | elevated |
+| `System` | 4 | admin / kernel |
+
+Admin tokens default to `System`, user tokens to `Medium`; `inherit_from` keeps
+the parent's level, and each token gets a fresh `creation_time`. (Enforcement in
+`SeAccessCheck` is USR-P5a.)
+
 ### Factory Methods
 
-| Method | Privileges | Description |
-| -------- | ----------- | ------------- |
-| `new_admin()` | `SE_ADMIN_PRIVILEGES` (0xFFFF) | Full-privilege token for SYSTEM |
-| `new_user()` | `SE_CHANGE_NOTIFY` only | Restricted user token |
-| `new_full(sid, is_admin, groups, privs, session_id)` | Custom | Complete construction |
-| `inherit_from(parent)` | Inherited | Copies sid, is_admin, groups, privileges, session_id |
+| Method | Privileges | Integrity | Description |
+| -------- | ----------- | ----------- | ------------- |
+| `new_admin()` | `SE_ADMIN_PRIVILEGES` (0xFFFF) | System | Full-privilege token for SYSTEM |
+| `new_user()` | `SE_CHANGE_NOTIFY` only | Medium | Restricted user token |
+| `new(sid, is_admin)` | by flag | System/Medium | Simple construction |
+| `new_full(sid, is_admin, groups, privs, session_id)` | Custom | System/Medium | Complete construction |
+| `inherit_from(parent)` | Inherited | Inherited | Copies identity; fresh `creation_time` |
 
-`is_admin_token()` returns true when `is_admin` is set or SID equals `sid_builtin_admin()`.
+`is_admin_token()` returns `is_admin`.
 
 ## SAM (Security Account Manager)
 
@@ -236,11 +253,12 @@ Combined: `SE_ADMIN_PRIVILEGES = 0xFFFF` (all 12 bits set). `SE_USER_PRIVILEGES 
 
 ## Tests
 
-34 tests covering:
+36 tests covering:
 
 - SID format/parse, builtin construction, equality, **well-known SIDs**
   (`SYSTEM`, `Administrator`, `Guest`, `Users`)
-- Token: new_admin, new_user, inherit, group membership
+- Token: new_admin, new_user, inherit, group membership, **integrity level**
+  (admin = System, user = Medium) and **creation_time**
 - ACL: insert canonical order, allow/deny evaluation
 - SeAccessCheck: admin bypass, empty DACL (deny), NULL DACL / absent SD (grant),
   specific ACE matching, deny-first ordering, **group-SID** allow and deny

@@ -653,7 +653,7 @@ v0.56–v0.60 y se publica como v0.51.3. Formato compartido en `libnlt`.
 - **USR-P1b**: Token: add integrity_level + creation_time `priority/high` `area/security` `type/feature` `v0.51 — NeoFS v2 + Shell Phase 2 + SAM`
   IntegrityLevel enum, Token fields, admin=System IL, user=Medium IL.
   Dependencies: USR-P1a
-  state: open
+  state: closed
 
 - **USR-P1c**: SAM persistence to Registry hive `priority/medium` `area/security` `type/feature` `v0.51 — NeoFS v2 + Shell Phase 2 + SAM`
   sam_save/sam_load via VFS, wire on user create/delete/password change.

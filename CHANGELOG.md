@@ -17,6 +17,14 @@
   global `SAM_DB`. Session tokens and the `\Session\{id}` manager are USR-P2.
   5 new tests.
 
+- **Security: `Token` integrity level + creation time (USR-P1b, #20).** Added the
+  `IntegrityLevel` enum (`Untrusted`/`Low`/`Medium`/`High`/`System`) and the
+  `Token.integrity_level` + `Token.creation_time` (TSC ticks) fields. Admin
+  tokens default to `System`, standard users to `Medium`; `inherit_from` keeps
+  the parent's level with a fresh timestamp. Integrity enforcement in
+  `SeAccessCheck` is USR-P5a. Also added a focused test for the `ob_create` type
+  map (covers the `ObType::Session` acceptance from #19). 3 new tests.
+
 ### Fixed
 
 - **Security: NT-correct `SeAccessCheck` — empty DACL, group SIDs, SACL audit

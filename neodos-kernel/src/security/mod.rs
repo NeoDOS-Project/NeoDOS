@@ -81,6 +81,39 @@ pub fn register_security_tests() {
         test_eq!(user_token.sid, sid_builtin_user());
     });
 
+    test_case!("token_integrity_defaults", {
+        // USR-P1b: admin = System IL, standard user = Medium IL.
+        test_eq!(Token::new_admin().integrity_level, IntegrityLevel::System);
+        test_eq!(Token::new_user().integrity_level, IntegrityLevel::Medium);
+        test_eq!(Token::new(sid_builtin_admin(), true).integrity_level, IntegrityLevel::System);
+        test_eq!(Token::new(sid_builtin_user(), false).integrity_level, IntegrityLevel::Medium);
+
+        test_eq!(IntegrityLevel::System.to_u8(), 4);
+        test_eq!(IntegrityLevel::Medium.to_u8(), 2);
+        test_eq!(IntegrityLevel::Medium.to_str(), "MEDIUM");
+        test_eq!(IntegrityLevel::from_u8(1), Some(IntegrityLevel::Low));
+        test_true!(IntegrityLevel::from_u8(9).is_none());
+        test_true!(IntegrityLevel::System > IntegrityLevel::Medium);
+    });
+
+    test_case!("token_creation_time_and_inherit", {
+        // creation_time is a monotonic timestamp; inheritance keeps the IL.
+        let parent = Token::new_user();
+        let child = Token::inherit_from(&parent);
+        test_true!(child.creation_time >= parent.creation_time);
+        test_eq!(child.integrity_level, parent.integrity_level);
+        test_eq!(child.sid, parent.sid);
+        test_eq!(child.groups, parent.groups);
+
+        let admin = Token::new_admin();
+        let admin_child = Token::inherit_from(&admin);
+        test_eq!(admin_child.integrity_level, IntegrityLevel::System);
+
+        let mut t = Token::new_user();
+        t.set_integrity_level(IntegrityLevel::Low);
+        test_eq!(t.integrity_level(), IntegrityLevel::Low);
+    });
+
     test_case!("token_inherit", {
         let parent = Token::new_admin();
         let child = Token::new(parent.sid, parent.is_admin);
