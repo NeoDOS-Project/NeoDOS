@@ -1,10 +1,19 @@
 //! Bounded lock-order invariant checker for the filesystem I/O locks (#343).
 //!
-//! The kernel takes three global filesystem locks in one canonical order:
+//! The kernel takes a small set of global filesystem locks in one canonical
+//! order:
 //!
 //! ```text
-//! VFS  ->  PAGE_CACHE  ->  BLOCK_DEVICES
+//! VFS  ->  MOUNT_MANAGER  ->  PAGE_CACHE  ->  BLOCK_DEVICES
 //! ```
+//!
+//! `MOUNT_MANAGER` protects the `MountManager` (drive mount points + their Ob
+//! namespace entries) and is only ever acquired while `VFS` is already held
+//! (`vfs_mount_filesystem` / `vfs_unmount_filesystem`) or on its own, so it
+//! ranks directly below `VFS`. Before this rank existed, the unified mount and
+//! unmount paths took `VFS` and `MOUNT_MANAGER` without any lock-order
+//! bookkeeping (issue #519), so an inversion involving them would have been
+//! invisible to this checker.
 //!
 //! Acquiring a lock while holding one of *lower* rank is an inversion and, on
 //! SMP>1, can deadlock (a real occurrence motivated this check: `NeoDosFsV2`
@@ -21,7 +30,9 @@
 use core::sync::atomic::{AtomicU64, Ordering};
 
 /// Lock ranks, ordered highest (acquired first) to lowest.
-pub const VFS: u8 = 3;
+pub const VFS: u8 = 4;
+/// The `MountManager` (drive mount points). Acquired under `VFS`.
+pub const MOUNT_MANAGER: u8 = 3;
 pub const PAGE_CACHE: u8 = 2;
 pub const BLOCK_DEVICES: u8 = 1;
 
@@ -91,6 +102,7 @@ pub fn register_tests() {
         VIOLATIONS.store(0, Ordering::Relaxed);
         {
             let _v = Guard::new(VFS);
+            let _m = Guard::new(MOUNT_MANAGER);
             let _p = Guard::new(PAGE_CACHE);
             let _b = Guard::new(BLOCK_DEVICES);
         }
@@ -121,5 +133,23 @@ pub fn register_tests() {
             let _v = Guard::new(VFS);
         }
         test_true!(violations() >= 1);
+    });
+
+    test_case!("lock_order_detects_mount_manager_then_vfs", {
+        // #519 regression guard: the unified mount/unmount paths take VFS and
+        // then MOUNT_MANAGER. Taking MOUNT_MANAGER before VFS is an inversion.
+        VIOLATIONS.store(0, Ordering::Relaxed);
+        {
+            let _m = Guard::new(MOUNT_MANAGER);
+            let _v = Guard::new(VFS);
+        }
+        test_true!(violations() >= 1);
+        // VFS -> MOUNT_MANAGER is the canonical order and must stay clean.
+        VIOLATIONS.store(0, Ordering::Relaxed);
+        {
+            let _v = Guard::new(VFS);
+            let _m = Guard::new(MOUNT_MANAGER);
+        }
+        test_eq!(violations(), 0);
     });
 }
