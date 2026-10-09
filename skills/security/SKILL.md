@@ -55,18 +55,22 @@ pub struct Token {
     pub groups: Vec<Sid>,
     pub privileges: u64,   // 12-bit privilege bitmap
     pub session_id: u32,
+    pub integrity_level: IntegrityLevel, // MIC: admin=System, user=Medium
+    pub creation_time: u64,              // TSC ticks at creation
 }
 ```
 
-| Factory | Privileges | Description |
-| --------- | ----------- | ------------- |
-| `Token::new_admin()` | `SE_ADMIN_PRIVILEGES` (0xFFFF) | Full-privilege token for SYSTEM |
-| `Token::new_user()` | `SE_USER_PRIVILEGES` (`SE_CHANGE_NOTIFY_PRIVILEGE`) | Restricted user token |
-| `Token::new_full(sid, is_admin, groups, privileges, session_id)` | custom | Complete construction |
-| `Token::inherit_from(parent)` | inherited | Copies sid, is_admin, groups, privileges, session_id |
+`IntegrityLevel` = `Untrusted(0)` / `Low(1)` / `Medium(2)` / `High(3)` /
+`System(4)`; admin tokens default to `System`, user tokens to `Medium`.
 
-`is_admin_token()` returns true when `is_admin` is set or the SID is
-`sid_builtin_admin()`.
+| Factory | Privileges | Integrity | Description |
+| --------- | ----------- | ----------- | ------------- |
+| `Token::new_admin()` | `SE_ADMIN_PRIVILEGES` (0xFFFF) | System | Full-privilege token for SYSTEM |
+| `Token::new_user()` | `SE_USER_PRIVILEGES` (`SE_CHANGE_NOTIFY_PRIVILEGE`) | Medium | Restricted user token |
+| `Token::new_full(sid, is_admin, groups, privileges, session_id)` | custom | System/Medium | Complete construction |
+| `Token::inherit_from(parent)` | inherited | inherited | Copies identity; fresh `creation_time` |
+
+`is_admin_token()` returns `is_admin`.
 
 ### Privilege bitmap (12 bits, `u64`)
 
