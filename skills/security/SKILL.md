@@ -94,17 +94,21 @@ pub struct SecurityDescriptor {
     pub revision: u8,
     pub owner: Option<Sid>,
     pub group: Option<Sid>,
-    pub dacl: Option<Acl>,
+    pub dacl: Option<Acl>,   // None = NULL DACL = full access
+    pub sacl: Option<Acl>,   // audit ACEs only; None = no auditing
 }
 ```
 
-ACE types: `ACE_TYPE_ACCESS_ALLOWED(0)`, `ACE_TYPE_ACCESS_DENIED(1)`.
+ACE types: `ACE_TYPE_ACCESS_ALLOWED(0)`, `ACE_TYPE_ACCESS_DENIED(1)`,
+`ACE_TYPE_SYSTEM_AUDIT(2)`.
 Access constants: `ACCESS_READ(1)`, `ACCESS_WRITE(2)`, `ACCESS_EXECUTE(4)`,
 `ACCESS_DELETE(8)`, `ACCESS_ALL(0xFFFF)`.
 
 Helpers: `Ace::allow(sid, mask)` / `Ace::deny(sid, mask)`; `Acl::new()`,
 `Acl::insert_ace_canonical(ace)` (all Deny before Allow), `Acl::is_empty()`;
-`SecurityDescriptor::new().with_dacl(acl)`.
+`SecurityDescriptor::new().with_dacl(acl).with_sacl(sacl)`. Also
+`set_auditing(bool)` / `auditing_enabled()` and `se_audit(...)` for SACL
+auditing.
 
 ## SeAccessCheck (`src/security/access.rs`)
 
@@ -116,19 +120,19 @@ pub fn se_access_check(
 ) -> bool;
 ```
 
-Current algorithm (code is truth):
+Algorithm (code is truth):
 
 1. **Admin bypass** — if `token.is_admin_token()` → grant.
-2. **No SD / no DACL** — `None` descriptor or `None` DACL → grant.
-3. **Empty DACL** — `dacl.is_empty()` → grant.
-4. **Deny-first** — a matching Deny ACE covering the requested bits → deny.
-5. **Allow** — a matching Allow ACE covering all requested bits → grant.
-6. **Fallback** — otherwise deny.
+2. **Absent descriptor** — `None` SD → grant (unprotected).
+3. **NULL DACL** — `Some` SD with `dacl == None` → grant (full access).
+4. **Empty DACL** — `Some` with no ACEs → **deny all**.
+5. **Deny-first** — a matching Deny ACE covering the requested bits → deny.
+6. **Allow** — a matching Allow ACE covering all requested bits → grant.
+7. **Fallback** — otherwise deny.
 
-> Note: `check_dacl` matches against `token.sid` only (group SIDs are not
-> consulted here). `docs/security/security.md` describes "empty DACL → deny" and
-> group matching; the implementation currently grants on an empty DACL and does
-> not consult groups. Treat the code as truth and fix the doc if you change this.
+ACE trustees match the token's primary SID **and** every SID in `token.groups`.
+`se_audit()` emits SACL audit records when audit mode is enabled, without
+affecting the decision.
 
 ## SAM (`src/security/sam.rs`)
 
@@ -192,6 +196,24 @@ token.add_group(sid_builtin_admin());
 assert!(token.is_in_group(sid_builtin_admin()));
 ```
 
+Group SIDs are consulted by `se_access_check`: an Allow/Deny ACE whose trustee is
+any of `token.groups` matches, so a group Allow can grant and a group Deny wins
+over a primary-SID Allow.
+
+### 5b. SACL / auditing
+
+```rust
+let mut sacl = Acl::new();
+sacl.add_ace(Ace { ace_type: ACE_TYPE_SYSTEM_AUDIT, flags: 0,
+                   access_mask: ACCESS_READ, sid: sid_builtin_user() });
+let sd = SecurityDescriptor::new().with_dacl(acl).with_sacl(sacl);
+
+set_auditing(true);   // enable audit logging
+// se_access_check(...) now emits an AUDIT record for matching audit ACEs
+```
+
+Auditing never changes the access decision and an absent SACL is a no-op.
+
 ### 6. Hook security into syscalls
 
 Admin syscalls are gated by `SYSCALL_PERMISSIONS` and checked centrally:
@@ -224,8 +246,9 @@ let parsed = parse_sam(&bytes).unwrap();
 
 - Always use `insert_ace_canonical()` — manual `push`/`add_ace` breaks Deny-first
   ordering.
-- Empty DACL / missing descriptor currently grant — do not rely on them for deny;
-  be explicit when you change this.
+- Empty DACL denies all; NULL DACL (and an absent descriptor) grants full access.
+  Be explicit about which one you want.
+- ACEs are matched against the primary SID and all group SIDs.
 - Tokens are copied at spawn; mutating a parent token does not affect children.
 - SAM usernames are case-insensitive and zero-padded to 32 bytes.
 - Session IDs isolate terminal sessions (per-VT login context).
@@ -235,8 +258,10 @@ let parsed = parse_sam(&bytes).unwrap();
 - Using `Acl::add_ace()` instead of `insert_ace_canonical()`.
 - Assuming `se_access_check` takes `&SecurityDescriptor` — it takes
   `Option<&SecurityDescriptor>`.
-- Assuming group SIDs participate in the check — currently only `token.sid` is
-  matched.
+- Assuming group SIDs do not participate — `se_access_check` matches
+  `token.sid` **and** `token.groups`.
+- Expecting an empty DACL to grant — an empty DACL denies all (use a NULL DACL
+  for full access).
 - Forgetting `inherit_from()` at process spawn.
 - Adding an admin syscall without setting its `SyscallPermission::admin()`.
 - SAM (de)serialization dropping the 4-byte alignment padding.
@@ -247,8 +272,9 @@ let parsed = parse_sam(&bytes).unwrap();
 - [ ] Token created with the proper privileges (admin vs. user)
 - [ ] Token inherited at process spawn
 - [ ] ACL built with `insert_ace_canonical()`
-- [ ] `SeAccessCheck` behavior matches the code (admin bypass, None/empty grant,
-      deny-first, allow, fallback deny)
+- [ ] `SeAccessCheck` behavior matches the code (admin bypass; absent SD / NULL
+      DACL grant; empty DACL denies; deny-first; allow; fallback deny)
+- [ ] Group SIDs and (if used) the SACL audit hook behave as expected
 - [ ] SAM serialize/parse round-trips
 - [ ] Admin syscalls flagged in `SYSCALL_PERMISSIONS`
 - [ ] Ob integration: access check on open/create
