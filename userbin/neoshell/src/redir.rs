@@ -1,16 +1,7 @@
 use libneodos::syscall;
 use neoshell_lib::tokenizer::{tokenize, TokenKind};
 
-const OB_PREFIX: &[u8] = b"\\Global\\FileSystem\\";
-
-fn to_ob_path<'a>(vfs: &[u8], buf: &'a mut [u8; 512]) -> Option<&'a str> {
-    let t = OB_PREFIX.len() + vfs.len();
-    if t > 510 { return None; }
-    buf[..OB_PREFIX.len()].copy_from_slice(OB_PREFIX);
-    buf[OB_PREFIX.len()..t].copy_from_slice(vfs);
-    buf[t] = 0;
-    Some(unsafe { core::str::from_utf8_unchecked(&buf[..t]) })
-}
+use libneoutil::to_ob_path_bytes as to_ob_path;
 
 fn resolve_vfs_path<'a>(val: &[u8], out: &'a mut [u8; 260]) -> &'a str {
     let mut cwb = [0u8; 256];

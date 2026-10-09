@@ -21,6 +21,40 @@ pub fn to_ob_path<'a>(vfs: &'a str, buf: &'a mut [u8; 512]) -> &'a str {
     unsafe { core::str::from_utf8_unchecked(&buf[..total]) }
 }
 
+/// Like [`to_ob_path`] but takes raw bytes; `None` if it does not fit.
+pub fn to_ob_path_bytes<'a>(vfs: &[u8], buf: &'a mut [u8; 512]) -> Option<&'a str> {
+    let total = OB_FS_PREFIX.len() + vfs.len();
+    if total > 510 {
+        return None;
+    }
+    buf[..OB_FS_PREFIX.len()].copy_from_slice(OB_FS_PREFIX);
+    buf[OB_FS_PREFIX.len()..total].copy_from_slice(vfs);
+    buf[total] = 0;
+    Some(unsafe { core::str::from_utf8_unchecked(&buf[..total]) })
+}
+
+/// Canonical name of a negative kernel errno (`EINVAL`..`EBUSY`, else `UNKNOWN`).
+pub fn errno_str(code: i64) -> &'static str {
+    match code {
+        -1 => "EINVAL",
+        -2 => "ENOENT",
+        -3 => "ENOMEM",
+        -4 => "EACCES",
+        -5 => "EBADF",
+        -6 => "EFAULT",
+        -7 => "ENOSYS",
+        -8 => "EAGAIN",
+        -9 => "EPIPE",
+        -10 => "EEXIST",
+        -11 => "ENOTDIR",
+        -12 => "EISDIR",
+        -13 => "EIO",
+        -14 => "ENODEV",
+        -15 => "EBUSY",
+        _ => "UNKNOWN",
+    }
+}
+
 /// NUL-terminated bytes → `&str` (empty on invalid UTF-8).
 pub fn nul_str(buf: &[u8]) -> &str {
     let end = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
@@ -81,6 +115,20 @@ mod tests {
         assert_eq!(parse_u32(b"12a"), None);
         assert_eq!(parse_u32(b""), None);
         assert_eq!(parse_u32(b"99999999999"), None); // overflow
+    }
+
+    #[test]
+    fn errno_str_names() {
+        assert_eq!(errno_str(-1), "EINVAL");
+        assert_eq!(errno_str(-2), "ENOENT");
+        assert_eq!(errno_str(-15), "EBUSY");
+        assert_eq!(errno_str(0), "UNKNOWN");
+    }
+
+    #[test]
+    fn to_ob_path_bytes_variant() {
+        let mut buf = [0u8; 512];
+        assert_eq!(to_ob_path_bytes(b"C:\\x", &mut buf), Some("\\Global\\FileSystem\\C:\\x"));
     }
 
     #[test]

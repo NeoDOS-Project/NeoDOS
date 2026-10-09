@@ -124,14 +124,7 @@ pub extern "C" fn _start() -> ! {
             write_err(b"\r\n");
             write_err(tr_id!(IDS_WRITE_FAILED).as_bytes());
             write_err(b": ");
-            let err_str: &[u8] = match e {
-                -1 => b"EINVAL",
-                -2 => b"ENOENT",
-                -4 => b"EACCES",
-                -5 => b"EBADF",
-                -13 => b"EIO",
-                _ => b"UNKNOWN",
-            };
+            let err_str: &[u8] = libneoutil::errno_str(e).as_bytes();
             write_err(err_str);
             write_err(b"\r\n");
             let _ = syscall::sys_close(src_fd);
