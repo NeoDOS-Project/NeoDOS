@@ -98,6 +98,15 @@ pub struct AbiTable {
     pub sys_ob_wait: extern "C" fn(u8) -> i64,
 }
 
+// Compile-time freeze of the core export-table layout (v8, version-first).
+// The consumer (`libneodos`) asserts the same offsets.
+const _: () = {
+    assert!(core::mem::offset_of!(AbiTable, version) == 0);
+    assert!(core::mem::offset_of!(AbiTable, sys_exit) == 8);
+    assert!(core::mem::offset_of!(AbiTable, sys_write) == 16);
+    assert!(core::mem::size_of::<AbiTable>() == 8 + 43 * 8);
+};
+
 #[no_mangle]
 #[link_section = ".export_table"]
 pub static EXPORT_TABLE: AbiTable = AbiTable {
