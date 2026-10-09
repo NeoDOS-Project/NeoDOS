@@ -39,6 +39,22 @@ struct Elf64Shdr {
     sh_entsize: u64,
 }
 
+/// ELF64 symbol table entry (24 bytes).
+#[repr(C)]
+struct Elf64Sym {
+    st_name: u32,
+    st_info: u8,
+    st_other: u8,
+    st_shndx: u16,
+    st_value: u64,
+    st_size: u64,
+}
+
+lazy_static! {
+    /// name → runtime address for symbols exported by loaded PIE NXLs (B2).
+    static ref NXL_SYMBOLS: Mutex<Vec<(Vec<u8>, u64)>> = Mutex::new(Vec::new());
+}
+
 lazy_static! {
     static ref NXL_REGISTRY: Mutex<[NxlSlot; NXL_SLOT_COUNT]> = {
         const SLOT: NxlSlot = NxlSlot { loaded: false, base: 0, size: 0, name: [0u8; 24] };
@@ -312,12 +328,8 @@ fn slot_name_matches(slot_name: &[u8; 24], path: &str) -> bool {
     slot_name == &want
 }
 
-/// Find the virtual address (link-relative) of the `.export_table` section.
-///
-/// Legacy NXLs place the export table at offset 0; PIE NXLs let lld map the ELF
-/// header into the first LOAD segment, so the table moves. Consumers still read
-/// `returned_base + 0`, so the loader must report the table's real address.
-fn nxl_export_table_offset(data: &[u8]) -> Option<u64> {
+/// Locate a section by name: `(sh_addr, file offset, size, entry size)`.
+fn find_section(data: &[u8], want: &[u8]) -> Option<(u64, usize, usize, usize)> {
     use core::mem::size_of;
 
     if data.len() < size_of::<crate::elf::Elf64Hdr>() {
@@ -362,13 +374,155 @@ fn nxl_export_table_offset(data: &[u8]) -> Option<u64> {
                     .position(|&b| b == 0)
                     .map(|p| no + p)
                     .unwrap_or(strtab.len());
-                if &strtab[no..end] == b".export_table" {
-                    return Some(sh.sh_addr);
+                if &strtab[no..end] == want {
+                    return Some((
+                        sh.sh_addr,
+                        sh.sh_offset as usize,
+                        sh.sh_size as usize,
+                        sh.sh_entsize as usize,
+                    ));
                 }
             }
         }
     }
     None
+}
+
+/// NUL-terminated name at `off` in a string table.
+fn strtab_name(strtab: &[u8], off: usize) -> Option<&[u8]> {
+    if off >= strtab.len() {
+        return None;
+    }
+    let end = strtab[off..]
+        .iter()
+        .position(|&b| b == 0)
+        .map(|p| off + p)
+        .unwrap_or(strtab.len());
+    let name = &strtab[off..end];
+    if name.is_empty() { None } else { Some(name) }
+}
+
+/// Find the virtual address (link-relative) of the `.export_table` section.
+///
+/// Legacy NXLs place the export table at offset 0; PIE NXLs let lld map the ELF
+/// header into the first LOAD segment, so the table moves. Consumers still read
+/// `returned_base + 0`, so the loader must report the table's real address.
+fn nxl_export_table_offset(data: &[u8]) -> Option<u64> {
+    find_section(data, b".export_table").map(|(addr, _, _, _)| addr)
+}
+
+/// Register every defined symbol exported by a PIE NXL under `load_offset`.
+fn register_nxl_symbols(data: &[u8], load_offset: u64) {
+    use core::mem::size_of;
+
+    let (_, dynsym_off, dynsym_size, dynsym_ent) =
+        match find_section(data, b".dynsym") { Some(s) => s, None => return };
+    let (_, dynstr_off, dynstr_size, _) =
+        match find_section(data, b".dynstr") { Some(s) => s, None => return };
+    if dynsym_ent < size_of::<Elf64Sym>() {
+        return;
+    }
+    let strtab = match data.get(dynstr_off..dynstr_off.saturating_add(dynstr_size)) {
+        Some(s) => s,
+        None => return,
+    };
+    let count = dynsym_size / dynsym_ent;
+
+    let mut reg = NXL_SYMBOLS.lock();
+    for i in 1..count {
+        let off = dynsym_off + i * dynsym_ent;
+        if off + size_of::<Elf64Sym>() > data.len() {
+            break;
+        }
+        let sym: &Elf64Sym = unsafe { &*(data.as_ptr().add(off) as *const Elf64Sym) };
+        if sym.st_shndx == 0 {
+            continue; // SHN_UNDEF
+        }
+        let name = match strtab_name(strtab, sym.st_name as usize) {
+            Some(n) => n,
+            None => continue,
+        };
+        let addr = load_offset.wrapping_add(sym.st_value);
+        if let Some(entry) = reg.iter_mut().find(|(n, _)| n.as_slice() == name) {
+            entry.1 = addr;
+        } else {
+            reg.push((name.to_vec(), addr));
+        }
+    }
+}
+
+/// Look up an exported NXL symbol by name.
+pub fn nxl_lookup_symbol(name: &str) -> Option<u64> {
+    nxl_lookup_symbol_bytes(name.as_bytes())
+}
+
+fn nxl_lookup_symbol_bytes(name: &[u8]) -> Option<u64> {
+    let reg = NXL_SYMBOLS.lock();
+    reg.iter().find(|(n, _)| n.as_slice() == name).map(|(_, a)| *a)
+}
+
+/// Resolve `R_X86_64_64/GLOB_DAT/JUMP_SLOT` imports of a PIE NXL against the
+/// registry of already-loaded NXEs, patching the target slots in place.
+fn resolve_nxl_imports(data: &[u8], load_offset: u64) {
+    use core::mem::size_of;
+
+    let (_, dynstr_off, dynstr_size, _) =
+        match find_section(data, b".dynstr") { Some(s) => s, None => return };
+    let (_, dynsym_off, dynsym_size, dynsym_ent) =
+        match find_section(data, b".dynsym") { Some(s) => s, None => return };
+    if dynsym_ent < size_of::<Elf64Sym>() {
+        return;
+    }
+    let strtab = match data.get(dynstr_off..dynstr_off.saturating_add(dynstr_size)) {
+        Some(s) => s,
+        None => return,
+    };
+    let sym_count = dynsym_size / dynsym_ent;
+
+    for rela_name in [b".rela.dyn".as_slice(), b".rela.plt".as_slice()] {
+        let (_, rela_off, rela_size, rela_ent) =
+            match find_section(data, rela_name) { Some(s) => s, None => continue };
+        if rela_ent < size_of::<crate::elf::Elf64Rela>() {
+            continue;
+        }
+        let count = rela_size / rela_ent;
+        for i in 0..count {
+            let off = rela_off + i * rela_ent;
+            if off + size_of::<crate::elf::Elf64Rela>() > data.len() {
+                break;
+            }
+            let rela: &crate::elf::Elf64Rela =
+                unsafe { &*(data.as_ptr().add(off) as *const crate::elf::Elf64Rela) };
+            let r_type = (rela.r_info & 0xFFFF_FFFF) as u32;
+            // R_X86_64_64 = 1, R_X86_64_GLOB_DAT = 6, R_X86_64_JUMP_SLOT = 7
+            if !matches!(r_type, 1 | 6 | 7) {
+                continue;
+            }
+            let sym_idx = (rela.r_info >> 32) as usize;
+            if sym_idx >= sym_count {
+                continue;
+            }
+            let sym_off = dynsym_off + sym_idx * dynsym_ent;
+            if sym_off + size_of::<Elf64Sym>() > data.len() {
+                continue;
+            }
+            let sym: &Elf64Sym = unsafe { &*(data.as_ptr().add(sym_off) as *const Elf64Sym) };
+            let name = match strtab_name(strtab, sym.st_name as usize) {
+                Some(n) => n,
+                None => continue,
+            };
+            match nxl_lookup_symbol_bytes(name) {
+                Some(target) => {
+                    let slot = load_offset.wrapping_add(rela.r_offset);
+                    unsafe { core::ptr::write_volatile(slot as *mut u64, target) };
+                    kdebug!(LogSubsys::Nxl, "resolved NXL import {:?} -> 0x{:x}", name, target);
+                }
+                None => {
+                    kwarn!(LogSubsys::Nxl, "unresolved NXL import {:?}", name);
+                }
+            }
+        }
+    }
 }
 
 /// Load a position-independent (PIE/ET_DYN) NXL into any free slot.
@@ -426,13 +580,18 @@ fn nxl_load_pie(data: &[u8], image_size: usize, path: &str) -> Option<u64> {
         mark_segment_user_accessible(seg.vaddr, seg.memsz, seg.flags);
     }
 
+    // B2: publish this library's exported symbols, then resolve its imports
+    // against the registry (its own symbols + any earlier-loaded NXL).
+    register_nxl_symbols(data, load_offset);
+    resolve_nxl_imports(data, load_offset);
+
     // Consumers read `returned_base + 0` as the export table. Find the real
     // section address (PIE moves it past the mapped ELF header) and report
     // that absolute address, matching the legacy fixed-base contract.
     let export_off = nxl_export_table_offset(data).unwrap_or(0);
-    let export_addr = base.wrapping_add(export_off);
+    let export_addr = load_offset.wrapping_add(export_off);
     if export_off != 0 {
-        kdebug!(LogSubsys::Nxl, "PIE '{}' export table at base+0x{:x}", path, export_off);
+        kdebug!(LogSubsys::Nxl, "PIE '{}' export table at load+0x{:x}", path, export_off);
     }
 
     {
@@ -589,5 +748,20 @@ pub fn register_nxl_tests() {
         };
         test_eq!(add(2, 3), 5);
         test_eq!(add(-4, 1), -3);
+    });
+
+    // B2: named symbol resolution from the library's `.dynsym`.
+    test_case!("nxl_symbol_lookup_math_add", {
+        let addr = match nxl_lookup_symbol("math_add") {
+            Some(a) => a,
+            None => return Err("math_add not exported in .dynsym"),
+        };
+        let add: extern "C" fn(i64, i64) -> i64 = unsafe { core::mem::transmute(addr) };
+        test_eq!(add(2, 3), 5);
+        test_eq!(add(40, 2), 42);
+
+        // The exported object symbol must match the export-table address.
+        let exported = nxl_lookup_symbol("MATH_EXPORT_TABLE");
+        test_eq!(exported, Some(MATH_EXPORT_BASE.load(Ordering::Relaxed)));
     });
 }
