@@ -110,9 +110,9 @@ pub struct Acl {
 
 pub struct SecurityDescriptor {
     pub revision: u8,
-    pub owner: Sid,
-    pub group: Sid,
-    pub dacl: Acl,            // discretionary ACL
+    pub owner: Option<Sid>,
+    pub group: Option<Sid>,
+    pub dacl: Option<Acl>,    // discretionary ACL
 }
 ```
 
@@ -134,9 +134,12 @@ File: `src/security/access.rs`. Access validation logic.
 
 ### Algorithm
 
-1. **Admin bypass**: if `token.is_admin` and the requested access includes admin-only rights, grant access immediately.
-2. **Deny-by-default**: an empty DACL (or one with no matching Allow ACE) returns denied.
-3. **Iteration order**: evaluate all Deny ACEs first. If any Deny ACE matches the token's SID or any group SID and covers the requested access, deny.
+1. **Admin bypass**: if `token.is_admin_token()` (the `is_admin` flag or the
+   built-in admin SID), grant immediately.
+2. **Missing security**: a `None` descriptor or a `None`/empty DACL grants access.
+3. **Iteration order**: evaluate all Deny ACEs first. If a Deny ACE matches
+   `token.sid` (group SIDs are **not** consulted by `check_dacl`) and covers the
+   requested access, deny.
 4. **Allow ACEs**: if a matching Allow ACE covers all requested access bits, grant.
 5. **Fallback**: if no Allow ACE matches, deny.
 
@@ -145,10 +148,21 @@ Signature:
 ```rust
 pub fn se_access_check(
     token: &Token,
-    sd: &SecurityDescriptor,
+    sd: Option<&SecurityDescriptor>,
     desired_access: u32,
-) -> Result<(), ()>
+) -> bool
+
+pub fn se_access_check_sid(
+    token_sid: &Sid,
+    is_admin: bool,
+    dacl: Option<&Acl>,
+    desired_access: u32,
+) -> bool
 ```
+
+> Note: the implementation currently treats an empty DACL as *grant* (it does not
+> deny-by-default), and matches ACEs against `token.sid` only. This section
+> reflects the code in `src/security/access.rs`.
 
 ## Token Lifecycle
 

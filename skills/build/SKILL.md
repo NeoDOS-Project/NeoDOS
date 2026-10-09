@@ -1,71 +1,117 @@
 ---
 name: build
-description: Compile kernel, bootloader, run in QEMU, execute tests
+description: Compile kernel, bootloader, build the disk image, run in QEMU, execute tests
 ---
 
 # Build
 
 ## When to use
 
-You are asked to build, run, or test the system; or encountered a build failure.
+You are asked to build, run, or test the system; you hit a compilation failure; or you need a fresh bootable disk image.
 
 ## Goal
 
-Successfully compile the kernel, bootloader, and optional user binaries; run in QEMU; execute tests.
+Compile the kernel, bootloader, and optional user binaries; produce a bootable image; run it in QEMU; execute the kernel test suite.
+
+## Toolchain
+
+- **NeoDev** is the unified build/image/run/test tool (independent repo:
+  <https://github.com/NeoDOS-Project/NeoDev>). Install with
+  `cargo install --git https://github.com/NeoDOS-Project/NeoDev.git`.
+- The kernel is built with **nightly Rust**: `neodos-kernel/rust-toolchain.toml`
+  pins `channel = "nightly"`. NeoDev selects the toolchain automatically; a bare
+  `cargo build` needs it on PATH.
+- Linker flags live in `neodos/.cargo/config.toml` (`rust-lld`,
+  `relocation-model=static`, `-melf_x86_64`).
 
 ## Steps
 
-1. **Cargo build kernel**
-   Run `cargo build` in `neodos-kernel/`. Fix any compilation errors.
-   If uncertain about subsystem dependencies, run `scripts/check_deps.py` first.
+1. **Fast feedback — compile the kernel only**
+   Run `cargo build` in `neodos-kernel/` and fix compilation errors first.
+   This does not produce an image.
 
-2. **Full disk image**
+2. **Build everything + disk image** (preferred before validating)
 
    ```bash
-   bash scripts/build.sh                 # bootloader + kernel + GPT image
-   bash scripts/build.sh --neodos-image  # + user binaries (.NXE)
+   neodev build --image
    ```
+
+   Quick iteration (kernel + bootloader only):
+
+   ```bash
+   neodev build --quick --image
+   ```
+
+   Component selectors: `--kernel`, `--bootloader`, `--userbin`, `--nxl`,
+   `--nem`, `--all` (default). Image size: `--neodos-size <MB>` (default 100).
 
 3. **Run in QEMU**
 
    ```bash
-   bash scripts/qemu-debug.sh            # QEMU + OVMF + GDB on :1234
-   QEMU_ACCEL=kvm bash scripts/qemu-debug.sh  # with KVM acceleration
+   neodev run
+   neodev run --kvm                     # KVM acceleration
+   neodev run --gdb                     # GDB server on :1234
+   neodev run --storage ahci            # ahci | ata | nvme | virtio
+   neodev run --net user                # user | tap | bridge (default: bridge)
+   neodev run --headless --serial qemu_output.log
    ```
 
-4. **Run kernel tests**
+4. **Run the kernel test suite**
 
    ```bash
-   python3 scripts/auto_test.py
+   neodev test
+   neodev test --kvm --storage ahci --timeout 180 --iterations 1
    ```
 
-   All 537+ tests must pass. If a test fails, inspect `neodos-kernel/src/testing.rs` for the test group and fix the failing test or the code it exercises.
+   All tests must pass. On failure, read the serial output, find the suite, and
+   inspect its `register_*_tests()` module.
 
-5. **Verify dependencies**
+5. **Verify cross-subsystem dependencies**
 
    ```bash
-   scripts/check_deps.py
+   neodev check-deps
    ```
 
-   Fix any cross-subsystem dependency violations.
+   Fix any violations against `check-deps-baseline.txt`.
+
+6. **Lint Markdown** (required when docs changed)
+
+   ```bash
+   npx markdownlint '**/*.md' --config .markdownlint.json
+   ```
+
+7. **Debug with GDB**
+
+   ```bash
+   neodev run --gdb
+   gdb neodos-kernel/target/x86_64-unknown-none/debug/neodos-kernel \
+       -ex 'target remote localhost:1234'
+   ```
+
+   See `docs/development/debugging.md`.
 
 ## Best practices
 
 - Build before committing every change, no exceptions.
-- Run `cargo build` in `neodos-kernel/` first (fastest feedback), then `python3 scripts/auto_test.py`.
-- Use `QEMU_ACCEL=kvm` for much faster emulation on Linux hosts.
-- When debugging, connect GDB with `gdb neodos-kernel/target/x86_64-unknown-none/debug/neodos-kernel` and `target remote :1234`.
+- Iterate with `neodev build --quick --image`; validate with `neodev build --image`.
+- Rebuild the image before measuring FS tests — an interactive boot can leave
+  `disk_image.img` dirty and produce false failures.
+- `cargo build` in `neodos-kernel/` is the fastest compile check.
 
 ## Common mistakes
 
-- Forgetting to build the bootloader after linker script changes (`bash scripts/build.sh` handles both).
-- Only building user binaries (`--neodos-image`) when the kernel ABI changed — NEM drivers/dlls need matching kernel.
-- Building without `--release` and wondering why QEMU is slow — debug builds have no optimizations.
-- Running `auto_test.py` without building first — it doesn't trigger a build.
+- Editing the bootloader or linker scripts but only rebuilding the kernel — run
+  `neodev build --image` (or `--quick --image`).
+- Running tests against a stale or dirty image.
+- Forgetting `neodev check-deps` after adding cross-module imports.
+- Running NeoDev outside the project root (use `--neodos-path` or `NEODOS_PATH`).
+- Skipping `markdownlint` when docs changed.
 
 ## Final checklist
 
 - [ ] `cargo build` in `neodos-kernel/` succeeds
-- [ ] `python3 scripts/auto_test.py` passes all tests
-- [ ] `scripts/check_deps.py` passes
-- [ ] QEMU boots to shell if image changed
+- [ ] `neodev build --image` succeeds
+- [ ] `neodev test` passes
+- [ ] `neodev check-deps` passes
+- [ ] `npx markdownlint '**/*.md' --config .markdownlint.json` passes
+- [ ] QEMU boots to the shell if the image changed

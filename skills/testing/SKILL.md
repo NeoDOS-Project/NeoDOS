@@ -1,96 +1,102 @@
 ---
 name: testing
-description: Write kernel tests, debug failures, modify test framework
+description: Write kernel tests with the test_case! harness, debug failures
 ---
 
 # Testing
 
 ## When to use
 
-Writing new kernel tests, debugging a test failure, or modifying the test framework.
+Writing new kernel tests, debugging a failing test, or extending the in-kernel
+test harness.
 
 ## Goal
 
-Add reliable kernel tests that exercise the target subsystem and integrate with the existing test runner.
+Add reliable in-kernel tests and integrate them with the existing harness.
+
+## Overview
+
+The test framework is compiled into the kernel — there is no external runner.
+Global registration lives in `neodos-kernel/src/testing.rs`; each subsystem
+exports a `register_*_tests()` function that registers its cases. `neodev test`
+boots QEMU headless and parses PASS/FAIL counts from the serial console. See
+`docs/development/testing.md`.
 
 ## Steps
 
-1. **Locate the test file**
-   All kernel tests live in `neodos-kernel/src/testing.rs`.
-   Find the relevant test group (e.g., `mod scheduler_tests`, `mod ob_tests`).
-
-2. **Add a test function**
+1. **Write the test** with the harness macros (in the relevant module):
 
    ```rust
-   pub fn test_my_feature() -> TestResult {
-       // Arrange
-       // Act
-       // Assert
-       TestResult::Passed  // or TestResult::Failed("reason")
+   test_case!("my_feature", {
+       // arrange / act / assert
+       test_eq!(a, b);
+       test_ne!(a, b);
+       test_true!(cond);
+       test_fail!("message");
+   });
+   ```
+
+   API: `test_case!(name, { body })` registers a named test (clean completion =
+   PASS; an assertion returns `Err` = FAIL); `test_eq!`, `test_ne!`, `test_true!`
+   assert; `test_fail!` always returns `Err` (for error paths).
+
+2. **Export a registration function** from that module, one `test_case!` per
+   test:
+
+   ```rust
+   pub fn register_my_tests() {
+       test_case!("my_feature_ok", { /* ... */ });
+       test_case!("my_feature_rejects_bad_handle", { /* ... */ });
    }
    ```
 
-   `TestResult` is the return type used by the test runner.
+3. **Register it centrally** — add `register_my_tests();` to
+   `testing::register_tests()` in `neodos-kernel/src/testing.rs`.
 
-3. **Register the test**
-   Find the `register_*_tests()` function for your group and add:
+4. **Cover the right patterns**: success path, error path (invalid handles,
+   null/bad pointers, out-of-range enums → the expected `Status` /
+   `SyscallError`), stress (repeated create/destroy, allocation pressure),
+   and concurrency for SMP-sensitive code.
 
-   ```rust
-   test_group.register(TestSpec::new("my_feature", test_my_feature));
-   ```
-
-   The `TestSpec` takes a name (used by the `test` shell command) and the function pointer.
-
-4. **Test patterns**
-   - **Success path**: Create objects, perform operations, verify results.
-   - **Error path**: Supply invalid handles, null pointers, out-of-range values — verify proper `Status::*` return.
-   - **Stress**: Repeated create/destroy, high allocation counts.
-   - **Concurrency** (if SMP): Spawn threads that operate on shared objects.
-
-5. **Assertion helpers**
-   Use existing helpers in `testing.rs`:
-
-   ```rust
-   assert!(condition, "message");           // Fail if false
-   assert_eq!(a, b, "message");             // Fail if a != b
-   ```
-
-   These return `TestResult::Failed` rather than panicking (panic kills the kernel).
-
-6. **Run tests**
+5. **Build and run**
 
    ```bash
-   cargo build && python3 scripts/auto_test.py
+   cd neodos-kernel && cargo build
+   neodev test
    ```
 
-   Or in QEMU shell: use the `test` command to run individual groups or all tests.
+   The run ends with a summary (`TESTS: X total, Y passed, Z failed`);
+   `neodev test` exits 0 only when there are 0 failures.
 
-7. **Debug a failing test**
-   - Check the test's assertion message for details.
-   - Add temporary debug output via the kernel logging facility (not printk).
-   - Run the failing test in isolation via the `test` command in QEMU (e.g., `test ob_tests`).
+6. **Debug a failure**: read the assertion message in the serial output; run a
+   subset in QEMU with the built-in `test <suite>` command; use the kernel
+   logging facility rather than `printk`.
 
 ## Best practices
 
-- One test per logical behavior — don't cram multiple scenarios into a single test.
-- Name tests descriptively: `test_create_and_query_event`, `test_destroy_invalid_handle`.
-- Clean up all resources in the test (destroy objects, free memory).
-- Tests run in kernel context at IRQL PASSIVE_LEVEL — don't block or sleep.
-- Keep tests independent — no shared mutable state between tests.
+- One behavior per test; use descriptive names
+  (`test_create_and_query_event`, `test_destroy_invalid_handle`).
+- Clean up every resource (objects, handles, frames, memory) before the test ends.
+- Keep tests independent — no ordering dependencies, no shared mutable state.
+- Tests run at PASSIVE_LEVEL with interrupts disabled (`hal::without_interrupts`).
+- For FS-mutating tests remember the disk image is shared across suites; rebuild
+  the image before measuring (`neodev build --quick --image && neodev test`).
 
 ## Common mistakes
 
-- Tests that pass but leave resources allocated (handle leak, memory leak).
-- Tests that depend on global state from a previous test (ordering dependency).
-- Using `assert!` instead of the test framework's `assert!` — panicking in kernel space crashes the system.
-- Testing only the happy path and ignoring error conditions.
-- Adding tests that take too long (>1 second) — tests run sequentially, slow tests add up.
+- Using `assert!` / `panic!` directly — a kernel panic kills the machine. Use the
+  harness macros.
+- Adding a `test_case!` without wiring `register_*_tests()` into
+  `testing::register_tests()`.
+- Testing only the happy path.
+- Leaving handles, frames, or memory allocated (leaks that break later suites).
+- Depending on global state left by a previous test.
 
 ## Final checklist
 
-- [ ] Test registered in the correct `register_*_tests()` function
+- [ ] Tests use `test_case!` and the harness assertions
+- [ ] `register_*_tests()` exported and called from `testing::register_tests()`
 - [ ] Success and error paths covered
-- [ ] No resource leaks (handles, memory, frames)
-- [ ] No ordering dependencies on other tests
-- [ ] `cargo build` succeeds
-- [ ] `python3 scripts/auto_test.py` — all tests pass (including new ones)
+- [ ] No resource leaks
+- [ ] No ordering dependencies
+- [ ] `cargo build` succeeds; `neodev test` passes with 0 failures

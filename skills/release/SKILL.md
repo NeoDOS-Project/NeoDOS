@@ -11,97 +11,101 @@ Cutting a new release, bumping the version, or preparing a changelog.
 
 ## Goal
 
-Produce a consistent, tested, and documented release with proper versioning and changelog.
+Produce a consistent, tested, and documented release with proper versioning.
 
 ## Steps
 
-1. **Check current version**
-   Read `AGENTS.md` — the version is at the top (e.g., `v0.48.6`).
-   Determine if the change is major, minor, or patch based on API/ABI compatibility:
-   - **Major**: Breaking ABI or public API change.
-   - **Minor**: New feature, backward compatible.
-   - **Patch**: Bug fix, no API change.
+1. **Check the current version**
+   Read `AGENTS.md` (version at the top, e.g. `v0.51.5`). Classify the change:
+   - **Major**: breaking ABI or public API change.
+   - **Minor**: new feature, backward compatible.
+   - **Patch**: bug fix, no API change.
 
-2. **Update AGENTS.md**
-   Bump the version string. Update ABI version if the NEM ABI changed.
-   Update the test count if tests were added/removed.
+2. **Bump the version in the right places**
+   - `AGENTS.md` (version string; update the test count and ABI if changed).
+   - `KERNEL_VERSION_CODE` / `BOOT_VERSION` in `src/main.rs` — currently stale
+     (`0x0A05`, tracked as `CH-11`); sync it on release.
+   - NEM ABI: bump `ABI_TARGET`/`ABI_MAX_VALID` in
+     `src/drivers/nem/format.rs` (re-exported as `crate::nem`) only for a breaking
+     NEM change; then update the ABI in `AGENTS.md`.
 
-3. **Update CHANGELOG.md**
-   Add a new heading for the release version. Move unreleased changes under it.
+3. **Update `CHANGELOG.md`**
+   Add a heading for the new version and move the unreleased entries under it.
    Format:
 
    ```markdown
-   ## v0.49.0 (2026-07-03)
-   - feat: new Ob type for synchronization primitives
-   - fix: slab allocator double-free on hot cache refill
+   ## vX.Y.Z (YYYY-MM-DD)
+   - feat: ...
+   - fix: ...
    ```
 
-   Keep entries concise, grouped by type (feat, fix, refactor, docs, test).
+   Group by type (feat, fix, refactor, docs, test); keep one line per change.
 
-4. **Sync roadmap**
-   Run `scripts/sync-roadmap.sh sync` to update GitHub Issues with any completed items.
-   (The old `docs/IMPROVEMENTS.md` files were removed in the docs reorganization;
-    GitHub Issues is the SSOT for planning.)
+4. **Sync the roadmap**
+
+   ```bash
+   scripts/sync-roadmap.sh sync
+   ```
+
+   GitHub Issues is the SSOT for planning; `roadmap/improvements.md` is the local
+   idea list.
 
 5. **Full build and test**
 
    ```bash
-   cargo build
-   python3 scripts/auto_test.py
-   scripts/check_deps.py
+   cd neodos-kernel && cargo build
+   neodev build --image
+   neodev test
+   neodev check-deps
+   npx markdownlint '**/*.md' --config .markdownlint.json
    ```
 
-6. **Build release image**
+6. **Build and boot the release image**
+   Boot in QEMU (`neodev run`) and verify the shell version prompt.
 
-   ```bash
-   bash scripts/build.sh --neodos-image
-   ```
-
-   If this is a release candidate, boot in QEMU and verify the shell prompt shows the correct version.
-
-7. **Commit**
+7. **Commit on the release branch**
 
    ```bash
    git add -A
-   git status                     # verify only intended files
-   git diff --cached --stat       # review staged changes
+   git status                 # only intended files
+   git diff --cached --stat
+   git commit -m "release: vX.Y.Z"
    ```
 
-   Commit message: `release: vX.Y.Z`.
-
-8. **Tag and push** (if publishable release)
+8. **Tag and push** (publishable release)
 
    ```bash
    git tag vX.Y.Z
    git push && git push --tags
    ```
 
-   If CI is configured, verify the release pipeline passes.
+   Branch workflow: `release/vX.Y.Z` from `develop` → PR → `master`.
 
 ## Best practices
 
-- Bump ABI version (`KERNEL_ABI_VERSION` in `src/nem/mod.rs`) on any breaking NEM change.
-- Test the full boot path (QEMU) for every release — not just unit tests.
-- Sync roadmap (`scripts/sync-roadmap.sh sync`) before cutting the release.
-- Keep `CHANGELOG.md` entries short — one line per change, link to PRs if available.
-- Never release on a dirty working tree — commit or stash first.
+- Bump the NEM ABI only on a breaking change, and mirror it in `AGENTS.md`.
+- Test the full boot path (QEMU) for every release, not just unit tests.
+- Sync the roadmap before cutting the release.
+- Keep `CHANGELOG.md` entries short; reference PRs.
+- Never release on a dirty working tree.
 
 ## Common mistakes
 
-- Forgetting to bump ABI version when NEM driver structs or ABIs changed.
-- Releasing without syncing `scripts/sync-roadmap.sh sync` — items show as pending that are done.
-- Releasing without running `scripts/auto_test.py` — CI catches it but it's embarrassing.
+- Bumping the version in only one place (`AGENTS.md` but not `src/main.rs`).
+- Forgetting the NEM ABI bump when driver structs changed.
+- Releasing without `neodev test` / `neodev check-deps`.
 - Including uncommitted changes in the release commit.
-- Bumping the version in only one place (AGENTS.md but not in-kernel version constant).
+- Skipping `scripts/sync-roadmap.sh sync`.
 
 ## Final checklist
 
 - [ ] Version bumped in `AGENTS.md`
-- [ ] ABI version bumped (if NEM ABI changed)
-- [ ] `CHANGELOG.md` updated with release notes
+- [ ] `KERNEL_VERSION_CODE` / `BOOT_VERSION` synced (`src/main.rs`)
+- [ ] NEM ABI bumped (if applicable) and reflected in `AGENTS.md`
+- [ ] `CHANGELOG.md` updated
 - [ ] Roadmap synced (`scripts/sync-roadmap.sh sync`)
-- [ ] `cargo build` + `python3 scripts/auto_test.py` pass
-- [ ] `scripts/check_deps.py` passes
-- [ ] `bash scripts/build.sh --neodos-image` succeeds
+- [ ] `cargo build` + `neodev build --image` succeed
+- [ ] `neodev test` and `neodev check-deps` pass
+- [ ] `markdownlint` passes
 - [ ] QEMU boot verified (version string correct)
-- [ ] Committed, tagged (`vX.Y.Z`), pushed
+- [ ] Committed on `release/vX.Y.Z`, tagged (`vX.Y.Z`), pushed

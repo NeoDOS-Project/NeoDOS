@@ -3,7 +3,7 @@
 use super::{ret, EINVAL};
 
 // ═══════════════════════════════════════════════════════════════════════
-// Registry (Cm) — RAX 67–76
+// Registry (Cm) — RAX 50–59
 // ═══════════════════════════════════════════════════════════════════════
 
 pub const REG_NONE: u32 = 0;
@@ -11,7 +11,7 @@ pub const REG_SZ: u32 = 1;
 pub const REG_DWORD: u32 = 2;
 pub const REG_BINARY: u32 = 3;
 
-/// sys_cm_open_key (RAX=67): open a registry key by full Ob path.
+/// sys_cm_open_key (RAX=50): open a registry key by full Ob path.
 /// Returns fd (>=3) on success.
 pub fn sys_cm_open_key(path: &str) -> Result<u8, i64> {
     let bytes = path.as_bytes();
@@ -30,7 +30,7 @@ pub fn sys_cm_create_key(fd: u8, name: &str) -> Result<(), i64> {
     super::ob::sys_ob_set_info(fd, super::ob::ObSetInfoClass::RegistryCreateKey, name.as_bytes())
 }
 
-/// sys_cm_query_value (RAX=69): query a value on a registry key by fd.
+/// sys_cm_query_value (RAX=52): query a value on a registry key by fd.
 /// buf receives: [type: u32 LE, data_len: u32 LE, data...]
 /// Returns total_size (8 + data_len) regardless of buf capacity.
 pub fn sys_cm_query_value(fd: u8, name: &str, buf: &mut [u8]) -> Result<usize, i64> {
@@ -46,7 +46,7 @@ pub fn sys_cm_query_value(fd: u8, name: &str, buf: &mut [u8]) -> Result<usize, i
 }
 
 
-/// sys_cm_set_value (RAX=70): set a value on a registry key by fd.
+/// sys_cm_set_value (RAX=53): set a value on a registry key by fd.
 /// fd = key handle from sys_cm_open_key, name = value name, value_type = REG_* constant.
 pub fn sys_cm_set_value(fd: u8, name: &str, value_type: u32, data: &[u8]) -> Result<(), i64> {
     let bytes = name.as_bytes();

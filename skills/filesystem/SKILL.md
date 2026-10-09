@@ -1,95 +1,118 @@
 ---
 name: filesystem
-description: Modify NeoFS, VFS, FAT32, GPT, block device manager, or I/O stack
+description: Modify NeoFS v2, VFS, FAT32, GPT, page cache, or the I/O stack
 ---
 
 # Filesystem
 
 ## When to use
 
-Modifying NeoFS, VFS, FAT32 driver, GPT parser, block device manager, I/O stack, or partition handling.
+Modifying NeoFS v2, VFS, the FAT32 ESP driver, GPT parsing, the block-device
+manager, the I/O stack, the page cache, or partition handling.
 
 ## Goal
 
-Make correct filesystem changes without corrupting data, breaking mount/unmount, or violating VFS abstractions.
+Make correct filesystem changes without corrupting data, breaking mount/unmount,
+or violating VFS abstractions.
+
+## References
+
+- `docs/filesystem/overview.md` — subsystem documentation
+- `docs/filesystem/neofs-v2.md`, `docs/filesystem/vfs-patterns.md`
+- NeoFS v2: `src/fs/neofs/` — `neodos_v2.rs` (superblock + `FileSystem`),
+  `neodos_dir.rs` (B-tree dirs), `neodos_io.rs` (extents + inline data),
+  `btree/` (COW B-tree), `freelist.rs`, `snapshot.rs`
+- VFS: `src/fs/vfs/` — `mod.rs` (`Vfs`), `io.rs` (IoStack), `mount.rs` (mount
+  manager), `partition.rs`
+- FAT32: `src/fs/fat32.rs` (ESP, mounted `A:`)
+- FSCK: `src/fs/fsck/` (`FsckTrait`, `ne2.rs`, `fat32.rs`)
+- GPT: `src/drivers/storage/gpt.rs`; block layer `src/drivers/storage/{block,manager}.rs`
+- Page cache: `src/buffer/page_cache.rs` (128 × 4 KB, LRU, dirty/write-back)
 
 ## Steps
 
-1. **Read `docs/filesystem/overview.md`**
-   Understand NeoFS layout, VFS architecture, IoStack, the page cache, and storage priority.
+1. **Read `docs/filesystem/overview.md`** — NeoFS v2 layout, VFS architecture,
+   IoStack, page cache, storage priority.
 
-2. **Identify the relevant subsystem**
-   - **NeoFS v2**: `src/fs/neodos_v2.rs` — native filesystem format (NE2). NeoFS v1 (NEOD) is obsolete and removed.
-   - **FAT32**: `src/drivers/fat32.rs` — FAT32 read/write support
-   - **VFS**: `src/vfs/mod.rs` — virtual filesystem layer (path resolution, file ops)
-   - **IoStack**: `src/vfs/io.rs` — I/O request stack (IRP-like)
-   - **Partitions**: `src/vfs/partition.rs` — partition table handling
-   - **GPT**: `src/drivers/gpt.rs` — GPT parser
-   - **Block device manager**: block device enumeration and priority (NVMe > VirtIO > AHCI > ATA)
+2. **Identify the subsystem** (see References). NeoFS v1 (NEOD) is removed;
+   NeoFS v2 (NE2) is the only native format.
 
-3. **VFS layer** (`src/vfs/mod.rs`)
-   VFS operations: `open`, `close`, `read`, `write`, `ioctl`, `mount`, `unmount`.
-   Each operation is dispatched to the underlying filesystem driver through the `VfsDriver` trait.
-   Adding a new operation: add it to `VfsDriver` trait and implement in all registered FS drivers.
-
-4. **Filesystem driver implementation**
-   For a new FS: implement `VfsDriver` trait. Key methods:
+3. **VFS layer** (`src/fs/vfs/mod.rs`)
+   The `FileSystem` trait is the driver contract:
 
    ```rust
-   fn mount(&self, device: &mut BlockDevice) -> Result<VfsMount, Status>;
-   fn unmount(&self, mount: &VfsMount) -> Result<(), Status>;
-   fn open(&self, mount: &VfsMount, path: &str) -> Result<VfsFileHandle, Status>;
-   fn read(&self, file: &VfsFileHandle, buf: &mut [u8], offset: u64) -> Result<u64, Status>;
-   fn write(&self, file: &VfsFileHandle, buf: &[u8], offset: u64) -> Result<u64, Status>;
+   pub trait FileSystem: Send {
+       fn read(&mut self, inode: u32, offset: u64, buf: &mut [u8]) -> Result<usize, VfsError>;
+       fn write(&mut self, inode: u32, offset: u64, buf: &[u8]) -> Result<usize, VfsError>;
+       fn lookup(&mut self, dir_inode: u32, name: &str) -> Result<VfsNode, VfsError>;
+       fn readdir(&mut self, dir_inode: u32, index: usize) -> Result<Option<DirEntry>, VfsError>;
+       fn mkdir(&mut self, dir_inode: u32, name: &str) -> Result<VfsNode, VfsError>;
+       fn create(&mut self, dir_inode: u32, name: &str) -> Result<VfsNode, VfsError>;
+       fn stat(&mut self, inode: u32) -> Result<VfsNode, VfsError>;
+       // remove_file/remove_dir/rename/volume_label/... default to NotImplemented
+   }
    ```
 
-   Place in `src/fs/` or `src/drivers/` depending on the FS type.
+   `Vfs { drives: [Option<Box<dyn FileSystem>>; 26], mounts: [Option<Mount>;
+   MAX_SUBDIR_MOUNTS], MAX_SUBDIR_MOUNTS = 8 }`. Path resolution walks
+   components, resolving `.` / `..` and traversing mount points.
 
-5. **IoStack** (`src/vfs/io.rs`, `src/vfs/partition.rs`)
-   I/O requests are IRP-like packets queued through the IoStack.
-   The stack manages: IRP allocation, completion routines, I/O priorities.
-   For `BlockDeviceManager`: storage devices are probed in priority order (NVMe first, then VirtIO, AHCI, ATA).
+4. **IoStack** (`src/fs/vfs/io.rs`, `partition.rs`)
+   Unified block I/O. `iostack_read_sectors()` / `iostack_write_sectors()`
+   translate partition-relative LBAs by adding `partition.base_lba`. The block
+   device manager probes controllers in priority order: **NVMe > VirtIO > AHCI
+   > ATA**.
 
-6. **Page cache**
-   FS reads go through the page cache (`src/vfs/cache.rs` if it exists). The cache holds recently accessed blocks.
-   Ensure cache coherence when writing: invalidate or update cached blocks on write.
+5. **Page cache** (`src/buffer/page_cache.rs`)
+   Global `PAGE_CACHE: Mutex<PageCache>`, 128 × 4 KB entries with LRU eviction
+   and dirty tracking. Keep it coherent on write (invalidate/update cached
+   blocks); file-backed mmap checks the cache before a VFS read. Flush dirty
+   entries before unmount.
 
-7. **Mount/unmount**
-   Mount: parse GPT, find filesystem partition, call `VfsDriver::mount()`, register in VFS namespace.
-   Unmount: flush dirty pages, call `VfsDriver::unmount()`, unregister.
-   Multiple mounts at different paths are supported.
+6. **Mount / unmount** (`src/fs/vfs/mount.rs`)
+   Mount: parse GPT, find the filesystem partition, mount via the `FileSystem`
+   impl, and register `\Global\FileSystem\<drive>:` + `\DosDevices\<letter>:`
+   entries in the Ob namespace. Unmount flushes then unregisters. Multiple
+   subdirectory mounts are supported.
 
-8. **Write tests**
-   Add tests in `src/testing.rs` for:
-   - Create file, write data, read back, verify
-   - Directory creation and listing
-   - Mount/unmount cycle
-   - Overwrite and truncate
-   - Error handling (file not found, disk full)
+7. **FSCK** (`src/fs/fsck/`)
+   Implement/verify `FsckTrait::check` (read-only) and `repair`. Exposed to user
+   mode via `ObInfoClass::FsckStatus(33)` and `ObSetInfoClass::FsckRepair(39)`;
+   driven by `fsck.nxe`.
+
+8. **Write tests** with `test_case!`: create → write → read-back; mkdir/readdir;
+   mount/unmount; overwrite/truncate; error paths (not found, full).
+
+9. **Build and test**
+
+   ```bash
+   cd neodos-kernel && cargo build
+   neodev build --quick --image && neodev test
+   neodev check-deps
+   ```
 
 ## Best practices
 
-- Always validate path lengths and components — no path traversal outside mount point.
-- Use `IoStack` for all block I/O — bypassing it breaks caching and ordering.
-- Flush page cache before unmount.
-- Partition-aware: don't assume a device is a whole disk; check GPT.
-- Handle storage priority correctly — prefer NVMe over VirtIO for boot.
+- Validate path lengths/components — no traversal outside the mount point.
+- All block I/O goes through the IoStack; bypassing it breaks caching/ordering.
+- Flush the page cache before unmount; keep page-cache coherence on writes.
+- Handle partial reads/writes — loop until complete.
+- Storage priority: prefer NVMe over VirtIO/AHCI for boot.
 
 ## Common mistakes
 
-- Bypassing the page cache and reading directly from the block device — stale data.
-- Not handling partial reads/writes — FS operations must loop until complete.
-- Forgetting to update directory entries after file write (size, timestamps).
-- Path traversal vulnerability via `..` components.
-- Storage priority mismatch — booting from ATA when NVMe is available.
+- Reading directly from the block device, bypassing the page cache (stale data).
+- Forgetting to update directory entries (size, timestamps) after a write.
+- `..` traversal escaping the mount point.
+- Assuming a device is a whole disk without checking the GPT.
+- Broken COW/snapshot assumptions when editing NeoFS v2 B-tree code.
 
 ## Final checklist
 
-- [ ] VfsDriver trait implemented (if new FS)
-- [ ] Mount/unmount tested (no leaks)
-- [ ] Page cache coherence maintained (writes invalidate cached reads)
+- [ ] `FileSystem` trait implemented (new FS) / updated safely (existing)
+- [ ] Mount/unmount tested with no leaks
+- [ ] Page-cache coherence maintained on writes
 - [ ] Path traversal prevented
-- [ ] Storage priority respected
-- [ ] GPT and partition table parsed correctly
-- [ ] Kernel tests added and pass
-- [ ] `docs/filesystem/overview.md` updated if VFS or FS format changed
+- [ ] Storage priority respected; GPT parsed correctly
+- [ ] Tests added; `cargo build`, `neodev test`, `neodev check-deps` pass
+- [ ] `docs/filesystem/overview.md` updated if VFS/format changed
