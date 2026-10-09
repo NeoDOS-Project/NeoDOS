@@ -297,8 +297,9 @@ Two library models are supported:
   loader-maintained symbol registry built from each library's `.dynsym`. Build
   such a library as a shared object with `--export-dynamic`.
 
-PIE export tables start with `version: u32`; a zero version is rejected (fail
-closed). The core `AbiTable` keeps `version` as its last field (index 43).
+Every NXL export table starts with `version: u32` (uniform convention); a zero
+version is rejected (fail closed). The core `libneodos.nxl` `AbiTable` is
+version 8, version-first.
 
 | NXL | Model | Load policy |
 | ----- | ----- | ------------- |

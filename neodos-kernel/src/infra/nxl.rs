@@ -133,11 +133,16 @@ pub fn load_nxl() -> bool {
     ok
 }
 
+/// Read the leading `version: u32` of an NXL export table (version-first ABI).
+fn nxl_abi_version(export_addr: u64) -> u32 {
+    unsafe { core::ptr::read_volatile(export_addr as *const u32) }
+}
+
 /// Dump key entries from the NXL AbiTable at `base`.
-/// The table mirrors libneodos/src/export.rs AbiTable layout (v7).
+/// The table is version-first (`version: u32`, 4 bytes padding, then function
+/// pointers); see `libneodos/src/export.rs`.
 fn dump_abi_table(base: u64) {
-    let tbl = base as *const u64;
-    // Offsets map to AbiTable fields in order (each 8 bytes until version: u32)
+    // Pointer fields, in order (each 8 bytes).
     let names = [
         "sys_exit", "sys_write", "sys_read", "sys_getpid", "sys_yield",
         "sys_close", "sys_brk", "sys_mmap", "sys_munmap",
@@ -151,13 +156,23 @@ fn dump_abi_table(base: u64) {
         "sys_ob_open", "sys_ob_create", "sys_ob_query_info",
         "sys_ob_set_info", "sys_ob_enum", "sys_ob_wait",
     ];
-    // version is at offset 42*8
-    // `version: u32` is the 44th field (index 43): 43 u64 fields precede it.
-    let version = unsafe { core::ptr::read_volatile(tbl.add(43) as *const u32) };
+    let version = nxl_abi_version(base);
     crate::serial_println!("[NXL] AbiTable at 0x{:x} version={}", base, version);
+    // version: u32 + 4 bytes padding precede the pointer table.
+    let tbl = unsafe { (base as *const u64).add(1) };
     for (i, name) in names.iter().enumerate() {
         let val = unsafe { core::ptr::read_volatile(tbl.add(i)) };
-        let status = if val == 0 { "NULL" } else if val < 0x4000000 || val > 0x4400000 { "OUT_OF_RANGE" } else { "ok" };
+        let in_nxl_region = (0x1e00_0000..0x1e20_0000).contains(&val);
+        // `err_*` entries are i64 constants, not pointers.
+        let status = if val == 0 {
+            "NULL"
+        } else if name.starts_with("err_") {
+            "ok"
+        } else if !in_nxl_region {
+            "OUT_OF_RANGE"
+        } else {
+            "ok"
+        };
         if status != "ok" {
             crate::serial_println!("[NXL]   {} [{:2}] = 0x{:016x} {}", name, i, val, status);
         }
@@ -268,6 +283,16 @@ pub fn nxl_load(path: &str) -> Option<u64> {
     for seg in &result.segments {
         mark_segment_user_accessible(seg.vaddr, seg.memsz, seg.flags);
     }
+
+    // Uniform version validation: every NXL export table is version-first.
+    let abi_version = nxl_abi_version(base);
+    if abi_version == 0 {
+        kerror!(LogSubsys::Nxl, "'{}' export table version is 0 (unset), refusing", path);
+        let mut registry = NXL_REGISTRY.lock();
+        registry[slot_idx].loaded = false;
+        return None;
+    }
+    kinfo!(LogSubsys::Nxl, "'{}' ABI version {}", path, abi_version);
 
     // Update slot metadata under lock
     {
@@ -626,7 +651,7 @@ fn nxl_load_pie(data: &[u8], image_size: usize, path: &str) -> Option<u64> {
     // ABI convention for relocatable (PIE) NXLs: the export table starts with
     // `version: u32`. Reject an unset version (0) so an incompatible library
     // fails closed instead of being used blindly (#584).
-    let abi_version = unsafe { core::ptr::read_volatile(export_addr as *const u32) };
+    let abi_version = nxl_abi_version(export_addr);
     if abi_version == 0 {
         kerror!(LogSubsys::Nxl, "PIE '{}' export table version is 0 (unset), refusing", path);
         let mut registry = NXL_REGISTRY.lock();
@@ -936,10 +961,14 @@ pub fn register_nxl_tests() {
     test_case!("nxl_core_abi_table_frozen", {
         let base = CORE_EXPORT_BASE.load(Ordering::Relaxed);
         test_true!(base != 0);
-        let version = unsafe { core::ptr::read_volatile((base + 43 * 8) as *const u32) };
-        test_eq!(version, 7);
-        // A dispatch entry must point into the NXL load region (sanity).
-        let sys_write = unsafe { core::ptr::read_volatile((base + 8) as *const u64) };
+        // Version is the first field now (uniform version-first convention).
+        let version = unsafe { core::ptr::read_volatile(base as *const u32) };
+        test_eq!(version, 8);
+        // Pointer table follows `version: u32` + 4 bytes padding; sys_exit is
+        // first (offset 8), sys_write second (offset 16).
+        let sys_exit = unsafe { core::ptr::read_volatile((base + 8) as *const u64) };
+        test_true!(sys_exit >= 0x1e00_0000 && sys_exit < 0x1e20_0000);
+        let sys_write = unsafe { core::ptr::read_volatile((base + 16) as *const u64) };
         test_true!(sys_write >= 0x1e00_0000 && sys_write < 0x1e20_0000);
     });
 
