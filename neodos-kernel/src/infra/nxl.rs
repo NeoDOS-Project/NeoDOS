@@ -11,6 +11,8 @@ use alloc::vec::Vec;
 pub static MATH_EXPORT_BASE: AtomicU64 = AtomicU64::new(0);
 /// Export-table address of the PIE `libarith.nxl` (imports `math_add`).
 pub static ARITH_EXPORT_BASE: AtomicU64 = AtomicU64::new(0);
+/// Export-table address of the core `libneodos.nxl` (legacy, slot 0).
+pub static CORE_EXPORT_BASE: AtomicU64 = AtomicU64::new(0);
 
 const NXL_REGION_BASE: u64 = 0x1e00_0000;
 const NXL_REGION_SIZE: u64 = 0x20_0000;
@@ -97,6 +99,7 @@ pub fn init_nxl_region() -> bool {
 pub fn load_nxl() -> bool {
     let ok = match nxl_load("C:\\System\\Libraries\\fs.nxl") {
         Some(base) => {
+            CORE_EXPORT_BASE.store(base, Ordering::Relaxed);
             kinfo!(LogSubsys::Nxl, "libneodos NXL loaded at 0x{:x}", base);
             dump_abi_table(base);
             true
@@ -926,6 +929,18 @@ pub fn register_nxl_tests() {
             unsafe { core::mem::transmute(*(base.wrapping_add(8) as *const u64)) };
         test_eq!(sum3(1, 2, 3), 6);
         test_eq!(sum3(10, -4, 1), 7);
+    });
+
+    // ABI freeze: the core `libneodos.nxl` AbiTable must keep its version and
+    // field order. `version: u32` is index 43 (43 u64 fields precede it).
+    test_case!("nxl_core_abi_table_frozen", {
+        let base = CORE_EXPORT_BASE.load(Ordering::Relaxed);
+        test_true!(base != 0);
+        let version = unsafe { core::ptr::read_volatile((base + 43 * 8) as *const u32) };
+        test_eq!(version, 7);
+        // A dispatch entry must point into the NXL load region (sanity).
+        let sys_write = unsafe { core::ptr::read_volatile((base + 8) as *const u64) };
+        test_true!(sys_write >= 0x1e00_0000 && sys_write < 0x1e20_0000);
     });
 
     // B2 from the real image: `libarith.nxl` is packaged by the (data-driven)
