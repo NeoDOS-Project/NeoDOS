@@ -225,4 +225,92 @@ pub fn register_security_tests() {
         test_eq!(acl.aces[1].access_mask, ACCESS_READ);
         test_eq!(acl.aces[2].access_mask, ACCESS_EXECUTE);
     });
+
+    // ── USR-P1d: empty/NULL DACL, group SIDs, SACL audit ──
+
+    test_case!("se_empty_dacl_denies", {
+        // An empty DACL (present, zero ACEs) denies all access (NT semantics).
+        let sd = SecurityDescriptor::new().with_dacl(Acl::new());
+        let token = Token::new_user();
+        test_true!(!se_access_check(&token, Some(&sd), ACCESS_READ));
+        test_true!(!se_access_check(&token, Some(&sd), ACCESS_ALL));
+    });
+
+    test_case!("se_null_dacl_allows", {
+        // A NULL DACL (`dacl == None`) grants full access.
+        let sd = SecurityDescriptor::new();
+        let token = Token::new_user();
+        test_true!(se_access_check(&token, Some(&sd), ACCESS_READ));
+        test_true!(se_access_check(&token, Some(&sd), ACCESS_ALL));
+    });
+
+    test_case!("se_absent_sd_allows", {
+        // No descriptor at all is treated as unprotected.
+        let token = Token::new_user();
+        test_true!(se_access_check(&token, None, ACCESS_READ));
+        test_true!(se_access_check(&token, None, ACCESS_ALL));
+    });
+
+    test_case!("se_group_sid_allow", {
+        // Grant via a group SID the token belongs to.
+        let group = Sid::from_parts(1, &[0, 0, 0, 0, 0, 5], &[32, 544]);
+        let mut acl = Acl::new();
+        acl.add_ace(Ace::allow(group, ACCESS_READ | ACCESS_WRITE));
+        let sd = SecurityDescriptor::new().with_dacl(acl);
+
+        let mut token = Token::new_user();
+        // Not a member yet → denied.
+        test_true!(!se_access_check(&token, Some(&sd), ACCESS_READ));
+        // Member → granted for the allowed bits only.
+        token.add_group(group);
+        test_true!(se_access_check(&token, Some(&sd), ACCESS_READ));
+        test_true!(se_access_check(&token, Some(&sd), ACCESS_WRITE));
+        test_true!(!se_access_check(&token, Some(&sd), ACCESS_EXECUTE));
+    });
+
+    test_case!("se_group_sid_deny_wins", {
+        // A group Deny ACE beats a primary-SID Allow ACE (deny-first).
+        let group = Sid::from_parts(1, &[0, 0, 0, 0, 0, 5], &[32, 544]);
+        let user = sid_builtin_user();
+        let mut acl = Acl::new();
+        acl.add_ace(Ace::allow(user, ACCESS_ALL));
+        acl.add_ace(Ace::deny(group, ACCESS_READ));
+        let sd = SecurityDescriptor::new().with_dacl(acl);
+
+        let mut token = Token::new_user();
+        token.add_group(group);
+        test_true!(!se_access_check(&token, Some(&sd), ACCESS_READ));
+        // WRITE is not covered by the group deny → allowed.
+        test_true!(se_access_check(&token, Some(&sd), ACCESS_WRITE));
+    });
+
+    test_case!("se_audit_absent_sacl_is_noop", {
+        // Auditing with no SACL must be a safe no-op and never change decisions.
+        let mut acl = Acl::new();
+        acl.add_ace(Ace::allow(sid_builtin_user(), ACCESS_READ));
+        let sd = SecurityDescriptor::new().with_dacl(acl);
+        let token = Token::new_user();
+
+        se_audit(&token, Some(&sd), ACCESS_READ, true); // off by default
+        set_auditing(true);
+        se_audit(&token, Some(&sd), ACCESS_READ, true); // no SACL → still safe
+        set_auditing(false);
+
+        test_true!(se_access_check(&token, Some(&sd), ACCESS_READ));
+    });
+
+    test_case!("se_acl_sacl_present", {
+        // A descriptor can carry a SACL without affecting the DACL decision.
+        let mut sacl = Acl::new();
+        sacl.add_ace(Ace { ace_type: ACE_TYPE_SYSTEM_AUDIT, flags: 0,
+                           access_mask: ACCESS_READ, sid: sid_builtin_user() });
+        let mut acl = Acl::new();
+        acl.add_ace(Ace::allow(sid_builtin_user(), ACCESS_READ));
+        let sd = SecurityDescriptor::new().with_dacl(acl).with_sacl(sacl);
+
+        test_true!(sd.sacl.is_some());
+        let token = Token::new_user();
+        test_true!(se_access_check(&token, Some(&sd), ACCESS_READ));
+        test_true!(!se_access_check(&token, Some(&sd), ACCESS_WRITE));
+    });
 }

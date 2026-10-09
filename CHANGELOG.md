@@ -2,6 +2,22 @@
 
 <!-- markdownlint-disable MD013 MD024 MD056 -->
 
+## Unreleased
+
+### Fixed
+
+- **Security: NT-correct `SeAccessCheck` — empty DACL, group SIDs, SACL audit
+  (#22).** `se_access_check` now **denies all access on an empty DACL** (present,
+  zero ACEs) while keeping **NULL DACL / absent descriptor = full access**, and
+  matches ACEs against the caller's primary SID **and group SIDs**
+  (`token.groups`), not only the primary SID. Deny-first ordering is preserved.
+  Added a SACL (`SecurityDescriptor::sacl`, `ACE_TYPE_SYSTEM_AUDIT`) and a global
+  audit switch (`set_auditing` / `se_audit`) that emits audit records for matching
+  audit ACEs without affecting the access decision. 7 new tests
+  (`se_empty_dacl_denies`, `se_null_dacl_allows`, `se_absent_sd_allows`,
+  `se_group_sid_allow`, `se_group_sid_deny_wins`, `se_audit_absent_sacl_is_noop`,
+  `se_acl_sacl_present`); kernel suite now 868/868.
+
 ## v0.51.5 — 2026-10-09
 
 ### Added

@@ -97,7 +97,7 @@ File: `src/security/acl.rs`.
 
 ```rust
 pub struct Ace {
-    pub ace_type: u8,         // 0=ALLOW, 1=DENY
+    pub ace_type: u8,         // 0=ALLOW, 1=DENY, 2=SYSTEM_AUDIT
     pub flags: u8,            // inheritance flags
     pub access_mask: u32,     // rights bitmap
     pub sid: Sid,             // trustee
@@ -112,7 +112,8 @@ pub struct SecurityDescriptor {
     pub revision: u8,
     pub owner: Option<Sid>,
     pub group: Option<Sid>,
-    pub dacl: Option<Acl>,    // discretionary ACL
+    pub dacl: Option<Acl>,    // discretionary ACL (None = NULL DACL = full access)
+    pub sacl: Option<Acl>,    // system ACL (audit ACEs only; None = no auditing)
 }
 ```
 
@@ -134,16 +135,19 @@ File: `src/security/access.rs`. Access validation logic.
 
 ### Algorithm
 
-1. **Admin bypass**: if `token.is_admin_token()` (the `is_admin` flag or the
-   built-in admin SID), grant immediately.
-2. **Missing security**: a `None` descriptor or a `None`/empty DACL grants access.
-3. **Iteration order**: evaluate all Deny ACEs first. If a Deny ACE matches
-   `token.sid` (group SIDs are **not** consulted by `check_dacl`) and covers the
-   requested access, deny.
-4. **Allow ACEs**: if a matching Allow ACE covers all requested access bits, grant.
-5. **Fallback**: if no Allow ACE matches, deny.
+`se_access_check(token, sd, desired_access) -> bool`:
 
-Signature:
+1. **Admin bypass**: if `token.is_admin_token()`, grant immediately.
+2. **Absent descriptor** (`sd == None`): unprotected → grant.
+3. **NULL DACL** (`sd.dacl == None`): full access → grant.
+4. **Empty DACL** (`Some` with zero ACEs): **deny all**.
+5. **Deny-first**: evaluate all Deny ACEs first. An ACE matches when its trustee
+   SID equals `token.sid` **or any SID in `token.groups`**; a matching Deny that
+   covers the requested access → deny.
+6. **Allow**: a matching Allow ACE covering all requested bits → grant.
+7. **Fallback**: no matching Allow → deny.
+
+Signatures:
 
 ```rust
 pub fn se_access_check(
@@ -152,7 +156,7 @@ pub fn se_access_check(
     desired_access: u32,
 ) -> bool
 
-pub fn se_access_check_sid(
+pub fn se_access_check_sid(        // single SID, no group membership
     token_sid: &Sid,
     is_admin: bool,
     dacl: Option<&Acl>,
@@ -160,9 +164,14 @@ pub fn se_access_check_sid(
 ) -> bool
 ```
 
-> Note: the implementation currently treats an empty DACL as *grant* (it does not
-> deny-by-default), and matches ACEs against `token.sid` only. This section
-> reflects the code in `src/security/access.rs`.
+### SACL and auditing (`ACE_TYPE_SYSTEM_AUDIT = 2`)
+
+A descriptor may carry a **SACL** (`SecurityDescriptor::sacl`) whose entries are
+audit ACEs. `se_audit(token, sd, desired_access, granted)` emits a record when
+auditing is enabled (`set_auditing(true)` / `auditing_enabled()`) and a
+`SYSTEM_AUDIT` ACE matches the trustee and requested access. Auditing is a
+logging hook only — it never changes the access decision, and an absent SACL is a
+no-op.
 
 ## Token Lifecycle
 
@@ -205,10 +214,12 @@ Combined: `SE_ADMIN_PRIVILEGES = 0xFFFF` (all 12 bits set). `SE_USER_PRIVILEGES 
 
 ## Tests
 
-23 tests covering:
+30 tests covering:
 
 - SID format/parse, builtin construction, equality
 - Token: new_admin, new_user, inherit, group membership
 - ACL: insert canonical order, allow/deny evaluation
-- SeAccessCheck: admin bypass, empty DACL, specific ACE matching, group-based access
+- SeAccessCheck: admin bypass, empty DACL (deny), NULL DACL / absent SD (grant),
+  specific ACE matching, deny-first ordering, **group-SID** allow and deny
+- SACL: audit hook is a no-op without a SACL and does not affect the decision
 - SAM database: 12 tests including create, add user, find by username, find by SID, remove user, flag manipulation, parse roundtrip, magic number validation, truncation detection, max entries enforcement
