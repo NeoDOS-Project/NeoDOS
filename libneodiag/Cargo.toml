@@ -1,0 +1,13 @@
+[package]
+name = "libneodiag"
+version = "0.1.0"
+edition = "2021"
+description = "NeoDOS diagnostics/table text helpers (pure, host-testable)"
+
+[lib]
+name = "libneodiag"
+path = "src/lib.rs"
+crate-type = ["lib"]
+
+[profile.release]
+panic = "abort"

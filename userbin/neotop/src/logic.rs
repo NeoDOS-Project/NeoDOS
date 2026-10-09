@@ -70,13 +70,6 @@ pub fn proc_truncated(
     flags & 1 != 0 || process_returned < process_total || thread_returned < thread_total
 }
 
-/// Number of spaces required to pad a field of `len` bytes up to `width`.
-///
-/// Saturating by construction: a value wider than its column never underflows.
-pub fn pad_width(len: usize, width: usize) -> usize {
-    width.saturating_sub(len)
-}
-
 /// MEM-PROC (#274): render a byte count as a short human-readable string with a
 /// fixed-ish width, using binary units. Zero renders as `0K`, `< 1 KiB` as
 /// `0.5K`, and values are one decimal in KiB/MiB/GiB. Writes into `out` and
@@ -261,16 +254,6 @@ mod tests {
     }
 
     // ── Existing helpers ──
-
-    #[test]
-    fn pad_width_never_underflows() {
-        assert_eq!(pad_width(0, 4), 4);
-        assert_eq!(pad_width(2, 4), 2);
-        assert_eq!(pad_width(4, 4), 0);
-        assert_eq!(pad_width(6, 4), 0);
-        assert_eq!(pad_width(12, 4), 0);
-        assert_eq!(pad_width(usize::MAX, 3), 0);
-    }
 
     #[test]
     fn thread_states_cover_kernel_encoding() {

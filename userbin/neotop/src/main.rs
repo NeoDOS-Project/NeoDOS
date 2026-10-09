@@ -107,13 +107,15 @@ fn write_pad(n: usize) {
 }
 
 fn write_field_left(s: &[u8], width: usize) {
-    write_str(s);
-    write_pad(logic::pad_width(s.len(), width));
+    let mut buf = [0u8; 64];
+    let n = libneodiag::pad_left(&mut buf, s, width);
+    write_str(&buf[..n]);
 }
 
 fn write_field_right(s: &[u8], width: usize) {
-    write_pad(logic::pad_width(s.len(), width));
-    write_str(s);
+    let mut buf = [0u8; 64];
+    let n = libneodiag::pad_right(&mut buf, s, width);
+    write_str(&buf[..n]);
 }
 
 fn u64_bytes(v: u64, buf: &mut [u8; 20]) -> &[u8] {
@@ -144,7 +146,7 @@ fn write_percent_x10(pct: Option<u64>) {
         Some(v) => {
             let mut tmp = [0u8; 24];
             let n = libmath::format_percent_x10(v, &mut tmp);
-            write_pad(logic::pad_width(n, 8));
+            write_pad(libneodiag::pad_width(n, 8));
             write_str(&tmp[..n]);
         }
     }

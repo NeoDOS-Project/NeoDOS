@@ -25,39 +25,22 @@ fn write_str(s: &[u8]) {
 }
 
 fn write_u32_right(v: u32, width: usize) {
-    let mut buf = [0u8; 12];
-    let mut i = 11;
+    let mut digits = [0u8; 12];
+    let mut i = digits.len();
     let mut n = v;
     if n == 0 {
-        buf[i] = b'0';
-        if i == 0 { write_str(&buf[0..1]); return; }
         i -= 1;
+        digits[i] = b'0';
     } else {
-        while n > 0 {
-            buf[i] = b'0' + (n % 10) as u8;
-            n /= 10;
-            if i == 0 { break; }
+        while n > 0 && i > 0 {
             i -= 1;
+            digits[i] = b'0' + (n % 10) as u8;
+            n /= 10;
         }
     }
-    let digits_end = 12;
-    let digits_start = i + 1;
-    let digits_len = digits_end - digits_start;
-    if digits_len >= width {
-        write_str(&buf[digits_start..digits_end]);
-    } else {
-        for _ in 0..(width - digits_len) {
-            write_str(b" ");
-        }
-        write_str(&buf[digits_start..digits_end]);
-    }
-}
-
-fn pad_right(s: &[u8], width: usize) -> [u8; 32] {
-    let mut buf = [0u8; 32];
-    let len = s.len().min(width);
-    buf[..len].copy_from_slice(&s[..len]);
-    buf
+    let mut buf = [0u8; 16];
+    let len = libneodiag::pad_right(&mut buf, &digits[i..], width);
+    write_str(&buf[..len]);
 }
 
 fn build_proc_path(pid: u32, buf: &mut [u8; 128]) -> &str {
@@ -206,8 +189,9 @@ pub extern "C" fn _start() -> ! {
         for _ in 0..(10 - state.len()) {
             write_str(b" ");
         }
-        let n = pad_right(name_str.as_bytes(), 24);
-        write_str(&n[..24]);
+        let mut nb = [0u8; 32];
+        let n = libneodiag::pad_left(&mut nb, name_str.as_bytes(), 24);
+        write_str(&nb[..n]);
         write_str(b"\r\n");
     }
 
