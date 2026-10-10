@@ -81,6 +81,32 @@ pub fn register_object_tests() {
         test_true!(result.is_none());
     });
 
+    test_case!("neodos05_ob_id_index_consistency", {
+        // Create/destroy churn: the O(log n) id index must stay consistent, and
+        // freed slots must be reusable under a fresh id (NEODOS-05 / #635).
+        let mut ids = alloc::vec::Vec::new();
+        for i in 0..32u64 {
+            ids.push(ob_create_object(ObType::Event, "idx", i, 0, None).unwrap());
+        }
+        for (i, id) in ids.iter().enumerate() {
+            if i % 2 == 0 { ob_destroy_object(*id).unwrap(); }
+        }
+        for (i, id) in ids.iter().enumerate() {
+            test_eq!(ob_lookup(*id).is_some(), i % 2 == 1);
+        }
+        // Slot reuse: a fresh object gets a new id that also resolves.
+        let fresh = ob_create_object(ObType::Event, "idx_reuse", 999, 0, None).unwrap();
+        test_true!(ob_lookup(fresh).is_some());
+        test_true!(!ids.contains(&fresh));
+        ob_destroy_object(fresh).unwrap();
+        for (i, id) in ids.iter().enumerate() {
+            if i % 2 == 1 { ob_destroy_object(*id).unwrap(); }
+        }
+        for id in &ids {
+            test_true!(ob_lookup(*id).is_none());
+        }
+    });
+
     test_case!("ob_enum_snapshot", {
         let start_count = ob_count();
         let id1 = ob_create_object(ObType::Process, "snap1", 10, 0, None).unwrap();
