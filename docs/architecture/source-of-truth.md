@@ -922,7 +922,7 @@ verified by source inspection and tracked as a gap (see
 Before any commit, verify:
 
 - [ ] `neodev check-deps` passes (T1)
-- [ ] `neodev test` passes (all 876 kernel tests + user-mode tests)
+- [ ] `neodev test` passes (all 888 kernel tests + user-mode tests)
 - [ ] `cargo build` in `neodos-kernel/` compiles without warnings
 - [ ] No new `use` statements that create forbidden dependencies (INV-1)
 - [ ] No new heap allocation in IRQ handlers (INV-2)
