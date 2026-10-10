@@ -1838,4 +1838,28 @@ pub fn register() {
         test_true!(sched.resolve_eprocess_slot().is_ok());
         test_true!(sched.resolve_kthread_slot().is_ok());
     });
+
+    // ── NEODOS-05 (#635): scheduler id indexes ──────────────────────────────
+    test_case!("neodos05_scheduler_id_index", {
+        use crate::scheduler::types::Eprocess;
+        let mut sched = Scheduler::new();
+        // put via helper -> find via the O(log n) index resolves.
+        let tid = 200u32;
+        let slot = sched.alloc_kthread_slot().unwrap();
+        let mut k = Kthread::new_ring3(tid, 5, 0x400000, 0x800000);
+        k.state = ThreadState::Ready;
+        sched.put_kthread(slot, Box::new(k));
+        test_true!(sched.find_kthread(tid).is_some());
+        test_eq!(sched.find_kthread(tid).unwrap().pid, 5);
+        test_eq!(sched.find_kthread_mut(tid).unwrap().tid, tid);
+        sched.clear_kthread_slot(slot);
+        test_true!(sched.find_kthread(tid).is_none());
+
+        let slot2 = sched.alloc_eprocess_slot().unwrap();
+        sched.put_eprocess(slot2, Eprocess::new_kernel(77));
+        test_true!(sched.find_eprocess(77).is_some());
+        test_eq!(sched.find_eprocess(77).unwrap().pid, 77);
+        sched.clear_eprocess_slot(slot2);
+        test_true!(sched.find_eprocess(77).is_none());
+    });
 }

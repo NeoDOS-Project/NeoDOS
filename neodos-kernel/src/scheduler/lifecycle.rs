@@ -487,9 +487,9 @@ impl Scheduler {
             }
         }
 
-        self.eprocesses[ep_slot] = Some(eproc);
+        self.put_eprocess(ep_slot, eproc);
         thread.state = ThreadState::Suspended;
-        self.kthreads[th_slot] = Some(Box::new(thread));
+        self.put_kthread(th_slot, Box::new(thread));
 
         kdebug!(LogSubsys::Sched, "[SCHED] CREATE TID={} PID={} priority={} state=Suspended (Ring 3)",
             tid, pid, PRIORITY_NORMAL);
@@ -598,8 +598,8 @@ impl Scheduler {
         // of panic if the precondition does not hold (NEODOS-08 / #638).
         let ep_slot = self.resolve_eprocess_slot()?;
         let th_slot = self.resolve_kthread_slot()?;
-        self.eprocesses[ep_slot] = Some(eproc);
-        self.kthreads[th_slot] = Some(Box::new(thread));
+        self.put_eprocess(ep_slot, eproc);
+        self.put_kthread(th_slot, Box::new(thread));
 
         kinfo!(LogSubsys::Sched, "PID {} -> \\Process\\{} OK", pid, pid);
         crate::trace_sched!(1, pid, 0);
@@ -696,7 +696,7 @@ impl Scheduler {
 
         // Additional threads become runnable through the common transition.
         thread.state = ThreadState::Suspended;
-        self.kthreads[th_slot] = Some(Box::new(thread));
+        self.put_kthread(th_slot, Box::new(thread));
         if let Some(k) = self.kthreads[th_slot].as_mut() {
             Self::make_thread_ready(k);
         }
@@ -753,9 +753,9 @@ impl Scheduler {
         };
 
         let ep_slot = self.alloc_eprocess_slot()?;
-        self.eprocesses[ep_slot] = Some(Eprocess::new_kernel(self.next_pid));
+        self.put_eprocess(ep_slot, Eprocess::new_kernel(self.next_pid));
         self.next_pid += 1;
-        self.kthreads[th_slot] = Some(Box::new(kthread));
+        self.put_kthread(th_slot, Box::new(kthread));
         // Fase 3 P1/P5: capturar frame inicial 18 slots y canary
         let (kptr, base, top, init_rsp, ent) = {
             let k = self.kthreads[th_slot].as_ref().unwrap();
@@ -851,7 +851,7 @@ impl Scheduler {
                 if let Some(th) = self.kthreads[th_idx].as_mut() {
                     Self::guard_kstack_reclaim(th);
                 }
-                self.kthreads[th_idx] = None;
+                self.clear_kthread_slot(th_idx);
             }
         }
 
@@ -945,11 +945,11 @@ impl Scheduler {
                         // is still abandoning (leaked instead).
                         Self::guard_kstack_reclaim(th);
                     }
-                    self.kthreads[th_idx] = None;
+                    self.clear_kthread_slot(th_idx);
                 }
             }
             // Drop eprocess (frees handle_table Vec, mmap_regions Vec, cwd_path String)
-            self.eprocesses[ep_idx] = None;
+            self.clear_eprocess_slot(ep_idx);
             crate::trace_sched!(3, pid, 0); // RECYCLE_SLOT
             true
         } else {
@@ -1070,7 +1070,7 @@ impl Scheduler {
             if let Some(th) = self.kthreads[th_idx].as_mut() {
                 Self::guard_kstack_reclaim(th);
             }
-            self.kthreads[th_idx] = None;
+            self.clear_kthread_slot(th_idx);
             crate::trace_sched!(3, tid as u64, 1);
             true
         } else {

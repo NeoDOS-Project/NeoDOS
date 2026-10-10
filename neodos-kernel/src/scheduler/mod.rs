@@ -169,6 +169,7 @@ pub fn preempt_disabled() -> bool {
 
 
 use alloc::boxed::Box;
+use alloc::collections::BTreeMap;
 use alloc::collections::VecDeque;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
@@ -188,6 +189,12 @@ pub struct Scheduler {
     /// TID 0 always gets CPU even when higher-priority threads dominate
     /// the Ready queue.
     schedule_count: u64,
+    /// NEODOS-05 (#635): `pid -> slot` / `tid -> slot` indexes so
+    /// `find_eprocess`/`find_kthread` are O(log n), not O(n). Maintained by the
+    /// `put_*`/`clear_*` helpers; `find_*` falls back to a linear scan on an
+    /// index miss (e.g. a test or legacy direct write).
+    pid_index: BTreeMap<u32, usize>,
+    tid_index: BTreeMap<u32, usize>,
 }
 
 #[allow(unused_macros)]
@@ -206,24 +213,44 @@ macro_rules! with_current {
 #[allow(clippy::new_without_default)]
 impl Scheduler {
     pub fn find_eprocess_mut(&mut self, pid: u32) -> Option<&mut Eprocess> {
+        if let Some(&idx) = self.pid_index.get(&pid) {
+            if self.eprocesses.get(idx).and_then(|e| e.as_ref()).is_some_and(|ep| ep.pid == pid) {
+                return self.eprocesses.get_mut(idx).and_then(|e| e.as_mut());
+            }
+        }
         self.eprocesses.iter_mut()
             .find(|e| e.as_ref().is_some_and(|ep| ep.pid == pid))
             .and_then(|e| e.as_mut())
     }
 
     pub fn find_eprocess(&self, pid: u32) -> Option<&Eprocess> {
+        if let Some(&idx) = self.pid_index.get(&pid) {
+            if let Some(ep) = self.eprocesses.get(idx).and_then(|e| e.as_ref()) {
+                if ep.pid == pid { return Some(ep); }
+            }
+        }
         self.eprocesses.iter()
             .find(|e| e.as_ref().is_some_and(|ep| ep.pid == pid))
             .and_then(|e| e.as_ref())
     }
 
     pub fn find_kthread_mut(&mut self, tid: u32) -> Option<&mut Kthread> {
+        if let Some(&idx) = self.tid_index.get(&tid) {
+            if self.kthreads.get(idx).and_then(|t| t.as_ref()).is_some_and(|k| k.tid == tid) {
+                return self.kthreads.get_mut(idx).and_then(|t| t.as_mut().map(|k| &mut **k));
+            }
+        }
         self.kthreads.iter_mut()
             .find(|t| t.as_ref().is_some_and(|k| k.tid == tid))
             .and_then(|t| t.as_mut().map(|k| &mut **k))
     }
 
     pub fn find_kthread(&self, tid: u32) -> Option<&Kthread> {
+        if let Some(&idx) = self.tid_index.get(&tid) {
+            if let Some(k) = self.kthreads.get(idx).and_then(|t| t.as_ref()) {
+                if k.tid == tid { return Some(k); }
+            }
+        }
         self.kthreads.iter()
             .find(|t| t.as_ref().is_some_and(|k| k.tid == tid))
             .and_then(|t| t.as_ref().map(|k| &**k))
@@ -436,6 +463,30 @@ impl Scheduler {
             next_tid: 2,
             timer_ticks: 0,
             schedule_count: 0,
+            pid_index: BTreeMap::new(),
+            tid_index: BTreeMap::new(),
+        }
+    }
+
+    /// NEODOS-05 (#635): slot writers that keep the id indexes consistent.
+    pub(crate) fn put_kthread(&mut self, slot: usize, k: Box<Kthread>) {
+        let tid = k.tid;
+        self.kthreads[slot] = Some(k);
+        self.tid_index.insert(tid, slot);
+    }
+    pub(crate) fn clear_kthread_slot(&mut self, slot: usize) {
+        if let Some(k) = self.kthreads[slot].take() {
+            self.tid_index.remove(&k.tid);
+        }
+    }
+    pub(crate) fn put_eprocess(&mut self, slot: usize, ep: Eprocess) {
+        let pid = ep.pid;
+        self.eprocesses[slot] = Some(ep);
+        self.pid_index.insert(pid, slot);
+    }
+    pub(crate) fn clear_eprocess_slot(&mut self, slot: usize) {
+        if let Some(ep) = self.eprocesses[slot].take() {
+            self.pid_index.remove(&ep.pid);
         }
     }
     pub fn has_non_idle_processes(&self) -> bool {

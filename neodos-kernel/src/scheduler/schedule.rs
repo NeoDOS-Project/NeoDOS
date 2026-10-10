@@ -553,7 +553,7 @@ impl Scheduler {
             n.push_u32(cpu);
             idle.name = n;
         }
-        self.kthreads[th_slot] = Some(Box::new(idle));
+        self.put_kthread(th_slot, Box::new(idle));
         let ptr = &**self.kthreads[th_slot].as_ref()? as *const Kthread as *mut Kthread;
         Some((tid, ptr))
     }
