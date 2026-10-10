@@ -7,6 +7,18 @@ use crate::object::types::{ObError, ObId, ObType, OB_NAME_LEN, ObObjectSnapshot,
 
 pub trait ObOperations: Send + Sync {
     fn on_destroy(&self, _id: ObId, _native_id: u64) {}
+
+    // NEODOS-06 (#636): Ob is the central dispatch point. Each hook returns
+    // `None` when the object type does not implement it, so callers fall back to
+    // their legacy path (behavior unchanged until a type registers ops).
+    /// Synchronous read into `buf` at `offset`; `Some(n)` = handled (n bytes).
+    fn read(&self, _id: ObId, _native_id: u64, _offset: u64, _buf: &mut [u8]) -> Option<usize> { None }
+    /// Synchronous write from `buf` at `offset`; `Some(n)` = handled (n bytes).
+    fn write(&self, _id: ObId, _native_id: u64, _offset: u64, _buf: &[u8]) -> Option<usize> { None }
+    /// Device control; `Some(reply)` = handled.
+    fn ioctl(&self, _id: ObId, _native_id: u64, _cmd: u32, _arg: u64) -> Option<i64> { None }
+    /// Wait/peek; `Some(true)` = currently signalled/waitable.
+    fn wait(&self, _id: ObId, _native_id: u64) -> Option<bool> { None }
 }
 
 /// Ops for file/directory handles opened via ObOpen → VFS resolution.

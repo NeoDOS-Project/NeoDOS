@@ -19,6 +19,21 @@ mod power;
 mod object;
 mod time;
 
+/// True if `info_class` is routed by some set domain. Completeness guard for
+/// ObSetInfoClass (NEODOS-06/#636, CH-06/#510, AUD-006/#526).
+pub fn set_class_handled(info_class: u32) -> bool {
+    process::handles(info_class)
+        || keyboard::handles(info_class)
+        || fs::handles(info_class)
+        || ipc::handles(info_class)
+        || net::handles(info_class)
+        || registry::handles(info_class)
+        || service::handles(info_class)
+        || power::handles(info_class)
+        || object::handles(info_class)
+        || time::handles(info_class)
+}
+
 pub fn handler_ob_set_info(regs: crate::syscall::Registers) -> u64 {
     let fd = regs.rbx as u8;
     let info_class = regs.rcx as u32;
@@ -121,6 +136,27 @@ pub fn register_ob_set_tests() {
         test_true!(!validate_datetime(0, 0, 0, 30, 2, 24)); // Feb 30
         test_true!(!validate_datetime(0, 0, 0, 29, 2, 23)); // 2023 not leap
         test_true!(!validate_datetime(0, 0, 0, 31, 4, 24)); // Apr 31
+    });
+
+    test_case!("neodos06_ob_class_coverage", {
+        // Complete coverage guard (NEODOS-06/#636, CH-06/#510, AUD-006/#526):
+        // every ObInfoClass variant must be routed by a query domain. PowerState
+        // (=32) is the known CH-06 gap and is excluded *explicitly*; any NEW gap
+        // fails the test.
+        let known_unhandled: [u32; 1] = [crate::object::types::ObInfoClass::PowerState as u32];
+        for c in 0..=42u32 {
+            if !known_unhandled.contains(&c) {
+                test_true!(crate::syscall::ob::query::info_class_handled(c));
+            }
+        }
+        // Every defined ObSetInfoClass variant must be routed.
+        for c in [
+            0u32, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21,
+            22, 23, 24, 25, 26, 27, 28, 29, 33, 34, 35, 36, 37, 38, 39, 43, 44, 45, 46, 47,
+            49, 50, 51,
+        ] {
+            test_true!(set_class_handled(c));
+        }
     });
 
     // #491: the RTC-write ACK guard lives in `time` (the module that already

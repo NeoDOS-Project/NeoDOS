@@ -18,6 +18,19 @@ mod session;
 
 pub use stats::register_ob_stats_tests;
 
+/// True if `info_class` is routed by some query domain. Completeness guard for
+/// ObInfoClass (NEODOS-06/#636, CH-06/#510, AUD-006/#526).
+pub fn info_class_handled(info_class: u32) -> bool {
+    process::handles(info_class)
+        || stats::handles(info_class)
+        || net::handles(info_class)
+        || registry::handles(info_class)
+        || time::handles(info_class)
+        || devices::handles(info_class)
+        || fs::handles(info_class)
+        || session::handles(info_class)
+}
+
 pub fn handler_ob_query_info(regs: crate::syscall::Registers) -> u64 {
     let fd = regs.rbx as u8;
     let info_class = regs.rcx as u32;
