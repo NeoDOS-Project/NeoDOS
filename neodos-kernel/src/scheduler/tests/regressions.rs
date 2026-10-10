@@ -1611,4 +1611,50 @@ pub fn register() {
         // Nothing reclaimable (all still running) -> no candidate.
         test_true!(q.find_reclaimable(0, |_| true).is_none());
     });
+    test_case!("neodos01_zombie_stress_4x_max_no_slot_leak", {
+        use crate::scheduler::lifecycle::{ZombieQueue, MAX_ZOMBIES};
+        let mut sched = Scheduler::new();
+        let base_pid: u32 = 10_000;
+        let n = MAX_ZOMBIES * 4; // 4×MAX_ZOMBIES = 256 exits
+
+        // 4×MAX real, already-terminated EPROCESS/KTHREAD pairs. `new_kernel`
+        // owns no external resources (no user slot / heap / handles), so the
+        // reaper only has to free the slot + kernel stack: exactly the leak
+        // surface of the zombie path.
+        for i in 0..n {
+            let pid = base_pid + i as u32;
+            let ep_slot = sched.alloc_eprocess_slot().unwrap();
+            sched.eprocesses[ep_slot] = Some(Eprocess::new_kernel(pid));
+            let th_slot = sched.alloc_kthread_slot().unwrap();
+            let mut k = Kthread::new_ring3(pid, pid, 0x400000, 0x800000);
+            k.state = ThreadState::Terminated;
+            sched.kthreads[th_slot] = Some(Box::new(k));
+        }
+        test_eq!(sched.eprocesses.iter().flatten().count(), n + 1); // + boot (pid 0)
+
+        // Feed all 256 dead PIDs through the zombie queue, then drain it exactly
+        // like the reaper does (`recycle_terminated`).
+        let mut q = ZombieQueue::new();
+        for i in 0..n {
+            q.enqueue(base_pid + i as u32);
+        }
+        let mut reclaimed = 0usize;
+        while let Some(pos) = q.find_reclaimable(0, |_| false) {
+            let pid = q.take_at(pos).unwrap();
+            test_true!(sched.recycle_terminated(pid));
+            reclaimed += 1;
+        }
+        test_eq!(reclaimed, n);
+        test_eq!(q.len(), 0);
+
+        // Zero slot leak: only the boot EPROCESS and the boot+idle KTHREADs
+        // remain, and none of the 256 pids is still tracked.
+        test_eq!(sched.eprocesses.iter().flatten().count(), 1);
+        test_eq!(sched.kthreads.iter().flatten().count(), 2);
+        for i in 0..n {
+            let pid = base_pid + i as u32;
+            test_true!(sched.find_eprocess(pid).is_none());
+            test_true!(sched.thread_tids_for_pid(pid).is_empty());
+        }
+    });
 }
