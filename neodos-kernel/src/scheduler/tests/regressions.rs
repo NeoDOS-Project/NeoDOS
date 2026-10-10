@@ -1592,17 +1592,159 @@ pub fn register() {
         q.requeue(7); // must not duplicate
         test_eq!(q.len(), 1);
     });
-    test_case!("neodos01_zombie_requeue_respects_hard_cap", {
+    // #631 regression: the hard cap must NEVER be enforced by evicting a
+    // pending entry. These tests fail against the removed `trim_to_hard_cap`
+    // (which did `pids.remove(0)` unconditionally and counted the victim as
+    // `ZOMBIE_STALE_DROPPED`), and pass with reclamation-only enforcement.
+    test_case!("neodos01_zombie_enqueue_over_cap_preserves_all_pending", {
+        use crate::scheduler::lifecycle::{ZombieQueue, ZOMBIE_HARD_CAP, zombie_queue_stats};
+        let mut q = ZombieQueue::new();
+        let before = zombie_queue_stats();
+        let total = ZOMBIE_HARD_CAP + 8;
+        // Repeated enqueue on the SAME instance, well beyond the hard cap.
+        for p in 1..=total as u32 {
+            test_true!(q.enqueue(p));
+        }
+        test_eq!(q.len(), total);
+        // Nothing was evicted to make room: every pending PID is still queued.
+        for p in 1..=total as u32 {
+            test_true!(q.contains(p));
+        }
+        // Enqueueing past the cap is neither a stale drop nor an overflow
+        // *eviction*; the queue never discards work on its own.
+        let after = zombie_queue_stats();
+        test_eq!(after.stale_dropped - before.stale_dropped, 0);
+        test_eq!(after.overflow - before.overflow, 0);
+        test_eq!(after.enqueued - before.enqueued, total as u64);
+    });
+    test_case!("neodos01_zombie_requeue_over_cap_preserves_all_pending", {
+        use crate::scheduler::lifecycle::{ZombieQueue, ZOMBIE_HARD_CAP, zombie_queue_stats};
+        let mut q = ZombieQueue::new();
+        for p in 1..=ZOMBIE_HARD_CAP as u32 {
+            q.enqueue(p);
+        }
+        let before = zombie_queue_stats();
+        q.requeue(9999);
+        // Requeue must not evict the oldest pending entry (pid 1).
+        test_eq!(q.len(), ZOMBIE_HARD_CAP + 1);
+        test_true!(q.contains(9999));
+        test_true!(q.contains(1));
+        let after = zombie_queue_stats();
+        test_eq!(after.requeued - before.requeued, 1);
+        test_eq!(after.stale_dropped - before.stale_dropped, 0);
+        test_eq!(after.overflow - before.overflow, 0);
+        // Requeueing the same PID again is deduped, not overflow.
+        q.requeue(9999);
+        test_eq!(q.len(), ZOMBIE_HARD_CAP + 1);
+        test_eq!(zombie_queue_stats().requeued - before.requeued, 1);
+    });
+    test_case!("neodos01_zombie_duplicate_at_cap_is_not_overflow", {
+        use crate::scheduler::lifecycle::{ZombieQueue, ZOMBIE_HARD_CAP, zombie_queue_stats};
+        let mut q = ZombieQueue::new();
+        for p in 1..=ZOMBIE_HARD_CAP as u32 {
+            q.enqueue(p);
+        }
+        let before = zombie_queue_stats();
+        // A duplicate at capacity is suppressed, not counted as overflow/stale.
+        test_true!(!q.enqueue(ZOMBIE_HARD_CAP as u32));
+        test_eq!(q.len(), ZOMBIE_HARD_CAP);
+        let after = zombie_queue_stats();
+        test_eq!(after.dedup_skipped - before.dedup_skipped, 1);
+        test_eq!(after.enqueued - before.enqueued, 0);
+        test_eq!(after.overflow - before.overflow, 0);
+        test_eq!(after.stale_dropped - before.stale_dropped, 0);
+    });
+    test_case!("neodos01_zombie_full_queue_all_running_retains_and_orders", {
         use crate::scheduler::lifecycle::{ZombieQueue, ZOMBIE_HARD_CAP};
         let mut q = ZombieQueue::new();
         for p in 1..=ZOMBIE_HARD_CAP as u32 {
             q.enqueue(p);
         }
+        // Full queue where every entry is still running: no reclaimable
+        // candidate, and the entries must be retained (never evicted to make
+        // room), which is the state `defer_reap_with_scheduler` reports as
+        // ZOMBIE_OVERFLOW instead of losing work.
         test_eq!(q.len(), ZOMBIE_HARD_CAP);
-        q.requeue(9999);
+        test_true!(q.over_hard_cap());
+        test_true!(q.find_reclaimable(0, |_| true).is_none());
+        test_true!(q.find_reclaimable(0, |_| false).is_some());
+        // Documented ordering: FIFO — the oldest reclaimable entry is returned
+        // first and `take_at(0)` removes it in enqueue order.
+        test_eq!(q.take_at(0).unwrap(), 1);
+        test_eq!(q.take_at(0).unwrap(), 2);
+        test_eq!(q.take_at(q.len() - 1).unwrap(), ZOMBIE_HARD_CAP as u32);
+    });
+    test_case!("neodos01_zombie_repeated_overflow_drain_no_growth", {
+        use crate::scheduler::lifecycle::{ZombieQueue, ZOMBIE_HARD_CAP};
+        // Many fill/drain cycles on one instance: cumulative enqueue beyond the
+        // cap followed by a full reclaim must not leave residue.
+        let mut q = ZombieQueue::new();
+        for cycle in 0..8u32 {
+            for i in 0..(ZOMBIE_HARD_CAP as u32 * 3) {
+                test_true!(q.enqueue(cycle * 100_000 + i + 1));
+            }
+            let mut drained = 0usize;
+            while let Some(pos) = q.find_reclaimable(0, |_| false) {
+                q.take_at(pos).unwrap();
+                drained += 1;
+            }
+            test_eq!(drained, ZOMBIE_HARD_CAP * 3);
+            test_eq!(q.len(), 0);
+            test_true!(q.is_empty());
+        }
+    });
+    test_case!("neodos01_zombie_take_recheck_requeue_retains_record", {
+        // Models the reaper's select -> take -> (post-take) recheck -> requeue
+        // sequence. A record that becomes ineligible between selection and
+        // reclamation must be retained (never dropped as stale) and a record
+        // removed once cannot be claimed again (single-claim under the lock).
+        use crate::scheduler::lifecycle::{ZombieQueue, ZOMBIE_HARD_CAP, zombie_queue_stats};
+        let mut q = ZombieQueue::new();
+        for p in 1..=ZOMBIE_HARD_CAP as u32 {
+            q.enqueue(p);
+        }
+        let before = zombie_queue_stats();
+
+        // Select the first reclaimable entry (FIFO: pid 1) and remove it...
+        let pos = q.find_reclaimable(0, |_| false).unwrap();
+        test_eq!(pos, 0);
+        let claimed = q.take_at(pos).unwrap();
+        test_eq!(claimed, 1);
+        // ...then the recheck finds it is running again: requeue and retain.
+        q.requeue(claimed);
         test_eq!(q.len(), ZOMBIE_HARD_CAP);
-        test_true!(q.find_reclaimable(0, |p| p == 9999).is_some());
-        test_true!(q.find_reclaimable(0, |p| p == 1).is_none());
+        test_true!(q.contains(1));
+
+        // A second claim cannot return the same record.
+        let claimed2 = q.take_at(0).unwrap();
+        test_ne!(claimed2, 1);
+        q.requeue(claimed2);
+        test_eq!(q.len(), ZOMBIE_HARD_CAP);
+
+        // The take/recheck/requeue cycle is neither a stale drop nor overflow.
+        let after = zombie_queue_stats();
+        test_eq!(after.stale_dropped - before.stale_dropped, 0);
+        test_eq!(after.overflow - before.overflow, 0);
+        test_eq!(after.requeued - before.requeued, 2);
+    });
+    test_case!("neodos01_zombie_overflow_recovery_after_capacity_release", {
+        // Full queue with every entry "running" is the overflow condition; once
+        // one entry becomes eligible again it must be reclaimable immediately,
+        // proving the retained work was not lost while capacity was exhausted.
+        use crate::scheduler::lifecycle::{ZombieQueue, ZOMBIE_HARD_CAP};
+        let mut q = ZombieQueue::new();
+        for p in 1..=ZOMBIE_HARD_CAP as u32 {
+            q.enqueue(p);
+        }
+        test_true!(q.over_hard_cap());
+        test_true!(q.find_reclaimable(0, |_| true).is_none());
+        // pid 5 stops running -> reclaimable; taken without disturbing the rest.
+        let pos = q.find_reclaimable(0, |p| p != 5).unwrap();
+        test_eq!(q.take_at(pos).unwrap(), 5);
+        test_eq!(q.len(), ZOMBIE_HARD_CAP - 1);
+        // The remaining still-running entries are retained, not evicted.
+        test_true!(q.contains(128));
+        test_true!(q.find_reclaimable(0, |_| true).is_none());
     });
     test_case!("neodos01_zombie_hard_cap_and_backpressure", {
         use crate::scheduler::lifecycle::{ZombieQueue, ZOMBIE_HARD_CAP, MAX_ZOMBIES};
@@ -1668,6 +1810,29 @@ pub fn register() {
             test_true!(sched.find_eprocess(pid).is_none());
             test_true!(sched.thread_tids_for_pid(pid).is_empty());
         }
+    });
+    test_case!("neodos01_zombie_confirmed_stale_removal_is_not_overflow", {
+        // Exercises the REAL reaper (`reap_pending_zombies`) against the
+        // process-global queue. A queued PID with no EPROCESS/KTHREAD that no
+        // CPU runs is a *confirmed* stale record: it is removed and counted as
+        // stale, never as overflow (and never by a blind eviction).
+        use crate::scheduler::lifecycle::{
+            reap_pending_zombies, zombie_enqueue_for_test, zombie_queue_len, zombie_queue_stats,
+        };
+        let mut sched = Scheduler::new();
+        // Drain any residue first so this test is independent and the deltas
+        // are exact (the global queue is shared with the running kernel).
+        reap_pending_zombies(&mut sched, 0);
+        let before = zombie_queue_stats();
+        let stale = 0xFFFF_FFF0u32;
+        zombie_enqueue_for_test(stale);
+        test_eq!(zombie_queue_len(), before.len + 1);
+        reap_pending_zombies(&mut sched, 0);
+        let after = zombie_queue_stats();
+        test_eq!(after.stale_dropped - before.stale_dropped, 1);
+        test_eq!(after.overflow - before.overflow, 0);
+        test_eq!(zombie_queue_len(), before.len);
+        test_true!(!crate::scheduler::lifecycle::zombie_queue_contains(stale));
     });
 
     // ── NEODOS-02 (#632): current-identity reads are never silent ────────────
@@ -1819,6 +1984,53 @@ pub fn register() {
         test_eq!(push1, push0);
         test_eq!(ovf1, ovf0);
         test_eq!(cur, 0);
+    });
+    test_case!("neodos03_guard_reclaim_quarantines_execution_owned_stack", {
+        // #633/SMP: a kernel stack a CPU is still abandoning (KPRCB repointed,
+        // `mov rsp` not yet executed) must NOT be freed by a reclamation
+        // attempt on another CPU. `guard_kstack_reclaim` must move it to the
+        // bounded quarantine and only free it after the window closes.
+        use crate::scheduler::diag::kstack;
+        use crate::scheduler::lifecycle::{drain_kstack_quarantine, kstack_quarantine_stats};
+        use crate::scheduler::types::KERNEL_STACK_SIZE;
+        use core::sync::atomic::Ordering;
+
+        kstack::switch_out_clear(); // start from a clean window on this CPU
+        drain_kstack_quarantine();
+        let (cur0, _push0, _drain0, _max0, _ovf0) = kstack_quarantine_stats();
+        let conflicts0 = kstack::CONFLICTS.load(Ordering::Relaxed);
+
+        // A live scheduler thread whose kernel stack we will try to recycle
+        // while `top` is still execution-owned by this CPU.
+        let tid = 0x5A5Au32;
+        let mut sched = Scheduler::new();
+        sched.next_tid = tid + 1;
+        let slot = sched.alloc_kthread_slot().unwrap();
+        let stack = crate::scheduler::stack::AlignedKStack::new_boxed();
+        let top = stack.0.as_ptr() as u64 + KERNEL_STACK_SIZE as u64;
+        let rsp = crate::scheduler::stack::init_ring0_frame(top, 0x600000);
+        let k = Kthread::new_ring3_with_stack(tid, tid, 0x600000, rsp, top, stack);
+        sched.kthreads[slot] = Some(Box::new(k));
+        let kptr = sched.find_kthread(tid).unwrap() as *const Kthread;
+
+        // Simulate the switch-out window: KPRCB already repointed (the PID is no
+        // longer "current") while this CPU still runs on `top`.
+        kstack::note(kptr, core::ptr::null(), 0xBAD0_0000);
+        test_true!(kstack::reclaim_conflict(top).is_some());
+
+        // Reclamation must quarantine, not free, the execution-owned stack.
+        test_true!(sched.recycle_thread(tid));
+        let (cur1, _p1, _d1, _m1, ovf1) = kstack_quarantine_stats();
+        test_eq!(cur1, cur0 + 1);
+        test_true!(kstack::CONFLICTS.load(Ordering::Relaxed) > conflicts0);
+        test_eq!(ovf1, 0);
+        test_true!(sched.find_kthread(tid).is_none());
+
+        // The ASM clear (after `mov rsp`) closes the window; the drain frees it.
+        kstack::switch_out_clear();
+        drain_kstack_quarantine();
+        let (cur2, _p2, _d2, _m2, _ovf2) = kstack_quarantine_stats();
+        test_eq!(cur2, cur0);
     });
 
     // ── NEODOS-08 (#638): boot-phase readiness ──────────────────────────────

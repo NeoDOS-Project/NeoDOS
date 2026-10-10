@@ -24,6 +24,11 @@ pub const MAX_ZOMBIES: usize = 64;
 /// Crossing this cap therefore means reaping lag or stale entries; it is
 /// surfaced through `ZOMBIE_OVERFLOW` and an error log (never silently), and
 /// the scheduler-aware paths force a synchronous reclaim to fall back under it.
+///
+/// The cap is enforced by **reclaiming eligible entries** in
+/// `defer_reap_with_scheduler`, never by evicting a pending entry: a queued PID
+/// is an outstanding reclamation obligation (EPROCESS/KTHREAD slot + kernel
+/// stack), so discarding it would leak resources instead of bounding them.
 pub const ZOMBIE_HARD_CAP: usize = MAX_ZOMBIES * 2;
 
 /// NeoInit's PID. INV-10: it MUST NEVER BE KILLED (source-of-truth.md §INV-10).
@@ -73,45 +78,43 @@ impl ZombieQueue {
     #[inline]
     pub fn over_hard_cap(&self) -> bool { self.pids.len() >= ZOMBIE_HARD_CAP }
 
+    /// True when `pid` is currently queued (dedup / test query).
+    #[inline]
+    pub fn contains(&self, pid: u32) -> bool { self.pids.iter().any(|&p| p == pid) }
+
     /// Enqueue `pid` at most once. Returns `false` when it was a duplicate.
+    ///
+    /// This **never evicts** a pending entry to respect the cap: a queued PID is
+    /// an outstanding reclamation obligation (EPROCESS/KTHREAD slot + kernel
+    /// stack), so dropping it would leak those resources rather than bound them.
+    /// The cap is enforced by `defer_reap_with_scheduler`, which admits this PID
+    /// and then reclaims other eligible entries; when none is eligible the
+    /// overflow is surfaced through `ZOMBIE_OVERFLOW` and the entries are
+    /// retained. `ZOMBIE_STALE_DROPPED` is reserved for entries whose staleness
+    /// was confirmed by a reclaim miss.
     pub fn enqueue(&mut self, pid: u32) -> bool {
         if pid == 0 { return false; }
         if self.pids.iter().any(|&p| p == pid) {
             ZOMBIE_DEDUP_SKIPPED.fetch_add(1, Ordering::Relaxed);
             return false;
         }
-        self.trim_to_hard_cap();
         self.pids.push(pid);
         ZOMBIE_ENQUEUED.fetch_add(1, Ordering::Relaxed);
         true
     }
 
-    /// Drop the oldest stale entries until the queue is back within the bounded
-    /// cap. This keeps the queue deterministic under bursty exits; overflow is
-    /// surfaced via the existing stale-drop and overflow counters instead of
-    /// silently growing past the policy limit.
-    fn trim_to_hard_cap(&mut self) {
-        while self.pids.len() >= ZOMBIE_HARD_CAP {
-            let evicted = self.pids.remove(0);
-            ZOMBIE_STALE_DROPPED.fetch_add(1, Ordering::Relaxed);
-            ZOMBIE_OVERFLOW.fetch_add(1, Ordering::Relaxed);
-            kwarn!(LogSubsys::Sched,
-                "zombie queue trimmed to hard cap; evicted pid {} (cap {} len={})",
-                evicted, ZOMBIE_HARD_CAP, self.pids.len());
-        }
-    }
-
     /// Re-queue a PID that is still alive (dedup; counted separately).
-    /// When the queue is already at the hard cap, evict the oldest stale entry
-    /// instead of silently growing past the scheduler's bounded policy.
+    ///
+    /// Like `enqueue`, this never evicts a pending entry. `requeue` only puts
+    /// back a PID that was just removed from this same queue (a reclaim attempt
+    /// that turned out unsafe), so it restores the previous length and cannot
+    /// grow the queue past the cap on its own.
     pub fn requeue(&mut self, pid: u32) {
         if pid == 0 { return; }
-        if self.pids.iter().any(|&p| p == pid) {
-            return;
+        if !self.pids.iter().any(|&p| p == pid) {
+            self.pids.push(pid);
+            ZOMBIE_REQUEUED.fetch_add(1, Ordering::Relaxed);
         }
-        self.trim_to_hard_cap();
-        self.pids.push(pid);
-        ZOMBIE_REQUEUED.fetch_add(1, Ordering::Relaxed);
     }
 
     /// Index of the first enqueued PID that is neither `exclude` nor currently
@@ -153,6 +156,14 @@ pub fn zombie_queue_stats() -> ZombieStats {
         overflow: ZOMBIE_OVERFLOW.load(Ordering::Relaxed),
         backpressure_hits: ZOMBIE_BACKPRESSURE.load(Ordering::Relaxed),
     }
+}
+
+/// Test-only: enqueue a PID into the process-global zombie queue so the real
+/// `reap_pending_zombies` path (confirmed-stale removal, overflow accounting)
+/// can be exercised without a live EPROCESS.
+#[doc(hidden)]
+pub fn zombie_enqueue_for_test(pid: u32) {
+    ZOMBIE_QUEUE.lock().enqueue(pid);
 }
 
 /// Defer EPROCESS slot recycling until after context switch (NEODOS-01 / #631).
@@ -219,6 +230,11 @@ pub fn defer_reap_with_scheduler(sched: &mut Scheduler, pid: u32) {
 /// Expose queue length for spawn backpressure checks.
 pub fn zombie_queue_len() -> usize {
     ZOMBIE_QUEUE.lock().len()
+}
+
+/// True when `pid` is queued in the process-global zombie queue (diagnostics).
+pub fn zombie_queue_contains(pid: u32) -> bool {
+    ZOMBIE_QUEUE.lock().contains(pid)
 }
 
 /// Check if spawn should be backpressured: the queue is at the soft watermark
