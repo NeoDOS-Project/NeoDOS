@@ -2086,4 +2086,24 @@ pub fn register() {
         sched.clear_eprocess_slot(slot2);
         test_true!(sched.find_eprocess(77).is_none());
     });
+
+    // ── #665 / F-02-D: PIDs are monotonic and never reused ──────────────────
+    test_case!("neodos_pids_monotonic_never_reused", {
+        // INV-6 / Rule 6.3.2: there is no pid_gen because PIDs are monotonic and
+        // never reused, so a stale PID cannot alias a newer process. Pin that
+        // guarantee; if reuse is ever introduced the invariant must gain a
+        // generation counter.
+        let mut sched = Scheduler::new();
+        let before = sched.next_pid;
+        let t1 = sched.spawn_kthread_named(0x500000, PRIORITY_NORMAL, "pidtest1").unwrap();
+        let t2 = sched.spawn_kthread_named(0x500000, PRIORITY_NORMAL, "pidtest2").unwrap();
+        test_ne!(t1, t2);
+        test_true!(sched.next_pid > before);
+        // No two live processes share a pid.
+        let mut pids: Vec<u32> = sched.eprocesses.iter().flatten().map(|e| e.pid).collect();
+        let n = pids.len();
+        pids.sort_unstable();
+        pids.dedup();
+        test_eq!(pids.len(), n);
+    });
 }
