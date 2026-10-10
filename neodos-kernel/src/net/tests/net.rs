@@ -7,8 +7,8 @@ use alloc::vec;
 use super::super::types::{TcpState, MacAddr, Ipv4Addr, SocketType, SocketDirection, SocketAddrV4};
 use super::super::arp::ArpCache;
 use super::super::socket::{
-    SocketManager, SOCKET_MANAGER, socket_bind, socket_connect,
-    socket_listen, socket_set_tcp_conn,
+    SocketManager, SOCKET_MANAGER, socket_bind, socket_connect, socket_connect_user,
+    socket_get_direction, socket_listen, socket_close, socket_set_tcp_conn,
 };
 use super::super::tcp::{
     tcp_alloc_connection, tcp_bind, tcp_listen, tcp_connect, tcp_close,
@@ -106,6 +106,32 @@ pub fn register() {
 
         tcp_close(id);
         tcp_free_connection(id);
+    });
+    test_case!("net_socket_connect_user_tcp_initiates_handshake", {
+        // The user-facing connect must send a SYN for TCP sockets. Regression:
+        // it used to only flip a flag, so no SYN was ever transmitted and every
+        // later send failed (tcp_send requires Established).
+        let sock = SOCKET_MANAGER.lock().alloc_socket(SocketType::Tcp).unwrap();
+        let tcp = tcp_alloc_connection().unwrap();
+        socket_set_tcp_conn(sock, tcp);
+        let remote = SocketAddrV4::new(Ipv4Addr::new([10, 0, 2, 2]), 80);
+        test_true!(socket_connect_user(sock, remote));
+        test_true!(
+            tcp_get_state(tcp) == Some(TcpState::SynSent)
+                || tcp_get_state(tcp) == Some(TcpState::Established)
+        );
+        socket_close(sock);
+        tcp_free_connection(tcp);
+        SOCKET_MANAGER.lock().free_socket(sock);
+    });
+    test_case!("net_socket_connect_user_udp_marks_connected", {
+        // UDP has no handshake: the socket is Connected immediately so that
+        // socket_send works (a TCP-style Connecting state would break UDP).
+        let sock = SOCKET_MANAGER.lock().alloc_socket(SocketType::Udp).unwrap();
+        let remote = SocketAddrV4::new(Ipv4Addr::new([8, 8, 8, 8]), 53);
+        test_true!(socket_connect_user(sock, remote));
+        test_eq!(socket_get_direction(sock), Some(SocketDirection::Connected));
+        SOCKET_MANAGER.lock().free_socket(sock);
     });
     test_case!("net_icmp_echo_reply_build", {
         let request = IcmpHeader::echo_request(1, 1);

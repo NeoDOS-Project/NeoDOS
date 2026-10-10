@@ -5,7 +5,7 @@
 
 ## Context
 
-- 876 kernel tests pass on clean `develop` branch
+- 888 kernel tests pass on clean `develop` branch
 - The system works via O(n) global priority scan fallback in `schedule()` (step 3)
 - The per-CPU runqueue fast path (steps 1-2) is effectively dead code for Running→Ready transitions
 - The earlier PID 5 triple-fault investigation showed RSP = `0xDEADBEEFCAFEBABE` (stack canary value) — not directly caused by these scheduler bugs, but the inconsistency window in P0-1/P0-4 could mask the real crash cause

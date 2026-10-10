@@ -42,10 +42,15 @@ pub(super) fn dispatch(
                 crate::net::types::Ipv4Addr(ip_bytes),
                 u16::from_be(port),
             );
-            crate::net::socket::socket_set_remote(socket_id, remote);
-            crate::net::socket::socket_set_connected(socket_id);
-            kdebug!(LogSubsys::Object, "Connect OK sid={}", socket_id);
-            0
+            // TCP initiates the handshake (SYN); UDP/raw record the peer.
+            // Previously this only flipped a flag, so a userland TCP socket
+            // never sent a SYN and every subsequent send failed.
+            if crate::net::socket::socket_connect_user(socket_id, remote) {
+                kdebug!(LogSubsys::Object, "Connect sid={}", socket_id);
+                0
+            } else {
+                err_to_u64(SyscallError::BadF)
+            }
         }
         _ if info_class == ObSetInfoClass::SocketBind as u32 => {
             if buf_size < 6 { return err_to_u64(SyscallError::Inval); }

@@ -212,6 +212,30 @@ pub fn socket_connect(id: u32, remote: SocketAddrV4) -> bool {
     true
 }
 
+/// User-facing connect (`ObSetInfoClass::SocketConnect`).
+///
+/// TCP initiates the handshake (`SYN`): the socket moves to `Connecting` and
+/// `tcp_handle_ack` flips it to `Connected` on completion. UDP/raw have no
+/// handshake, so the peer is recorded and the socket is marked `Connected`
+/// immediately. Returns false if the socket does not exist.
+pub fn socket_connect_user(id: u32, remote: SocketAddrV4) -> bool {
+    match socket_get_type(id) {
+        Some(SocketType::Tcp) => socket_connect(id, remote),
+        Some(_) => {
+            let mut mgr = SOCKET_MANAGER.lock();
+            match mgr.get_socket_mut(id) {
+                Some(s) => {
+                    s.remote = remote;
+                    s.direction = SocketDirection::Connected;
+                    true
+                }
+                None => false,
+            }
+        }
+        None => false,
+    }
+}
+
 pub fn socket_send(id: u32, data: &[u8]) -> Result<usize, ()> {
     let (local, remote, bound_nic) = {
         let mut mgr = SOCKET_MANAGER.lock();
@@ -292,10 +316,8 @@ pub fn socket_get_type(id: u32) -> Option<SocketType> {
     SOCKET_MANAGER.lock().get_socket(id).map(|s| s.socket_type)
 }
 
-pub fn socket_set_remote(id: u32, remote: SocketAddrV4) {
-    if let Some(s) = SOCKET_MANAGER.lock().get_socket_mut(id) {
-        s.remote = remote;
-    }
+pub fn socket_get_direction(id: u32) -> Option<SocketDirection> {
+    SOCKET_MANAGER.lock().get_socket(id).map(|s| s.direction)
 }
 
 /// Pin a socket to a NIC for send-interface selection (#536 follow-up).
@@ -319,12 +341,6 @@ pub fn socket_set_nic(id: u32, nic_id: u32) -> bool {
 pub fn socket_set_tcp_conn(id: u32, tcp_id: u32) {
     if let Some(socket) = SOCKET_MANAGER.lock().get_socket_mut(id) {
         socket.tcp_conn_id = Some(tcp_id);
-    }
-}
-
-pub fn socket_set_connected(id: u32) {
-    if let Some(socket) = SOCKET_MANAGER.lock().get_socket_mut(id) {
-        socket.direction = SocketDirection::Connected;
     }
 }
 

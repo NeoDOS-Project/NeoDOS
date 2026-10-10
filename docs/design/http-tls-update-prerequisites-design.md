@@ -18,7 +18,7 @@ not design the userland features themselves (see the sibling docs).
 
 | Source | What it establishes |
 | --- | --- |
-| `neodos-kernel/src/syscall/ob/set/net.rs` | `SocketConnect=18` reads `{ip,port}`, calls `socket_set_remote` + `socket_set_connected`; it never calls `socket_connect` |
+| `neodos-kernel/src/syscall/ob/set/net.rs` | `SocketConnect=18` now calls `socket_connect_user` (TCP → `socket_connect`/SYN; UDP → records peer + `Connected`). Previously it only flipped a flag. **Fixed.** |
 | `neodos-kernel/src/net/socket.rs` | `socket_connect(id, remote)` performs the real connect (TCP: `tcp_connect`/SYN; UDP: records remote); used only by kernel DNS + tests |
 | `neodos-kernel/src/net/tcp.rs` | full state machine, `tcp_connect`, `tcp_tick` flush, RTO; `tcp_send` buffers only |
 | `neodos-kernel/src/hal/mod.rs`, `hal/raw/cpu.rs` | `has_rdrand`, `rdrand` (10-retry); kernel-only, used for ASLR; **no RDSEED**, no Ring-3 exposure |
