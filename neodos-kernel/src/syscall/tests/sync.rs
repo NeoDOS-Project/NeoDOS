@@ -137,6 +137,20 @@ pub fn register_sync_tests() {
         if f::smap_supported() { test_true!(f::smap_enabled()); }
         if f::nx_supported() { test_true!(f::nx_enabled()); }
     });
+
+    // ── NEODOS-09 (#649): recoverable fault probe ────────────────────────────
+    test_case!("neodos09_fault_probe_recovers_inaccessible_access", {
+        use crate::arch::x64::probe::{probe_armed, probe_read_u8};
+        // A readable kernel address returns its byte.
+        let x: u8 = 0x5A;
+        test_eq!(probe_read_u8(&x as *const u8 as u64), Some(0x5A));
+        test_true!(!probe_armed());
+        // A ring-0 access to an unmapped address faults and is recovered — it
+        // returns None instead of bugchecking (no silent access). 0x1_0000_0000
+        // is beyond the 4 GiB identity map.
+        test_true!(probe_read_u8(0x1_0000_0000).is_none());
+        test_true!(!probe_armed());
+    });
 }
 
 // ── DOS path canonicalization tests (cd/chdir resolution) ──────────────
