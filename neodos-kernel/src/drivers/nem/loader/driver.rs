@@ -5,26 +5,27 @@ use crate::eventbus::{self, Event, EventCallback, EventType};
 use crate::drivers::driver_runtime::{DriverId};
 use alloc::vec::Vec;
 use spin::Mutex;
+use core::sync::atomic::{AtomicU32, Ordering};
 
-/// Global mutable reference to the driver currently being initialized.
-/// Used by driver binaries to register callbacks without passing a reference.
-static mut CURRENT_DRIVER_ID: DriverId = 0;
+/// Driver currently being initialized (0 = kernel context, no driver active).
+/// Atomic (no `static mut`): NEODOS-07 / #637.
+static CURRENT_DRIVER_ID: AtomicU32 = AtomicU32::new(0);
 
 /// Set the driver ID that is considered "current" for registration calls.
 /// This is only safe when called from the scheduler task that executes the driver entry.
 pub unsafe fn set_current_driver(id: DriverId) {
-    CURRENT_DRIVER_ID = id;
+    CURRENT_DRIVER_ID.store(id, Ordering::Release);
 }
 
 /// Clear the current driver after the driver entry returns.
 pub unsafe fn clear_current_driver() {
-    CURRENT_DRIVER_ID = 0;
+    CURRENT_DRIVER_ID.store(0, Ordering::Release);
 }
 
 /// Read the current driver ID (0 = kernel context, no driver active).
 /// Used by the capability system to check per-call permissions in hst_* exports.
 pub fn current_driver_id() -> DriverId {
-    unsafe { CURRENT_DRIVER_ID }
+    CURRENT_DRIVER_ID.load(Ordering::Acquire)
 }
 
 /// Public function used by driver binaries to register an event callback.

@@ -2,6 +2,7 @@ use super::hst::{HalServiceTable, build_hst};
 use crate::drivers::driver_runtime::{self, DriverId, ERR_INIT_FAILED};
 use crate::eventbus;
 use alloc::vec::Vec;
+use spin::Mutex;
 
 pub type DriverInitFn = unsafe extern "C" fn(*const HalServiceTable) -> i32;
 pub type DriverEventFn = unsafe extern "C" fn(event_type: u32, data0: u64, data1: u64) -> i32;
@@ -16,7 +17,8 @@ pub struct LoadedDriver {
     pub hst: HalServiceTable,
 }
 
-static mut LOADED_DRIVERS: Vec<LoadedDriver> = Vec::new();
+// Single driver registry, lock-protected (no `static mut`): NEODOS-07 / #637.
+static LOADED_DRIVERS: Mutex<Vec<LoadedDriver>> = Mutex::new(Vec::new());
 
 pub fn register_inline(id: DriverId, name: &str,
                        init_fn: Option<DriverInitFn>,
@@ -31,17 +33,20 @@ pub fn register_inline(id: DriverId, name: &str,
         fini_fn,
         hst,
     };
-    unsafe { LOADED_DRIVERS.push(loaded); }
+    LOADED_DRIVERS.lock().push(loaded);
 }
 
 pub fn call_init(id: DriverId) -> Result<(), &'static str> {
-    let loaded = unsafe {
-        LOADED_DRIVERS.iter_mut().find(|d| d.id == id)
-            .ok_or("Driver not loaded in runtime")?
+    // Snapshot the fn + HST under the lock, then call outside it (disjoint from
+    // any re-entrant registry access).
+    let (init, hst) = {
+        let g = LOADED_DRIVERS.lock();
+        let d = g.iter().find(|d| d.id == id)
+            .ok_or("Driver not loaded in runtime")?;
+        (d.init_fn, d.hst)
     };
-    let hst_ptr = &loaded.hst as *const HalServiceTable;
-    if let Some(init) = loaded.init_fn {
-        let result = unsafe { init(hst_ptr) };
+    if let Some(init) = init {
+        let result = unsafe { init(&hst as *const HalServiceTable) };
         if result != 0 {
             driver_runtime::DRIVER_RUNTIME.lock()
                 .set_error(id, ERR_INIT_FAILED, true);
@@ -52,23 +57,24 @@ pub fn call_init(id: DriverId) -> Result<(), &'static str> {
 }
 
 pub fn call_event_by_id(id: DriverId, event_type: u32, data0: u64, data1: u64) -> Result<i32, &'static str> {
-    let loaded = unsafe {
-        LOADED_DRIVERS.iter().find(|d| d.id == id)
-            .ok_or("Driver not loaded")?
+    let event_fn = {
+        let g = LOADED_DRIVERS.lock();
+        g.iter().find(|d| d.id == id).ok_or("Driver not loaded")?.event_fn
     };
-    if let Some(event_fn) = loaded.event_fn {
-        let result = unsafe { event_fn(event_type, data0, data1) };
-        Ok(result)
+    if let Some(event_fn) = event_fn {
+        Ok(unsafe { event_fn(event_type, data0, data1) })
     } else {
         Ok(0)
     }
 }
 
 pub fn call_fini(id: DriverId) {
-    if let Some(loaded) = unsafe { LOADED_DRIVERS.iter_mut().find(|d| d.id == id) } {
-        if let Some(fini) = loaded.fini_fn {
-            unsafe { fini(); }
-        }
+    let fini = {
+        let g = LOADED_DRIVERS.lock();
+        g.iter().find(|d| d.id == id).and_then(|d| d.fini_fn)
+    };
+    if let Some(fini) = fini {
+        unsafe { fini(); }
     }
 }
 

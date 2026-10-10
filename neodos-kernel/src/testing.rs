@@ -238,6 +238,7 @@ pub fn register_tests() {
     crate::drivers::abi::register_abi_tests();
     crate::drivers::dependency::register_dependency_tests();
     crate::drivers::pci::register_tests();
+    crate::drivers::register_registry_tests();
     crate::fs::btree::register_btree_tests();
     crate::fs::freelist::register_freelist_tests();
     crate::fs::snapshot::register_snapshot_tests();
