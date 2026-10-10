@@ -242,16 +242,30 @@ pub extern "C" fn syscall_try_resched(current_rsp: u64) -> u64 {
             // Ring-0 kernel thread can run from Ring-0 on the next selection.
             // `schedule_with` already committed the idle; accept the dispatch
             // (do not revive the current thread).
+            //
+            // A genuine kernel thread (`is_kernel`, not idle) is also a valid
+            // non-Ring-3 target: it runs in Ring 0 by design and its saved
+            // context is a dispatch frame, so it may be resumed directly from
+            // the syscall return without the transient-frame hazard that
+            // `require_ring3` guards against. This lets a Ready kernel thread be
+            // dispatched promptly instead of only via the starvation hand-off.
             let this_cpu = unsafe { crate::arch::x64::cpu_local::this_cpu_id() };
-            if scheduler::Scheduler::take_kernel_handoff(this_cpu) {
-                crate::serial_println!("[K355] resched handoff -> idle tid={}", next_tid);
+            let handoff = scheduler::Scheduler::take_kernel_handoff(this_cpu);
+            let kernel_dispatch = unsafe { (*next).is_kernel && !(*next).is_idle };
+            if handoff || kernel_dispatch {
+                if handoff {
+                    crate::serial_println!("[K355] resched handoff -> idle tid={}", next_tid);
+                } else {
+                    kdebug!(LogSubsys::Syscall,
+                        "[SYSCALL_RESCHED] kernel-thread dispatch tid={} pid={}", next_tid, next_pid);
+                }
                 unsafe {
                     crate::arch::x64::cpu_local::this_cpu_set_current_thread_site(
                         next, crate::scheduler::diag::SITE_SET_RESCHED_CHOSEN);
                     crate::arch::x64::cpu_local::this_cpu_set_current_pid(next_pid);
                     crate::arch::x64::cpu_local::this_cpu_inc_context_switch_count();
                 }
-                audit_iretq(&scheduler, next_rsp, next, "resched_k355_idle");
+                audit_iretq(&scheduler, next_rsp, next, "resched_kernel_dispatch");
                 return next_rsp;
             }
             let current_is_blocked = scheduler.find_kthread(tid)

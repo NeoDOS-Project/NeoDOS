@@ -197,6 +197,11 @@ pub struct Kthread {
     pub cpu_time_base: u64,
     pub waiting_for: Option<u64>,
     pub priority: u8,
+    /// Base (un-boosted) priority. Aging temporarily boosts `priority` while a
+    /// thread is starved; when the thread runs again it is restored to this
+    /// value. Without this, a one-off starvation boost would permanently raise
+    /// a thread's priority and let it starve every other thread.
+    pub base_priority: u8,
     pub time_slice_remaining: u16,
     pub ticks_since_scheduled: u64,
     pub kernel_stack_top: u64,
@@ -217,6 +222,12 @@ pub struct Kthread {
     /// are only selected when no other thread is Ready. Replaces the old
     /// `tid == IDLE_TID` checks so AP idle threads (distinct TIDs) are handled.
     pub is_idle: bool,
+    /// True for genuine kernel threads (and idle): threads that run in Ring 0
+    /// **by design** and whose saved context is a valid Ring-0 dispatch frame.
+    /// Unlike a user thread interrupted inside a syscall, these may be
+    /// dispatched from a Ring-3 context (syscall return / timer user-preempt)
+    /// without the transient-frame hazard that `require_ring3` protects against.
+    pub is_kernel: bool,
     /// Set when a *running* thread asks to yield (`yield_current_thread` /
     /// `sys_yield`). The thread is NOT marked Ready nor enqueued at that point:
     /// doing so would expose a live context with a stale `rsp` to other CPUs,

@@ -901,9 +901,18 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
             if next_cs & 3 != 3 {
                 // #355: accept the scheduler's idle hand-off (a Ring-0 kernel
                 // thread is starved). `schedule_with` already committed idle.
+                //
+                // A genuine kernel thread (`is_kernel`, not idle) is also a valid
+                // non-Ring-3 target from this Ring-3 interrupt: it runs in Ring 0
+                // by design with a dispatch frame, so it may be resumed directly
+                // instead of only via the starvation hand-off.
                 let this_cpu = unsafe { crate::arch::x64::cpu_local::this_cpu_id() };
-                if crate::scheduler::Scheduler::take_kernel_handoff(this_cpu) {
-                    crate::serial_println!("[K355] timer handoff -> idle tid={}", next_tid);
+                let handoff = crate::scheduler::Scheduler::take_kernel_handoff(this_cpu);
+                let kernel_dispatch = unsafe { (*next).is_kernel && !(*next).is_idle };
+                if handoff || kernel_dispatch {
+                    if handoff {
+                        crate::serial_println!("[K355] timer handoff -> idle tid={}", next_tid);
+                    }
                     unsafe { prepare_timer_return(next); }
                     unsafe {
                         crate::arch::x64::cpu_local::this_cpu_set_current_thread_site(
@@ -914,7 +923,7 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
                     crate::hal::ack_irq(32);
                     crate::invariants::timer_irq_exit();
                     crate::invariants::irq_exit_clear();
-                    audit_iretq_frame(&scheduler, next_rsp, next, "timer_k355_idle");
+                    audit_iretq_frame(&scheduler, next_rsp, next, "timer_kernel_dispatch");
                     return next_rsp;
                 }
                 if (tid == 5 || next_tid == 5) && crate::scheduler::sched_forensic_verbose() {
