@@ -40,19 +40,14 @@ impl Scheduler {
                 k.ticks_since_scheduled = k.ticks_since_scheduled.saturating_add(AGING_INTERVAL_TICKS);
                 if k.ticks_since_scheduled >= MAX_STARVATION_TICKS && k.priority > PRIORITY_HIGH {
                     // Boost a thread that has been Ready (not running) for a
-                    // full starvation window.
+                    // full starvation window. The boost persists while the
+                    // thread stays Ready; it is ended by the dispatch that
+                    // actually runs the thread (`account_dispatch` restores
+                    // `base_priority`). Resetting the counter here must not by
+                    // itself cancel the boost.
                     Self::remove_from_run_queue(k);
                     k.priority -= 1;
                     k.ticks_since_scheduled = 0;
-                    Self::enqueue_to_cpu_run_queue(k);
-                } else if k.ticks_since_scheduled < MAX_STARVATION_TICKS
-                    && k.priority < k.base_priority
-                {
-                    // The thread is no longer starved (it ran, or the boost is
-                    // stale): restore its base priority so an aging boost is
-                    // always temporary and cannot invert fairness permanently.
-                    Self::remove_from_run_queue(k);
-                    k.priority = k.base_priority;
                     Self::enqueue_to_cpu_run_queue(k);
                 }
             }

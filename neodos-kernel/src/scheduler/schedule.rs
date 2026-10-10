@@ -2,7 +2,7 @@
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 use crate::log::LogSubsys;
-use crate::scheduler::types::{Kthread, ThreadState, BOOT_TID, PRIORITY_COUNT, IDLE_TIME_SLICE, AGING_INTERVAL_TICKS, MAX_STARVATION_TICKS};
+use crate::scheduler::types::{Kthread, ThreadState, BOOT_TID, PRIORITY_COUNT, IDLE_TIME_SLICE, TIME_SLICES, AGING_INTERVAL_TICKS, MAX_STARVATION_TICKS};
 use crate::arch::x64::cpu_local::MAX_CPUS;
 use crate::scheduler::Scheduler;
 use crate::scheduler::lifecycle::reap_pending_zombies;
@@ -132,6 +132,27 @@ pub(crate) fn candidate_owned_elsewhere(kptr: *const Kthread, self_cpu: u32) -> 
         }
         _ => false,
     }
+}
+
+/// Decide whether a non-Ring-3 `next` selected by the syscall-return or timer
+/// user-preempt path may be dispatched.
+///
+/// `handoff` is the #355 anti-starvation signal (the target is this CPU's idle).
+/// Otherwise only a genuine, non-idle kernel thread is accepted: it runs in
+/// Ring 0 by design and its saved context is a valid Ring-0 dispatch frame, so
+/// it may be resumed directly from a Ring-3 context. A *user* thread interrupted
+/// inside a syscall is never accepted here (`is_kernel == false`).
+///
+/// Shared by both return paths so their acceptance policy cannot diverge.
+#[inline]
+pub(crate) fn accept_non_ring3_dispatch(handoff: bool, next: *const Kthread) -> bool {
+    if handoff {
+        return true;
+    }
+    if next.is_null() {
+        return false;
+    }
+    unsafe { (*next).is_kernel && !(*next).is_idle }
 }
 
 /// Fallback Ring-3 selection used by the syscall-return path when the current
@@ -857,6 +878,12 @@ impl Scheduler {
             k.cpu_time_base = Kthread::CPU_TIME_UNSET;
             return;
         }
+        // Grant a fresh timeslice at dispatch. The timer preemption paths
+        // already did this; doing it here makes the syscall-return dispatch
+        // path consistent, so an accepted thread can never be committed with
+        // `time_slice_remaining == 0` (which would republish it after one tick).
+        let idx = (k.priority as usize).min(PRIORITY_COUNT as usize - 1);
+        k.time_slice_remaining = TIME_SLICES[idx];
         crate::scheduler::accounting::mark_dispatch(k);
     }
 

@@ -908,8 +908,7 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
                 // instead of only via the starvation hand-off.
                 let this_cpu = unsafe { crate::arch::x64::cpu_local::this_cpu_id() };
                 let handoff = crate::scheduler::Scheduler::take_kernel_handoff(this_cpu);
-                let kernel_dispatch = unsafe { (*next).is_kernel && !(*next).is_idle };
-                if handoff || kernel_dispatch {
+                if crate::scheduler::schedule::accept_non_ring3_dispatch(handoff, next) {
                     if handoff {
                         crate::serial_println!("[K355] timer handoff -> idle tid={}", next_tid);
                     }

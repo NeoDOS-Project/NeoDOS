@@ -264,10 +264,11 @@ pub fn register() {
             }
         }
     });
-    test_case!("n355_aging_boost_is_reversible", {
-        // An aging boost must be temporary: once the thread is dispatched (its
-        // starvation window resets) the base priority is restored, so a
-        // one-off starvation cannot permanently invert fairness.
+    test_case!("n355_aging_boost_persists_until_dispatch", {
+        // End-to-end aging lifecycle through the REAL scheduler path.
+        // A boost must persist while the thread stays Ready (a counter reset
+        // alone must not cancel it) and must end at dispatch, where the base
+        // priority is restored and a fresh slice is granted.
         let this_cpu = unsafe { crate::arch::x64::cpu_local::this_cpu_id() };
         unsafe {
             if crate::arch::x64::cpu_local::kprcb_page(this_cpu as usize).is_some() {
@@ -288,20 +289,199 @@ pub fn register() {
         kk.priority = PRIORITY_NORMAL;
         kk.base_priority = PRIORITY_NORMAL;
         kk.ticks_since_scheduled = MAX_STARVATION_TICKS;
+        kk.time_slice_remaining = 0;
         kk.cpu = this_cpu;
         let ik = sched.alloc_kthread_slot().unwrap();
         sched.kthreads[ik] = Some(Box::new(kk));
         Scheduler::enqueue_to_cpu_run_queue(sched.find_kthread(12).unwrap());
 
-        // One aging tick boosts the starved thread.
+        // 1st aging pass: boost.
         sched.apply_aging();
-        test_true!(sched.find_kthread(12).unwrap().priority < PRIORITY_NORMAL);
+        test_eq!(sched.find_kthread(12).unwrap().priority, PRIORITY_ABOVE_NORMAL);
 
-        // Dispatch resets the starvation window and restores the base priority.
-        Scheduler::account_dispatch(sched.find_kthread_mut(12).unwrap());
+        // 2nd aging pass: the counter was reset, but the boost MUST persist
+        // (it ends at dispatch, not at an arbitrary aging tick).
+        sched.apply_aging();
+        test_eq!(sched.find_kthread(12).unwrap().priority, PRIORITY_ABOVE_NORMAL);
+        test_true!(sched.find_kthread(12).unwrap().ticks_since_scheduled > 0);
+
+        // Queue/bitmap must be consistent at the boosted priority.
+        test_true!(unsafe {
+            crate::arch::x64::cpu_local::with_runqueue(this_cpu as usize, |rq| rq.contains(12))
+        });
+        test_true!(
+            (crate::arch::x64::cpu_local::read_active_bitmap(this_cpu as usize)
+                >> PRIORITY_ABOVE_NORMAL) & 1 == 1
+        );
+
+        // Dispatch through the real scheduler: base priority restored, slice
+        // granted, starvation counter cleared, thread Running.
+        let next = sched.schedule();
+        test_eq!(unsafe { (*next).tid }, 12);
         let k = sched.find_kthread(12).unwrap();
         test_eq!(k.priority, PRIORITY_NORMAL);
         test_eq!(k.ticks_since_scheduled, 0);
+        test_eq!(k.state, ThreadState::Running);
+        test_eq!(k.time_slice_remaining, TIME_SLICES[PRIORITY_NORMAL as usize]);
+
+        unsafe {
+            if crate::arch::x64::cpu_local::kprcb_page(this_cpu as usize).is_some() {
+                crate::arch::x64::cpu_local::cpu_run_queue_mut(this_cpu as usize).clear();
+            }
+        }
+    });
+    test_case!("n355_timer_accepts_kernel_thread_dispatch", {
+        // Timer user-preempt return path: `schedule_with_handoff(true, true)`
+        // selects a genuine kernel thread, and the shared acceptance predicate
+        // (used by both the timer and syscall return paths) accepts it while
+        // rejecting idle-without-handoff and user threads.
+        use crate::scheduler::schedule::accept_non_ring3_dispatch;
+        let this_cpu = unsafe { crate::arch::x64::cpu_local::this_cpu_id() };
+        unsafe {
+            if crate::arch::x64::cpu_local::kprcb_page(this_cpu as usize).is_some() {
+                crate::arch::x64::cpu_local::cpu_run_queue_mut(this_cpu as usize).clear();
+            }
+        }
+        let mut sched = Scheduler::new();
+        sched.next_tid = 100;
+        for k in sched.kthreads.iter_mut().flatten() {
+            if k.is_idle { k.cpu = this_cpu; }
+        }
+        let sk = crate::scheduler::AlignedKStack::new_boxed();
+        let tk = sk.0.as_ptr() as u64 + crate::scheduler::KERNEL_STACK_SIZE as u64;
+        let rk = crate::scheduler::stack::init_ring0_frame(tk, 0x500000);
+        let mut kk = Kthread::new_ring3_with_stack(11, 11, 0x500000, rk, tk, sk);
+        kk.is_kernel = true;
+        kk.state = ThreadState::Ready;
+        kk.priority = PRIORITY_NORMAL;
+        kk.base_priority = PRIORITY_NORMAL;
+        kk.ticks_since_scheduled = 0;
+        kk.cpu = this_cpu;
+        let ik = sched.alloc_kthread_slot().unwrap();
+        sched.kthreads[ik] = Some(Box::new(kk));
+        Scheduler::enqueue_to_cpu_run_queue(sched.find_kthread(11).unwrap());
+
+        let next = sched.schedule_with_handoff(true, true);
+        test_eq!(unsafe { (*next).tid }, 11);
+        // Non-Ring-3 frame (Ring-0 kernel thread).
+        test_true!(unsafe { *(((*next).rsp + 128) as *const u64) & 3 } != 3);
+        // No #355 handoff: acceptance must come from the kernel-thread rule.
+        test_true!(!crate::scheduler::Scheduler::take_kernel_handoff(this_cpu));
+        test_true!(accept_non_ring3_dispatch(false, next));
+
+        // idle without handoff is NOT accepted; with handoff it is.
+        let idle = sched.find_idle_ptr(this_cpu);
+        test_true!(!idle.is_null());
+        test_true!(!accept_non_ring3_dispatch(false, idle));
+        test_true!(accept_non_ring3_dispatch(true, idle));
+
+        // A user thread with a Ring-0 frame (as if interrupted in a syscall)
+        // must never be accepted as a kernel dispatch.
+        let su = crate::scheduler::AlignedKStack::new_boxed();
+        let tu = su.0.as_ptr() as u64 + crate::scheduler::KERNEL_STACK_SIZE as u64;
+        let ru = crate::scheduler::stack::init_ring0_frame(tu, 0x400000);
+        let ku = Kthread::new_ring3_with_stack(13, 13, 0x400000, ru, tu, su);
+        test_true!(!ku.is_kernel);
+        test_true!(!accept_non_ring3_dispatch(false, &ku as *const Kthread));
+
+        unsafe {
+            if crate::arch::x64::cpu_local::kprcb_page(this_cpu as usize).is_some() {
+                crate::arch::x64::cpu_local::cpu_run_queue_mut(this_cpu as usize).clear();
+            }
+        }
+    });
+    test_case!("n355_smp_owned_kernel_thread_not_committed", {
+        // A Ready kernel thread whose live execution context is still owned by
+        // another CPU (KPRCB.current_thread) must be rejected, never committed
+        // on the wrong CPU. `candidate_owned_elsewhere` is not weakened.
+        let this_cpu = unsafe { crate::arch::x64::cpu_local::this_cpu_id() };
+        unsafe {
+            if crate::arch::x64::cpu_local::kprcb_page(this_cpu as usize).is_some() {
+                crate::arch::x64::cpu_local::cpu_run_queue_mut(this_cpu as usize).clear();
+            }
+        }
+        let mut sched = Scheduler::new();
+        sched.next_tid = 100;
+        for k in sched.kthreads.iter_mut().flatten() {
+            if k.is_idle { k.cpu = this_cpu; }
+        }
+        let sk = crate::scheduler::AlignedKStack::new_boxed();
+        let tk = sk.0.as_ptr() as u64 + crate::scheduler::KERNEL_STACK_SIZE as u64;
+        let rk = crate::scheduler::stack::init_ring0_frame(tk, 0x500000);
+        let mut kk = Kthread::new_ring3_with_stack(11, 11, 0x500000, rk, tk, sk);
+        kk.is_kernel = true;
+        kk.state = ThreadState::Ready;
+        kk.priority = PRIORITY_NORMAL;
+        kk.base_priority = PRIORITY_NORMAL;
+        kk.cpu = this_cpu;
+        let ik = sched.alloc_kthread_slot().unwrap();
+        sched.kthreads[ik] = Some(Box::new(kk));
+        Scheduler::enqueue_to_cpu_run_queue(sched.find_kthread(11).unwrap());
+
+        let kptr = sched.find_kthread(11).unwrap() as *const Kthread;
+        let other = if this_cpu == 0 { 1 } else { 0 };
+        let other_kprcb = crate::arch::x64::cpu_local::kprcb_page(other as usize);
+        test_true!(other_kprcb.is_some());
+        if let Some(base) = other_kprcb {
+            let slot =
+                (base + crate::arch::x64::cpu_local::OFFSET_CURRENT_THREAD as u64) as *mut u64;
+            let saved = unsafe { *slot };
+            // Simulate the other CPU still owning this thread's live context.
+            unsafe { *slot = kptr as u64; }
+            test_eq!(
+                crate::arch::x64::cpu_local::kthread_current_cpu(kptr),
+                Some(other)
+            );
+
+            let next = sched.schedule_with_handoff(true, true);
+            test_ne!(unsafe { (*next).tid }, 11);
+            test_eq!(sched.find_kthread(11).unwrap().state, ThreadState::Ready);
+
+            unsafe { *slot = saved; }
+        }
+
+        unsafe {
+            if crate::arch::x64::cpu_local::kprcb_page(this_cpu as usize).is_some() {
+                crate::arch::x64::cpu_local::cpu_run_queue_mut(this_cpu as usize).clear();
+            }
+        }
+    });
+    test_case!("n355_syscall_dispatch_grants_fresh_slice", {
+        // F2: a kernel thread accepted through the syscall-return selection must
+        // not be committed with `time_slice_remaining == 0` (which would
+        // republish it after a single tick).
+        let this_cpu = unsafe { crate::arch::x64::cpu_local::this_cpu_id() };
+        unsafe {
+            if crate::arch::x64::cpu_local::kprcb_page(this_cpu as usize).is_some() {
+                crate::arch::x64::cpu_local::cpu_run_queue_mut(this_cpu as usize).clear();
+            }
+        }
+        let mut sched = Scheduler::new();
+        sched.next_tid = 100;
+        for k in sched.kthreads.iter_mut().flatten() {
+            if k.is_idle { k.cpu = this_cpu; }
+        }
+        let sk = crate::scheduler::AlignedKStack::new_boxed();
+        let tk = sk.0.as_ptr() as u64 + crate::scheduler::KERNEL_STACK_SIZE as u64;
+        let rk = crate::scheduler::stack::init_ring0_frame(tk, 0x500000);
+        let mut kk = Kthread::new_ring3_with_stack(11, 11, 0x500000, rk, tk, sk);
+        kk.is_kernel = true;
+        kk.state = ThreadState::Ready;
+        kk.priority = PRIORITY_NORMAL;
+        kk.base_priority = PRIORITY_NORMAL;
+        kk.ticks_since_scheduled = 0;
+        kk.time_slice_remaining = 0; // as left by a prior timer expiry
+        kk.cpu = this_cpu;
+        let ik = sched.alloc_kthread_slot().unwrap();
+        sched.kthreads[ik] = Some(Box::new(kk));
+        Scheduler::enqueue_to_cpu_run_queue(sched.find_kthread(11).unwrap());
+
+        let next = sched.schedule_with_handoff(true, true);
+        test_eq!(unsafe { (*next).tid }, 11);
+        test_eq!(
+            sched.find_kthread(11).unwrap().time_slice_remaining,
+            TIME_SLICES[PRIORITY_NORMAL as usize]
+        );
 
         unsafe {
             if crate::arch::x64::cpu_local::kprcb_page(this_cpu as usize).is_some() {
