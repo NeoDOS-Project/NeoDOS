@@ -1808,4 +1808,34 @@ pub fn register() {
         test_eq!(ovf1, ovf0);
         test_eq!(cur, 0);
     });
+
+    // ── NEODOS-08 (#638): boot-phase readiness ──────────────────────────────
+    test_case!("neodos08_boot_phase_monotonic_and_require", {
+        use core::sync::atomic::Ordering;
+        use crate::scheduler::{BootPhase, phase, set_phase, require_phase,
+            BOOT_PHASE_REGRESSION, READINESS_VIOLATIONS};
+        let before = phase();
+        let reg0 = BOOT_PHASE_REGRESSION.load(Ordering::Relaxed);
+        // Going backwards must be rejected (never silently accepted).
+        set_phase(BootPhase::Early);
+        if before != BootPhase::Early {
+            test_true!(BOOT_PHASE_REGRESSION.load(Ordering::Relaxed) > reg0);
+            test_eq!(phase() as u8, before as u8);
+        }
+        // The boot test suite runs at SmpReady: a Ready requirement must
+        // fail-control and record a violation (no silent no-op).
+        if phase() < BootPhase::Ready {
+            let v0 = READINESS_VIOLATIONS.load(Ordering::Relaxed);
+            test_true!(!require_phase(BootPhase::Ready, "neodos08_test"));
+            test_true!(READINESS_VIOLATIONS.load(Ordering::Relaxed) > v0);
+        }
+    });
+    test_case!("neodos08_resolve_slots_returns_ok_not_panic", {
+        // resolve_* used to `expect()`; now they return Err. A fresh scheduler
+        // with ensure_slots called must resolve.
+        let mut sched = Scheduler::new();
+        test_true!(sched.ensure_slots().is_ok());
+        test_true!(sched.resolve_eprocess_slot().is_ok());
+        test_true!(sched.resolve_kthread_slot().is_ok());
+    });
 }

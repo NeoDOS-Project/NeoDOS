@@ -38,7 +38,7 @@ pub use snapshot::{
 // `with_vfs`/`with_page_cache`/`with_block_devices` bracket their critical
 // sections with `preempt_disable()`/`preempt_enable()`; `on_timer_tick` does
 // not deschedule a thread while the counter is non-zero.
-use core::sync::atomic::{AtomicU32, Ordering};
+use core::sync::atomic::{AtomicU8, AtomicU32, AtomicU64, Ordering};
 pub static PREEMPT_COUNT: [AtomicU32; crate::arch::x64::cpu_local::MAX_CPUS] =
     [const { AtomicU32::new(0) }; crate::arch::x64::cpu_local::MAX_CPUS];
 
@@ -50,6 +50,80 @@ static PREEMPT_TRACKING: core::sync::atomic::AtomicBool =
 #[inline]
 pub fn preempt_tracking_enable() {
     PREEMPT_TRACKING.store(true, Ordering::Release);
+    // NEODOS-08 (#638): per-CPU identity + preempt tracking are now valid.
+    set_phase(BootPhase::SmpReady);
+}
+
+// ── Boot-phase readiness (NEODOS-08 / #638) ─────────────────────────────────
+/// Explicit boot ordering. Subsystems that depend on a later phase must gate on
+/// it via [`require_phase`] instead of silently no-op-ing (the class of
+/// timing/partial-init bug behind #474/#482/#488).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[repr(u8)]
+pub enum BootPhase {
+    /// Before per-CPU `%gs`/KPRCB exists (preempt tracking is a no-op).
+    Early = 0,
+    /// Per-CPU identity valid and preempt tracking enabled.
+    SmpReady = 1,
+    /// APs are allowed to run the scheduler.
+    ApScheduling = 2,
+    /// First Ring-3 hand-off performed.
+    Userland = 3,
+    /// Steady-state interactive.
+    Ready = 4,
+}
+
+static BOOT_PHASE: AtomicU8 = AtomicU8::new(BootPhase::Early as u8);
+/// Monotonic-transition violations (attempts to go backwards). Must stay 0.
+pub static BOOT_PHASE_REGRESSION: AtomicU64 = AtomicU64::new(0);
+/// `preempt_disable` used while tracking is off *past* bring-up. Must stay 0.
+pub static PREEMPT_USE_TOO_EARLY: AtomicU64 = AtomicU64::new(0);
+/// Subsystems used before their required phase. Must stay 0.
+pub static READINESS_VIOLATIONS: AtomicU64 = AtomicU64::new(0);
+
+#[inline]
+pub fn phase() -> BootPhase {
+    match BOOT_PHASE.load(Ordering::Acquire) {
+        0 => BootPhase::Early,
+        1 => BootPhase::SmpReady,
+        2 => BootPhase::ApScheduling,
+        3 => BootPhase::Userland,
+        _ => BootPhase::Ready,
+    }
+}
+
+#[inline]
+pub fn phase_at_least(p: BootPhase) -> bool {
+    (phase() as u8) >= (p as u8)
+}
+
+/// Advance the boot phase. Monotonic: going backwards is a bug and is reported
+/// (never silently accepted).
+pub fn set_phase(p: BootPhase) {
+    let cur = BOOT_PHASE.load(Ordering::Acquire);
+    if (p as u8) < cur {
+        BOOT_PHASE_REGRESSION.fetch_add(1, Ordering::Relaxed);
+        kerror!(LogSubsys::Boot,
+            "boot phase regression: {} -> {}", cur, p as u8);
+        return;
+    }
+    if (p as u8) != cur {
+        BOOT_PHASE.store(p as u8, Ordering::Release);
+        crate::serial_println!("[BOOT_PHASE] -> {:?}", p);
+    }
+}
+
+/// Require a minimum phase. Records a violation and returns `false` (never
+/// silent) when a subsystem is used too early.
+pub fn require_phase(p: BootPhase, what: &'static str) -> bool {
+    if phase_at_least(p) {
+        true
+    } else {
+        READINESS_VIOLATIONS.fetch_add(1, Ordering::Relaxed);
+        kerror!(LogSubsys::Boot,
+            "subsystem used before ready: {} requires {:?}, phase={:?}", what, p, phase());
+        false
+    }
 }
 
 #[inline]
@@ -60,6 +134,11 @@ fn preempt_tracking_on() -> bool {
 #[inline]
 pub fn preempt_disable() {
     if !preempt_tracking_on() {
+        // A no-op preempt_disable past bring-up would silently let the timer
+        // deschedule a lock holder (#376). Record the misuse (NEODOS-08 / #638).
+        if phase_at_least(BootPhase::SmpReady) {
+            PREEMPT_USE_TOO_EARLY.fetch_add(1, Ordering::Relaxed);
+        }
         return;
     }
     let cpu = unsafe { crate::arch::x64::cpu_local::this_cpu_id() } as usize;
@@ -404,7 +483,14 @@ pub fn ap_sched_active() -> bool {
 
 /// Enable/disable AP scheduling. Must only be toggled by the BSP.
 pub fn set_ap_sched_active(v: bool) {
+    if v {
+        // NEODOS-08 (#638): AP scheduling requires per-CPU bring-up done.
+        require_phase(BootPhase::SmpReady, "ap_sched_active");
+    }
     AP_SCHED_ACTIVE.store(v, core::sync::atomic::Ordering::Release);
+    if v {
+        set_phase(BootPhase::ApScheduling);
+    }
 }
 
 /// Establish the BSP's per-CPU identity (KPRCB.current_thread = boot thread)

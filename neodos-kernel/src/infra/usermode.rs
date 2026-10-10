@@ -441,6 +441,10 @@ pub fn wait_for_process(pid: u32) {
     crate::serial_println!("[USERMODE] RSP0=0x{:x} executing execute_usermode entry=0x{:x}",
         kernel_stack_top, entry);
     kdebug!(LogSubsys::User, "[THREAD] RSP0=0x{:x}, entering Ring3", kernel_stack_top);
+    // NEODOS-08 (#638): the Ring-3 hand-off requires per-CPU bring-up done; the
+    // transition to the Userland phase is explicit, not implicit by timing.
+    crate::scheduler::require_phase(crate::scheduler::BootPhase::SmpReady, "usermode_handoff");
+    crate::scheduler::set_phase(crate::scheduler::BootPhase::Userland);
     execute_usermode(entry, user_stack_top);
 
     // When the Ring 3 process exits, exit_to_kernel restores the boot

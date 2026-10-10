@@ -594,9 +594,10 @@ impl Scheduler {
         thread.name = crate::scheduler::types::KernelName::from_path(name);
         thread.state = ThreadState::Suspended;
 
-        // Find slots (no alloc — we pre-reserved via ensure_slots)
-        let ep_slot = self.resolve_eprocess_slot();
-        let th_slot = self.resolve_kthread_slot();
+        // Find slots (no alloc — we pre-reserved via ensure_slots). Err instead
+        // of panic if the precondition does not hold (NEODOS-08 / #638).
+        let ep_slot = self.resolve_eprocess_slot()?;
+        let th_slot = self.resolve_kthread_slot()?;
         self.eprocesses[ep_slot] = Some(eproc);
         self.kthreads[th_slot] = Some(Box::new(thread));
 
@@ -659,16 +660,17 @@ impl Scheduler {
         Ok(())
     }
 
-    /// Resolve a free eprocess slot (must exist — caller called ensure_slots).
-    fn resolve_eprocess_slot(&mut self) -> usize {
+    /// Resolve a free eprocess slot. `Err` (never panic) when none is free —
+    /// the caller must have called `ensure_slots()` (NEODOS-08 / #638).
+    pub(crate) fn resolve_eprocess_slot(&mut self) -> Result<usize, &'static str> {
         self.eprocesses.iter().position(|e| e.is_none())
-            .expect("ensure_slots guarantees a free eprocess slot")
+            .ok_or("EPROCESS table full (ensure_slots not called or OOM)")
     }
 
-    /// Resolve a free kthread slot (must exist — caller called ensure_slots).
-    fn resolve_kthread_slot(&mut self) -> usize {
+    /// Resolve a free kthread slot. `Err` (never panic) when none is free.
+    pub(crate) fn resolve_kthread_slot(&mut self) -> Result<usize, &'static str> {
         self.kthreads.iter().position(|t| t.is_none())
-            .expect("ensure_slots guarantees a free kthread slot")
+            .ok_or("KTHREAD table full (ensure_slots not called or OOM)")
     }
 
     /// Add an additional thread to an existing EPROCESS (Ring 3).
