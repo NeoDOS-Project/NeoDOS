@@ -71,6 +71,17 @@
 
 ### Fixed
 
+- **`neotop` i18n: oversized i18n `.bss` spilled into the process stack (#576).**
+  The i18n table pool plus its three load scratch buffers totalled ~203 KiB of
+  static `.bss` (`(MAX_TABLES + 3) * MAX_FILE`). `neotop`'s large stack buffers
+  (an ~11 KiB `proc_buf`) pushed its `.bss` past `MAX_BIN_SIZE` (192 KiB) into
+  the process stack region, so the stack silently clobbered `NLT_COUNT` and every
+  `tr_id!` fell back to the `#<id>` marker — while `neotop --help`, which exits
+  before allocating those buffers, stayed translated. `MAX_FILE` is reduced from
+  18 KiB to 8 KiB (the largest shipped NLT is ~1 KiB), bringing the per-binary
+  `.bss` well under `MAX_BIN_SIZE`. Verified in VirtualBox: `neotop` renders
+  `NeoTOP 0.2 - Monitor del Sistema`, `PROCESO`, `HILO`, `ESTADO`, … in Spanish.
+
 - **`MemoryStats.total_pages` derived from managed frames (#611).** It was
   computed from `phys_max` (including high MMIO regions), so it was inconsistent
   with `free_pages`/`used_pages`; it now counts the managed region frames.

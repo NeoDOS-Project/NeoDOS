@@ -18,7 +18,16 @@ use crate::{res, syscall};
 
 const MAX_TABLES: usize = 8;
 /// Maximum raw `.nlt` file size (payload + optional region/signature blocks).
-const MAX_FILE: usize = 18432;
+///
+/// Kept modest on purpose (#576): the table pool and the three load scratch
+/// buffers are all `MAX_FILE`-sized, so the static footprint is
+/// `(MAX_TABLES + 3) * MAX_FILE`. The largest shipped NLT is ~1 KB, so 8 KiB
+/// leaves ample headroom while keeping the per-binary `.bss` well under
+/// `MAX_BIN_SIZE` (192 KiB). A `.bss` larger than `MAX_BIN_SIZE` makes the ELF
+/// loader's zero-fill spill into the process stack region, silently clobbering
+/// i18n statics such as `NLT_COUNT` (observed with neotop, whose large stack
+/// buffers reached the pool tail).
+const MAX_FILE: usize = 8192;
 const MAX_APP_NAME: usize = 32;
 const MAX_LANG: usize = 16;
 
