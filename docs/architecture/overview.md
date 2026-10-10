@@ -60,9 +60,9 @@ NeoDOS Kernel (x86_64-unknown-none)
    - Service Manager init (PHASE 3.882): load service definitions from Registry, create \Service\ namespace, resolve dependencies
    - Power Manager runtime init (PHASE 3.883): load plans and policies from Registry
    - ABI validation + ABI freeze check (PHASE 3.9)
-   - Kernel self-tests (888 tests) + netpump kernel-thread spawn + benchmarks (PHASE 4)
+   - Kernel self-tests (891 tests) + netpump kernel-thread spawn + benchmarks (PHASE 4)
    - Auto-start services (PHASE 4): start System/Auto services in dependency order
-   - Ring 3 shell via NeoInit PID 1 (neoshell.nxe, 888 kernel tests + user commands)
+   - Ring 3 shell via NeoInit PID 1 (neoshell.nxe, 891 kernel tests + user commands)
 ```
 
 ## Disco único GPT
@@ -555,7 +555,7 @@ Beyond the NEM driver framework, the kernel includes integrated hardware drivers
 
 ### 11. Test Coverage
 
-The kernel testing framework includes **888 tests** (200+ test_case! macros) with suites dedicated to the driver architecture:
+The kernel testing framework includes **891 tests** (200+ test_case! macros) with suites dedicated to the driver architecture:
 
 | Suite | Tests | Description |
 | ------- | ------- | ------------- |
@@ -587,7 +587,7 @@ The kernel testing framework includes **888 tests** (200+ test_case! macros) wit
 | Security | 23 | NT6 Security: SID format, Token (groups/privileges/session_id), ACL allow/deny, SeAccessCheck, admin bypass, SAM database (parse/serialize, 64 entries) |
 | URN | 15 | NT5.5 Unified Resource Namespace: parse schemes, resolve file/device, Ob frontend (OB-025) |
 
-Tests run automatically at boot. The kernel runs 888 tests (200+ test_case! registrations). After boot, NeoInit spawns its user-mode test binaries when enabled via the registry (`userbin/neoinit/src/main.rs`), including the network test `C:\System\Tools\dhcptest.nxe`. Additional boot stress testing via `scripts/stress_boot.sh`.
+Tests run automatically at boot. The kernel runs 891 tests (200+ test_case! registrations). After boot, NeoInit spawns its user-mode test binaries when enabled via the registry (`userbin/neoinit/src/main.rs`), including the network test `C:\System\Tools\dhcptest.nxe`. Additional boot stress testing via `scripts/stress_boot.sh`.
 
 ---
 
