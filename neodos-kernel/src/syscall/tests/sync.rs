@@ -80,6 +80,33 @@ pub fn register_sync_tests() {
         test_true!(vaddr <= offset);
         test_true!(offset < vaddr + 0x10000);
     });
+
+    // ── NEODOS-04 (#634): fault-safe user copy fuzz ──────────────────────────
+
+    test_case!("neodos04_copy_rejects_bad_user_ptrs", {
+        use super::super::{copy_from_user, copy_to_user};
+        let mut buf = [0u8; 16];
+        // null source/dest
+        test_true!(copy_from_user(&mut buf, 0).is_err());
+        test_true!(copy_to_user(0, &buf[..1]).is_err());
+        // kernel address (above USER_LIMIT) must never be dereferenced
+        test_true!(copy_from_user(&mut buf, 0x4000_0000).is_err());
+        test_true!(copy_to_user(0x4000_0000, &buf[..1]).is_err());
+        // cross-page: starts inside the USER window, ends past USER_LIMIT
+        let last = crate::arch::x64::paging::USER_LIMIT - 1;
+        test_true!(copy_from_user(&mut buf[..2], last).is_err());
+        // 0-byte copy to a null dest is a no-op (Ok), not an error
+        test_true!(copy_to_user(0, &[]).is_ok());
+    });
+
+    test_case!("neodos04_copy_reads_user_window_atomically", {
+        use super::super::{copy_from_user, copy_to_user};
+        // The USER window is identity-mapped PRESENT|USER, so a valid pointer
+        // reads/writes without faulting in Ring 0.
+        let mut buf = [0u8; 4];
+        test_true!(copy_from_user(&mut buf, crate::arch::x64::paging::USER_BASE).is_ok());
+        test_true!(copy_to_user(crate::arch::x64::paging::USER_BASE, &[1, 2, 3]).is_ok());
+    });
 }
 
 // ── DOS path canonicalization tests (cd/chdir resolution) ──────────────

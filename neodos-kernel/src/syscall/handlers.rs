@@ -5,6 +5,7 @@ use crate::log::LogSubsys;
 use crate::scheduler::{self, ThreadState};
 use crate::net::types::Ipv4Addr;
 use super::{err_to_u64, SyscallError, is_user_ptr_valid, copy_user_string,
+           copy_from_user, copy_to_user,
            current_handle_entry, set_current_handle, set_need_resched};
 
 // ── Poll struct ──
@@ -50,13 +51,19 @@ pub(super) fn handler_exit(regs: super::Registers) -> u64 {
 
 pub(super) fn handler_write(regs: super::Registers) -> u64 {
     let fd = regs.rbx as u8;
-    let ptr = regs.rcx as *const u8;
     let len = regs.rdx as usize;
 
-    if !is_user_ptr_valid(regs.rcx, len as u64) || len > 4096 {
+    if len > 4096 {
         return err_to_u64(SyscallError::Fault);
     }
-    let slice = unsafe { core::slice::from_raw_parts(ptr, len) };
+    // Fault-safe copy: validation + read happen atomically under
+    // SCHEDULER -> USER_MEMORY_LOCK (NEODOS-04 / #634).
+    let mut kbuf = [0u8; 4096];
+    let n = match copy_from_user(&mut kbuf[..len], regs.rcx) {
+        Ok(n) => n,
+        Err(_) => return err_to_u64(SyscallError::Fault),
+    };
+    let slice = &kbuf[..n];
 
     let entry = current_handle_entry(fd);
 
@@ -116,10 +123,10 @@ pub(super) fn handler_yield(_regs: super::Registers) -> u64 {
 
 pub(super) fn handler_read(regs: super::Registers) -> u64 {
     let fd = regs.rbx as u8;
-    let buf_ptr = regs.rcx as *mut u8;
+    let buf_ptr = regs.rcx;
     let count = regs.rdx as usize;
 
-    if !is_user_ptr_valid(regs.rcx, count as u64) || count > 4096 {
+    if count > 4096 {
         return err_to_u64(SyscallError::Fault);
     }
 
@@ -130,6 +137,9 @@ pub(super) fn handler_read(regs: super::Registers) -> u64 {
         crate::serial_println!("[READB] enter pid={} tid={} vt={} buf=0x{:x} count={}",
             crate::scheduler::current_pid(), crate::scheduler::current_tid(),
             vt, regs.rcx, count);
+        // Accumulate into a kernel buffer; the user write happens once, atomically,
+        // via copy_to_user (NEODOS-04 / #634).
+        let mut kbuf = [0u8; 4096];
         let mut bytes_read = 0usize;
         while bytes_read < count {
             // FIX: Single atomic pop inside without_interrupts to avoid race
@@ -160,7 +170,7 @@ pub(super) fn handler_read(regs: super::Registers) -> u64 {
 
             match pop_res {
                 Some(Some(byte)) => {
-                    unsafe { buf_ptr.add(bytes_read).write(byte); }
+                    kbuf[bytes_read] = byte;
                     bytes_read += 1;
                     if byte == b'\r' || byte == b'\n' {
                         break;
@@ -183,7 +193,10 @@ pub(super) fn handler_read(regs: super::Registers) -> u64 {
         }
         crate::serial_println!("[READB] exit pid={} tid={} bytes_read={}",
             crate::scheduler::current_pid(), crate::scheduler::current_tid(), bytes_read);
-        bytes_read as u64
+        match copy_to_user(buf_ptr, &kbuf[..bytes_read]) {
+            Ok(()) => bytes_read as u64,
+            Err(_) => err_to_u64(SyscallError::Fault),
+        }
     } else if entry.is_pipe_read() {
         let pipe_id = entry.native_id().unwrap_or(0) as u8;
         let mut temp_buf = alloc::vec![0u8; count];
@@ -191,12 +204,10 @@ pub(super) fn handler_read(regs: super::Registers) -> u64 {
             Ok(0) => {
                 0
             }
-            Ok(n) => {
-                unsafe {
-                    core::ptr::copy_nonoverlapping(temp_buf.as_ptr(), buf_ptr, n);
-                }
-                n as u64
-            }
+            Ok(n) => match copy_to_user(buf_ptr, &temp_buf[..n]) {
+                Ok(()) => n as u64,
+                Err(_) => err_to_u64(SyscallError::Fault),
+            },
             Err(()) => {
                 crate::object::pipe::block_current_for_pipe(pipe_id);
                 err_to_u64(SyscallError::Again)
@@ -338,7 +349,10 @@ pub(super) fn handler_brk(regs: super::Registers) -> u64 {
                         unsafe { core::ptr::write_volatile(page as *mut u8, 0); }
                     }
                     None => {
+                        // Serialize page frees with user copies (NEODOS-04 / #634).
+                        let _mem = crate::syscall::util::USER_MEMORY_LOCK.lock();
                         crate::arch::x64::paging::heap_free_range(start_page, page);
+                        drop(_mem);
                         crate::scheduler::set_current_heap_break(current_break);
                         return err_to_u64(SyscallError::NoMem);
                     }
@@ -351,6 +365,11 @@ pub(super) fn handler_brk(regs: super::Registers) -> u64 {
                 (new_break - current_break) as usize);
         }
     } else if new_break < current_break {
+        // Freeing user pages while a concurrent copy holds a validated pointer
+        // would be a TOCTOU → Ring-0 #PF. Serialize with USER_MEMORY_LOCK; the
+        // lock is dropped before set_current_heap_break (order SCHEDULER ->
+        // USER_MEMORY_LOCK, never the reverse).
+        let _mem = crate::syscall::util::USER_MEMORY_LOCK.lock();
         let shrink_start = new_break;
         let shrink_end = current_break;
         let start_page = (shrink_start + crate::arch::x64::paging::PAGE_4K - 1)
@@ -361,6 +380,7 @@ pub(super) fn handler_brk(regs: super::Registers) -> u64 {
             crate::arch::x64::paging::heap_free_page(page);
             page += crate::arch::x64::paging::PAGE_4K;
         }
+        drop(_mem);
     }
 
     crate::scheduler::set_current_heap_break(new_break);
@@ -454,7 +474,11 @@ pub(super) fn handler_munmap(regs: super::Registers) -> u64 {
     let region = crate::scheduler::remove_current_mmap_region(addr);
     match region {
         Some(r) => {
+            // Free under USER_MEMORY_LOCK so it is serialized with user copies
+            // (NEODOS-04 / #634).
+            let _mem = crate::syscall::util::USER_MEMORY_LOCK.lock();
             crate::scheduler::free_current_mmap_pages(r.base, r.len);
+            drop(_mem);
             0
         }
         None => err_to_u64(SyscallError::Inval),
@@ -582,21 +606,27 @@ pub(super) fn handler_driver_unload(regs: super::Registers) -> u64 {
 // ═══════════════════════════════════════════════════════════════════════
 
 pub(super) fn handler_poll(regs: super::Registers) -> u64 {
-    let fds_ptr = regs.rbx as *mut PollFd;
+    let fds_ptr = regs.rbx;
     let nfds = regs.rcx as usize;
     let _timeout = regs.rdx as i64;
 
-    if fds_ptr.is_null() || nfds == 0 || nfds > 256 {
+    if fds_ptr == 0 || nfds == 0 || nfds > 256 {
         return err_to_u64(SyscallError::Inval);
     }
 
+    let entry_size = core::mem::size_of::<PollFd>(); // fd:i32 + events:i16 + revents:i16 = 8
+    let total = nfds * entry_size;
+    // Fault-safe read of the whole fd array (NEODOS-04 / #634). Previously the
+    // structs were dereferenced with read_volatile and no validation.
+    let mut raw = alloc::vec![0u8; total];
+    if copy_from_user(&mut raw, fds_ptr).is_err() {
+        return err_to_u64(SyscallError::Fault);
+    }
     let mut fds = alloc::vec![PollFd { fd: 0, events: 0, revents: 0 }; nfds];
-    for (i, fd_entry) in fds.iter_mut().enumerate().take(nfds) {
-        unsafe {
-            let src = fds_ptr.add(i);
-            fd_entry.fd = core::ptr::read_volatile(&(*src).fd);
-            fd_entry.events = core::ptr::read_volatile(&(*src).events);
-        }
+    for (i, fd_entry) in fds.iter_mut().enumerate() {
+        let off = i * entry_size;
+        fd_entry.fd = i32::from_ne_bytes([raw[off], raw[off + 1], raw[off + 2], raw[off + 3]]);
+        fd_entry.events = i16::from_ne_bytes([raw[off + 4], raw[off + 5]]);
     }
 
     let mut ready_count: u64 = 0;
@@ -652,10 +682,15 @@ pub(super) fn handler_poll(regs: super::Registers) -> u64 {
         }
     }
 
-    for (i, fd_entry) in fds.iter().enumerate().take(nfds) {
-        unsafe {
-            core::ptr::write_volatile(&mut (*fds_ptr.add(i)).revents, fd_entry.revents);
-        }
+    // Write revents back into the same buffer and copy it out atomically.
+    for (i, fd_entry) in fds.iter().enumerate() {
+        let off = i * entry_size;
+        let r = fd_entry.revents.to_ne_bytes();
+        raw[off + 6] = r[0];
+        raw[off + 7] = r[1];
+    }
+    if copy_to_user(fds_ptr, &raw).is_err() {
+        return err_to_u64(SyscallError::Fault);
     }
 
     ready_count
