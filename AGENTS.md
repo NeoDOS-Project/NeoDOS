@@ -31,6 +31,7 @@ neodev build --quick --image     # build kernel + bl + image
 neodev build --image             # build everything + image (preferred)
 neodev run                       # QEMU + OVMF + GDB :1234
 neodev test                      # run automated tests
+scripts/build-test.sh            # rebuild-safe build + test (cargo build + image + test)
 neodev list                      # show discovered projects
 neodev clean                     # clean artifacts
 ```
@@ -125,14 +126,16 @@ making changes.
 
 ### Git Workflow (commits)
 
-1. `cargo build` in `neodos-kernel/` (or `neodev build --quick`)
-2. `neodev test`
-3. `scripts/check-skills.sh`
-4. `npx markdownlint '**/*.md' --config .markdownlint.json`
-5. `scripts/sync-roadmap.sh check`
-6. If all pass: `git add -A && git commit -m "feat|fix|refactor: descripción (#123)" && git push`
-7. Open PR → `develop`, get approval, merge (squash).
-8. On completion: mark every satisfied acceptance-criteria checkbox in the Issue, update `CHANGELOG.md`, run `sync-roadmap.sh sync`, update relevant `docs/*.md`.
+1. `scripts/build-test.sh` — rebuild-safe: `cargo build` (kernel) →
+   `neodev build --quick --image` → `neodev test`. Use it instead of raw
+   `neodev test`: `neodev build --quick` does not reliably rebuild the kernel and
+   can package/test a **stale `kernel.elf`** (NeoDev#36).
+2. `scripts/check-skills.sh`
+3. `npx markdownlint '**/*.md' --config .markdownlint.json`
+4. `scripts/sync-roadmap.sh check`
+5. If all pass: `git add -A && git commit -m "feat|fix|refactor: descripción (#123)" && git push`
+6. Open PR → `develop`, get approval, merge (squash).
+7. On completion: mark every satisfied acceptance-criteria checkbox in the Issue, update `CHANGELOG.md`, run `sync-roadmap.sh sync`, update relevant `docs/*.md`.
 
 ## Proactive Capability Discovery
 
