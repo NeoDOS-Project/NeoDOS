@@ -1762,4 +1762,50 @@ pub fn register() {
             }
         }
     });
+
+    // ── NEODOS-03 (#633): kernel-stack quarantine ───────────────────────────
+    test_case!("neodos03_kstack_quarantine_drains_no_leak", {
+        use crate::scheduler::lifecycle::{
+            quarantine_push_for_test, drain_kstack_quarantine, kstack_quarantine_stats,
+        };
+        let (_c0, push0, drain0, _m0, _o0) = kstack_quarantine_stats();
+        // A freshly-allocated stack has no CPU mid-switch on it, so it must be
+        // freed on the next drain (no leak).
+        test_eq!(quarantine_push_for_test(), 1);
+        drain_kstack_quarantine();
+        let (cur, push, drained, _max, ovf) = kstack_quarantine_stats();
+        test_eq!(cur, 0);
+        test_eq!(push - push0, 1);
+        test_true!(drained > drain0);
+        test_eq!(ovf, 0);
+    });
+    test_case!("neodos03_recycle_N_cycles_no_stack_leak", {
+        use crate::scheduler::lifecycle::{drain_kstack_quarantine, kstack_quarantine_stats};
+        let (_c0, push0, _d0, _m0, ovf0) = kstack_quarantine_stats();
+        let mut sched = Scheduler::new();
+        sched.next_tid = 1_000;
+        // 64 kill/exit cycles: normal (non-conflicting) recycle must not
+        // quarantine or leak the kernel stack.
+        for i in 0..64u32 {
+            let tid = 10 + i;
+            let slot = sched.alloc_kthread_slot().unwrap();
+            sched.kthreads[slot] = Some(Box::new(Kthread::new_ring3(tid, tid, 0x400000, 0x800000)));
+            // The freshly-created stack's canary must be intact (never corrupted
+            // by a previous cycle's recycle/free). #633.
+            if let Some(k) = sched.find_kthread(tid) {
+                if let Some(bottom) = crate::scheduler::stack::kernel_stack_canary_addr(
+                    k.kernel_stack_top, k.kernel_stack_size,
+                ) {
+                    let canary = unsafe { *(bottom as *const u64) };
+                    test_eq!(canary, crate::scheduler::types::STACK_CANARY);
+                }
+            }
+            test_true!(sched.recycle_thread(tid));
+        }
+        drain_kstack_quarantine();
+        let (cur, push1, _d1, _m1, ovf1) = kstack_quarantine_stats();
+        test_eq!(push1, push0);
+        test_eq!(ovf1, ovf0);
+        test_eq!(cur, 0);
+    });
 }

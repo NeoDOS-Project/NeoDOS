@@ -224,6 +224,8 @@ pub fn is_zombie_backpressured() -> bool {
 /// drain the whole eligible set per schedule, so a burst of 1000 exits is reaped
 /// in one schedule, not 1000 schedules.
 pub fn reap_pending_zombies(sched: &mut Scheduler, exclude_pid: u32) {
+    // NEODOS-03 (#633): free any quarantine stacks no CPU is mid-switch on.
+    drain_kstack_quarantine();
     // Quick check without the queue lock when there is nothing to do.
     if ZOMBIE_QUEUE.lock().is_empty() { return; }
 
@@ -265,6 +267,90 @@ pub fn reap_pending_zombies(sched: &mut Scheduler, exclude_pid: u32) {
         }
         // Continue loop to reap the next eligible zombie.
     }
+}
+
+// ── NEODOS-03 (#633): kernel-stack quarantine ───────────────────────────────
+//
+// A terminated thread's kernel stack must not be freed while another CPU is in
+// the window between repointing `KPRCB.current_thread` and executing the
+// `mov rsp` that leaves that stack (#476). Instead of *leaking* the stack
+// (`core::mem::forget`, the previous workaround), it is retained here and freed
+// by `drain_kstack_quarantine` once no CPU is mid-switch on it.
+pub(crate) struct QuarantinedStack {
+    top: u64,
+    stack: Box<AlignedKStack>,
+}
+
+/// Bounded: at most one stack per CPU can be mid-switch at a time, so the cap is
+/// generous; crossing it means an owner CPU is stuck and is surfaced via metrics.
+const KSTACK_QUARANTINE_CAP: usize = crate::arch::x64::cpu_local::MAX_CPUS * 4;
+
+static KSTACK_QUARANTINE: Mutex<Vec<QuarantinedStack>> = Mutex::new(Vec::new());
+static KSTACK_Q_CURRENT: AtomicU64 = AtomicU64::new(0);
+static KSTACK_Q_PUSHES: AtomicU64 = AtomicU64::new(0);
+static KSTACK_Q_DRAINED: AtomicU64 = AtomicU64::new(0);
+static KSTACK_Q_MAX: AtomicU64 = AtomicU64::new(0);
+static KSTACK_Q_OVERFLOW: AtomicU64 = AtomicU64::new(0);
+
+fn quarantine_push(top: u64, stack: Box<AlignedKStack>) {
+    let mut q = KSTACK_QUARANTINE.lock();
+    if q.len() >= KSTACK_QUARANTINE_CAP {
+        // Drain first: a conflicting stack is only mid-switch on a CPU for a
+        // few instructions, so entries should become drainable immediately.
+        q.retain(|e| crate::scheduler::diag::kstack::reclaim_conflict(e.top).is_some());
+        if q.len() >= KSTACK_QUARANTINE_CAP {
+            KSTACK_Q_OVERFLOW.fetch_add(1, Ordering::Relaxed);
+            kerror!(LogSubsys::Sched,
+                "kstack quarantine overflow: {} entries (cap {}); retaining, not freeing a possibly-live stack",
+                q.len(), KSTACK_QUARANTINE_CAP);
+        }
+    }
+    q.push(QuarantinedStack { top, stack });
+    KSTACK_Q_PUSHES.fetch_add(1, Ordering::Relaxed);
+    let cur = q.len() as u64;
+    KSTACK_Q_CURRENT.store(cur, Ordering::Relaxed);
+    if cur > KSTACK_Q_MAX.load(Ordering::Relaxed) {
+        KSTACK_Q_MAX.store(cur, Ordering::Relaxed);
+    }
+}
+
+/// Free every quarantined stack that no CPU is still abandoning. Cheap when the
+/// quarantine is empty (single atomic load). Called on every schedule from
+/// `reap_pending_zombies`, with the scheduler lock held.
+pub fn drain_kstack_quarantine() {
+    if KSTACK_Q_CURRENT.load(Ordering::Relaxed) == 0 {
+        return;
+    }
+    let mut q = KSTACK_QUARANTINE.lock();
+    let before = q.len();
+    // Keep (retain) only stacks still mid-switch on some CPU; the rest are freed.
+    q.retain(|e| crate::scheduler::diag::kstack::reclaim_conflict(e.top).is_some());
+    let drained = (before - q.len()) as u64;
+    if drained > 0 {
+        KSTACK_Q_DRAINED.fetch_add(drained, Ordering::Relaxed);
+        KSTACK_Q_CURRENT.store(q.len() as u64, Ordering::Relaxed);
+    }
+}
+
+/// (current, pushes, drained, high_water, overflow). `current` must return to 0
+/// (no leak); `overflow` must stay 0 in normal operation.
+pub fn kstack_quarantine_stats() -> (u64, u64, u64, u64, u64) {
+    (
+        KSTACK_Q_CURRENT.load(Ordering::Relaxed),
+        KSTACK_Q_PUSHES.load(Ordering::Relaxed),
+        KSTACK_Q_DRAINED.load(Ordering::Relaxed),
+        KSTACK_Q_MAX.load(Ordering::Relaxed),
+        KSTACK_Q_OVERFLOW.load(Ordering::Relaxed),
+    )
+}
+
+/// Test-only: allocate a stack and enqueue it, returning the queue length.
+#[doc(hidden)]
+pub fn quarantine_push_for_test() -> u64 {
+    let stack = AlignedKStack::new_boxed();
+    let top = stack.0.as_ptr() as u64 + KERNEL_STACK_SIZE as u64;
+    quarantine_push(top, stack);
+    KSTACK_Q_CURRENT.load(Ordering::Relaxed)
 }
 
 /// Free all external resources owned by an EPROCESS: user memory slot, demand
@@ -787,21 +873,22 @@ impl Scheduler {
         true
     }
 
-    /// #476 H1 experiment — never free a kernel stack that another CPU is
-    /// still abandoning (KPRCB repointed, `mov rsp` not yet executed). The
-    /// conflicting stack is *leaked* so the experiment can continue without
-    /// corrupting memory; the event is recorded as `[KSTACK_RECLAIM_CONFLICT]`.
-    /// Returns true when a conflict was detected.
+    /// Never free a kernel stack that another CPU is still abandoning (KPRCB
+    /// repointed, `mov rsp` not yet executed). Instead of leaking it
+    /// (`core::mem::forget`, the #476 H1 workaround), the stack is moved to the
+    /// bounded quarantine and freed later by `drain_kstack_quarantine` once no
+    /// CPU is mid-switch on it (NEODOS-03 / #633). Returns true on conflict.
     fn guard_kstack_reclaim(th: &mut Kthread) -> bool {
+        let top = th.kernel_stack_top;
         if let Some((owner, _otid, _opid, orsp, nks)) =
-            crate::scheduler::diag::kstack::reclaim_conflict(th.kernel_stack_top)
+            crate::scheduler::diag::kstack::reclaim_conflict(top)
         {
             let reclaimer = unsafe { crate::arch::x64::cpu_local::this_cpu_id() } as usize;
             crate::scheduler::diag::kstack::record_conflict(
                 reclaimer, owner, th.tid as u64, th.pid as u64,
-                th.kernel_stack_top, th.kernel_stack_size as u64, orsp, nks);
+                top, th.kernel_stack_size as u64, orsp, nks);
             if let Some(b) = th.take_kernel_stack() {
-                core::mem::forget(b);
+                quarantine_push(top, b);
             }
             true
         } else {
