@@ -5,7 +5,7 @@
 ## Permanent Rules (MUST always follow)
 
 1. **No automatic builds.** Only build/test when explicitly asked.
-2. **Test before commit:** `cargo build` in `neodos-kernel/` → `neodev test` → `neodev check-deps` → `npx markdownlint '**/*.md' --config .markdownlint.json`.
+2. **Test before commit:** `cargo build` in `neodos-kernel/` → `neodev test` → `neodev check-deps` → `scripts/check-skills.sh` → `npx markdownlint '**/*.md' --config .markdownlint.json`.
 3. **Never modify public API without updating docs.** Syscalls, ObInfoClass, NEM ABI, structs in `libneodos/`.
 4. **NT-like design philosophy:** Object Manager (`Ob`) is the central abstraction for syscalls, handles, security, and namespace.
 5. **No new Ring 0 shell commands.** All interactive commands go to `userbin/` as `.NXE` Ring 3 binaries.
@@ -26,6 +26,7 @@ Install it first, then use:
 ```bash
 scripts/sync-roadmap.sh sync     # sync roadmap → GitHub Issues (idempotent)
 scripts/sync-roadmap.sh check    # verify GitHub connection and local files
+scripts/check-skills.sh          # verify skills/*/SKILL.md vs current docs/code
 neodev build --quick --image     # build kernel + bl + image 
 neodev build --image             # build everything + image (preferred)
 neodev run                       # QEMU + OVMF + GDB :1234
@@ -126,11 +127,12 @@ making changes.
 
 1. `cargo build` in `neodos-kernel/` (or `neodev build --quick`)
 2. `neodev test`
-3. `npx markdownlint '**/*.md' --config .markdownlint.json`
-4. `scripts/sync-roadmap.sh check`
-5. If all pass: `git add -A && git commit -m "feat|fix|refactor: descripción (#123)" && git push`
-6. Open PR → `develop`, get approval, merge (squash).
-7. On completion: mark every satisfied acceptance-criteria checkbox in the Issue, update `CHANGELOG.md`, run `sync-roadmap.sh sync`, update relevant `docs/*.md`.
+3. `scripts/check-skills.sh`
+4. `npx markdownlint '**/*.md' --config .markdownlint.json`
+5. `scripts/sync-roadmap.sh check`
+6. If all pass: `git add -A && git commit -m "feat|fix|refactor: descripción (#123)" && git push`
+7. Open PR → `develop`, get approval, merge (squash).
+8. On completion: mark every satisfied acceptance-criteria checkbox in the Issue, update `CHANGELOG.md`, run `sync-roadmap.sh sync`, update relevant `docs/*.md`.
 
 ## Proactive Capability Discovery
 

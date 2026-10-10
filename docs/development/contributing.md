@@ -22,7 +22,7 @@ neodev run
 
 - Follow AGENTS.md naming rules: kebab-case for files/dirs, PascalCase for types, snake_case for fns/vars
 - All inline assembly confined to `src/hal/raw/`
-- New syscalls must be `sys_ob_*` (RAX >= 77)
+- New syscalls must be `sys_ob_*` — every syscall operates on Ob objects and takes/returns Ob handles (no numeric threshold)
 - No Ring 0 shell commands — user binaries go in `userbin/` as `.NXE`
 
 ## Pull Request Process
@@ -34,6 +34,7 @@ neodev run
    cargo build
    neodev test
    neodev check-deps
+   scripts/check-skills.sh
    npx markdownlint '**/*.md' --config .markdownlint.json
    ```
 
