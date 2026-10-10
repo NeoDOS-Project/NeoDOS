@@ -4,6 +4,7 @@ use alloc::vec::Vec;
 use spin::Mutex;
 use lazy_static::lazy_static;
 use crate::object::types::{ObError, ObId, ObType, OB_NAME_LEN, ObObjectSnapshot, ObEnumEntry};
+use crate::id_index::IdIndex;
 
 pub trait ObOperations: Send + Sync {
     fn on_destroy(&self, _id: ObId, _native_id: u64) {}
@@ -64,9 +65,9 @@ const INITIAL_TABLE_CAPACITY: usize = 64;
 
 pub struct ObObjectTable {
     slots: Vec<Option<ObObject>>,
-    /// NEODOS-05 (#635): `ObId -> slot` index so lookups are O(log n) instead of
-    /// a linear scan over all slots (every handle access hits this).
-    index: BTreeMap<ObId, usize>,
+    /// NEODOS-05 (#635): `ObId -> slot` O(1) index instead of a linear scan over
+    /// all slots (every handle access hits this).
+    index: IdIndex,
     count: usize,
     next_id: ObId,
 }
@@ -75,7 +76,7 @@ impl ObObjectTable {
     pub fn new() -> Self {
         ObObjectTable {
             slots: Vec::with_capacity(INITIAL_TABLE_CAPACITY),
-            index: BTreeMap::new(),
+            index: IdIndex::new(),
             count: 0,
             next_id: 1,
         }
@@ -114,20 +115,20 @@ impl ObObjectTable {
                 self.slots.len() - 1
             }
         };
-        self.index.insert(id, slot_idx);
+        self.index.insert(id as u64, slot_idx);
         self.count += 1;
         Ok(id)
     }
 
-    /// Look up an object by ID. Returns a copy. O(log n) via the id index.
+    /// Look up an object by ID. Returns a copy. O(1) average via the id index.
     pub fn lookup(&self, id: ObId) -> Option<ObObject> {
-        let idx = *self.index.get(&id)?;
+        let idx = self.index.get(id as u64)?;
         self.slots.get(idx)?.as_ref().copied()
     }
 
-    /// Mutable lookup. O(log n) via the id index.
+    /// Mutable lookup. O(1) average via the id index.
     pub fn lookup_mut(&mut self, id: ObId) -> Option<&mut ObObject> {
-        let idx = *self.index.get(&id)?;
+        let idx = self.index.get(id as u64)?;
         self.slots.get_mut(idx)?.as_mut()
     }
 
@@ -156,7 +157,7 @@ impl ObObjectTable {
     /// Destroy an object. Fails if refcount > 1 (i.e., caller still holds
     /// the initial creation reference plus any extra references).
     pub fn destroy(&mut self, id: ObId) -> Result<(), ObError> {
-        let idx = *self.index.get(&id).ok_or(ObError::NotFound)?;
+        let idx = self.index.get(id as u64).ok_or(ObError::NotFound)?;
 
         let refcount = self.slots[idx].as_ref().map_or(0, |o| o.refcount);
         if refcount > 1 {
@@ -172,7 +173,7 @@ impl ObObjectTable {
         }
 
         self.slots[idx] = None;
-        self.index.remove(&id);
+        self.index.remove(id as u64);
         self.count -= 1;
         Ok(())
     }
@@ -180,7 +181,7 @@ impl ObObjectTable {
     /// Extract destroy info (ops + native_id) without clearing the slot.
     /// Used by ob_close_object to call the callback outside the lock.
     pub fn extract_destroy_info(&mut self, id: ObId) -> Result<(Option<&'static dyn ObOperations>, u64), ObError> {
-        let idx = *self.index.get(&id).ok_or(ObError::NotFound)?;
+        let idx = self.index.get(id as u64).ok_or(ObError::NotFound)?;
         let refcount = self.slots[idx].as_ref().map_or(0, |o| o.refcount);
         if refcount > 0 {
             return Err(ObError::RefCountHeld);
@@ -192,7 +193,8 @@ impl ObObjectTable {
 
     /// Finalize destroy — clear the slot after the callback has been called.
     pub fn finalize_destroy(&mut self, id: ObId) {
-        if let Some(idx) = self.index.remove(&id) {
+        if let Some(idx) = self.index.get(id as u64) {
+            self.index.remove(id as u64);
             self.slots[idx] = None;
             self.count -= 1;
         }
