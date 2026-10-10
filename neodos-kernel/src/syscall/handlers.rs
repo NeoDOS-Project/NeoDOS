@@ -67,6 +67,14 @@ pub(super) fn handler_write(regs: super::Registers) -> u64 {
 
     let entry = current_handle_entry(fd);
 
+    // NEODOS-06 (#636): if the Ob object implements `write`, it handles it;
+    // otherwise fall through to the legacy per-type path below.
+    if entry.has_ob_object() {
+        if let Some(w) = crate::object::ob_dispatch_write(entry.object_id, entry.offset, slice) {
+            return w as u64;
+        }
+    }
+
     if entry.is_stdout() || entry.is_stderr() {
         if let Ok(s) = core::str::from_utf8(slice) {
             crate::console::print_str(s);
@@ -131,6 +139,18 @@ pub(super) fn handler_read(regs: super::Registers) -> u64 {
     }
 
     let entry = current_handle_entry(fd);
+
+    // NEODOS-06 (#636): if the Ob object implements `read`, it handles it;
+    // otherwise fall through to the legacy per-type path below.
+    if entry.has_ob_object() && count <= 4096 {
+        let mut kbuf = [0u8; 4096];
+        if let Some(n) = crate::object::ob_dispatch_read(entry.object_id, entry.offset, &mut kbuf[..count]) {
+            return match copy_to_user(buf_ptr, &kbuf[..n]) {
+                Ok(()) => n as u64,
+                Err(_) => err_to_u64(SyscallError::Fault),
+            };
+        }
+    }
 
     if entry.is_stdin() {
         let vt = crate::scheduler::current_vt_num();

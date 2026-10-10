@@ -16,6 +16,25 @@ pub(crate) use table::{ObObject, ObObjectTable, ObOperations, FileHandleOps, FIL
 pub use security::ob_open_path;
 pub use enum_mod::ob_enum_directory;
 
+// NEODOS-06 (#636): Ob dispatch — handlers consult the object's `ObOperations`
+// first; `None` means "not handled by Ob, use the legacy path".
+pub fn ob_dispatch_read(object_id: ObId, offset: u64, buf: &mut [u8]) -> Option<usize> {
+    let obj = ob_lookup(object_id)?;
+    obj.ops?.read(object_id, obj.native_id, offset, buf)
+}
+pub fn ob_dispatch_write(object_id: ObId, offset: u64, buf: &[u8]) -> Option<usize> {
+    let obj = ob_lookup(object_id)?;
+    obj.ops?.write(object_id, obj.native_id, offset, buf)
+}
+pub fn ob_dispatch_ioctl(object_id: ObId, cmd: u32, arg: u64) -> Option<i64> {
+    let obj = ob_lookup(object_id)?;
+    obj.ops?.ioctl(object_id, obj.native_id, cmd, arg)
+}
+pub fn ob_dispatch_wait(object_id: ObId) -> Option<bool> {
+    let obj = ob_lookup(object_id)?;
+    obj.ops?.wait(object_id, obj.native_id)
+}
+
 pub fn register_object_tests() {
     use crate::{test_case, test_eq, test_true};
     namespace::register_namespace_tests();
