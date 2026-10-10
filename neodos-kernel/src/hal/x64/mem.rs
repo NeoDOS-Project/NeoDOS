@@ -70,6 +70,11 @@ pub extern "C" fn map_page(phys: u64, virt: u64, flags: u64) -> i32 {
     if flags & 0x10 != 0 {
         pte_flags |= PageTableFlags::NO_CACHE;
     }
+    // bit 63: NX (no-execute). Only valid when EFER.NXE is enabled; callers must
+    // gate on CPU support (see `arch::x64::features::nx_enabled`). NEODOS-09 / #639.
+    if flags & (1u64 << 63) != 0 {
+        pte_flags |= PageTableFlags::NO_EXECUTE;
+    }
     pte.set_addr(PhysAddr::new(phys), pte_flags);
     crate::hal::flush_tlb(virt);
     0

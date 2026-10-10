@@ -203,7 +203,16 @@ pub unsafe fn init(boot_info: &BootInfo) -> ! {
     // ============================================
     // PHASE 2.8: SMP — Start Application Processors
     // ============================================
-    println!("[+] Initializing SMP (per-CPU data structures)...");
+    // NEODOS-09 (#639): detect CPU security features and enable SMEP/SMAP/NXE on
+    // the BSP before APs are started. CPUID-gated: no-op on hardware without
+    // support.
+    arch::x64::features::detect();
+    unsafe { arch::x64::features::enable_on_this_cpu(); }
+    println!(
+        "[+] Initializing SMP (per-CPU data structures)... [CPU_FEAT] SMEP={}/{} SMAP={}/{} NX={}/{}",
+        arch::x64::features::smep_supported(), arch::x64::features::smep_enabled(),
+        arch::x64::features::smap_supported(), arch::x64::features::smap_enabled(),
+        arch::x64::features::nx_supported(), arch::x64::features::nx_enabled());
     // Force scheduler initialization on the BSP *before* APs can lazily build
     // it. `Scheduler::new()` captures the bootstrap stack, so it must run on
     // the BSP, not on an AP.

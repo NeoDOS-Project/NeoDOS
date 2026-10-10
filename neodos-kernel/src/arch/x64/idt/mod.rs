@@ -615,9 +615,14 @@ extern "x86-interrupt" fn gpf_handler(stack_frame: InterruptStackFrame, error_co
 }
 
 extern "x86-interrupt" fn page_fault_handler(
-    stack_frame: InterruptStackFrame,
+    mut stack_frame: InterruptStackFrame,
     error_code: PageFaultErrorCode,
 ) {
+    // Recoverable probe (#649): a kernel-mode fault while a probe is armed is
+    // redirected to the probe's recovery label instead of bugchecking.
+    if crate::arch::x64::probe::try_recover(&mut stack_frame, error_code) {
+        return;
+    }
     // INV-14: Page fault at IRQL >= DISPATCH is fatal (bugcheck).
     let irql = unsafe { crate::arch::x64::cpu_local::this_cpu_irql() };
     if irql >= crate::hal::irql::DISPATCH_LEVEL {
