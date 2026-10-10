@@ -577,7 +577,10 @@ pub fn mmap_alloc_page(virt: u64) -> Option<u64> {
     }
     let phys = crate::hal::alloc_page();
     if phys.is_null() { return None; }
-    let rc = crate::hal::map_page(phys as u64, virt, 0x6); // PRESENT | WRITABLE | USER_ACCESSIBLE
+    // PRESENT | WRITABLE | USER_ACCESSIBLE, plus NX when the CPU supports it:
+    // mmap data is never executable (W^X, NEODOS-09 / #639).
+    let nx = if crate::arch::x64::features::nx_enabled() { 1u64 << 63 } else { 0 };
+    let rc = crate::hal::map_page(phys as u64, virt, 0x6 | nx);
     if rc != 0 { return None; }
     Some(phys as u64)
 }
@@ -850,7 +853,10 @@ pub fn heap_alloc_page(virt: u64) -> Option<u64> {
     }
     let phys = crate::hal::alloc_page();
     if phys.is_null() { return None; }
-    let rc = crate::hal::map_page(phys as u64, virt, 0x6); // PRESENT | WRITABLE | USER_ACCESSIBLE
+    // PRESENT | WRITABLE | USER_ACCESSIBLE, plus NX when the CPU supports it:
+    // heap data is never executable (W^X, NEODOS-09 / #639).
+    let nx = if crate::arch::x64::features::nx_enabled() { 1u64 << 63 } else { 0 };
+    let rc = crate::hal::map_page(phys as u64, virt, 0x6 | nx);
     if rc != 0 { return None; }
     // MEM-PROC (#274): count this resident page against its heap slot.
     if let Some(slot) = heap_slot_of(virt) {

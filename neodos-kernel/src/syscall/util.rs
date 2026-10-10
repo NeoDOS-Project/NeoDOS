@@ -126,7 +126,10 @@ fn with_user_memory_locked<R>(
         }
     };
 
-    let result = op(&sched);
+    // SMAP: the kernel may only touch user pages with RFLAGS.AC set. The HAL
+    // wraps the validated access so it stays fault-safe under SMAP (NEODOS-09 /
+    // #639); on CPUs without SMAP this is a no-op.
+    let result = crate::hal::safe::with_user_access(|| op(&sched));
 
     drop(_mem);
     drop(sched);

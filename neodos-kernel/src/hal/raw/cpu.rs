@@ -98,6 +98,24 @@ pub unsafe fn raw_write_cr3(val: u64) {
 }
 
 #[inline]
+pub unsafe fn raw_write_cr4(val: u64) {
+    asm!("mov cr4, {}", in(reg) val, options(nomem, nostack));
+}
+
+/// Set RFLAGS.AC (allow supervisor access to user pages, SMAP). #UD if SMAP is
+/// not supported, so callers must gate on `features::smap_enabled()`.
+#[inline]
+pub unsafe fn raw_stac() {
+    asm!("stac", options(nomem, nostack, preserves_flags));
+}
+
+/// Clear RFLAGS.AC (SMAP).
+#[inline]
+pub unsafe fn raw_clac() {
+    asm!("clac", options(nomem, nostack, preserves_flags));
+}
+
+#[inline]
 pub unsafe fn raw_invlpg(virt: u64) {
     asm!("invlpg [{}]", in(reg) virt, options(nostack, nomem, preserves_flags));
 }

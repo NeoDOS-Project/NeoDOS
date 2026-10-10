@@ -456,6 +456,10 @@ pub extern "sysv64" fn ap_entry(stack_top: u64) -> ! {
         crate::hal::write_cr3(pml4);
     }
 
+    // NEODOS-09 (#639): enable SMEP/SMAP/NXE on this AP too (BSP detected the
+    // capabilities). Must run before any user-memory access on this CPU.
+    unsafe { crate::arch::x64::features::enable_on_this_cpu(); }
+
     // Register this CPU's idle Kthread and install it as the KPRCB current
     // context BEFORE enabling interrupts. `stack_top` is this AP's own
     // pre-allocated stack.
