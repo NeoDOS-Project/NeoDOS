@@ -174,72 +174,85 @@ impl Scheduler {
         })
     }
 
-    /// F-01: per-CPU view of current PID. If KPRCB is initialized (SMP) AND
-    /// the KPRCB thread belongs to this Scheduler, returns per-CPU PID.
-    /// Falls back to global current_tid for tests/local schedulers.
-    pub fn current_pid(&self) -> u32 {
-        if self.kprcb_thread_in_self() {
-            if let Some(pid) = crate::arch::x64::cpu_local::try_per_cpu_pid() {
-                return pid;
-            }
+    /// NEODOS-02 (#632): record a KPRCB identity fallback. Called when the
+    /// per-CPU identity is unavailable while the global scheduler is active
+    /// (`ap_sched_active()`), i.e. a production SMP path would otherwise
+    /// silently use the shared global `current_tid`. Site-tagged and counted by
+    /// `diag::kprcb_fallback_count` so it is never silent.
+    #[inline]
+    fn note_kprcb_fallback(&self, site: &'static str) {
+        let gs = crate::hal::safe::GsBase::read();
+        if gs == 0 {
+            // Early boot before GS is programmed: no per-CPU identity exists yet.
+            return;
         }
-        self.find_kthread(self.current_tid).map(|t| t.pid).unwrap_or(0)
+        let ptr = unsafe { crate::arch::x64::cpu_local::this_cpu_current_thread() };
+        crate::scheduler::diag::kprcb_fallback_ev(site, gs, ptr, self.current_tid);
+        // NEODOS-02 (#632): in production (AP scheduling active, GS set) the
+        // per-CPU KPRCB identity MUST be available. Falling back to the shared
+        // global `current_tid` would let two CPUs operate on the same KTHREAD /
+        // kernel stack. Fail explicitly (project BUGCHECK convention) instead of
+        // corrupting state silently.
+        let cpu = unsafe { crate::arch::x64::cpu_local::this_cpu_id() };
+        panic!(
+            "BUGCHECK: KPRCB identity unavailable in production (site={} cpu={} gs=0x{:x} cur=0x{:x} global_current_tid={})",
+            site, cpu, gs, ptr as u64, self.current_tid
+        );
     }
 
-    /// F-01: per-CPU helper to get current TID for THIS CPU if this is the
-    /// global scheduler (KPRCB thread in self). Otherwise fallback.
-    pub fn current_tid_for_this_cpu(&self) -> u32 {
+    /// NEODOS-02 (#632): the single source of "current TID on this CPU".
+    ///
+    /// Prefers the per-CPU KPRCB identity. If it is unavailable while the
+    /// global scheduler is active, records the fallback via
+    /// [`Self::note_kprcb_fallback`] instead of falling back silently. Local
+    /// test schedulers (KPRCB thread not in `self`) intentionally use
+    /// `self.current_tid`.
+    fn current_tid_checked(&self, site: &'static str) -> u32 {
         if self.kprcb_thread_in_self() {
             if let Some(tid) = crate::arch::x64::cpu_local::try_per_cpu_tid() {
                 return tid;
             }
         } else if crate::scheduler::ap_sched_active() {
-            // #345 diagnostic: the per-CPU KPRCB identity is unavailable, so the
-            // shared global `current_tid` is used. Record the reason.
-            let gs = crate::hal::safe::GsBase::read();
-            if gs != 0 {
-                let ptr = unsafe { crate::arch::x64::cpu_local::this_cpu_current_thread() };
-                crate::scheduler::diag::kprcb_fallback_ev(
-                    "current_tid_for_this_cpu", gs, ptr, self.current_tid);
-            }
+            self.note_kprcb_fallback(site);
         }
         self.current_tid
     }
 
+    /// NEODOS-02 (#632): per-CPU PID, checked like [`Self::current_tid_checked`].
+    fn current_pid_checked(&self, site: &'static str) -> u32 {
+        if self.kprcb_thread_in_self() {
+            if let Some(pid) = crate::arch::x64::cpu_local::try_per_cpu_pid() {
+                return pid;
+            }
+        } else if crate::scheduler::ap_sched_active() {
+            self.note_kprcb_fallback(site);
+        }
+        self.find_kthread(self.current_tid).map(|t| t.pid).unwrap_or(0)
+    }
+
+    /// F-01: per-CPU view of current PID.
+    pub fn current_pid(&self) -> u32 {
+        self.current_pid_checked("current_pid")
+    }
+
+    /// F-01: per-CPU helper to get current TID for THIS CPU.
+    pub fn current_tid_for_this_cpu(&self) -> u32 {
+        self.current_tid_checked("current_tid_for_this_cpu")
+    }
+
     pub fn current_eprocess_mut(&mut self) -> Option<&mut Eprocess> {
-        // Use per-CPU only for global scheduler; local test schedulers use self.current_tid
-        let tid = if self.kprcb_thread_in_self() {
-            crate::arch::x64::cpu_local::try_per_cpu_tid().unwrap_or(self.current_tid)
-        } else {
-            self.current_tid
-        };
+        let tid = self.current_tid_checked("current_eprocess_mut");
         let pid = self.find_kthread(tid).map(|t| t.pid)?;
         self.find_eprocess_mut(pid)
     }
 
     pub fn current_kthread_mut(&mut self) -> Option<&mut Kthread> {
-        let tid = if self.kprcb_thread_in_self() {
-            crate::arch::x64::cpu_local::try_per_cpu_tid().unwrap_or(self.current_tid)
-        } else {
-            if crate::scheduler::ap_sched_active() {
-                let gs = crate::hal::safe::GsBase::read();
-                if gs != 0 {
-                    let ptr = unsafe { crate::arch::x64::cpu_local::this_cpu_current_thread() };
-                    crate::scheduler::diag::kprcb_fallback_ev(
-                        "current_kthread_mut", gs, ptr, self.current_tid);
-                }
-            }
-            self.current_tid
-        };
+        let tid = self.current_tid_checked("current_kthread_mut");
         self.find_kthread_mut(tid)
     }
 
     pub fn current_eprocess(&self) -> Option<&Eprocess> {
-        let tid = if self.kprcb_thread_in_self() {
-            crate::arch::x64::cpu_local::try_per_cpu_tid().unwrap_or(self.current_tid)
-        } else {
-            self.current_tid
-        };
+        let tid = self.current_tid_checked("current_eprocess");
         let pid = self.find_kthread(tid).map(|t| t.pid)?;
         self.find_eprocess(pid)
     }

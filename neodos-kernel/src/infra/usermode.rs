@@ -13,29 +13,12 @@ use alloc::format;
 
 // ── Per-CPU exit trampoline ──────────────────────────────────────────────
 //
-// The EXIT_RSP/EXIT_RIP/etc. context must be per-CPU (each CPU has its
-// own IRETQ trampoline). We store these in the KPRCB at known offsets
-// and access them via GS segment.
+// The exit context (RSP/RIP/RBX/R12-R15/RBP) is per-CPU: each CPU has its own
+// IRETQ trampoline. It lives in the KPRCB at known offsets and is accessed via
+// the GS segment (see `execute_usermode_asm` / `exit_to_kernel` below).
 //
-// For backward compatibility, we keep the global statics as well (used
-// during early boot before GS is set, or for single-CPU mode).
-
-#[no_mangle]
-static mut EXIT_RSP: u64 = 0;
-#[no_mangle]
-static mut EXIT_RIP: u64 = 0;
-#[no_mangle]
-static mut EXIT_RBX: u64 = 0;
-#[no_mangle]
-static mut EXIT_R12: u64 = 0;
-#[no_mangle]
-static mut EXIT_R13: u64 = 0;
-#[no_mangle]
-static mut EXIT_R14: u64 = 0;
-#[no_mangle]
-static mut EXIT_R15: u64 = 0;
-#[no_mangle]
-static mut EXIT_RBP: u64 = 0;
+// The former global `EXIT_*` statics were removed (NEODOS-02 / #632): they were
+// never read and the SMP path only ever uses the per-CPU KPRCB.
 
 #[no_mangle]
 static EXIT_NOW: AtomicU8 = AtomicU8::new(0);
@@ -49,7 +32,7 @@ core::arch::global_asm!(
     // We need to save kernel RSP/RIP into KPRCB fields via GS.
     // First, save to global statics (backward compat), then also to KPRCB.
 
-    // Save return address (label 1f) as EXIT_RIP
+    // Save the return address (label 1f) into the KPRCB EXIT_RIP offset.
     "lea rax, [rip + 1f]",
     // Write to per-CPU KPRCB via GS segment (global statics removed for SMP safety — AUDIT-07)
     "mov gs:[{}], rsp",                     // OFFSET_EXIT_RSP
@@ -369,7 +352,7 @@ pub fn wait_for_process(pid: u32) {
     // Transition the boot thread (TID 0, current) to Blocked so the
     // scheduler never picks it again, then activate the target process
     // from Suspended to Running and make it current.  The boot thread's
-    // real saved execution context lives in EXIT_RSP/EXIT_RIP (set by
+    // real saved execution context lives in the per-CPU KPRCB EXIT_RSP/EXIT_RIP (set by
     // execute_usermode_asm) — it will be restored when the Ring 3
     // process exits via exit_to_kernel.
     // #482: capture the target for the *deferred* KPRCB publication performed
@@ -461,7 +444,7 @@ pub fn wait_for_process(pid: u32) {
     execute_usermode(entry, user_stack_top);
 
     // When the Ring 3 process exits, exit_to_kernel restores the boot
-    // context from EXIT_RSP/EXIT_RIP and returns here.  Restore the
+    // context from the per-CPU KPRCB EXIT_RSP/EXIT_RIP and returns here. Restore the
     // boot thread's Running state for consistency.
     crate::serial_println!("[USERMODE] EXIT: Ring3 process pid={} terminated, returning to boot", pid);
     crate::hal::without_interrupts(|| {

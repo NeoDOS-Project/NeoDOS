@@ -1657,4 +1657,109 @@ pub fn register() {
             test_true!(sched.thread_tids_for_pid(pid).is_empty());
         }
     });
+
+    // ── NEODOS-02 (#632): current-identity reads are never silent ────────────
+    test_case!("neodos02_current_identity_prefers_kprcb_and_is_never_silent", {
+        // A local (non-global) Scheduler must keep using its own current_tid and
+        // current_pid, and must not record a KPRCB identity fallback while AP
+        // scheduling is inactive (the test/local-scheduler path). All the
+        // "current" accessors now funnel through `current_tid_checked`, so a
+        // production fallback is always counted, never silent.
+        let before = crate::scheduler::diag::kprcb_fallback_count();
+        let mut sched = Scheduler::new();
+        sched.next_tid = 5;
+        sched.current_tid = 3;
+        let slot = sched.alloc_kthread_slot().unwrap();
+        let mut k = Kthread::new_ring3(3, 7, 0x400000, 0x800000);
+        k.state = ThreadState::Running;
+        sched.kthreads[slot] = Some(Box::new(k));
+
+        test_eq!(sched.current_tid_for_this_cpu(), 3);
+        test_eq!(sched.current_pid(), 7);
+        test_true!(sched.current_kthread_mut().is_some());
+        // No Eprocess for pid 7 → resolving the current Eprocess yields None,
+        // not a wrong process from the global current_tid.
+        test_true!(sched.current_eprocess_mut().is_none());
+        test_true!(sched.current_eprocess().is_none());
+
+        if !crate::scheduler::ap_sched_active() {
+            test_eq!(crate::scheduler::diag::kprcb_fallback_count(), before);
+        }
+    });
+    test_case!("neodos02_no_kprcb_fallback_in_production", {
+        // AC3 (#632): on SMP>1 the production scheduler reads the current
+        // TID/PID exclusively from the per-CPU KPRCB — zero fallback events.
+        // The fallback counter only advances in the production condition, so it
+        // must not move across normal current-identity reads.
+        if crate::arch::x64::cpu_local::cpu_count() < 2 {
+            return Ok(());
+        }
+        let before = crate::scheduler::diag::kprcb_fallback_count();
+        let _ = crate::scheduler::current_tid();
+        let _ = crate::scheduler::current_pid();
+        let _ = crate::scheduler::current_scheduler().lock().current_tid_for_this_cpu();
+        let _ = crate::scheduler::current_scheduler().lock().current_pid();
+        test_eq!(crate::scheduler::diag::kprcb_fallback_count(), before);
+    });
+    test_case!("neodos02_ready_window_never_current_thread_of_other_cpu", {
+        // AC4 (#632): switch-out window. A KTHREAD published `Ready` while
+        // another CPU still owns it as `KPRCB.current_thread` must be deferred
+        // by the selection guard and never committed here; the escaped
+        // ownership counters must stay at zero (the check→commit race did not
+        // happen).
+        if crate::arch::x64::cpu_local::cpu_count() < 2 {
+            return Ok(());
+        }
+        let this_cpu = unsafe { crate::arch::x64::cpu_local::this_cpu_id() };
+        unsafe {
+            if crate::arch::x64::cpu_local::kprcb_page(this_cpu as usize).is_some() {
+                crate::arch::x64::cpu_local::cpu_run_queue_mut(this_cpu as usize).clear();
+            }
+        }
+        let mut sched = Scheduler::new();
+        sched.next_tid = 100;
+        for k in sched.kthreads.iter_mut().flatten() {
+            if k.is_idle { k.cpu = this_cpu; }
+        }
+        // Ready kernel thread enqueued on this CPU.
+        let sk = crate::scheduler::AlignedKStack::new_boxed();
+        let tk = sk.0.as_ptr() as u64 + crate::scheduler::KERNEL_STACK_SIZE as u64;
+        let rk = crate::scheduler::stack::init_ring0_frame(tk, 0x500000);
+        let mut kk = Kthread::new_ring3_with_stack(11, 11, 0x500000, rk, tk, sk);
+        kk.is_kernel = true;
+        kk.state = ThreadState::Ready;
+        kk.priority = PRIORITY_NORMAL;
+        kk.base_priority = PRIORITY_NORMAL;
+        kk.cpu = this_cpu;
+        let ik = sched.alloc_kthread_slot().unwrap();
+        sched.kthreads[ik] = Some(Box::new(kk));
+        Scheduler::enqueue_to_cpu_run_queue(sched.find_kthread(11).unwrap());
+
+        let kptr = sched.find_kthread(11).unwrap() as *const Kthread;
+        let other = if this_cpu == 0 { 1 } else { 0 };
+        let other_base = crate::arch::x64::cpu_local::kprcb_page(other as usize).unwrap();
+        let slot = (other_base + crate::arch::x64::cpu_local::OFFSET_CURRENT_THREAD as u64) as *mut u64;
+        let saved = unsafe { *slot };
+        // Simulate the window: the OTHER CPU still owns this KTHREAD.
+        unsafe { *slot = kptr as u64; };
+
+        let (rej0, rwr0, srd0, soc0) = crate::scheduler::schedule::sched_ready_guard_stats();
+        let next = sched.schedule_with_handoff(true, true);
+        test_ne!(unsafe { (*next).tid }, 11);
+        test_eq!(sched.find_kthread(11).unwrap().state, ThreadState::Ready);
+        let (rej1, rwr1, srd1, soc1) = crate::scheduler::schedule::sched_ready_guard_stats();
+        // Deferred (rejected >=1) but no escaped conflict (the three conflict
+        // counters must not advance).
+        test_true!(rej1 > rej0);
+        test_eq!(rwr1, rwr0);
+        test_eq!(srd1, srd0);
+        test_eq!(soc1, soc0);
+
+        unsafe { *slot = saved; }
+        unsafe {
+            if crate::arch::x64::cpu_local::kprcb_page(this_cpu as usize).is_some() {
+                crate::arch::x64::cpu_local::cpu_run_queue_mut(this_cpu as usize).clear();
+            }
+        }
+    });
 }
