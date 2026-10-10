@@ -1,7 +1,7 @@
 //! Ob set — service control.
 
 use crate::object::types::ObSetInfoClass;
-use crate::syscall::{err_to_u64, SyscallError};
+use crate::syscall::{err_to_u64, SyscallError, copy_from_user};
 
 pub(super) fn handles(info_class: u32) -> bool {
     info_class == ObSetInfoClass::ServiceStart as u32
@@ -52,7 +52,11 @@ pub(super) fn dispatch(
                 return err_to_u64(SyscallError::Inval);
             }
             let timeout_ms = if buf_size >= 4 {
-                unsafe { core::ptr::read_volatile(buf_ptr as *const u32) }
+                let mut b = [0u8; 4];
+                if copy_from_user(&mut b, buf_ptr).is_err() {
+                    return err_to_u64(SyscallError::Fault);
+                }
+                u32::from_ne_bytes(b)
             } else {
                 0
             };
@@ -78,7 +82,11 @@ pub(super) fn dispatch(
                 return err_to_u64(SyscallError::Inval);
             }
             let timeout_ms = if buf_size >= 4 {
-                unsafe { core::ptr::read_volatile(buf_ptr as *const u32) }
+                let mut b = [0u8; 4];
+                if copy_from_user(&mut b, buf_ptr).is_err() {
+                    return err_to_u64(SyscallError::Fault);
+                }
+                u32::from_ne_bytes(b)
             } else {
                 0
             };
@@ -106,9 +114,13 @@ pub(super) fn dispatch(
             if buf_size < 6 {
                 return err_to_u64(SyscallError::Inval);
             }
-            let start_type = unsafe { core::ptr::read_volatile(buf_ptr as *const u8) };
-            let restart_policy = unsafe { core::ptr::read_volatile((buf_ptr + 1) as *const u8) };
-            let max_failures = unsafe { core::ptr::read_volatile((buf_ptr + 2) as *const u32) };
+            let mut cfg = [0u8; 6];
+            if copy_from_user(&mut cfg, buf_ptr).is_err() {
+                return err_to_u64(SyscallError::Fault);
+            }
+            let start_type = cfg[0];
+            let restart_policy = cfg[1];
+            let max_failures = u32::from_ne_bytes([cfg[2], cfg[3], cfg[4], cfg[5]]);
 
             use crate::services::{ServiceStartType, ServiceRestartPolicy};
             let st = match start_type {

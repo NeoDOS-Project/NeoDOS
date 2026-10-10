@@ -107,6 +107,23 @@ pub fn register_sync_tests() {
         test_true!(copy_from_user(&mut buf, crate::arch::x64::paging::USER_BASE).is_ok());
         test_true!(copy_to_user(crate::arch::x64::paging::USER_BASE, &[1, 2, 3]).is_ok());
     });
+
+    test_case!("neodos04_user_copy_serializes_with_freers", {
+        use super::super::{copy_from_user, copy_to_user};
+        use crate::syscall::util::USER_MEMORY_LOCK;
+        // The brk/munmap page freers hold USER_MEMORY_LOCK while freeing. While
+        // it is held here (simulating a concurrent freer), a user copy must not
+        // proceed — it fails closed with EFAULT (retryable), never racing the
+        // free and never faulting in Ring 0 (NEODOS-04 / #634).
+        let guard = USER_MEMORY_LOCK.lock();
+        let mut buf = [0u8; 4];
+        test_true!(copy_from_user(&mut buf, crate::arch::x64::paging::USER_BASE).is_err());
+        test_true!(copy_to_user(crate::arch::x64::paging::USER_BASE, &buf).is_err());
+        drop(guard);
+        // Once the freer releases the lock, the same valid window succeeds.
+        let mut buf2 = [0u8; 4];
+        test_true!(copy_from_user(&mut buf2, crate::arch::x64::paging::USER_BASE).is_ok());
+    });
 }
 
 // ── DOS path canonicalization tests (cd/chdir resolution) ──────────────

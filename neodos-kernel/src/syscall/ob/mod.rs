@@ -22,7 +22,7 @@ pub use wait::handler_ob_wait;
 pub use destroy::handler_ob_destroy;
 
 // Snapshot and service remain in mod.rs (not split per spec, kept for minimal change)
-use crate::syscall::{err_to_u64, SyscallError};
+use crate::syscall::{err_to_u64, SyscallError, copy_from_user, copy_to_user};
 use crate::syscall::util::is_user_ptr_valid;
 
 const SNAPSHOT_OP_CREATE: u32 = 0;
@@ -66,7 +66,11 @@ pub(super) fn handler_ob_snapshot(regs: super::Registers) -> u64 {
             if !is_user_ptr_valid(buf_ptr, 8) {
                 return err_to_u64(SyscallError::Fault);
             }
-            let snapshot_id = unsafe { core::ptr::read_volatile(buf_ptr as *const u64) };
+            let mut b = [0u8; 8];
+            if copy_from_user(&mut b, buf_ptr).is_err() {
+                return err_to_u64(SyscallError::Fault);
+            }
+            let snapshot_id = u64::from_ne_bytes(b);
             let result = crate::globals::with_vfs(|vfs| {
                 vfs.snapshot_restore(drive_idx, snapshot_id)
             });
@@ -82,7 +86,11 @@ pub(super) fn handler_ob_snapshot(regs: super::Registers) -> u64 {
             if !is_user_ptr_valid(buf_ptr, 8) {
                 return err_to_u64(SyscallError::Fault);
             }
-            let snapshot_id = unsafe { core::ptr::read_volatile(buf_ptr as *const u64) };
+            let mut b = [0u8; 8];
+            if copy_from_user(&mut b, buf_ptr).is_err() {
+                return err_to_u64(SyscallError::Fault);
+            }
+            let snapshot_id = u64::from_ne_bytes(b);
             let result = crate::globals::with_vfs(|vfs| {
                 vfs.snapshot_delete(drive_idx, snapshot_id)
             });
@@ -99,17 +107,29 @@ pub(super) fn handler_ob_snapshot(regs: super::Registers) -> u64 {
             if !is_user_ptr_valid(buf_ptr, 16) {
                 return err_to_u64(SyscallError::Fault);
             }
-            let id = unsafe { core::ptr::read_volatile(buf_ptr as *const u64) };
-            let src_len = unsafe { core::ptr::read_volatile((buf_ptr as *const u32).add(2)) } as usize;
-            let dst_len = unsafe { core::ptr::read_volatile((buf_ptr as *const u32).add(3)) } as usize;
+            let mut hdr = [0u8; 16];
+            if copy_from_user(&mut hdr, buf_ptr).is_err() {
+                return err_to_u64(SyscallError::Fault);
+            }
+            let id = u64::from_ne_bytes([hdr[0], hdr[1], hdr[2], hdr[3], hdr[4], hdr[5], hdr[6], hdr[7]]);
+            let src_len = u32::from_ne_bytes([hdr[8], hdr[9], hdr[10], hdr[11]]) as usize;
+            let dst_len = u32::from_ne_bytes([hdr[12], hdr[13], hdr[14], hdr[15]]) as usize;
             let total = 16usize.saturating_add(src_len).saturating_add(dst_len);
             if total > buf_size || !is_user_ptr_valid(buf_ptr, total as u64) {
                 return err_to_u64(SyscallError::Inval);
             }
-            let src = unsafe { core::slice::from_raw_parts((buf_ptr + 16) as *const u8, src_len) };
-            let dst = unsafe { core::slice::from_raw_parts((buf_ptr + 16 + src_len as u64) as *const u8, dst_len) };
-            let src = match core::str::from_utf8(src) { Ok(s) => s, Err(_) => return err_to_u64(SyscallError::Inval) };
-            let dst = match core::str::from_utf8(dst) { Ok(s) => s, Err(_) => return err_to_u64(SyscallError::Inval) };
+            let mut ksrc = alloc::vec::Vec::with_capacity(src_len);
+            ksrc.resize(src_len, 0u8);
+            if copy_from_user(&mut ksrc, buf_ptr + 16).is_err() {
+                return err_to_u64(SyscallError::Fault);
+            }
+            let mut kdst = alloc::vec::Vec::with_capacity(dst_len);
+            kdst.resize(dst_len, 0u8);
+            if copy_from_user(&mut kdst, buf_ptr + 16 + src_len as u64).is_err() {
+                return err_to_u64(SyscallError::Fault);
+            }
+            let src = match core::str::from_utf8(&ksrc) { Ok(s) => s, Err(_) => return err_to_u64(SyscallError::Inval) };
+            let dst = match core::str::from_utf8(&kdst) { Ok(s) => s, Err(_) => return err_to_u64(SyscallError::Inval) };
             match crate::globals::with_vfs(|vfs| vfs.snapshot_extract(drive_idx, id, src, dst)) {
                 Ok(bytes) => bytes,
                 Err(_) => err_to_u64(SyscallError::Io),
@@ -129,12 +149,9 @@ pub(super) fn handler_ob_snapshot(regs: super::Registers) -> u64 {
             });
             match count {
                 Ok(n) => {
-                    unsafe {
-                        core::ptr::copy_nonoverlapping(
-                            kernel_buf.as_ptr(),
-                            buf_ptr as *mut u8,
-                            buf_size.min(n * core::mem::size_of::<crate::fs::snapshot::SnapshotEntryRaw>()),
-                        );
+                    let copy_bytes = buf_size.min(n * core::mem::size_of::<crate::fs::snapshot::SnapshotEntryRaw>());
+                    if copy_to_user(buf_ptr, &kernel_buf[..copy_bytes]).is_err() {
+                        return err_to_u64(SyscallError::Fault);
                     }
                     n as u64
                 }
@@ -191,7 +208,11 @@ pub(super) fn handler_ob_service(regs: super::Registers) -> u64 {
         }
         SERVICE_CONTROL_STOP => {
             let timeout_ms = if buf_len >= 4 && buf_ptr != 0 {
-                unsafe { core::ptr::read_volatile(buf_ptr as *const u32) }
+                let mut b = [0u8; 4];
+                if copy_from_user(&mut b, buf_ptr).is_err() {
+                    return err_to_u64(SyscallError::Fault);
+                }
+                u32::from_ne_bytes(b)
             } else {
                 0
             };
@@ -207,7 +228,11 @@ pub(super) fn handler_ob_service(regs: super::Registers) -> u64 {
         }
         SERVICE_CONTROL_RESTART => {
             let timeout_ms = if buf_len >= 4 && buf_ptr != 0 {
-                unsafe { core::ptr::read_volatile(buf_ptr as *const u32) }
+                let mut b = [0u8; 4];
+                if copy_from_user(&mut b, buf_ptr).is_err() {
+                    return err_to_u64(SyscallError::Fault);
+                }
+                u32::from_ne_bytes(b)
             } else {
                 0
             };
@@ -251,8 +276,8 @@ pub(super) fn handler_ob_service(regs: super::Registers) -> u64 {
                 (svc.start_tick >> 32) as u8, (svc.start_tick >> 40) as u8,
                 (svc.start_tick >> 48) as u8, (svc.start_tick >> 56) as u8,
             ];
-            unsafe {
-                core::ptr::copy_nonoverlapping(status.as_ptr(), buf_ptr as *mut u8, 29);
+            if copy_to_user(buf_ptr, &status).is_err() {
+                return err_to_u64(SyscallError::Fault);
             }
             29
         }
@@ -263,9 +288,13 @@ pub(super) fn handler_ob_service(regs: super::Registers) -> u64 {
             if !is_user_ptr_valid(buf_ptr, 6) {
                 return err_to_u64(SyscallError::Fault);
             }
-            let start_type = unsafe { core::ptr::read_volatile(buf_ptr as *const u8) };
-            let restart_policy = unsafe { core::ptr::read_volatile((buf_ptr + 1) as *const u8) };
-            let max_failures = unsafe { core::ptr::read_volatile((buf_ptr + 2) as *const u32) };
+            let mut cfg = [0u8; 6];
+            if copy_from_user(&mut cfg, buf_ptr).is_err() {
+                return err_to_u64(SyscallError::Fault);
+            }
+            let start_type = cfg[0];
+            let restart_policy = cfg[1];
+            let max_failures = u32::from_ne_bytes([cfg[2], cfg[3], cfg[4], cfg[5]]);
 
             use crate::services::{ServiceStartType, ServiceRestartPolicy};
             let st = match start_type {

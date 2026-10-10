@@ -1,6 +1,6 @@
 //! Ob create — process and thread objects.
 
-use crate::syscall::{err_to_u64, SyscallError};
+use crate::syscall::{err_to_u64, SyscallError, copy_from_user};
 use crate::scheduler;
 use crate::syscall::copy_handle_entry_for_child;
 
@@ -60,14 +60,7 @@ pub(super) fn dispatch(
                 let copy_ok = if ARGS_ADDR >= crate::arch::x64::paging::USER_BASE
                     && ARGS_ADDR.saturating_add(256) <= crate::arch::x64::paging::USER_LIMIT
                 {
-                    unsafe {
-                        core::ptr::copy_nonoverlapping(
-                            ARGS_ADDR as *const u8,
-                            args_buf.as_mut_ptr(),
-                            256,
-                        );
-                    }
-                    true
+                    copy_from_user(&mut args_buf, ARGS_ADDR).is_ok()
                 } else { false };
                 if copy_ok {
                     crate::hal::without_interrupts(|| {

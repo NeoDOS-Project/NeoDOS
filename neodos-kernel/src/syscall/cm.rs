@@ -4,7 +4,7 @@ use crate::cm;
 use crate::hal;
 use crate::handle::{HandleEntry, alloc_handle};
 use crate::scheduler;
-use crate::syscall::{copy_user_string, is_user_ptr_valid, current_handle_entry};
+use crate::syscall::{copy_user_string, is_user_ptr_valid, current_handle_entry, copy_from_user, copy_to_user};
 use crate::log::LogSubsys;
 use alloc::string::ToString;
 
@@ -230,15 +230,13 @@ pub(super) fn handler_cm_query_value(regs: Registers) -> u64 {
                 let copy_len = if buf_len >= total_size { total_size } else { buf_len };
 
                 if is_user_ptr_valid(buf_ptr, copy_len as u64) {
-                    unsafe {
-                        core::ptr::copy_nonoverlapping(header.as_ptr(), buf_ptr as *mut u8, 8);
-                        if copy_len > 8 && buf_len >= 8 + data.len() {
-                            let data_copy = &data[..core::cmp::min(data.len(), buf_len - 8)];
-                            core::ptr::copy_nonoverlapping(
-                                data_copy.as_ptr(),
-                                (buf_ptr + 8) as *mut u8,
-                                data_copy.len(),
-                            );
+                    if copy_to_user(buf_ptr, &header).is_err() {
+                        return err_to_u64(SyscallError::Fault);
+                    }
+                    if copy_len > 8 && buf_len >= 8 + data.len() {
+                        let data_copy = &data[..core::cmp::min(data.len(), buf_len - 8)];
+                        if copy_to_user(buf_ptr + 8, data_copy).is_err() {
+                            return err_to_u64(SyscallError::Fault);
                         }
                     }
                 }
@@ -281,9 +279,9 @@ pub(super) fn handler_cm_set_value(regs: Registers) -> u64 {
 
     let mut data = alloc::vec::Vec::with_capacity(data_len);
     if data_len > 0 {
-        unsafe {
-            let slice = core::slice::from_raw_parts(data_ptr as *const u8, data_len);
-            data.extend_from_slice(slice);
+        data.resize(data_len, 0u8);
+        if copy_from_user(&mut data, data_ptr).is_err() {
+            return err_to_u64(SyscallError::Fault);
         }
     }
 
@@ -316,9 +314,10 @@ pub(super) fn handler_cm_enum_key(regs: Registers) -> u64 {
             let len = bytes.len().min(255);
             if buf_ptr != 0 {
                 if is_user_ptr_valid(buf_ptr, (len + 1) as u64) {
-                    unsafe {
-                        core::ptr::copy_nonoverlapping(bytes.as_ptr(), buf_ptr as *mut u8, len);
-                        (buf_ptr as *mut u8).add(len).write(0u8);
+                    let mut out = [0u8; 256];
+                    out[..len].copy_from_slice(bytes);
+                    if copy_to_user(buf_ptr, &out[..len + 1]).is_err() {
+                        return err_to_u64(SyscallError::Fault);
                     }
                     return (len + 1) as u64;
                 }
@@ -352,9 +351,10 @@ pub(super) fn handler_cm_enum_value(regs: Registers) -> u64 {
             let len = bytes.len().min(255);
             if buf_ptr != 0 {
                 if is_user_ptr_valid(buf_ptr, (len + 1) as u64) {
-                    unsafe {
-                        core::ptr::copy_nonoverlapping(bytes.as_ptr(), buf_ptr as *mut u8, len);
-                        (buf_ptr as *mut u8).add(len).write(0u8);
+                    let mut out = [0u8; 256];
+                    out[..len].copy_from_slice(bytes);
+                    if copy_to_user(buf_ptr, &out[..len + 1]).is_err() {
+                        return err_to_u64(SyscallError::Fault);
                     }
                     return (len + 1) as u64;
                 }
