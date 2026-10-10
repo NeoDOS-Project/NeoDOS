@@ -185,29 +185,11 @@ impl ObObjectTable {
         self.slots[idx] = None;
         self.index.remove(id as u64);
         self.count -= 1;
+        // Drop any SecurityDescriptor so it cannot leak, and cannot bleed onto a
+        // reused ObId (#664). Lock order: OB_TABLE -> OB_SECURITY; there is no
+        // path that takes OB_SECURITY then OB_TABLE, so this cannot deadlock.
+        OB_SECURITY.lock().remove(&id);
         Ok((ops, native_id))
-    }
-
-    /// Extract destroy info (ops + native_id) without clearing the slot.
-    /// Used by ob_close_object to call the callback outside the lock.
-    pub fn extract_destroy_info(&mut self, id: ObId) -> Result<(Option<&'static dyn ObOperations>, u64), ObError> {
-        let idx = self.index.get(id as u64).ok_or(ObError::NotFound)?;
-        let refcount = self.slots[idx].as_ref().map_or(0, |o| o.refcount);
-        if refcount > 0 {
-            return Err(ObError::RefCountHeld);
-        }
-        let ops = self.slots[idx].as_ref().and_then(|o| o.ops);
-        let native_id = self.slots[idx].as_ref().map_or(0, |o| o.native_id);
-        Ok((ops, native_id))
-    }
-
-    /// Finalize destroy — clear the slot after the callback has been called.
-    pub fn finalize_destroy(&mut self, id: ObId) {
-        if let Some(idx) = self.index.get(id as u64) {
-            self.index.remove(id as u64);
-            self.slots[idx] = None;
-            self.count -= 1;
-        }
     }
 
     pub fn len(&self) -> usize {
@@ -307,30 +289,25 @@ pub fn ob_open_object(id: ObId, _access: u32) -> Result<(), ObError> {
 }
 
 pub fn ob_close_object(id: ObId) -> Result<(), ObError> {
-    let mut table = OB_TABLE.lock();
-    let cnt = table.dereference(id)?;
-    if cnt > 0 {
-        return Ok(());
-    }
-    // Refcount reached 0 — extract destroy info and drop lock before callback
-    let (ops, native_id) = table.extract_destroy_info(id)?;
-    if ops.is_none() && native_id == 0 {
-        // No callback, simple cleanup
-        table.finalize_destroy(id);
-        drop(table);
-        // VFS-1.3: Remove stale namespace entry
-        let _ = crate::object::namespace::ob_remove_by_id(id);
-        return Ok(());
-    }
-    drop(table);
-    // Call on_destroy WITHOUT holding OB_TABLE lock (avoids deadlock with ob_destroy_object)
+    // Phase 1: drop the final reference and unlink the object under the lock.
+    // Unlinking while the lock is held closes the finalize window (#661): once
+    // the refcount reaches 0 the object is unreachable, so a concurrent
+    // reference/open cannot resurrect it and a second close/destroy cannot run
+    // on_destroy again.
+    let (ops, native_id) = {
+        let mut table = OB_TABLE.lock();
+        let cnt = table.dereference(id)?;
+        if cnt > 0 {
+            return Ok(());
+        }
+        table.take_for_destroy(id)?
+    };
+    // Phase 2: run on_destroy WITHOUT holding OB_TABLE (some ops re-enter the
+    // Object Manager; see ob_destroy_object / PipeObOps, #662).
     if let Some(cb) = ops {
         cb.on_destroy(id, native_id);
     }
-    let mut table = OB_TABLE.lock();
-    table.finalize_destroy(id);
-    drop(table);
-    // VFS-1.3: Remove stale namespace entry
+    // VFS-1.3: Remove stale namespace entry for this ObId.
     let _ = crate::object::namespace::ob_remove_by_id(id);
     Ok(())
 }

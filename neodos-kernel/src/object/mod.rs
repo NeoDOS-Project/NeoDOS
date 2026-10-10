@@ -36,7 +36,7 @@ pub fn ob_dispatch_wait(object_id: ObId) -> Option<bool> {
 }
 
 pub fn register_object_tests() {
-    use crate::{test_case, test_eq, test_true};
+    use crate::{test_case, test_eq, test_false, test_true};
     namespace::register_namespace_tests();
 
     test_case!("ob_create_lookup", {
@@ -74,6 +74,56 @@ pub fn register_object_tests() {
         let result = ob_destroy_object(id);
         test_true!(result.is_err());
         test_eq!(result.unwrap_err(), ObError::NotFound);
+    });
+
+    // #661 probe: an ObOperations whose on_destroy records what it can observe
+    // about its own object. After the fix the object must already be unlinked.
+    static PROBE_CALLS: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+    static PROBE_REACHABLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+    static PROBE_REF_OK: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+    struct ProbeOnDestroyOps;
+    impl ObOperations for ProbeOnDestroyOps {
+        fn on_destroy(&self, id: ObId, _native_id: u64) {
+            use core::sync::atomic::Ordering;
+            PROBE_CALLS.fetch_add(1, Ordering::SeqCst);
+            if ob_lookup(id).is_some() {
+                PROBE_REACHABLE.store(true, Ordering::SeqCst);
+            }
+            if ob_reference(id).is_ok() {
+                PROBE_REF_OK.store(true, Ordering::SeqCst);
+            }
+        }
+    }
+    static PROBE_OPS: ProbeOnDestroyOps = ProbeOnDestroyOps;
+
+    test_case!("ob_close_finalize_unlinks_before_callback", {
+        // #661: the object must be unlinked BEFORE on_destroy runs, so it cannot
+        // be resurrected by a concurrent reference/open and on_destroy cannot
+        // run twice.
+        use core::sync::atomic::Ordering;
+        PROBE_CALLS.store(0, Ordering::SeqCst);
+        PROBE_REACHABLE.store(false, Ordering::SeqCst);
+        PROBE_REF_OK.store(false, Ordering::SeqCst);
+        let id = ob_create_object(ObType::Event, "finalize_probe", 0, 0, Some(&PROBE_OPS)).unwrap();
+        ob_close_object(id).unwrap();
+        test_eq!(PROBE_CALLS.load(Ordering::SeqCst), 1);
+        test_false!(PROBE_REACHABLE.load(Ordering::SeqCst));
+        test_false!(PROBE_REF_OK.load(Ordering::SeqCst));
+        test_true!(ob_lookup(id).is_none());
+        // A second close is NotFound and must NOT invoke on_destroy again.
+        test_eq!(ob_close_object(id).unwrap_err(), ObError::NotFound);
+        test_eq!(PROBE_CALLS.load(Ordering::SeqCst), 1);
+    });
+
+    test_case!("ob_destroy_removes_security_descriptor", {
+        // #664: the SecurityDescriptor is released on destroy (no leak, no
+        // bleed onto a reused ObId).
+        use crate::security::acl::SecurityDescriptor;
+        let id = ob_create_object(ObType::Event, "sd_probe", 0, 0, None).unwrap();
+        ob_set_security(id, SecurityDescriptor::new()).unwrap();
+        test_true!(OB_SECURITY.lock().contains_key(&id));
+        ob_destroy_object(id).unwrap();
+        test_true!(!OB_SECURITY.lock().contains_key(&id));
     });
 
     test_case!("ob_lookup_not_found", {
