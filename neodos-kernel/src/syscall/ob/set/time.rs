@@ -1,7 +1,7 @@
 //! Ob set — system date/time.
 
 use crate::object::types::ObSetInfoClass;
-use crate::syscall::{err_to_u64, SyscallError};
+use crate::syscall::{err_to_u64, SyscallError, copy_from_user};
 use super::validate_datetime;
 
 pub(super) fn handles(info_class: u32) -> bool {
@@ -37,8 +37,8 @@ pub(super) fn dispatch(
                 return err_to_u64(SyscallError::Inval);
             }
             let mut raw = [0u8; 7];
-            unsafe {
-                core::ptr::copy_nonoverlapping(buf_ptr as *const u8, raw.as_mut_ptr(), sz);
+            if copy_from_user(&mut raw, buf_ptr).is_err() {
+                return err_to_u64(SyscallError::Fault);
             }
             let (second, minute, hour, day, month, year) =
                 (raw[0], raw[1], raw[2], raw[3], raw[4], raw[5]);

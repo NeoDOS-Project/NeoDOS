@@ -3,7 +3,7 @@ use alloc::string::{String, ToString};
 use crate::scheduler::{self, ThreadState};
 use crate::object::types::{ObInfoClass, ObSetInfoClass};
 use crate::log::LogSubsys;
-use crate::syscall::{current_handle_entry, copy_handle_entry_for_child, resolve_chdir_target, err_to_u64, ob_err_to_syscall, SyscallError};
+use crate::syscall::{current_handle_entry, copy_handle_entry_for_child, resolve_chdir_target, err_to_u64, ob_err_to_syscall, SyscallError, copy_to_user};
 use crate::syscall::util::{is_user_ptr_valid};
 
 pub fn handler_ob_enum(regs: crate::syscall::Registers) -> u64 {
@@ -73,14 +73,19 @@ pub fn handler_ob_enum(regs: crate::syscall::Registers) -> u64 {
         return match result {
             Ok(()) => {
                 let count = core::cmp::min(max_entries, entries.len());
-                for (i, raw) in entries.iter().enumerate().take(count) {
-                    unsafe {
-                        core::ptr::copy_nonoverlapping(
+                let esize = core::mem::size_of::<crate::object::ObEnumEntry>();
+                let mut out = alloc::vec::Vec::with_capacity(count * esize);
+                for raw in entries.iter().take(count) {
+                    let bytes = unsafe {
+                        core::slice::from_raw_parts(
                             raw as *const crate::object::ObEnumEntry as *const u8,
-                            (buf_ptr as *mut u8).add(i * core::mem::size_of::<crate::object::ObEnumEntry>()),
-                            core::mem::size_of::<crate::object::ObEnumEntry>(),
-                        );
-                    }
+                            esize,
+                        )
+                    };
+                    out.extend_from_slice(bytes);
+                }
+                if copy_to_user(buf_ptr, &out).is_err() {
+                    return err_to_u64(SyscallError::Fault);
                 }
                 count as u64
             }
@@ -102,14 +107,19 @@ pub fn handler_ob_enum(regs: crate::syscall::Registers) -> u64 {
         Err(_) => return err_to_u64(SyscallError::Inval),
     };
     let count = core::cmp::min(max_entries, ob_entries.len());
-    for (i, raw) in ob_entries.iter().enumerate().take(count) {
-        unsafe {
-            core::ptr::copy_nonoverlapping(
+    let esize = core::mem::size_of::<crate::object::ObEnumEntry>();
+    let mut out = alloc::vec::Vec::with_capacity(count * esize);
+    for raw in ob_entries.iter().take(count) {
+        let bytes = unsafe {
+            core::slice::from_raw_parts(
                 raw as *const crate::object::ObEnumEntry as *const u8,
-                (buf_ptr as *mut u8).add(i * core::mem::size_of::<crate::object::ObEnumEntry>()),
-                core::mem::size_of::<crate::object::ObEnumEntry>(),
-            );
-        }
+                esize,
+            )
+        };
+        out.extend_from_slice(bytes);
+    }
+    if copy_to_user(buf_ptr, &out).is_err() {
+        return err_to_u64(SyscallError::Fault);
     }
     count as u64
 }

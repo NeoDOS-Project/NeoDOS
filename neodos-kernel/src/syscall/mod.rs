@@ -21,7 +21,7 @@ mod cm;
 mod tests;
 pub mod util;
 pub mod resched;
-pub(crate) use util::{is_user_ptr_valid, copy_user_string};
+pub(crate) use util::{is_user_ptr_valid, copy_user_string, copy_from_user, copy_to_user};
 
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;

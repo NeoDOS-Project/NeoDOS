@@ -1,7 +1,7 @@
 //! Ob set — sockets, NIC IP/gateway and hostname.
 
 use crate::object::types::ObSetInfoClass;
-use crate::syscall::{err_to_u64, SyscallError};
+use crate::syscall::{err_to_u64, SyscallError, copy_from_user};
 use crate::log::LogSubsys;
 
 pub(super) fn handles(info_class: u32) -> bool {
@@ -36,8 +36,12 @@ pub(super) fn dispatch(
                 return err_to_u64(SyscallError::Inval);
             }
             let socket_id = obj.native_id as u32;
-            let ip_bytes = unsafe { core::ptr::read_volatile(buf_ptr as *const [u8; 4]) };
-            let port = unsafe { core::ptr::read_volatile((buf_ptr + 4) as *const u16) };
+            let mut ab = [0u8; 6];
+            if copy_from_user(&mut ab, buf_ptr).is_err() {
+                return err_to_u64(SyscallError::Fault);
+            }
+            let ip_bytes = [ab[0], ab[1], ab[2], ab[3]];
+            let port = u16::from_ne_bytes([ab[4], ab[5]]);
             let remote = crate::net::types::SocketAddrV4::new(
                 crate::net::types::Ipv4Addr(ip_bytes),
                 u16::from_be(port),
@@ -63,8 +67,12 @@ pub(super) fn dispatch(
                 return err_to_u64(SyscallError::Inval);
             }
             let socket_id = obj.native_id as u32;
-            let ip_bytes = unsafe { core::ptr::read_volatile(buf_ptr as *const [u8; 4]) };
-            let port = unsafe { core::ptr::read_volatile((buf_ptr + 4) as *const u16) };
+            let mut ab = [0u8; 6];
+            if copy_from_user(&mut ab, buf_ptr).is_err() {
+                return err_to_u64(SyscallError::Fault);
+            }
+            let ip_bytes = [ab[0], ab[1], ab[2], ab[3]];
+            let port = u16::from_ne_bytes([ab[4], ab[5]]);
             let local = crate::net::types::SocketAddrV4::new(
                 crate::net::types::Ipv4Addr(ip_bytes),
                 u16::from_be(port),
@@ -83,10 +91,11 @@ pub(super) fn dispatch(
                 return err_to_u64(SyscallError::Inval);
             }
             let socket_id = obj.native_id as u32;
-            let nic_id = u32::from_le_bytes(unsafe {
-                [*(buf_ptr as *const u8), *((buf_ptr + 1) as *const u8),
-                 *((buf_ptr + 2) as *const u8), *((buf_ptr + 3) as *const u8)]
-            });
+            let mut nb = [0u8; 4];
+            if copy_from_user(&mut nb, buf_ptr).is_err() {
+                return err_to_u64(SyscallError::Fault);
+            }
+            let nic_id = u32::from_le_bytes(nb);
             if crate::net::socket::socket_set_nic(socket_id, nic_id) { 0 }
             else { err_to_u64(SyscallError::NoEnt) }
         }
@@ -114,8 +123,8 @@ pub(super) fn dispatch(
             }
             let socket_id = obj.native_id as u32;
             let mut temp = alloc::vec![0u8; buf_size];
-            unsafe {
-                core::ptr::copy_nonoverlapping(buf_ptr as *const u8, temp.as_mut_ptr(), buf_size);
+            if copy_from_user(&mut temp, buf_ptr).is_err() {
+                return err_to_u64(SyscallError::Fault);
             }
             match crate::net::socket::socket_send(socket_id, &temp) {
                 Ok(n) => n as u64,
@@ -140,14 +149,20 @@ pub(super) fn dispatch(
         // ── RegistryCreateKey (23): create a subkey (name in buf) ──
         _ if info_class == ObSetInfoClass::SetNicIp as u32 => {
             if buf_size < 8 { return err_to_u64(SyscallError::Inval); }
-            let iface_idx = unsafe { core::ptr::read_volatile(buf_ptr as *const u32) };
-            let ip_bytes = unsafe { core::ptr::read_volatile((buf_ptr + 4) as *const [u8; 4]) };
-            let ip = crate::net::types::Ipv4Addr(ip_bytes);
+            let mut hdr = [0u8; 8];
+            if copy_from_user(&mut hdr, buf_ptr).is_err() {
+                return err_to_u64(SyscallError::Fault);
+            }
+            let iface_idx = u32::from_ne_bytes([hdr[0], hdr[1], hdr[2], hdr[3]]);
+            let ip = crate::net::types::Ipv4Addr([hdr[4], hdr[5], hdr[6], hdr[7]]);
             kdebug!(LogSubsys::Object, "SetNicIp: iface={} ip={}", iface_idx, ip);
             crate::net::nic::nic_set_ip(iface_idx, ip);
             if buf_size >= 12 {
-                let mask_bytes = unsafe { core::ptr::read_volatile((buf_ptr + 8) as *const [u8; 4]) };
-                let mask = crate::net::types::Ipv4Addr(mask_bytes);
+                let mut mb = [0u8; 4];
+                if copy_from_user(&mut mb, buf_ptr + 8).is_err() {
+                    return err_to_u64(SyscallError::Fault);
+                }
+                let mask = crate::net::types::Ipv4Addr(mb);
                 kdebug!(LogSubsys::Object, "SetNicMask: iface={} mask={}", iface_idx, mask);
                 crate::net::nic::nic_set_mask(iface_idx, mask);
             }
@@ -156,9 +171,12 @@ pub(super) fn dispatch(
         // ── SetNicGateway (28): set NIC default gateway (0.0.0.0 = unset) ──
         _ if info_class == ObSetInfoClass::SetNicGateway as u32 => {
             if buf_size < 8 { return err_to_u64(SyscallError::Inval); }
-            let iface_idx = unsafe { core::ptr::read_volatile(buf_ptr as *const u32) };
-            let gw_bytes = unsafe { core::ptr::read_volatile((buf_ptr + 4) as *const [u8; 4]) };
-            let gw = crate::net::types::Ipv4Addr(gw_bytes);
+            let mut hdr = [0u8; 8];
+            if copy_from_user(&mut hdr, buf_ptr).is_err() {
+                return err_to_u64(SyscallError::Fault);
+            }
+            let iface_idx = u32::from_ne_bytes([hdr[0], hdr[1], hdr[2], hdr[3]]);
+            let gw = crate::net::types::Ipv4Addr([hdr[4], hdr[5], hdr[6], hdr[7]]);
             kdebug!(LogSubsys::Object, "SetNicGateway: iface={} gw={}", iface_idx, gw);
             crate::net::nic::nic_set_gateway(iface_idx, gw);
             0
@@ -173,8 +191,8 @@ pub(super) fn dispatch(
             let hostname_bytes = {
                 let mut tmp = [0u8; 64];
                 let copy_len = buf_size.min(63);
-                unsafe {
-                    core::ptr::copy_nonoverlapping(buf_ptr as *const u8, tmp.as_mut_ptr(), copy_len);
+                if copy_from_user(&mut tmp[..copy_len], buf_ptr).is_err() {
+                    return err_to_u64(SyscallError::Fault);
                 }
                 tmp[copy_len] = 0;
                 let s = match core::str::from_utf8(&tmp[..copy_len]) {

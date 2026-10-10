@@ -1,7 +1,7 @@
 //! Ob set — object name and security descriptor.
 
 use crate::object::types::ObSetInfoClass;
-use crate::syscall::{err_to_u64, SyscallError};
+use crate::syscall::{err_to_u64, SyscallError, copy_from_user};
 use crate::syscall::util::copy_user_string;
 
 pub(super) fn handles(info_class: u32) -> bool {
@@ -42,26 +42,28 @@ pub(super) fn dispatch(
             if buf_size < 2 {
                 return err_to_u64(SyscallError::Inval);
             }
-            let base = buf_ptr as *const u8;
-            let _sd_rev = unsafe { core::ptr::read_volatile(base) };
-            let ace_count = unsafe { core::ptr::read_volatile(base.add(1)) };
+            let mut kbuf = alloc::vec::Vec::with_capacity(buf_size);
+            kbuf.resize(buf_size, 0u8);
+            if copy_from_user(&mut kbuf, buf_ptr).is_err() {
+                return err_to_u64(SyscallError::Fault);
+            }
+            let _sd_rev = kbuf[0];
+            let ace_count = kbuf[1];
             let mut offset = 2usize;
             let mut acl = crate::security::acl::Acl::new();
             for _ in 0..ace_count {
                 if offset + 7 > buf_size {
                     return err_to_u64(SyscallError::Inval);
                 }
-                let ace_type = unsafe { core::ptr::read_volatile(base.add(offset)) };
-                let flags = unsafe { core::ptr::read_volatile(base.add(offset + 1)) };
-                let access_mask = unsafe {
-                    u32::from_le_bytes([
-                        core::ptr::read_volatile(base.add(offset + 2)),
-                        core::ptr::read_volatile(base.add(offset + 3)),
-                        core::ptr::read_volatile(base.add(offset + 4)),
-                        core::ptr::read_volatile(base.add(offset + 5)),
-                    ])
-                };
-                let sid_cnt = unsafe { core::ptr::read_volatile(base.add(offset + 6)) } as usize;
+                let ace_type = kbuf[offset];
+                let flags = kbuf[offset + 1];
+                let access_mask = u32::from_le_bytes([
+                    kbuf[offset + 2],
+                    kbuf[offset + 3],
+                    kbuf[offset + 4],
+                    kbuf[offset + 5],
+                ]);
+                let sid_cnt = kbuf[offset + 6] as usize;
                 if sid_cnt > crate::security::sid::MAX_SUB_AUTHORITIES {
                     return err_to_u64(SyscallError::Inval);
                 }
@@ -71,19 +73,17 @@ pub(super) fn dispatch(
                 }
                 let mut sid_auth = [0u8; 6];
                 for j in 0..6 {
-                    sid_auth[j] = unsafe { core::ptr::read_volatile(base.add(offset + j)) };
+                    sid_auth[j] = kbuf[offset + j];
                 }
                 offset += 6;
                 let mut sid_subs = [0u32; crate::security::sid::MAX_SUB_AUTHORITIES];
                 for j in 0..sid_cnt {
-                    sid_subs[j] = unsafe {
-                        u32::from_le_bytes([
-                            core::ptr::read_volatile(base.add(offset + j * 4)),
-                            core::ptr::read_volatile(base.add(offset + j * 4 + 1)),
-                            core::ptr::read_volatile(base.add(offset + j * 4 + 2)),
-                            core::ptr::read_volatile(base.add(offset + j * 4 + 3)),
-                        ])
-                    };
+                    sid_subs[j] = u32::from_le_bytes([
+                        kbuf[offset + j * 4],
+                        kbuf[offset + j * 4 + 1],
+                        kbuf[offset + j * 4 + 2],
+                        kbuf[offset + j * 4 + 3],
+                    ]);
                 }
                 offset += sid_cnt * 4;
                 let sid = crate::security::sid::Sid::from_parts(1, &sid_auth, &sid_subs[..sid_cnt]);

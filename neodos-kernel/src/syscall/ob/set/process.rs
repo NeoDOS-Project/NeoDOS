@@ -1,7 +1,7 @@
 //! Ob set — process/thread priority, terminate and VT foreground.
 
 use crate::object::types::ObSetInfoClass;
-use crate::syscall::{err_to_u64, SyscallError};
+use crate::syscall::{err_to_u64, SyscallError, copy_from_user};
 
 pub(super) fn handles(info_class: u32) -> bool {
     info_class == ObSetInfoClass::ProcessPriority as u32
@@ -34,7 +34,11 @@ pub(super) fn dispatch(
             if buf_size < 4 {
                 return err_to_u64(SyscallError::Inval);
             }
-            let priority = unsafe { core::ptr::read_volatile(buf_ptr as *const u32) };
+            let mut pb = [0u8; 4];
+            if copy_from_user(&mut pb, buf_ptr).is_err() {
+                return err_to_u64(SyscallError::Fault);
+            }
+            let priority = u32::from_ne_bytes(pb);
             if priority > 3 {
                 return err_to_u64(SyscallError::Inval);
             }
@@ -60,7 +64,11 @@ pub(super) fn dispatch(
             if buf_size < 4 {
                 return err_to_u64(SyscallError::Inval);
             }
-            let priority = unsafe { core::ptr::read_volatile(buf_ptr as *const u32) };
+            let mut pb = [0u8; 4];
+            if copy_from_user(&mut pb, buf_ptr).is_err() {
+                return err_to_u64(SyscallError::Fault);
+            }
+            let priority = u32::from_ne_bytes(pb);
             if priority > 3 {
                 return err_to_u64(SyscallError::Inval);
             }
@@ -137,7 +145,11 @@ pub(super) fn dispatch(
                 return err_to_u64(SyscallError::Inval);
             }
             if buf_size < 1 { return err_to_u64(SyscallError::Inval); }
-            let new_vt = unsafe { core::ptr::read_volatile(buf_ptr as *const u8) };
+            let mut vb = [0u8; 1];
+            if copy_from_user(&mut vb, buf_ptr).is_err() {
+                return err_to_u64(SyscallError::Fault);
+            }
+            let new_vt = vb[0];
             if new_vt >= crate::input::vt::VT_COUNT as u8 { return err_to_u64(SyscallError::Inval); }
             crate::hal::without_interrupts(|| {
                 let s = crate::scheduler::current_scheduler();

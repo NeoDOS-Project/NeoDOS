@@ -1,7 +1,7 @@
 //! Ob query — CPU, memory, drives and drivers.
 
 use crate::object::types::ObInfoClass;
-use crate::syscall::{err_to_u64, SyscallError};
+use crate::syscall::{err_to_u64, SyscallError, copy_to_user};
 use crate::syscall::ob::types::{ObDeviceInfo, DriveInfoRaw, DriverInfoRaw};
 
 pub(super) fn handles(info_class: u32) -> bool {
@@ -35,11 +35,11 @@ pub(super) fn dispatch(
             let sz = core::mem::size_of::<crate::cpu::CpuInfoFull>();
             if buf_size < (sz as usize) { return err_to_u64(SyscallError::Inval); }
             let info = crate::cpu::get_cpu_info_full();
-            unsafe {
-                core::ptr::copy_nonoverlapping(
-                    &info as *const crate::cpu::CpuInfoFull as *const u8,
-                    buf_ptr as *mut u8, sz as usize,
-                );
+            let bytes = unsafe {
+                core::slice::from_raw_parts(&info as *const crate::cpu::CpuInfoFull as *const u8, sz)
+            };
+            if copy_to_user(buf_ptr, bytes).is_err() {
+                return err_to_u64(SyscallError::Fault);
             }
             sz as u64
         }
@@ -59,11 +59,11 @@ pub(super) fn dispatch(
             if buf_size < OLD_SZ { return err_to_u64(SyscallError::Inval); }
             let copy_sz = core::cmp::min(buf_size, full_sz);
             let stats = crate::memory::stats();
-            unsafe {
-                core::ptr::copy_nonoverlapping(
-                    &stats as *const crate::memory::MemoryStats as *const u8,
-                    buf_ptr as *mut u8, copy_sz,
-                );
+            let bytes = unsafe {
+                core::slice::from_raw_parts(&stats as *const crate::memory::MemoryStats as *const u8, copy_sz)
+            };
+            if copy_to_user(buf_ptr, bytes).is_err() {
+                return err_to_u64(SyscallError::Fault);
             }
             copy_sz as u64
         }
@@ -81,6 +81,7 @@ pub(super) fn dispatch(
             let entry_size = core::mem::size_of::<DriveInfoRaw>();
             let max_entries = buf_size / entry_size;
             if max_entries == 0 { return 0u64; }
+            let mut kernel_out: alloc::vec::Vec<u8> = alloc::vec::Vec::new();
             let written = crate::globals::with_vfs(|vfs| {
                 let mut count = 0usize;
                 for i in 0..26 {
@@ -107,18 +108,18 @@ pub(super) fn dispatch(
                             label: label_bytes,
                             total_sectors,
                         };
-                        unsafe {
-                            core::ptr::copy_nonoverlapping(
-                                &raw as *const DriveInfoRaw as *const u8,
-                                (buf_ptr as *mut u8).add(count * entry_size),
-                                entry_size,
-                            );
-                        }
+                        let bytes = unsafe {
+                            core::slice::from_raw_parts(&raw as *const DriveInfoRaw as *const u8, entry_size)
+                        };
+                        kernel_out.extend_from_slice(bytes);
                         count += 1;
                     }
                 }
                 (count * entry_size) as u64
             });
+            if copy_to_user(buf_ptr, &kernel_out).is_err() {
+                return err_to_u64(SyscallError::Fault);
+            }
             written
         }
         _ if info_class == ObInfoClass::Drivers as u32 => {
@@ -143,12 +144,11 @@ pub(super) fn dispatch(
                         events_received: d.events_received, tick_count: d.tick_count,
                         registered_at_tick: d.registered_at_tick, name: d.name,
                     };
-                    unsafe {
-                        core::ptr::copy_nonoverlapping(
-                            &raw as *const DriverInfoRaw as *const u8,
-                            buf_ptr as *mut u8,
-                            entry_size,
-                        );
+                    let bytes = unsafe {
+                        core::slice::from_raw_parts(&raw as *const DriverInfoRaw as *const u8, entry_size)
+                    };
+                    if copy_to_user(buf_ptr, bytes).is_err() {
+                        return err_to_u64(SyscallError::Fault);
                     }
                     return entry_size as u64;
                 }
@@ -164,6 +164,8 @@ pub(super) fn dispatch(
             let runtime = crate::drivers::driver_runtime::DRIVER_RUNTIME.lock();
             let ids = runtime.driver_ids();
             let count = ids.len().min(max_entries);
+            let mut out = alloc::vec::Vec::new();
+            out.resize(count * entry_size_bulk, 0u8);
             for (i, &id) in ids.iter().enumerate().take(count) {
                 if let Some(d) = crate::drivers::driver_runtime::get_driver(id) {
                     let raw = DriverInfoRaw {
@@ -174,16 +176,16 @@ pub(super) fn dispatch(
                         events_received: d.events_received, tick_count: d.tick_count,
                         registered_at_tick: d.registered_at_tick, name: d.name,
                     };
-                    unsafe {
-                        core::ptr::copy_nonoverlapping(
-                            &raw as *const DriverInfoRaw as *const u8,
-                            (buf_ptr as *mut u8).add(i * entry_size_bulk),
-                            entry_size_bulk,
-                        );
-                    }
+                    let bytes = unsafe {
+                        core::slice::from_raw_parts(&raw as *const DriverInfoRaw as *const u8, entry_size_bulk)
+                    };
+                    out[i * entry_size_bulk..(i + 1) * entry_size_bulk].copy_from_slice(bytes);
                 }
             }
     drop(runtime);
+    if copy_to_user(buf_ptr, &out).is_err() {
+        return err_to_u64(SyscallError::Fault);
+    }
     (count * entry_size_bulk) as u64
         }
         _ if info_class == ObInfoClass::Device as u32 => {
@@ -200,11 +202,11 @@ pub(super) fn dispatch(
             };
             let sz = core::mem::size_of::<ObDeviceInfo>();
             if buf_size < sz { return err_to_u64(SyscallError::Inval); }
-            unsafe {
-                core::ptr::copy_nonoverlapping(
-                    &di as *const ObDeviceInfo as *const u8,
-                    buf_ptr as *mut u8, sz,
-                );
+            let bytes = unsafe {
+                core::slice::from_raw_parts(&di as *const ObDeviceInfo as *const u8, sz)
+            };
+            if copy_to_user(buf_ptr, bytes).is_err() {
+                return err_to_u64(SyscallError::Fault);
             }
             sz as u64
         }

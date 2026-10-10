@@ -1,7 +1,7 @@
 //! Ob query — SMP observability and process/thread snapshots.
 
 use crate::object::types::ObInfoClass;
-use crate::syscall::{err_to_u64, SyscallError};
+use crate::syscall::{err_to_u64, SyscallError, copy_to_user};
 use crate::syscall::ob::types::{StatsHeader, CpuStatsEntry, ThreadStatsEntry, STATS_VERSION, SmpStats, SMP_STATS_VERSION, ProcSnapshotHeader, ProcessInfoRaw, ThreadInfoRaw, PROC_SNAPSHOT_VERSION, PROC_NAME_MAX, PROC_SNAPSHOT_FLAG_TRUNCATED};
 use super::process::process_state_aggregate;
 
@@ -100,12 +100,14 @@ fn read_cpu_stats(cpu: u32, online: bool, total: u32) -> CpuStatsEntry {
     }
 }
 
-/// Build a `[StatsHeader][CpuStatsEntry; returned]` snapshot into `buf_ptr`.
-fn snapshot_cpu_stats(buf_ptr: u64, buf_size: usize) -> u64 {
+/// Build a `[StatsHeader][CpuStatsEntry; returned]` snapshot into a kernel
+/// buffer. Kernel-only (no user memory touched); the syscall wrapper copies the
+/// result out fault-safely (NEODOS-04 / #634).
+fn build_cpu_stats(buf_size: usize) -> Result<alloc::vec::Vec<u8>, SyscallError> {
     let hdr_sz = core::mem::size_of::<StatsHeader>();
     let entry_sz = core::mem::size_of::<CpuStatsEntry>();
     if buf_size < hdr_sz {
-        return err_to_u64(SyscallError::Inval);
+        return Err(SyscallError::Inval);
     }
 
     // NeoDOS brings CPUs online sequentially and `cpu_count()` returns the
@@ -121,28 +123,38 @@ fn snapshot_cpu_stats(buf_ptr: u64, buf_size: usize) -> u64 {
         returned: returned as u32,
         entry_size: entry_sz as u32,
     };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            &hdr as *const StatsHeader as *const u8,
-            buf_ptr as *mut u8,
-            hdr_sz,
-        );
-        let mut out = (buf_ptr as *mut u8).add(hdr_sz) as *mut CpuStatsEntry;
-        for cpu in 0..returned {
-            let entry = read_cpu_stats(cpu as u32, true, total);
-            out.write(entry);
-            out = out.add(1);
-        }
+    let mut out = alloc::vec::Vec::with_capacity(hdr_sz + returned * entry_sz);
+    let hdr_bytes = unsafe {
+        core::slice::from_raw_parts(&hdr as *const StatsHeader as *const u8, hdr_sz)
+    };
+    out.extend_from_slice(hdr_bytes);
+    for cpu in 0..returned {
+        let entry = read_cpu_stats(cpu as u32, true, total);
+        let entry_bytes = unsafe {
+            core::slice::from_raw_parts(&entry as *const CpuStatsEntry as *const u8, entry_sz)
+        };
+        out.extend_from_slice(entry_bytes);
     }
-    (hdr_sz + returned * entry_sz) as u64
+    Ok(out)
 }
 
-/// Build a `SmpStats` (global work-stealing counters) into `buf_ptr`.
-fn snapshot_smp_stats(buf_ptr: u64, buf_size: usize) -> u64 {
+/// Fault-safe syscall wrapper for [`build_cpu_stats`].
+fn snapshot_cpu_stats(buf_ptr: u64, buf_size: usize) -> u64 {
+    match build_cpu_stats(buf_size) {
+        Ok(out) => {
+            if copy_to_user(buf_ptr, &out).is_ok() { out.len() as u64 }
+            else { err_to_u64(SyscallError::Fault) }
+        }
+        Err(e) => err_to_u64(e),
+    }
+}
+
+/// Build a `SmpStats` (global work-stealing counters) snapshot. Kernel-only.
+fn build_smp_stats(buf_size: usize) -> Result<alloc::vec::Vec<u8>, SyscallError> {
     use core::sync::atomic::Ordering;
     let sz = core::mem::size_of::<SmpStats>();
     if buf_size < sz {
-        return err_to_u64(SyscallError::Inval);
+        return Err(SyscallError::Inval);
     }
     let stats = SmpStats {
         version: SMP_STATS_VERSION,
@@ -150,14 +162,21 @@ fn snapshot_smp_stats(buf_ptr: u64, buf_size: usize) -> u64 {
         steal_attempts: crate::scheduler::smp::STEAL_ATTEMPTS.load(Ordering::Relaxed),
         steal_success: crate::scheduler::smp::STEAL_SUCCESS.load(Ordering::Relaxed),
     };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            &stats as *const SmpStats as *const u8,
-            buf_ptr as *mut u8,
-            sz,
-        );
+    let bytes = unsafe {
+        core::slice::from_raw_parts(&stats as *const SmpStats as *const u8, sz)
+    };
+    Ok(bytes.to_vec())
+}
+
+/// Fault-safe syscall wrapper for [`build_smp_stats`].
+fn snapshot_smp_stats(buf_ptr: u64, buf_size: usize) -> u64 {
+    match build_smp_stats(buf_size) {
+        Ok(out) => {
+            if copy_to_user(buf_ptr, &out).is_ok() { out.len() as u64 }
+            else { err_to_u64(SyscallError::Fault) }
+        }
+        Err(e) => err_to_u64(e),
     }
-    sz as u64
 }
 
 /// Build a `[StatsHeader][ThreadStatsEntry; returned]` snapshot into `buf_ptr`.
@@ -167,17 +186,17 @@ fn snapshot_smp_stats(buf_ptr: u64, buf_size: usize) -> u64 {
 /// best-effort snapshot: threads created/terminated concurrently may or may
 /// not appear, and `Kthread.cpu` reflects the CPU the thread is enqueued or
 /// running on at copy time.
-fn snapshot_thread_stats(buf_ptr: u64, buf_size: usize) -> u64 {
+fn build_thread_stats(buf_size: usize) -> Result<alloc::vec::Vec<u8>, SyscallError> {
     let hdr_sz = core::mem::size_of::<StatsHeader>();
     let entry_sz = core::mem::size_of::<ThreadStatsEntry>();
     if buf_size < hdr_sz {
-        return err_to_u64(SyscallError::Inval);
+        return Err(SyscallError::Inval);
     }
 
     // One snapshot in flight; contended calls are retryable, never blocking.
     let _guard = match THREAD_STATS_LOCK.try_lock() {
         Some(g) => g,
-        None => return err_to_u64(SyscallError::Again),
+        None => return Err(SyscallError::Again),
     };
 
     let mut total = 0usize;
@@ -215,21 +234,32 @@ fn snapshot_thread_stats(buf_ptr: u64, buf_size: usize) -> u64 {
         returned: copied as u32,
         entry_size: entry_sz as u32,
     };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            &hdr as *const StatsHeader as *const u8,
-            buf_ptr as *mut u8,
-            hdr_sz,
-        );
-        if copied > 0 {
-            core::ptr::copy_nonoverlapping(
+    let mut out = alloc::vec::Vec::with_capacity(hdr_sz + copied * entry_sz);
+    let hdr_bytes = unsafe {
+        core::slice::from_raw_parts(&hdr as *const StatsHeader as *const u8, hdr_sz)
+    };
+    out.extend_from_slice(hdr_bytes);
+    if copied > 0 {
+        let staged = unsafe {
+            core::slice::from_raw_parts(
                 core::ptr::addr_of!(THREAD_STATS_STAGING) as *const u8,
-                (buf_ptr as *mut u8).add(hdr_sz),
                 copied * entry_sz,
-            );
-        }
+            )
+        };
+        out.extend_from_slice(staged);
     }
-    (hdr_sz + copied * entry_sz) as u64
+    Ok(out)
+}
+
+/// Fault-safe syscall wrapper for [`build_thread_stats`].
+fn snapshot_thread_stats(buf_ptr: u64, buf_size: usize) -> u64 {
+    match build_thread_stats(buf_size) {
+        Ok(out) => {
+            if copy_to_user(buf_ptr, &out).is_ok() { out.len() as u64 }
+            else { err_to_u64(SyscallError::Fault) }
+        }
+        Err(e) => err_to_u64(e),
+    }
 }
 
 /// Copy a kernel name into the fixed `PROC_NAME_MAX` user-visible field,
@@ -252,17 +282,17 @@ fn name_to_array(name: &str) -> [u8; PROC_NAME_MAX] {
 /// only then are records copied to user space (no kernel pointers escape).
 /// Returns bytes written; `-Again` if a snapshot is already in flight;
 /// `-Inval` if the buffer cannot hold the header.
-fn snapshot_process_snapshot(buf_ptr: u64, buf_size: usize) -> u64 {
+fn build_process_snapshot(buf_size: usize) -> Result<alloc::vec::Vec<u8>, SyscallError> {
     let hdr_sz = core::mem::size_of::<ProcSnapshotHeader>();
     let proc_sz = core::mem::size_of::<ProcessInfoRaw>();
     let thr_sz = core::mem::size_of::<ThreadInfoRaw>();
     if buf_size < hdr_sz {
-        return err_to_u64(SyscallError::Inval);
+        return Err(SyscallError::Inval);
     }
 
     let _guard = match PROC_SNAPSHOT_LOCK.try_lock() {
         Some(g) => g,
-        None => return err_to_u64(SyscallError::Again),
+        None => return Err(SyscallError::Again),
     };
 
     // Capture under the scheduler lock; released before any user-memory write.
@@ -277,6 +307,8 @@ fn snapshot_process_snapshot(buf_ptr: u64, buf_size: usize) -> u64 {
     let p_total = staging.process_count.min(crate::scheduler::MAX_SNAPSHOT_PROCESSES);
     let t_total = staging.thread_count.min(crate::scheduler::MAX_SNAPSHOT_THREADS);
 
+    let mut out = alloc::vec::Vec::new();
+    out.resize(hdr_sz, 0u8);
     let mut off = hdr_sz;
     let mut p_ret = 0usize;
     while p_ret < p_total && off + proc_sz <= buf_size {
@@ -289,13 +321,10 @@ fn snapshot_process_snapshot(buf_ptr: u64, buf_size: usize) -> u64 {
             committed_bytes: p.committed_bytes,
             working_set_bytes: p.working_set_bytes,
         };
-        unsafe {
-            core::ptr::copy_nonoverlapping(
-                &raw as *const ProcessInfoRaw as *const u8,
-                (buf_ptr as *mut u8).add(off),
-                proc_sz,
-            );
-        }
+        let bytes = unsafe {
+            core::slice::from_raw_parts(&raw as *const ProcessInfoRaw as *const u8, proc_sz)
+        };
+        out.extend_from_slice(bytes);
         off += proc_sz;
         p_ret += 1;
     }
@@ -314,13 +343,10 @@ fn snapshot_process_snapshot(buf_ptr: u64, buf_size: usize) -> u64 {
             cpu: t.cpu,
             cpu_time: t.cpu_time,
         };
-        unsafe {
-            core::ptr::copy_nonoverlapping(
-                &raw as *const ThreadInfoRaw as *const u8,
-                (buf_ptr as *mut u8).add(off),
-                thr_sz,
-            );
-        }
+        let bytes = unsafe {
+            core::slice::from_raw_parts(&raw as *const ThreadInfoRaw as *const u8, thr_sz)
+        };
+        out.extend_from_slice(bytes);
         off += thr_sz;
         t_ret += 1;
     }
@@ -337,14 +363,23 @@ fn snapshot_process_snapshot(buf_ptr: u64, buf_size: usize) -> u64 {
         thread_entry_size: thr_sz as u32,
         flags: if truncated { PROC_SNAPSHOT_FLAG_TRUNCATED } else { 0 },
     };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            &hdr as *const ProcSnapshotHeader as *const u8,
-            buf_ptr as *mut u8,
-            hdr_sz,
-        );
+    let hdr_bytes = unsafe {
+        core::slice::from_raw_parts(&hdr as *const ProcSnapshotHeader as *const u8, hdr_sz)
+    };
+    out[..hdr_sz].copy_from_slice(hdr_bytes);
+    Ok(out)
+}
+
+/// Fault-safe syscall wrapper for [`build_process_snapshot`].
+fn snapshot_process_snapshot(buf_ptr: u64, buf_size: usize) -> u64 {
+    match build_process_snapshot(buf_size) {
+        Ok(out) => {
+            let n = out.len() as u64;
+            if copy_to_user(buf_ptr, &out).is_ok() { n }
+            else { err_to_u64(SyscallError::Fault) }
+        }
+        Err(e) => err_to_u64(e),
     }
-    off as u64
 }
 
 pub(super) fn handles(info_class: u32) -> bool {
@@ -462,17 +497,14 @@ pub fn register_ob_stats_tests() {
     });
 
     test_case!("smp_stats_snapshot", {
-        let mut buf = [0u8; core::mem::size_of::<SmpStats>()];
-        let n = snapshot_smp_stats(buf.as_mut_ptr() as u64, buf.len()) as usize;
-        test_eq!(n, core::mem::size_of::<SmpStats>());
-        let s = unsafe { core::ptr::read_unaligned(buf.as_ptr() as *const SmpStats) };
+        let out = build_smp_stats(core::mem::size_of::<SmpStats>()).unwrap();
+        test_eq!(out.len(), core::mem::size_of::<SmpStats>());
+        let s = unsafe { core::ptr::read_unaligned(out.as_ptr() as *const SmpStats) };
         test_eq!(s.version, SMP_STATS_VERSION);
         // Counters are read live; a snapshot must report success >= attempts.
         test_true!(s.steal_success <= s.steal_attempts);
         // Too-small buffer is rejected, not truncated.
-        let mut small = [0u8; 4];
-        let r = snapshot_smp_stats(small.as_mut_ptr() as u64, small.len());
-        test_true!(r > u64::MAX - 0x1000); // err_to_u64(...) => huge (negative) value
+        test_true!(build_smp_stats(4).is_err());
     });
 
     test_case!("process_state_aggregate_semantics", {
@@ -485,10 +517,9 @@ pub fn register_ob_stats_tests() {
     });
 
     test_case!("cpu_stats_snapshot_header", {
-        let mut buf = [0u8; 16 + 40 * 2];
-        let n = snapshot_cpu_stats(buf.as_mut_ptr() as u64, buf.len()) as usize;
-        test_true!(n >= core::mem::size_of::<StatsHeader>());
-        let hdr = unsafe { core::ptr::read_unaligned(buf.as_ptr() as *const StatsHeader) };
+        let out = build_cpu_stats(16 + 40 * 2).unwrap();
+        test_true!(out.len() >= core::mem::size_of::<StatsHeader>());
+        let hdr = unsafe { core::ptr::read_unaligned(out.as_ptr() as *const StatsHeader) };
         test_eq!(hdr.version, STATS_VERSION);
         test_eq!(hdr.entry_size as usize, core::mem::size_of::<CpuStatsEntry>());
         test_true!(hdr.total >= 1);
@@ -497,10 +528,9 @@ pub fn register_ob_stats_tests() {
     });
 
     test_case!("thread_stats_snapshot_header", {
-        let mut buf = [0u8; 16 + 24 * 4];
-        let n = snapshot_thread_stats(buf.as_mut_ptr() as u64, buf.len()) as usize;
-        test_true!(n >= core::mem::size_of::<StatsHeader>());
-        let hdr = unsafe { core::ptr::read_unaligned(buf.as_ptr() as *const StatsHeader) };
+        let out = build_thread_stats(16 + 24 * 4).unwrap();
+        test_true!(out.len() >= core::mem::size_of::<StatsHeader>());
+        let hdr = unsafe { core::ptr::read_unaligned(out.as_ptr() as *const StatsHeader) };
         test_eq!(hdr.version, STATS_VERSION);
         test_eq!(hdr.entry_size as usize, core::mem::size_of::<ThreadStatsEntry>());
         test_true!(hdr.returned <= hdr.total);
@@ -510,10 +540,9 @@ pub fn register_ob_stats_tests() {
     test_case!("thread_stats_truncation_is_reported", {
         // Room for exactly one entry: header.total must still be the true
         // count so callers can detect truncation (never silent).
-        let mut buf = [0u8; 16 + 24];
-        let n = snapshot_thread_stats(buf.as_mut_ptr() as u64, buf.len()) as usize;
-        test_eq!(n, 16 + 24);
-        let hdr = unsafe { core::ptr::read_unaligned(buf.as_ptr() as *const StatsHeader) };
+        let out = build_thread_stats(16 + 24).unwrap();
+        test_eq!(out.len(), 16 + 24);
+        let hdr = unsafe { core::ptr::read_unaligned(out.as_ptr() as *const StatsHeader) };
         test_eq!(hdr.returned, 1);
         test_true!(hdr.total >= hdr.returned);
     });
@@ -538,11 +567,10 @@ pub fn register_ob_stats_tests() {
         let cap = core::mem::size_of::<ProcSnapshotHeader>()
             + core::mem::size_of::<ProcessInfoRaw>() * crate::scheduler::MAX_SNAPSHOT_PROCESSES
             + core::mem::size_of::<ThreadInfoRaw>() * crate::scheduler::MAX_SNAPSHOT_THREADS;
-        let mut buf = alloc::vec![0u8; cap];
-        let n = snapshot_process_snapshot(buf.as_mut_ptr() as u64, buf.len()) as usize;
-        test_true!(n >= core::mem::size_of::<ProcSnapshotHeader>());
+        let out = build_process_snapshot(cap).unwrap();
+        test_true!(out.len() >= core::mem::size_of::<ProcSnapshotHeader>());
         let hdr = unsafe {
-            core::ptr::read_unaligned(buf.as_ptr() as *const ProcSnapshotHeader)
+            core::ptr::read_unaligned(out.as_ptr() as *const ProcSnapshotHeader)
         };
         test_eq!(hdr.version, PROC_SNAPSHOT_VERSION);
         test_eq!(hdr.process_entry_size as usize, core::mem::size_of::<ProcessInfoRaw>());
@@ -563,7 +591,7 @@ pub fn register_ob_stats_tests() {
         for i in 0..hdr.process_returned as usize {
             let p = unsafe {
                 core::ptr::read_unaligned(
-                    buf.as_ptr().add(pbase + i * core::mem::size_of::<ProcessInfoRaw>())
+                    out.as_ptr().add(pbase + i * core::mem::size_of::<ProcessInfoRaw>())
                         as *const ProcessInfoRaw,
                 )
             };
@@ -576,7 +604,7 @@ pub fn register_ob_stats_tests() {
         for i in 0..hdr.thread_returned as usize {
             let t = unsafe {
                 core::ptr::read_unaligned(
-                    buf.as_ptr().add(tbase + i * core::mem::size_of::<ThreadInfoRaw>())
+                    out.as_ptr().add(tbase + i * core::mem::size_of::<ThreadInfoRaw>())
                         as *const ThreadInfoRaw,
                 )
             };
@@ -603,18 +631,15 @@ pub fn register_ob_stats_tests() {
 
     test_case!("proc_snapshot_truncation_and_zero_capacity", {
         // Zero capacity is rejected deterministically.
-        let mut small = [0u8; 32];
-        let r = snapshot_process_snapshot(small.as_mut_ptr() as u64, 0);
-        test_true!((r as i64) < 0);
+        test_true!(build_process_snapshot(0).is_err());
 
         // Room for the header + exactly one process: processes capped at 1 and
         // the truncated flag is set (never a silent partial snapshot).
         let one = core::mem::size_of::<ProcSnapshotHeader>()
             + core::mem::size_of::<ProcessInfoRaw>();
-        let mut buf = alloc::vec![0u8; one];
-        let _ = snapshot_process_snapshot(buf.as_mut_ptr() as u64, buf.len());
+        let out = build_process_snapshot(one).unwrap();
         let hdr = unsafe {
-            core::ptr::read_unaligned(buf.as_ptr() as *const ProcSnapshotHeader)
+            core::ptr::read_unaligned(out.as_ptr() as *const ProcSnapshotHeader)
         };
         test_true!(hdr.process_returned <= 1);
         test_true!(hdr.process_returned <= hdr.process_total);

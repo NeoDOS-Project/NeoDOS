@@ -3,7 +3,7 @@ use alloc::string::{String, ToString};
 use crate::scheduler::{self, ThreadState};
 use crate::object::types::{ObInfoClass, ObSetInfoClass};
 use crate::log::LogSubsys;
-use crate::syscall::util::{is_user_ptr_valid, copy_user_string};
+use crate::syscall::util::copy_from_user;
 use crate::syscall::{current_handle_entry, copy_handle_entry_for_child, resolve_chdir_target, err_to_u64, ob_err_to_syscall, SyscallError};
 
 pub fn handler_ob_wait(regs: crate::syscall::Registers) -> u64 {
@@ -15,9 +15,6 @@ pub fn handler_ob_wait(regs: crate::syscall::Registers) -> u64 {
     if handle_count == 0 || handles_ptr == 0 {
         return err_to_u64(SyscallError::Inval);
     }
-    if !is_user_ptr_valid(handles_ptr, (handle_count as u64) * 8) {
-        return err_to_u64(SyscallError::Fault);
-    }
     if handle_count > 1 {
         return err_to_u64(SyscallError::NoSys);
     }
@@ -25,7 +22,12 @@ pub fn handler_ob_wait(regs: crate::syscall::Registers) -> u64 {
         return err_to_u64(SyscallError::Inval);
     }
 
-    let fd = unsafe { (handles_ptr as *const u64).read() } as u8;
+    // Fault-safe read of the single handle (NEODOS-04 / #634).
+    let mut hbuf = [0u8; 8];
+    if copy_from_user(&mut hbuf, handles_ptr).is_err() {
+        return err_to_u64(SyscallError::Fault);
+    }
+    let fd = u64::from_ne_bytes(hbuf) as u8;
     let entry = current_handle_entry(fd);
 
     if entry.object_id == 0 {

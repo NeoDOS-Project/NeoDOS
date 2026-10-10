@@ -1,6 +1,6 @@
 //! Ob create — pipe objects (paired read/write handles).
 
-use crate::syscall::{err_to_u64, SyscallError};
+use crate::syscall::{err_to_u64, SyscallError, copy_to_user};
 use crate::scheduler;
 use crate::syscall::ob_err_to_syscall;
 use crate::syscall::util::is_user_ptr_valid;
@@ -60,9 +60,11 @@ pub(super) fn dispatch(
             crate::object::ob_reference(ob_id).ok();
             crate::object::ob_reference(ob_id).ok();
             let _ = crate::object::ob_close_object(ob_id);
-            unsafe {
-                (fds_out as *mut u64).write(rfd);
-                (fds_out as *mut u64).add(1).write(wfd);
+            let mut out = [0u8; 16];
+            out[..8].copy_from_slice(&rfd.to_ne_bytes());
+            out[8..].copy_from_slice(&wfd.to_ne_bytes());
+            if copy_to_user(fds_out, &out).is_err() {
+                return err_to_u64(SyscallError::Fault);
             }
             rfd
         }

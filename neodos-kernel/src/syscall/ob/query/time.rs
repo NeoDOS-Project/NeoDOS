@@ -1,7 +1,7 @@
 //! Ob query — system date/time and timezone.
 
 use crate::object::types::ObInfoClass;
-use crate::syscall::{err_to_u64, SyscallError};
+use crate::syscall::{err_to_u64, SyscallError, copy_to_user};
 use crate::syscall::ob::types::{SysDateTime, SysTimeZone};
 
 pub(super) fn handles(info_class: u32) -> bool {
@@ -48,11 +48,11 @@ pub(super) fn dispatch(
                     day: 0, month: 0, year: 0, valid: 0,
                 },
             };
-            unsafe {
-                core::ptr::copy_nonoverlapping(
-                    &sysdt as *const SysDateTime as *const u8,
-                    buf_ptr as *mut u8, sz,
-                );
+            let bytes = unsafe {
+                core::slice::from_raw_parts(&sysdt as *const SysDateTime as *const u8, sz)
+            };
+            if copy_to_user(buf_ptr, bytes).is_err() {
+                return err_to_u64(SyscallError::Fault);
             }
             sz as u64
         }
@@ -79,11 +79,11 @@ pub(super) fn dispatch(
                 dst_end_month: tz.dst_end_month,
                 dst_end_day: tz.dst_end_day,
             };
-            unsafe {
-                core::ptr::copy_nonoverlapping(
-                    &sys as *const SysTimeZone as *const u8,
-                    buf_ptr as *mut u8, sz,
-                );
+            let bytes = unsafe {
+                core::slice::from_raw_parts(&sys as *const SysTimeZone as *const u8, sz)
+            };
+            if copy_to_user(buf_ptr, bytes).is_err() {
+                return err_to_u64(SyscallError::Fault);
             }
             sz as u64
         }
@@ -114,11 +114,11 @@ pub(super) fn dispatch(
                     day: 0, month: 0, year: 0, valid: 0,
                 },
             };
-            unsafe {
-                core::ptr::copy_nonoverlapping(
-                    &sysdt as *const SysDateTime as *const u8,
-                    buf_ptr as *mut u8, sz,
-                );
+            let bytes = unsafe {
+                core::slice::from_raw_parts(&sysdt as *const SysDateTime as *const u8, sz)
+            };
+            if copy_to_user(buf_ptr, bytes).is_err() {
+                return err_to_u64(SyscallError::Fault);
             }
             sz as u64
         }
