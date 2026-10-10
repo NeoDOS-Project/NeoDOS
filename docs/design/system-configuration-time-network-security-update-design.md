@@ -85,7 +85,7 @@ crates**, and explain in §10 why NXLs are not warranted now.
 | Audited branch | `develop` | `git rev-parse --abbrev-ref HEAD` |
 | Audited commit | `8c6865c806f2ac4009a99195d938c36ab9df044d` | `git rev-parse HEAD` |
 | Working tree | clean (`git status --porcelain` empty) | — |
-| Kernel version | v0.51.5, tests 876, ABI v8, SSDT RAX 0–99 (37 assigned) | `AGENTS.md:3` |
+| Kernel version | v0.51.5, tests 888, ABI v8, SSDT RAX 0–99 (37 assigned) | `AGENTS.md:3` |
 | Build tool | NeoDev 0.3.0 (`neodev`) | `neodev --version` |
 
 The session working directory (`/home/amartinper/rust-os`) is **not** a git
@@ -138,14 +138,14 @@ Status vocabulary used throughout (per the task's requirement to distinguish):
 
 These are the concrete paths that justify the status labels above.
 
-**Trace A — userland TCP connect (broken).** `neocurl.nxe` would call
+**Trace A — userland TCP connect (fixed).** `neocurl.nxe` calls
 `libnet::socket_connect(fd, ip, port)` → `sys_ob_set_info(fd, SocketConnect=18, …)`
-→ `neodos-kernel/src/syscall/ob/set/net.rs` reads `{ip,port}` and calls
-`socket_set_remote` + `socket_set_connected`, then returns `0`. It never calls
-`crate::net::socket::socket_connect`, which is the only thing that invokes
-`tcp_connect`/sends a SYN. A subsequent `socket_send` reaches `tcp_send`, which
-requires `state == Established` and fails. **Net result: the connect "succeeds"
-and every later I/O fails.**
+→ `neodos-kernel/src/syscall/ob/set/net.rs` now calls
+`socket_connect_user(socket_id, remote)`: TCP routes to
+`crate::net::socket::socket_connect`, which invokes `tcp_connect` and sends the
+SYN (`tcp_handle_ack` flips the socket to `Connected` on completion); UDP/raw
+record the peer and mark the socket `Connected`. Previously it only flipped a
+flag, so no SYN was sent and every later `socket_send` failed. **Fixed.**
 
 **Trace B — local time (works).** A tool opens `\Global\Info\DateTime`, queries
 `ObInfoClass::LocalDateTime` → `neodos-kernel/src/syscall/ob/query/time.rs` →
