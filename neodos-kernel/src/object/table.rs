@@ -5,6 +5,13 @@ use spin::Mutex;
 use lazy_static::lazy_static;
 use crate::object::types::{ObError, ObId, ObType, OB_NAME_LEN, ObObjectSnapshot, ObEnumEntry};
 use crate::id_index::IdIndex;
+use core::sync::atomic::{AtomicU64, Ordering};
+
+// ── Reference-count observability (#663) ────────────────────────────────────
+// A saturating or underflowing object refcount is a lifecycle bug; it must
+// never be silent. Exposed via `ob_refcount_stats()`.
+static OB_REF_OVERFLOW: AtomicU64 = AtomicU64::new(0);
+static OB_REF_UNDERFLOW: AtomicU64 = AtomicU64::new(0);
 
 pub trait ObOperations: Send + Sync {
     fn on_destroy(&self, _id: ObId, _native_id: u64) {}
@@ -132,26 +139,47 @@ impl ObObjectTable {
         self.slots.get_mut(idx)?.as_mut()
     }
 
-    /// Increment reference count. Returns new count.
+    /// Increment reference count. Returns new count. Saturation at `u32::MAX`
+    /// is counted in `OB_REF_OVERFLOW` (and logged) instead of being silently
+    /// pinned.
     pub fn reference(&mut self, id: ObId) -> Result<u32, ObError> {
         self.lookup_mut(id)
             .map(|o| {
+                if o.refcount == u32::MAX {
+                    OB_REF_OVERFLOW.fetch_add(1, Ordering::Relaxed);
+                    kwarn!(crate::log::LogSubsys::Object,
+                        "object refcount overflow (u32::MAX) id={}", id);
+                }
                 o.refcount = o.refcount.saturating_add(1);
                 o.refcount
             })
             .ok_or(ObError::NotFound)
     }
 
-    /// Decrement reference count. Returns new count.
+    /// Decrement reference count. Returns new count. A decrement of an
+    /// already-zero count is counted in `OB_REF_UNDERFLOW` (and logged) instead
+    /// of silently returning 0.
     pub fn dereference(&mut self, id: ObId) -> Result<u32, ObError> {
         self.lookup_mut(id)
             .map(|o| {
                 if o.refcount > 0 {
                     o.refcount -= 1;
+                } else {
+                    OB_REF_UNDERFLOW.fetch_add(1, Ordering::Relaxed);
+                    kwarn!(crate::log::LogSubsys::Object,
+                        "object refcount underflow (already 0) id={}", id);
                 }
                 o.refcount
             })
             .ok_or(ObError::NotFound)
+    }
+
+    /// Test-only: force an object's reference count, so the overflow/
+    /// underflow guards can be exercised deterministically without acquiring
+    /// 2^32 references. Never used on a production path.
+    #[doc(hidden)]
+    pub fn set_refcount_for_test(&mut self, id: ObId, n: u32) -> Result<(), ObError> {
+        self.lookup_mut(id).ok_or(ObError::NotFound).map(|o| o.refcount = n)
     }
 
     /// Validate and unlink an object for destruction, returning its
@@ -318,6 +346,20 @@ pub fn ob_reference(id: ObId) -> Result<u32, ObError> {
 
 pub fn ob_dereference(id: ObId) -> Result<u32, ObError> {
     OB_TABLE.lock().dereference(id)
+}
+
+/// `(overflow, underflow)` reference-count anomaly counters (#663).
+pub fn ob_refcount_stats() -> (u64, u64) {
+    (
+        OB_REF_OVERFLOW.load(Ordering::Relaxed),
+        OB_REF_UNDERFLOW.load(Ordering::Relaxed),
+    )
+}
+
+/// Test-only: force an object's reference count (see `set_refcount_for_test`).
+#[doc(hidden)]
+pub fn ob_set_refcount_for_test(id: ObId, n: u32) -> Result<(), ObError> {
+    OB_TABLE.lock().set_refcount_for_test(id, n)
 }
 
 pub fn ob_count() -> usize {

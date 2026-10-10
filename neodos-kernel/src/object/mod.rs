@@ -12,7 +12,7 @@ pub mod security;
 
 pub use types::{ObError, ObId, ObType, OB_NAME_LEN};
 pub use types::{ObObjectSnapshot, ObEnumEntry};
-pub(crate) use table::{ObObject, ObObjectTable, ObOperations, FileHandleOps, FILE_HANDLE_OPS, OB_TABLE, OB_SECURITY, init_object_manager, ob_create_object, ob_destroy_object, ob_lookup, ob_open_object, ob_close_object, ob_reference, ob_dereference, ob_count, ob_enum_snapshot, ob_set_object_name, ob_set_security, ob_create_object_path};
+pub(crate) use table::{ObObject, ObObjectTable, ObOperations, FileHandleOps, FILE_HANDLE_OPS, OB_TABLE, OB_SECURITY, init_object_manager, ob_create_object, ob_destroy_object, ob_lookup, ob_open_object, ob_close_object, ob_reference, ob_dereference, ob_refcount_stats, ob_set_refcount_for_test, ob_count, ob_enum_snapshot, ob_set_object_name, ob_set_security, ob_create_object_path};
 pub use security::ob_open_path;
 pub use enum_mod::ob_enum_directory;
 
@@ -124,6 +124,25 @@ pub fn register_object_tests() {
         test_true!(OB_SECURITY.lock().contains_key(&id));
         ob_destroy_object(id).unwrap();
         test_true!(!OB_SECURITY.lock().contains_key(&id));
+    });
+
+    test_case!("ob_refcount_overflow_underflow_observable", {
+        // #663: refcount saturation and underflow are observable, not silent.
+        let (o0, u0) = ob_refcount_stats();
+        let id = ob_create_object(ObType::Event, "rc_probe", 0, 0, None).unwrap();
+        // Underflow: decrement an already-zero count.
+        ob_dereference(id).unwrap(); // 1 -> 0
+        ob_dereference(id).unwrap(); // 0 -> underflow counted
+        let (_o1, u1) = ob_refcount_stats();
+        test_eq!(u1 - u0, 1);
+        // Overflow: reference at u32::MAX saturates and is counted.
+        ob_set_refcount_for_test(id, u32::MAX).unwrap();
+        ob_reference(id).unwrap();
+        let (o2, _u2) = ob_refcount_stats();
+        test_eq!(o2 - o0, 1);
+        // Restore a destroyable count and clean up.
+        ob_set_refcount_for_test(id, 1).unwrap();
+        ob_destroy_object(id).unwrap();
     });
 
     test_case!("ob_lookup_not_found", {
