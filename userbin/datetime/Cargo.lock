@@ -7,6 +7,7 @@ name = "datetime"
 version = "0.1.0"
 dependencies = [
  "libneodos",
+ "libntp",
 ]
 
 [[package]]
@@ -18,4 +19,8 @@ dependencies = [
 
 [[package]]
 name = "libnlt"
+version = "0.1.0"
+
+[[package]]
+name = "libntp"
 version = "0.1.0"
