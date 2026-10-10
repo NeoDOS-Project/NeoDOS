@@ -114,7 +114,7 @@ pub struct ObObjectSnapshot {
 // OB-012: ObQueryInfo — Info Classes
 // ═══════════════════════════════════════════════════════════════════════
 
-/// Info classes for sys_ob_query_info (RAX=62).
+/// Info classes for sys_ob_query_info (RAX=42).
 #[repr(u32)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ObInfoClass {
@@ -172,7 +172,7 @@ pub enum ObInfoClass {
     ProcessShutdownState = 42,
 }
 
-/// Info classes for sys_ob_set_info (RAX=63).
+/// Info classes for sys_ob_set_info (RAX=43).
 #[repr(u32)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ObSetInfoClass {
@@ -232,7 +232,7 @@ pub enum ObSetInfoClass {
 // OB-014: ObEnum — Directory Entry
 // ═══════════════════════════════════════════════════════════════════════
 
-/// ABI-stable entry written by sys_ob_enum (RAX=64).
+/// ABI-stable entry written by sys_ob_enum (RAX=44).
 /// Compatible extension: old code can read id+obj_type+name (first 44 bytes),
 /// new code additionally reads mode+size (52 bytes total).
 #[repr(C)]

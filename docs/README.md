@@ -58,7 +58,7 @@
 | Document | Description |
 |----------|-------------|
 | [Overview](filesystem/overview.md) | NeoFS, VFS, IoStack, FAT32, page cache |
-| [NeoFS v2](filesystem/neofs-v2.md) | NE2 filesystem design, indirect blocks, journaling |
+| [NeoFS v2](filesystem/neofs-v2.md) | NE2 filesystem design, indirect blocks, copy-on-write |
 | [VFS Usage Patterns](filesystem/vfs-patterns.md) | VFS patterns and conventions |
 
 ## Networking
@@ -130,6 +130,7 @@
 | [KBD SMP Queue Validation](investigation/kbd-smp-queue-validation.md) | Keyboard SMP queue validation report |
 | [#293 SMP4 shell GPF](investigation/smp4-shell-gpf-2026-09-27.md) | GPF in the shell `iretq` of `syscall_handler_asm` |
 | [#331 SMP>1 exit TLB-shootdown self-deadlock](investigation/smp331-exit-tlb-shootdown-self-deadlock.md) | Recursive `SCHEDULER` lock in process-exit page free |
+| [P0-4.1 Scheduler Handoff (archived)](investigation/p0-4-1-scheduler-handoff-2026-08-28.md) | Transient scheduler handoff (2026-08-28), superseded by `develop` |
 | [#338 Ring-0 `Ready` frame publication](investigation/smp338-ring0-ready-frame-2026-09-29.md) | netcfg stalls after one iteration |
 | [#340 e1000 RX init / DHCP first-DISCOVER loss](investigation/netd-dhcp-first-discover-2026-09-27.md) | RX init order, `DD+len=0` descriptors |
 | [#340 netd / `sys_yield` / scheduling](investigation/netd-sys-yield-340-2026-09-30.md) | netd scheduling investigation (2026-09-30) |
@@ -163,6 +164,13 @@
 | [FPU / SSE Context](design/fpu-context-design.md) | Save/restore FP/SIMD on context switch (#471) |
 | [Large NXE Binaries](design/nxe-large-binary-design.md) | Binary size cap and user stack (#470) |
 | [Monotonic Clock](design/monotonic-clock-design.md) | Monotonic uptime + sleep (#467) |
+| [System Config, Time Zones, HTTP/TLS, Updates](design/system-configuration-time-network-security-update-design.md) | Master design: neocfg, time zones, libhttp/neocurl, libtls, libupdate/neoupdate |
+| [Time Zone / Local Time](design/timezone-local-time-design.md) | Timezone/local-time design: Ob classes 43/52, libtimezone (TZif) |
+| [HTTP/TLS/Update Kernel Prerequisites](design/http-tls-update-prerequisites-design.md) | TCP connect fix, Ring-3 CSPRNG, fsync + atomic replace |
+| [HTTP Client (libhttp) + neocurl](design/libhttp-neocurl-design.md) | HTTP/1.1 client + diagnostic CLI |
+| [TLS / HTTPS (libcrypto + libtls)](design/libtls-https-design.md) | TLS 1.2/1.3, trust anchors, hostname validation, CSPRNG |
+| [Signed Updates (libupdate + neoupdate)](design/libupdate-neoupdate-design.md) | Manifest, Ed25519 trust model, safe transaction |
+| [NXP Packages, MSI Installation & Package Management](design/nxp-msi-package-management-design.md) | `.nxp` format, NeoDOS `.msi` bundles, libneopkg/neoget, trust, transactions |
 | [Raw Keyboard API](design/raw-keyboard-api-design.md) | Raw keyboard event API (#466) |
 | [Font Manager](design/font-manager-design.md) | Font manager design proposal |
 | [NeoCfg](design/neocfg-design.md) | Configuration system design |

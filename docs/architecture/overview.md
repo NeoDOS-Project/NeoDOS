@@ -60,9 +60,9 @@ NeoDOS Kernel (x86_64-unknown-none)
    - Service Manager init (PHASE 3.882): load service definitions from Registry, create \Service\ namespace, resolve dependencies
    - Power Manager runtime init (PHASE 3.883): load plans and policies from Registry
    - ABI validation + ABI freeze check (PHASE 3.9)
-   - Kernel self-tests (825 tests) + netpump kernel-thread spawn + benchmarks (PHASE 4)
+   - Kernel self-tests (876 tests) + netpump kernel-thread spawn + benchmarks (PHASE 4)
    - Auto-start services (PHASE 4): start System/Auto services in dependency order
-   - Ring 3 shell via NeoInit PID 1 (neoshell.nxe, 825 kernel tests + user commands)
+   - Ring 3 shell via NeoInit PID 1 (neoshell.nxe, 876 kernel tests + user commands)
 ```
 
 ## Disco único GPT
@@ -166,9 +166,9 @@ NeoDOS implements a **layered driver architecture** with full hardware access me
 │   18 event types, 64 handlers max, dynamic payload        │
 │   dispatch from scheduler (NEVER in IRQ context)          │
 └─────────────────────────┬────────────────────────────────┘
-                          │ 26 primitives extern "C"
+                          │ 29 primitives extern "C"
 ┌─────────────────────────▼────────────────────────────────┐
-│              HAL ABI v0.3                                  │
+│              HAL ABI v0.4                                  │
 │   src/hal/x64/ — cpu, io, mem, irq, time                 │
 │   Port I/O · CPU control · Page memory · IRQ · Timer      │
 └─────────────────────────┬────────────────────────────────┘
@@ -189,7 +189,7 @@ Unified object manager system for creating, tracking, referencing, and enumerati
 | --------- | ---------- | ------------- |
 | **ObObject** | `src/object/mod.rs` | Per-object metadata: ObId (u64), ObType, 128-byte name, refcount, flags, native_id, ObOperations callbacks |
 | **ObObjectTable** | `src/object/mod.rs` | Dynamic `Vec<Option<ObObject>>`, no hard limit, protected by `spin::Mutex`, global via `lazy_static!` |
-| **ObType** | `src/object/types.rs` | Enum (u32): Unknown(0), Process(1), Driver(2), Device(3), Pipe(4), EventBus(5), BlockDevice(6), Filesystem(7), MemoryRegion(8), Symlink(9), MountPoint(10), Directory(11), Key(12), Event(13), Semaphore(14), Timer(15), Thread(16), Section(17), Socket(18), Service(20), PowerManager(21), KeyboardDevice(22) |
+| **ObType** | `src/object/types.rs` | Enum (u32): Unknown(0), Process(1), Driver(2), Device(3), Pipe(4), EventBus(5), BlockDevice(6), Filesystem(7), MemoryRegion(8), Symlink(9), MountPoint(10), Directory(11), Key(12), Event(13), Semaphore(14), Timer(15), Thread(16), Section(17), Socket(18), Session(19), Service(20), PowerManager(21), KeyboardDevice(22) |
 | **Namespace** | `src/object/namespace.rs` | Hierarchical `\`-rooted tree with `DirectoryObject` nodes, `BTreeMap`-backed children, case-insensitive keys. Standard dirs: `\Device`, `\DosDevices`, `\Global`, `\Driver`, `\FileSystem`, `\Ob`, `\Registry`, `\Process` |
 | **Symlinks** | `src/object/namespace.rs` | `SymlinkEntry` in namespace nodes, max 10 hop resolution with loop detection |
 | **Mount points** | `src/fs/vfs/mount.rs` | `MountManager` with `MountPoint` struct, `FilesystemType` enum, DosDevices symlink creation, global `MOUNT_MANAGER` |
@@ -210,7 +210,7 @@ Lowest kernel layer. All inline assembly confined to `src/hal/` (55 asm calls). 
 | ------- | -------- | ---------- |
 | **raw** | `hal/raw/` | Bare asm primitives: `raw_read_msr`, `raw_write_msr`, `raw_pause`, `raw_sti/cli`, `raw_halt`, `raw_read_tsc`, `raw_cpuid`, `raw_read_cr0/2/3/4`, `raw_write_cr3`, `raw_invlpg`, `raw_invpcid`, `raw_read_rflags`, `raw_lgdt/lidt/ltr`, `raw_set_segment_regs`, `raw_gs_read/write_u64/u32/u16/u8`, `raw_inb/outb/inw/outw/inl/outl`, `raw_rep_stosd` |
 | **safe** | `hal/safe/` | Type-safe wrappers: `Msr` trait with `read_msr<T: Msr>()` / `write_msr<T: Msr>()`, MSR constants (`GS_BASE`, `APIC_BASE_MSR`, `EFER`), `IsSafe` flag, `read_cr2()` |
-| **x64 ABI** | `hal/x64/` | Extern "C" ABI surface (26 primitives), delegates to `hal/raw`. `cpu.rs`, `io.rs`, `mem.rs`, `irq.rs`, `time.rs`, `irql.rs`, `mod.rs` |
+| **x64 ABI** | `hal/x64/` | Extern "C" ABI surface (29 primitives), delegates to `hal/raw`. `cpu.rs`, `io.rs`, `mem.rs`, `irq.rs`, `time.rs`, `irql.rs`, `mod.rs` |
 
 **Extern "C" primitives (ABI surface):**
 
@@ -379,7 +379,7 @@ Standalone NEM v3 binary driver loader. Loads a `.nem` from NeoFS or raw data, a
 
 ### 5. Driver Certification Pipeline (`src/drivers/nem/runtime/mod.rs`)
 
-Strict **7-state state machine** for driver lifecycle management.
+Strict **8-state state machine** for driver lifecycle management.
 
 ```text
 Loaded(0) → Initialized(1) → Registered(2) → Bound(3) → Active(4)
@@ -555,13 +555,13 @@ Beyond the NEM driver framework, the kernel includes integrated hardware drivers
 
 ### 11. Test Coverage
 
-The kernel testing framework includes **825 tests** (200+ test_case! macros) with suites dedicated to the driver architecture:
+The kernel testing framework includes **876 tests** (200+ test_case! macros) with suites dedicated to the driver architecture:
 
 | Suite | Tests | Description |
 | ------- | ------- | ------------- |
 | NEM | 23 | v3 parsing, ABI, relocations, edge cases |
 | Event Bus | 17 | Creation, push/pop, order, overflow, IDs, dispatch, filters |
-| Driver State | 21 | 7-state pipeline, transition matrix, certification |
+| Driver State | 21 | 8-state pipeline, transition matrix, certification |
 | Boot Loader | 8 | Scan, load, init, activate, categories |
 | PS/2 Kbd Ref | 10 | Reference PS/2 keyboard driver |
 | Framebuffer Ref | 8 | Reference framebuffer driver |
@@ -587,7 +587,7 @@ The kernel testing framework includes **825 tests** (200+ test_case! macros) wit
 | Security | 23 | NT6 Security: SID format, Token (groups/privileges/session_id), ACL allow/deny, SeAccessCheck, admin bypass, SAM database (parse/serialize, 64 entries) |
 | URN | 15 | NT5.5 Unified Resource Namespace: parse schemes, resolve file/device, Ob frontend (OB-025) |
 
-Tests run automatically at boot. The kernel runs 837 tests (200+ test_case! registrations). After boot, NeoInit spawns its user-mode test binaries when enabled via the registry (`userbin/neoinit/src/main.rs`), including the network test `C:\System\Tools\dhcptest.nxe`. Additional boot stress testing via `scripts/stress_boot.sh`.
+Tests run automatically at boot. The kernel runs 876 tests (200+ test_case! registrations). After boot, NeoInit spawns its user-mode test binaries when enabled via the registry (`userbin/neoinit/src/main.rs`), including the network test `C:\System\Tools\dhcptest.nxe`. Additional boot stress testing via `scripts/stress_boot.sh`.
 
 ---
 
@@ -603,7 +603,7 @@ Tests run automatically at boot. The kernel runs 837 tests (200+ test_case! regi
 ## Kernel Subsystems (High-Level)
 
 - **apc**: `src/apc/mod.rs` — Asynchronous Procedure Call engine. Per-thread kernel/user APC queues (max 64 each). Kernel APCs dispatched at PASSIVE_LEVEL on syscall return. User APCs dispatched one-at-a-time before IRETQ to Ring 3. Used for IRP completion delivery (DIRQL→DPC→APC flow) and deferred callback execution.
-- **object**: `src/object/` — Object Manager (Ob). Unified object tracking with reference counting, type identification (ObType = 22 variants), Hierarchical object namespace with Directory entries, case-insensitive path lookup, symlinks, and security descriptors. Objects auto-register for lifecycle via `ObOperations::on_destroy`. `KOBJ` via Ring 3 `kobj.nxe` lists all live objects.
+- **object**: `src/object/` — Object Manager (Ob). Unified object tracking with reference counting, type identification (ObType = 23 variants), Hierarchical object namespace with Directory entries, case-insensitive path lookup, symlinks, and security descriptors. Objects auto-register for lifecycle via `ObOperations::on_destroy`. `KOBJ` via Ring 3 `kobj.nxe` lists all live objects.
 - **kbd**: `src/input/kbd/` — Keyboard Manager (NeoKBD): layout engine, Unicode composition, dead key compose, hotkey dispatch, auto-repeat, Registry-backed config, `ObType::KeyboardDevice(22)`, `\Device\Keyboard` namespace object
 - **power**: `src/services/power/` — Power Manager subsystem: `PowerManager` struct with 3 power plans (Balanced/Performance/PowerSaver), `PowerPlan`/`PowerPolicies`/`CpuPolicy`/`PowerAction` data structures, Registry-backed plan persistence, `coordinator::shutdown()`/`reboot()` for power lifecycle, plus ACPI HAL layer (RSDP discovery, RSDT/XSDT parsing, FADT extraction, S5 sleep, reset register)
 - **arch/x64**: GDT, IDT, PIC, paging (4-level, 2 MB huge pages + 4 KB demand-paging), interrupt handlers (timer IRQ0, keyboard IRQ1, syscall INT 0x80)

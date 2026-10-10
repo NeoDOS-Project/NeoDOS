@@ -13,9 +13,9 @@
 
 | Subsistema | Estado actual | APIs públicas disponibles | Documento de diseño |
 | --- | --- | --- | --- |
-| **Object Manager** | ✅ Completo (ObType 0–20, RAX 60–66) | `ob_open`, `ob_create`, `ob_query_info`, `ob_set_info`, `ob_enum`, `ob_wait`, `ob_destroy` | `docs/kernel/objects.md` |
-| **Registry (Cm)** | ✅ Completo (RAX 67–76, cell-based hive) | `cm_open_key`, `cm_create_key`, `cm_query_value`, `cm_set_value`, `cm_enum_key`, `cm_enum_value`, `cm_delete_key`, `cm_flush_key` | `docs/registry/registry.md` |
-| **Service Manager** | ✅ Completo (ObType::Service=20, RAX 77) | `sys_ob_service` con START/STOP/RESTART/QUERY_STATUS/SET_CONFIG | `docs/kernel/syscalls.md` |
+| **Object Manager** | ✅ Completo (ObType 0–22, RAX 40–48) | `ob_open`, `ob_create`, `ob_query_info`, `ob_set_info`, `ob_enum`, `ob_wait`, `ob_destroy` | `docs/kernel/objects.md` |
+| **Registry (Cm)** | ✅ Completo (RAX 50–59, cell-based hive) | `cm_open_key`, `cm_create_key`, `cm_query_value`, `cm_set_value`, `cm_enum_key`, `cm_enum_value`, `cm_delete_key`, `cm_flush_key` | `docs/registry/registry.md` |
+| **Service Manager** | ✅ Completo (ObType::Service=20, RAX 47) | `sys_ob_service` con START/STOP/RESTART/QUERY_STATUS/SET_CONFIG | `docs/kernel/syscalls.md` |
 | **Keyboard layout** | ✅ Completo (ObInfoClass::KeyboardLayout=14, ObSetInfoClass::KeyboardLayout=5) | `ob_query_info(KeyboardLayout)`, `ob_set_info(KeyboardLayout)` | `docs/kernel/objects.md` |
 | **System info** (Version, Memory, CPU, DateTime, Drives) | ✅ Completo via `\Global\Info\*` objects | `ob_open` + `ob_query_info` con clases 7–11 | `docs/kernel/objects.md` |
 | **Power Manager** | ❌ No implementado (diseño en `docs/services/power-manager.md`) | Propuesto: ObType::PowerManager=21, info classes 32–34 y 37–42 | `docs/services/power-manager.md` |
@@ -25,7 +25,7 @@
 
 ### 1.2 Patrón de aplicaciones Ring 3 existentes
 
-Las 48 aplicaciones .NXE en `userbin/` siguen el mismo patrón:
+Las 52 aplicaciones .NXE en `userbin/` siguen el mismo patrón:
 
 ```rust
 #![no_std]
@@ -446,22 +446,22 @@ NeoCfg no extiende el kernel. Es una aplicación Ring 3 que **consume** APIs exi
 
 | Operación | API | RAX o clase |
 | --- | --- | --- |
-| Abrir información del sistema | `ob_open(\Global\Info\*)` + `ob_query_info` | RAX 60, 62 |
+| Abrir información del sistema | `ob_open(\Global\Info\*)` + `ob_query_info` | RAX 40, 42 |
 | Leer versión | `ob_query_info(Version=8)` | Clase 8 |
 | Leer memoria | `ob_query_info(Memory=10)` | Clase 10 |
 | Leer CPU | `ob_query_info(CpuInfo=7)` | Clase 7 |
 | Leer unidades | `ob_query_info(Drives=11)` | Clase 11 |
-| Enumerar procesos | `ob_enum(\Ob\Process)` | RAX 64 |
-| Enumerar servicios | `ob_enum(\Service)` + `ob_query_info(ServiceStatus=31)` | RAX 64, clase 31 |
+| Enumerar procesos | `ob_enum(\Ob\Process)` | RAX 44 |
+| Enumerar servicios | `ob_enum(\Service)` + `ob_query_info(ServiceStatus=31)` | RAX 44, clase 31 |
 | Cambiar teclado | `ob_set_info(KeyboardLayout=5)` | Clase 5 |
 | Leer teclado | `ob_query_info(KeyboardLayout=14)` | Clase 14 |
-| Abrir Power Manager (futuro) | `ob_open(\Device\PowerManager)` | RAX 60 |
+| Abrir Power Manager (futuro) | `ob_open(\Device\PowerManager)` | RAX 40 |
 | Consultar plan (futuro) | `ob_query_info(PowerPlanInfo=32)` | Clase 32 |
 | Cambiar plan (futuro) | `ob_set_info(PowerSetPlan=41)` | Clase 41 |
 | Apagar (futuro) | `ob_set_info(PowerShutdown=37)` | Clase 37 |
 | Reiniciar (futuro) | `ob_set_info(PowerReboot=38)` | Clase 38 |
-| Leer Registry para locale (futuro) | `cm_open_key` + `cm_query_value` | RAX 67, 69 |
-| Escribir Registry para locale (futuro) | `cm_set_value` | RAX 70 |
+| Leer Registry para locale (futuro) | `cm_open_key` + `cm_query_value` | RAX 50, 52 |
+| Escribir Registry para locale (futuro) | `cm_set_value` | RAX 53 |
 
 ### 3.14 Archivos nuevos
 

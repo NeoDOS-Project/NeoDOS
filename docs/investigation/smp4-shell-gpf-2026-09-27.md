@@ -5,7 +5,7 @@
 **Entorno:** VirtualBox 7.2.20, EFI, ICH9, `nic1=bridged` (82540EM), 4 vCPUs, 512 MB
 **Disparador:** interacción con el shell Ring 3 (`read` bloqueante + entrada de teclado)
 **Estado:** reproducido de forma determinista; clasificado; **sin fix aplicado**
-**Relacionado:** `P0-4.1-HANDOFF.md`, `docs/investigation/phase13-ap-timer-iretq-gpf-forensics.md`,
+**Relacionado:** `docs/investigation/p0-4-1-scheduler-handoff-2026-08-28.md`, `docs/investigation/phase13-ap-timer-iretq-gpf-forensics.md`,
 `docs/investigation/smp-bring-up-report.md`, issue #293.
 
 ---

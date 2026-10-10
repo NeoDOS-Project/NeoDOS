@@ -3,7 +3,7 @@
 > **Autor:** Arquitecto Jefe de Sistemas Operativos
 > **Versión del documento:** v1.0
 > **Fecha:** 2026-06-21
-> **Estado:** Auditoría completa — Plan director
+> **Estado:** Histórico (snapshot 2026-06). Estado actual: `docs/architecture/overview.md` y `source-of-truth.md`.
 
 ---
 
@@ -30,7 +30,7 @@ NeoDOS es un sistema operativo de 64 bits con arquitectura híbrida (kernel mono
 
 - Código 100% Rust (sin C en la base)
 - HAL con asm aislado en `hal/raw/`
-- 825 tests automáticos en kernel
+- 876 tests automáticos en kernel
 - Certificación de drivers con 7 estados
 - Sistema de capacidades para control de acceso granular
 - IRQL framework para prioridad de interrupciones
@@ -95,7 +95,7 @@ NeoDOS es un sistema operativo moderno de 64 bits para la plataforma x86-64, dis
 
 6. **La compatibilidad es un contrato.** Una vez que una syscall, una estructura ABI, o un formato de driver se declara estable, no cambia. El versionado semántico se aplica a nivel de kernel, no solo de API.
 
-7. **Los tests son especificación.** 825 tests no son una métrica de calidad — son la especificación ejecutable del comportamiento del kernel. Si no hay test, el comportamiento no está definido.
+7. **Los tests son especificación.** 876 tests no son una métrica de calidad — son la especificación ejecutable del comportamiento del kernel. Si no hay test, el comportamiento no está definido.
 
 ---
 
@@ -791,7 +791,7 @@ HAL ─── Arch (x86_64)
 | Métrica | Actual | Objetivo v1.0 |
 | --------- | -------- | --------------- |
 | Líneas de código kernel | ~45.580 | <60K |
-| Tests automáticos | 825 (test_case!) | >800 |
+| Tests automáticos | 876 (test_case!) | >800 |
 | Cobertura de líneas | ~60% | >90% |
 | Syscalls (handlers SSDT) | 29 | 50–60 |
 | Procesos simultáneos | Ilimitado (Vec dinámica) | Ilimitado |

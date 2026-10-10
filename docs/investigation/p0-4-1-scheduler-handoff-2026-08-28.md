@@ -1,5 +1,18 @@
 # NeoDOS P0-4.1 Scheduler Handoff
 
+> **Status:** Archived — superseded. Transient scheduler handoff dated
+> 2026-08-28 (branch `fix/p0-scheduler-runqueue-correctness`, base `a64a278`).
+> All named fixes are integrated in `develop` (HEAD `8c6865c`); the test count
+> in the body (699/699) is obsolete. Kept for history only.
+
+---
+> **Status:** Archived — superseded. Transient scheduler handoff dated
+> 2026-08-28 (branch `fix/p0-scheduler-runqueue-correctness`, base `a64a278`).
+> All named fixes are integrated in `develop` (HEAD `8c6865c`); the test count
+> in the body (699/699) is obsolete. Kept for history only.
+
+---
+
 Fecha: 2026-08-28
 Repositorio: `/home/amartinper/rust-os/neodos`
 Rama: `fix/p0-scheduler-runqueue-correctness`
