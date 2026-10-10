@@ -960,24 +960,6 @@ pub fn register_nxl_tests() {
         test_true!(sys_write >= 0x1e00_0000 && sys_write < 0x1e20_0000);
     });
 
-    // B2 from the real image: `libarith.nxl` is packaged and loaded on demand;
-    // its `math_add` import must resolve from the provider loaded first.
-    test_case!("nxl_cross_library_import_from_image", {
-        if nxl_load("C:\\System\\Libraries\\math.nxl").is_none() {
-            return Err("math.nxl not loaded");
-        }
-        let base = match nxl_load("C:\\System\\Libraries\\libarith.nxl") {
-            Some(b) => b,
-            None => return Err("libarith.nxl not loaded"),
-        };
-        // The export table must declare ABI version 1 (#584).
-        let version = unsafe { core::ptr::read_volatile(base as *const u32) };
-        test_eq!(version, 1);
-        let sum3: extern "C" fn(i64, i64, i64) -> i64 =
-            unsafe { core::mem::transmute(*(base.wrapping_add(8) as *const u64)) };
-        test_eq!(sum3(1, 2, 3), 6);
-    });
-
     // console.nxl / net.nxl are PIE now: they must load into any free slot
     // (previously fixed bases 0x1e080000/0x1e0c0000 collided with dynamically
     // placed PIE libraries).

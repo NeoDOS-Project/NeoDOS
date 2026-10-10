@@ -313,7 +313,7 @@ Wrapper de red que depende de `libneodos` y `libnet-nxl`. Misma justificación q
 
 | Componente | Ubicación | Naturaleza |
 |------------|-----------|------------|
-| Tests unitarios kernel | `neodos-kernel/src/testing.rs` (891 tests) | En el kernel |
+| Tests unitarios kernel | `neodos-kernel/src/testing.rs` (890 tests) | En el kernel |
 | Tests de integración | `neodev test` (vía neodev, ya separado) | Herramienta externa |
 | Tests de validación | `scripts/check_deps.py` | Script Python |
 

@@ -2,7 +2,7 @@
 
 ## Overview
 
-In-kernel test harness. No external test runner required. 891 tests across 50+ suites compiled directly into the kernel image. Tests execute in kernel mode and can exercise all subsystems including privileged operations.
+In-kernel test harness. No external test runner required. 890 tests across 50+ suites compiled directly into the kernel image. Tests execute in kernel mode and can exercise all subsystems including privileged operations.
 
 Two execution paths:
 
@@ -50,7 +50,7 @@ test_case!("my_test", {
   neodev test
   ```
 
-  Expected result is all tests passing (e.g. `891/891 PASS`); any failure is a regression.
+  Expected result is all tests passing (e.g. `890/890 PASS`); any failure is a regression.
 - **Serial log growth.** `neodev test` writes `qemu_output.log` (gitignored). Very
   large logs (hundreds of MB) can destabilise the run; rotate/delete it if a run
   exits early.

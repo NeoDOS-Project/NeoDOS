@@ -85,7 +85,7 @@ crates**, and explain in §10 why NXLs are not warranted now.
 | Audited branch | `develop` | `git rev-parse --abbrev-ref HEAD` |
 | Audited commit | `8c6865c806f2ac4009a99195d938c36ab9df044d` | `git rev-parse HEAD` |
 | Working tree | clean (`git status --porcelain` empty) | — |
-| Kernel version | v0.51.5, tests 891, ABI v8, SSDT RAX 0–99 (37 assigned) | `AGENTS.md:3` |
+| Kernel version | v0.51.5, tests 890, ABI v8, SSDT RAX 0–99 (37 assigned) | `AGENTS.md:3` |
 | Build tool | NeoDev 0.3.0 (`neodev`) | `neodev --version` |
 
 The session working directory (`/home/amartinper/rust-os`) is **not** a git
