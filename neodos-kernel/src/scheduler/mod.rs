@@ -318,6 +318,12 @@ impl Scheduler {
             if let Some(tid) = crate::arch::x64::cpu_local::try_per_cpu_tid() {
                 return tid;
             }
+            // If this scheduler claims the KPRCB current-thread identity but the
+            // KPRCB read still fails, treat it as a production safety violation:
+            // the fallback path is never silent.
+            if crate::scheduler::ap_sched_active() {
+                self.note_kprcb_fallback(site);
+            }
         } else if crate::scheduler::ap_sched_active() {
             self.note_kprcb_fallback(site);
         }
@@ -329,6 +335,9 @@ impl Scheduler {
         if self.kprcb_thread_in_self() {
             if let Some(pid) = crate::arch::x64::cpu_local::try_per_cpu_pid() {
                 return pid;
+            }
+            if crate::scheduler::ap_sched_active() {
+                self.note_kprcb_fallback(site);
             }
         } else if crate::scheduler::ap_sched_active() {
             self.note_kprcb_fallback(site);

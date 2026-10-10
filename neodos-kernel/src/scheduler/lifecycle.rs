@@ -80,18 +80,38 @@ impl ZombieQueue {
             ZOMBIE_DEDUP_SKIPPED.fetch_add(1, Ordering::Relaxed);
             return false;
         }
+        self.trim_to_hard_cap();
         self.pids.push(pid);
         ZOMBIE_ENQUEUED.fetch_add(1, Ordering::Relaxed);
         true
     }
 
+    /// Drop the oldest stale entries until the queue is back within the bounded
+    /// cap. This keeps the queue deterministic under bursty exits; overflow is
+    /// surfaced via the existing stale-drop and overflow counters instead of
+    /// silently growing past the policy limit.
+    fn trim_to_hard_cap(&mut self) {
+        while self.pids.len() >= ZOMBIE_HARD_CAP {
+            let evicted = self.pids.remove(0);
+            ZOMBIE_STALE_DROPPED.fetch_add(1, Ordering::Relaxed);
+            ZOMBIE_OVERFLOW.fetch_add(1, Ordering::Relaxed);
+            kwarn!(LogSubsys::Sched,
+                "zombie queue trimmed to hard cap; evicted pid {} (cap {} len={})",
+                evicted, ZOMBIE_HARD_CAP, self.pids.len());
+        }
+    }
+
     /// Re-queue a PID that is still alive (dedup; counted separately).
+    /// When the queue is already at the hard cap, evict the oldest stale entry
+    /// instead of silently growing past the scheduler's bounded policy.
     pub fn requeue(&mut self, pid: u32) {
         if pid == 0 { return; }
-        if !self.pids.iter().any(|&p| p == pid) {
-            self.pids.push(pid);
-            ZOMBIE_REQUEUED.fetch_add(1, Ordering::Relaxed);
+        if self.pids.iter().any(|&p| p == pid) {
+            return;
         }
+        self.trim_to_hard_cap();
+        self.pids.push(pid);
+        ZOMBIE_REQUEUED.fetch_add(1, Ordering::Relaxed);
     }
 
     /// Index of the first enqueued PID that is neither `exclude` nor currently

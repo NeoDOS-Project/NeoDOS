@@ -1592,6 +1592,18 @@ pub fn register() {
         q.requeue(7); // must not duplicate
         test_eq!(q.len(), 1);
     });
+    test_case!("neodos01_zombie_requeue_respects_hard_cap", {
+        use crate::scheduler::lifecycle::{ZombieQueue, ZOMBIE_HARD_CAP};
+        let mut q = ZombieQueue::new();
+        for p in 1..=ZOMBIE_HARD_CAP as u32 {
+            q.enqueue(p);
+        }
+        test_eq!(q.len(), ZOMBIE_HARD_CAP);
+        q.requeue(9999);
+        test_eq!(q.len(), ZOMBIE_HARD_CAP);
+        test_true!(q.find_reclaimable(0, |p| p == 9999).is_some());
+        test_true!(q.find_reclaimable(0, |p| p == 1).is_none());
+    });
     test_case!("neodos01_zombie_hard_cap_and_backpressure", {
         use crate::scheduler::lifecycle::{ZombieQueue, ZOMBIE_HARD_CAP, MAX_ZOMBIES};
         let mut q = ZombieQueue::new();
