@@ -37,13 +37,41 @@ lazy_static! {
 /// Sync reclaim or spawn backpressure (see defer_reap_with_scheduler) bounds it.
 pub fn defer_reap(pid: u32) {
     if pid == 0 { return; }
+
+    // Deduplicate queue entries. A recycled pid should only be reaped once.
+    // Repeating the same PID without a corresponding recycle is a queue-growth
+    // bug and can leave the scheduler with stale, unrecoverable entries.
+    {
+        let zombies = ZOMBIE_PIDS.lock();
+        if zombies.iter().any(|&queued_pid| queued_pid == pid) {
+            return;
+        }
+    }
+
+    // Best-effort reaping before we append another pending PID. This keeps the
+    // queue bounded in the common case without ever discarding a live PID.
+    if let Some(mut sched) = crate::scheduler::current_scheduler().try_lock() {
+        let before = zombie_queue_len();
+        let cur_pid = sched.current_pid();
+        reap_pending_zombies(&mut *sched, cur_pid);
+        if zombie_queue_len() < before {
+            kwarn!(crate::log::LogSubsys::Sched,
+                "zombie queue drained from {} to {} before enqueueing pid {}",
+                before, zombie_queue_len(), pid);
+        }
+    }
+
     let mut zombies = ZOMBIE_PIDS.lock();
     if zombies.len() >= MAX_ZOMBIES {
-        kwarn!(crate::log::LogSubsys::Sched, "zombie backpressure: queue len {} >= MAX {}", zombies.len(), MAX_ZOMBIES);
+        kwarn!(crate::log::LogSubsys::Sched,
+            "zombie backpressure: queue len {} >= MAX {} (best-effort drain before enqueue)",
+            zombies.len(), MAX_ZOMBIES);
     }
     zombies.push(pid);
     if zombies.len() > MAX_ZOMBIES * 4 {
-        kwarn!(crate::log::LogSubsys::Sched, "zombie storm: queue len {} exceeds hard cap {} (awaiting reap, no loss)", zombies.len(), MAX_ZOMBIES * 4);
+        kwarn!(crate::log::LogSubsys::Sched,
+            "zombie storm: queue len {} exceeds hard cap {} (awaiting reap, no silent loss)",
+            zombies.len(), MAX_ZOMBIES * 4);
         // F-DEV-02: do NOT drain without recycle — that leaked PID slots forever.
         // Queue stays oversized until reap_pending_zombies drains eligible entries.
     }
@@ -71,11 +99,26 @@ pub fn defer_reap_with_scheduler(sched: &mut Scheduler, pid: u32) {
         };
         let pid_to_reclaim = { ZOMBIE_PIDS.lock().remove(pos) };
         if crate::arch::x64::cpu_local::is_pid_running_on_any_cpu(pid_to_reclaim) {
-            ZOMBIE_PIDS.lock().push(pid_to_reclaim);
+            let mut zombies = ZOMBIE_PIDS.lock();
+            if !zombies.iter().any(|&queued_pid| queued_pid == pid_to_reclaim) {
+                zombies.push(pid_to_reclaim);
+            }
             break;
         }
         if !sched.recycle_terminated(pid_to_reclaim) {
-            // Already gone or not found — continue to next
+            // The queue entry was stale or already consumed by another path.
+            // Keep it alive only if the PID is still live; otherwise warn and
+            // discard the stale record so we do not silently lose a valid queue item.
+            if crate::arch::x64::cpu_local::is_pid_running_on_any_cpu(pid_to_reclaim) {
+                let mut zombies = ZOMBIE_PIDS.lock();
+                if !zombies.iter().any(|&queued_pid| queued_pid == pid_to_reclaim) {
+                    zombies.push(pid_to_reclaim);
+                }
+            } else {
+                kwarn!(crate::log::LogSubsys::Sched,
+                    "stale zombie pid {} dropped from queue after reclaim miss",
+                    pid_to_reclaim);
+            }
             continue;
         }
     }
@@ -137,9 +180,21 @@ pub fn reap_pending_zombies(sched: &mut Scheduler, exclude_pid: u32) {
                     ZOMBIE_PIDS.lock().push(pid);
                     continue;
                 }
-                // Recycle may take other locks (Ob), but not ZOMBIE_PIDS, so safe
+                // Recycle may take other locks (Ob), but not ZOMBIE_PIDS, so safe.
                 if !sched.recycle_terminated(pid) {
-                    // If recycle failed (already gone), just continue to next
+                    // A stale queue entry is not a silent loss: if the PID is still
+                    // live somewhere, requeue it for the next pass; otherwise warn and
+                    // discard the stale record.
+                    if crate::arch::x64::cpu_local::is_pid_running_on_any_cpu(pid) {
+                        let mut zombies = ZOMBIE_PIDS.lock();
+                        if !zombies.iter().any(|&queued_pid| queued_pid == pid) {
+                            zombies.push(pid);
+                        }
+                    } else {
+                        kwarn!(crate::log::LogSubsys::Sched,
+                            "stale zombie pid {} already reaped; dropping stale queue entry",
+                            pid);
+                    }
                     continue;
                 }
                 // Continue loop to reap next eligible zombie
@@ -529,6 +584,7 @@ impl Scheduler {
             cpu_time_base: Kthread::CPU_TIME_UNSET,
             waiting_for: None,
             priority,
+            base_priority: priority,
             time_slice_remaining: TIME_SLICES[priority as usize],
             ticks_since_scheduled: 0,
             kernel_stack_top,
@@ -540,6 +596,7 @@ impl Scheduler {
             user_apc_queue: VecDeque::new(),
             apc_pending: false,
             is_idle: false,
+            is_kernel: true,
             yield_requested: false,
             name: crate::scheduler::types::KernelName::from_path(name),
         };

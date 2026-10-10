@@ -205,6 +205,110 @@ pub fn register() {
         let next2 = sched.schedule_with(false);
         test_eq!(unsafe { (*next2).tid }, 11);
     });
+    test_case!("n355_kernel_thread_selectable_from_ring3_context", {
+        // Regression for the K355 starvation: a *Ready* genuine Ring-0 kernel
+        // thread must be committable by the Ring-3-context selection path
+        // (`require_ring3 = true`) even when it is NOT past the starvation
+        // threshold. Before the fix it was only reachable via the 5000-tick
+        // hand-off, so it ran once per window and the hand-off flooded.
+        let this_cpu = unsafe { crate::arch::x64::cpu_local::this_cpu_id() };
+        unsafe {
+            if crate::arch::x64::cpu_local::kprcb_page(this_cpu as usize).is_some() {
+                crate::arch::x64::cpu_local::cpu_run_queue_mut(this_cpu as usize).clear();
+            }
+        }
+        let mut sched = Scheduler::new();
+        sched.next_tid = 100;
+        for k in sched.kthreads.iter_mut().flatten() {
+            if k.is_idle { k.cpu = this_cpu; }
+        }
+
+        // Current Ring-3 yielder, Running (the syscall-return context).
+        let s3 = crate::scheduler::AlignedKStack::new_boxed();
+        let t3 = s3.0.as_ptr() as u64 + crate::scheduler::KERNEL_STACK_SIZE as u64;
+        let r3 = crate::scheduler::init_ring3_frame(t3, 0x400000, 0x800000);
+        let mut k3 = Kthread::new_ring3_with_stack(10, 10, 0x400000, r3, t3, s3);
+        k3.state = ThreadState::Running;
+        k3.priority = PRIORITY_NORMAL;
+        k3.base_priority = PRIORITY_NORMAL;
+        k3.cpu = this_cpu;
+        let i3 = sched.alloc_kthread_slot().unwrap();
+        sched.kthreads[i3] = Some(Box::new(k3));
+        sched.current_tid = 10;
+
+        // A genuine Ring-0 kernel thread: Ready, NOT starved (ticks == 0),
+        // normal priority, enqueued on this CPU.
+        let sk = crate::scheduler::AlignedKStack::new_boxed();
+        let tk = sk.0.as_ptr() as u64 + crate::scheduler::KERNEL_STACK_SIZE as u64;
+        let rk = crate::scheduler::stack::init_ring0_frame(tk, 0x500000);
+        let mut kk = Kthread::new_ring3_with_stack(11, 11, 0x500000, rk, tk, sk);
+        kk.is_kernel = true;
+        kk.state = ThreadState::Ready;
+        kk.priority = PRIORITY_NORMAL;
+        kk.base_priority = PRIORITY_NORMAL;
+        kk.ticks_since_scheduled = 0;
+        kk.cpu = this_cpu;
+        let ik = sched.alloc_kthread_slot().unwrap();
+        sched.kthreads[ik] = Some(Box::new(kk));
+        Scheduler::enqueue_to_cpu_run_queue(sched.find_kthread(11).unwrap());
+
+        // The Ring-3 syscall-return selection must commit the kernel thread
+        // directly (not the idle fallback / hand-off).
+        let next = sched.schedule_with_handoff(true, true);
+        test_eq!(unsafe { (*next).tid }, 11);
+        test_true!(unsafe { (*next).is_kernel });
+
+        unsafe {
+            if crate::arch::x64::cpu_local::kprcb_page(this_cpu as usize).is_some() {
+                crate::arch::x64::cpu_local::cpu_run_queue_mut(this_cpu as usize).clear();
+            }
+        }
+    });
+    test_case!("n355_aging_boost_is_reversible", {
+        // An aging boost must be temporary: once the thread is dispatched (its
+        // starvation window resets) the base priority is restored, so a
+        // one-off starvation cannot permanently invert fairness.
+        let this_cpu = unsafe { crate::arch::x64::cpu_local::this_cpu_id() };
+        unsafe {
+            if crate::arch::x64::cpu_local::kprcb_page(this_cpu as usize).is_some() {
+                crate::arch::x64::cpu_local::cpu_run_queue_mut(this_cpu as usize).clear();
+            }
+        }
+        let mut sched = Scheduler::new();
+        sched.next_tid = 100;
+        for k in sched.kthreads.iter_mut().flatten() {
+            if k.is_idle { k.cpu = this_cpu; }
+        }
+        let sk = crate::scheduler::AlignedKStack::new_boxed();
+        let tk = sk.0.as_ptr() as u64 + crate::scheduler::KERNEL_STACK_SIZE as u64;
+        let rk = crate::scheduler::stack::init_ring0_frame(tk, 0x500000);
+        let mut kk = Kthread::new_ring3_with_stack(12, 12, 0x500000, rk, tk, sk);
+        kk.is_kernel = true;
+        kk.state = ThreadState::Ready;
+        kk.priority = PRIORITY_NORMAL;
+        kk.base_priority = PRIORITY_NORMAL;
+        kk.ticks_since_scheduled = MAX_STARVATION_TICKS;
+        kk.cpu = this_cpu;
+        let ik = sched.alloc_kthread_slot().unwrap();
+        sched.kthreads[ik] = Some(Box::new(kk));
+        Scheduler::enqueue_to_cpu_run_queue(sched.find_kthread(12).unwrap());
+
+        // One aging tick boosts the starved thread.
+        sched.apply_aging();
+        test_true!(sched.find_kthread(12).unwrap().priority < PRIORITY_NORMAL);
+
+        // Dispatch resets the starvation window and restores the base priority.
+        Scheduler::account_dispatch(sched.find_kthread_mut(12).unwrap());
+        let k = sched.find_kthread(12).unwrap();
+        test_eq!(k.priority, PRIORITY_NORMAL);
+        test_eq!(k.ticks_since_scheduled, 0);
+
+        unsafe {
+            if crate::arch::x64::cpu_local::kprcb_page(this_cpu as usize).is_some() {
+                crate::arch::x64::cpu_local::cpu_run_queue_mut(this_cpu as usize).clear();
+            }
+        }
+    });
     test_case!("n382_fifo_fast_path_respects_priority", {
         let this_cpu = unsafe { crate::arch::x64::cpu_local::this_cpu_id() };
         // Isolate the real per-CPU run queue for this CPU.
