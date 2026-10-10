@@ -16,6 +16,7 @@
 10. **Naming:** kebab-case for files/dirs, PascalCase for types/enums/traits, snake_case for fns/vars.
 11. **Branch first.** Every feature, bug fix, investigation, refactor, audit, or architectural change MUST be developed on its own dedicated branch. Never work directly on `develop`. See [Branching Rule](#branching-rule).
 12. **Module layout.** One directory = one subsystem, with dependencies flowing only downward (enforced by `neodev check-deps`). Never reuse a module name across layers. Use `mod.rs` for directory modules. During incremental moves, keep historical `crate::<name>` paths working via re-exports in the parent, and refresh `check-deps-baseline.txt` for the moved paths.
+13. **Issue acceptance criteria are the definition of done.** If an Issue has checkboxes (acceptance criteria), the work MUST satisfy **all** of them before it is considered complete — never close or claim an Issue done with unchecked criteria. When finished, **mark every satisfied checkbox in the Issue body** (e.g. `gh issue edit`, or edit the PR body if the checkboxes live there). If any criterion cannot be met, leave the Issue open (do not use `Closes #N`) and report the unmet item explicitly.
 
 ## Quick Reference
 
@@ -64,7 +65,10 @@ Completamente idempotente. Ejecutable múltiples veces sin crear duplicados.
 3. Trabajar en feature branch: `feat/NOMBRE-DE-LA-ISSUE`.
 4. Commits: `git commit -m "feat: descripción (#123)"` con referencia a la Issue.
 5. PR → `develop` → merge. El PR cierra la Issue automáticamente.
-6. Al completar: `sync-roadmap.sh sync` actualiza `improvements.md`.
+6. Al completar: verificar que **todos** los criterios de aceptación (checkboxes) de
+   la Issue se cumplen, marcarlos en el cuerpo de la Issue, y `sync-roadmap.sh sync`
+   actualiza `improvements.md`. Si algún criterio no se cumple, no cerrar la Issue:
+   dejar el PR sin `Closes` y reportar el punto pendiente.
 
 ### Releases
 
@@ -126,7 +130,7 @@ making changes.
 4. `scripts/sync-roadmap.sh check`
 5. If all pass: `git add -A && git commit -m "feat|fix|refactor: descripción (#123)" && git push`
 6. Open PR → `develop`, get approval, merge (squash).
-7. On completion: update `CHANGELOG.md`, run `sync-roadmap.sh sync`, update relevant `docs/*.md`.
+7. On completion: mark every satisfied acceptance-criteria checkbox in the Issue, update `CHANGELOG.md`, run `sync-roadmap.sh sync`, update relevant `docs/*.md`.
 
 ## Proactive Capability Discovery
 
