@@ -154,9 +154,23 @@ impl ObObjectTable {
             .ok_or(ObError::NotFound)
     }
 
-    /// Destroy an object. Fails if refcount > 1 (i.e., caller still holds
-    /// the initial creation reference plus any extra references).
-    pub fn destroy(&mut self, id: ObId) -> Result<(), ObError> {
+    /// Validate and unlink an object for destruction, returning its
+    /// `(ops, native_id)` so the caller can run `on_destroy` **outside** the
+    /// table lock.
+    ///
+    /// Fails with `RefCountHeld` if the object still has extra references
+    /// (refcount > 1). On success the slot is cleared while the lock is held,
+    /// so the object is unreachable and cannot be resurrected by a concurrent
+    /// `reference` before its `on_destroy` runs.
+    ///
+    /// The caller MUST invoke the returned callback without holding `OB_TABLE`:
+    /// some ops re-enter the Object Manager (e.g. `PipeObOps::on_destroy` ->
+    /// `PIPE_MANAGER.free_pipe` -> `ob_destroy_object`), which self-deadlocks on
+    /// the non-reentrant table mutex.
+    pub fn take_for_destroy(
+        &mut self,
+        id: ObId,
+    ) -> Result<(Option<&'static dyn ObOperations>, u64), ObError> {
         let idx = self.index.get(id as u64).ok_or(ObError::NotFound)?;
 
         let refcount = self.slots[idx].as_ref().map_or(0, |o| o.refcount);
@@ -164,18 +178,14 @@ impl ObObjectTable {
             return Err(ObError::RefCountHeld);
         }
 
-        // Extract ops and native_id before dropping the slot
+        // Extract ops and native_id before dropping the slot.
         let ops = self.slots[idx].as_ref().and_then(|o| o.ops);
         let native_id = self.slots[idx].as_ref().map_or(0, |o| o.native_id);
-
-        if let Some(cb) = ops {
-            cb.on_destroy(id, native_id);
-        }
 
         self.slots[idx] = None;
         self.index.remove(id as u64);
         self.count -= 1;
-        Ok(())
+        Ok((ops, native_id))
     }
 
     /// Extract destroy info (ops + native_id) without clearing the slot.
@@ -270,12 +280,21 @@ pub fn ob_create_object(
 }
 
 pub fn ob_destroy_object(id: ObId) -> Result<(), ObError> {
-    let result = OB_TABLE.lock().destroy(id);
-    if result.is_ok() {
-        // VFS-1.3: Remove stale namespace entry for this ObId
-        let _ = crate::object::namespace::ob_remove_by_id(id);
+    // Phase 1: validate + unlink under the table lock.
+    let (ops, native_id) = {
+        let mut table = OB_TABLE.lock();
+        table.take_for_destroy(id)?
+    };
+    // Phase 2: run the type callback WITHOUT holding OB_TABLE. Some ops re-enter
+    // the Object Manager (PipeObOps::on_destroy -> PIPE_MANAGER.free_pipe ->
+    // ob_destroy_object); running them under the non-reentrant table mutex
+    // would self-deadlock (#662).
+    if let Some(cb) = ops {
+        cb.on_destroy(id, native_id);
     }
-    result
+    // VFS-1.3: Remove stale namespace entry for this ObId.
+    let _ = crate::object::namespace::ob_remove_by_id(id);
+    Ok(())
 }
 
 pub fn ob_lookup(id: ObId) -> Option<ObObject> {
