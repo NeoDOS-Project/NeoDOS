@@ -221,6 +221,7 @@ pub fn register_tests() {
     crate::input::register_tests();
     crate::input::vt::register_tests();
     crate::scheduler::register_tests();
+    crate::id_index::register_tests();
     crate::syscall::register_syscall_table_tests();
     crate::syscall::register_path_tests();
     crate::syscall::register_sync_tests();

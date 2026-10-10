@@ -65,6 +65,7 @@ mod services;
 pub use input::kbd;
 mod stress_spawn; // #345 Phase 2 diagnostic spawn-storm harness
 mod i18n_tests;
+mod id_index; // NEODOS-05 (#635): O(1) id index (Obj table + scheduler)
 // Cross-cutting infrastructure now lives under `infra/`.
 mod infra;
 pub use infra::{
