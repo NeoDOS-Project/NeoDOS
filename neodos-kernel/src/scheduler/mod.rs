@@ -182,10 +182,22 @@ impl Scheduler {
     #[inline]
     fn note_kprcb_fallback(&self, site: &'static str) {
         let gs = crate::hal::safe::GsBase::read();
-        if gs != 0 {
-            let ptr = unsafe { crate::arch::x64::cpu_local::this_cpu_current_thread() };
-            crate::scheduler::diag::kprcb_fallback_ev(site, gs, ptr, self.current_tid);
+        if gs == 0 {
+            // Early boot before GS is programmed: no per-CPU identity exists yet.
+            return;
         }
+        let ptr = unsafe { crate::arch::x64::cpu_local::this_cpu_current_thread() };
+        crate::scheduler::diag::kprcb_fallback_ev(site, gs, ptr, self.current_tid);
+        // NEODOS-02 (#632): in production (AP scheduling active, GS set) the
+        // per-CPU KPRCB identity MUST be available. Falling back to the shared
+        // global `current_tid` would let two CPUs operate on the same KTHREAD /
+        // kernel stack. Fail explicitly (project BUGCHECK convention) instead of
+        // corrupting state silently.
+        let cpu = unsafe { crate::arch::x64::cpu_local::this_cpu_id() };
+        panic!(
+            "BUGCHECK: KPRCB identity unavailable in production (site={} cpu={} gs=0x{:x} cur=0x{:x} global_current_tid={})",
+            site, cpu, gs, ptr as u64, self.current_tid
+        );
     }
 
     /// NEODOS-02 (#632): the single source of "current TID on this CPU".
