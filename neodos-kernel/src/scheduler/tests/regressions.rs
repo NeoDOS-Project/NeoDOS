@@ -1558,4 +1558,57 @@ pub fn register() {
             test_eq!(sched.kthreads[slot].as_ref().unwrap().state, ThreadState::Running);
         }
     });
+
+    // ── NEODOS-01 (#631): zombie queue observability and boundedness ─────────
+    test_case!("neodos01_zombie_queue_dedup_is_single_entry", {
+        use crate::scheduler::lifecycle::ZombieQueue;
+        let mut q = ZombieQueue::new();
+        test_true!(q.enqueue(42));
+        test_true!(!q.enqueue(42)); // duplicate is refused
+        test_true!(!q.enqueue(0));  // pid 0 is never enqueued
+        test_eq!(q.len(), 1);
+        test_true!(!q.is_empty());
+    });
+    test_case!("neodos01_zombie_reclaim_skips_running", {
+        use crate::scheduler::lifecycle::ZombieQueue;
+        let mut q = ZombieQueue::new();
+        q.enqueue(1);
+        q.enqueue(2);
+        q.enqueue(3);
+        // pid 2 still running; 1 and 3 are reclaimable.
+        let pos = q.find_reclaimable(0, |p| p == 2).unwrap();
+        test_eq!(q.take_at(pos).unwrap(), 1);
+        let pos = q.find_reclaimable(0, |p| p == 2).unwrap();
+        test_eq!(q.take_at(pos).unwrap(), 3);
+        test_true!(q.find_reclaimable(0, |p| p == 2).is_none());
+        test_eq!(q.len(), 1);
+    });
+    test_case!("neodos01_zombie_requeue_is_idempotent", {
+        use crate::scheduler::lifecycle::ZombieQueue;
+        let mut q = ZombieQueue::new();
+        q.enqueue(7);
+        test_eq!(q.take_at(0).unwrap(), 7);
+        q.requeue(7);
+        q.requeue(7); // must not duplicate
+        test_eq!(q.len(), 1);
+    });
+    test_case!("neodos01_zombie_hard_cap_and_backpressure", {
+        use crate::scheduler::lifecycle::{ZombieQueue, ZOMBIE_HARD_CAP, MAX_ZOMBIES};
+        let mut q = ZombieQueue::new();
+        // Fill to the soft watermark; every entry is "running".
+        for p in 1..=MAX_ZOMBIES as u32 { q.enqueue(p); }
+        test_eq!(q.len(), MAX_ZOMBIES);
+        test_true!(!q.over_hard_cap());
+        test_true!(q.backpressured(|_| true));
+        // A single reclaimable entry clears backpressure.
+        test_true!(!q.backpressured(|p| p == 1));
+        // Cross the deterministic hard cap with unique PIDs.
+        while q.len() < ZOMBIE_HARD_CAP {
+            let next = (q.len() as u32) + 1000;
+            q.enqueue(next);
+        }
+        test_true!(q.over_hard_cap());
+        // Nothing reclaimable (all still running) -> no candidate.
+        test_true!(q.find_reclaimable(0, |_| true).is_none());
+    });
 }

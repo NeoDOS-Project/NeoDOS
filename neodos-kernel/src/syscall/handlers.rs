@@ -35,7 +35,7 @@ pub(super) fn handler_exit(regs: super::Registers) -> u64 {
         // Centralized termination (also used by exception path) — handles thread_count, resources, waiters, defer reap
         if tid > 0 {
             scheduler.terminate_current(code as i64);
-            // terminate_current already did defer_reap and wake, but ensure resched
+            // terminate_current already queued the zombie (defer_reap_with_scheduler) and woke waiters; ensure resched
             crate::syscall::set_need_resched();
         }
         kdebug!(LogSubsys::Syscall, "done (after if tid > 0 block)");

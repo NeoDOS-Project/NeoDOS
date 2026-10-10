@@ -512,7 +512,7 @@ pub fn cleanup_terminated_process(pid: u32) {
         if crate::arch::x64::cpu_local::is_pid_running_on_any_cpu(pid) {
             // F-02-B: the pid still has a thread executing on some CPU (SMP).
             // Do not drop its kernel stack now; defer reclaim to the reaper.
-            crate::scheduler::lifecycle::defer_reap(pid);
+            crate::scheduler::lifecycle::defer_reap_with_scheduler(&mut *sched, pid);
         } else {
             sched.recycle_terminated(pid);
         }
