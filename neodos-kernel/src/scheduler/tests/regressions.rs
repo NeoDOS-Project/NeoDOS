@@ -1657,4 +1657,33 @@ pub fn register() {
             test_true!(sched.thread_tids_for_pid(pid).is_empty());
         }
     });
+
+    // ── NEODOS-02 (#632): current-identity reads are never silent ────────────
+    test_case!("neodos02_current_identity_prefers_kprcb_and_is_never_silent", {
+        // A local (non-global) Scheduler must keep using its own current_tid and
+        // current_pid, and must not record a KPRCB identity fallback while AP
+        // scheduling is inactive (the test/local-scheduler path). All the
+        // "current" accessors now funnel through `current_tid_checked`, so a
+        // production fallback is always counted, never silent.
+        let before = crate::scheduler::diag::kprcb_fallback_count();
+        let mut sched = Scheduler::new();
+        sched.next_tid = 5;
+        sched.current_tid = 3;
+        let slot = sched.alloc_kthread_slot().unwrap();
+        let mut k = Kthread::new_ring3(3, 7, 0x400000, 0x800000);
+        k.state = ThreadState::Running;
+        sched.kthreads[slot] = Some(Box::new(k));
+
+        test_eq!(sched.current_tid_for_this_cpu(), 3);
+        test_eq!(sched.current_pid(), 7);
+        test_true!(sched.current_kthread_mut().is_some());
+        // No Eprocess for pid 7 → resolving the current Eprocess yields None,
+        // not a wrong process from the global current_tid.
+        test_true!(sched.current_eprocess_mut().is_none());
+        test_true!(sched.current_eprocess().is_none());
+
+        if !crate::scheduler::ap_sched_active() {
+            test_eq!(crate::scheduler::diag::kprcb_fallback_count(), before);
+        }
+    });
 }
