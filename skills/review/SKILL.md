@@ -63,6 +63,7 @@ changes before they land.
    cd neodos-kernel && cargo build
    neodev build --quick --image && neodev test
    neodev check-deps
+   scripts/check-skills.sh
    npx markdownlint '**/*.md' --config .markdownlint.json
    ```
 
@@ -84,6 +85,8 @@ changes before they land.
 - Approving a new Ring 0 shell command.
 - Missing an ABI bump when NEM structs change.
 - Missing docs for a public API change.
+- Approving `skills/` that cite removed scripts or obsolete paths
+  (`scripts/check-skills.sh` catches both).
 - Catching raw handle dereferences instead of table lookups.
 - Missing safety comments on `unsafe`.
 
@@ -92,6 +95,7 @@ changes before they land.
 - [ ] All AGENTS.md permanent rules satisfied
 - [ ] `neodev check-deps` passes
 - [ ] Public API docs updated (syscalls, objects, drivers, libneodos)
+- [ ] `skills/` in sync (`scripts/check-skills.sh` passes)
 - [ ] Tests added/updated; error paths covered
 - [ ] `cargo build` + `neodev test` pass
 - [ ] `npx markdownlint '**/*.md' --config .markdownlint.json` passes

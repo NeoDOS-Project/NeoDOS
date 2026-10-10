@@ -6,6 +6,15 @@
 
 ### Added
 
+- **`scripts/check-skills.sh`: keep `skills/*/SKILL.md` in sync with docs/code
+  (#605).** Lightweight drift guard that fails when a skill cites a missing
+  `scripts/<name>`, an obsolete heuristic (e.g. `RAX >= 77`, Registry RAX
+  67-76), the removed `TestSpec`/`TestResult` harness or `nem_driver!` macro, or
+  a stale path (`src/vfs/`, `src/slab.rs`, `src/handle.rs`,
+  `src/work_queue.rs`). References that intentionally document a token as
+  obsolete are allow-listed per file. Wired into the release, review and
+  documentation checklists and the commit workflow.
+
 - **NXL v2: relocatable PIE libraries with symbol resolution (#601, #586).**
   NXL shared libraries can be built position-independent (`ET_DYN`) and load
   into any free slot: the loader applies `R_X86_64_RELATIVE` relocations and

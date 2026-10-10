@@ -57,6 +57,7 @@ Keep docs accurate and useful — they explain design, not replicate code.
 
    ```bash
    neodev check-deps
+   scripts/check-skills.sh
    npx markdownlint '**/*.md' --config .markdownlint.json
    ```
 
@@ -68,6 +69,9 @@ Keep docs accurate and useful — they explain design, not replicate code.
 - Use ASCII diagrams for complex flows; cross-reference with relative links.
 - One doc per subsystem — no duplicate overview docs.
 - When deleting a feature, delete or mark its documentation.
+- Keep the procedural checklists in `skills/` in sync too — run
+  `scripts/check-skills.sh`; it catches removed scripts, obsolete heuristics,
+  and stale paths before they reach an agent.
 - Keep the `docs/README.md` index in sync with new/removed files.
 
 ## Common mistakes
@@ -87,4 +91,5 @@ Keep docs accurate and useful — they explain design, not replicate code.
 - [ ] `scripts/sync-roadmap.sh sync` run if items completed
 - [ ] `CHANGELOG.md` updated
 - [ ] Cross-references valid; `markdownlint` passes
+- [ ] Skills synced (`scripts/check-skills.sh` passes)
 - [ ] `neodev check-deps` and the MCP `check_consistency` (targets=docs) pass

@@ -57,8 +57,12 @@ Produce a consistent, tested, and documented release with proper versioning.
    neodev build --image
    neodev test
    neodev check-deps
+   scripts/check-skills.sh
    npx markdownlint '**/*.md' --config .markdownlint.json
    ```
+
+   `check-skills.sh` fails if any `skills/*/SKILL.md` still cites a removed
+   script, an obsolete heuristic, or a stale path (issue #605).
 
 6. **Build and boot the release image**
    Boot in QEMU (`neodev run`) and verify the shell version prompt.
@@ -86,6 +90,8 @@ Produce a consistent, tested, and documented release with proper versioning.
 - Bump the NEM ABI only on a breaking change, and mirror it in `AGENTS.md`.
 - Test the full boot path (QEMU) for every release, not just unit tests.
 - Sync the roadmap before cutting the release.
+- Keep `skills/` in sync: the release is the last checkpoint, so run
+  `scripts/check-skills.sh` and fix any drift before tagging.
 - Keep `CHANGELOG.md` entries short; reference PRs.
 - Never release on a dirty working tree.
 
@@ -94,6 +100,7 @@ Produce a consistent, tested, and documented release with proper versioning.
 - Bumping the version in only one place (`AGENTS.md` but not `src/main.rs`).
 - Forgetting the NEM ABI bump when driver structs changed.
 - Releasing without `neodev test` / `neodev check-deps`.
+- Letting `skills/` drift — run `scripts/check-skills.sh`.
 - Including uncommitted changes in the release commit.
 - Skipping `scripts/sync-roadmap.sh sync`.
 
@@ -106,6 +113,7 @@ Produce a consistent, tested, and documented release with proper versioning.
 - [ ] Roadmap synced (`scripts/sync-roadmap.sh sync`)
 - [ ] `cargo build` + `neodev build --image` succeed
 - [ ] `neodev test` and `neodev check-deps` pass
+- [ ] Skills synced (`scripts/check-skills.sh` passes)
 - [ ] `markdownlint` passes
 - [ ] QEMU boot verified (version string correct)
 - [ ] Committed on `release/vX.Y.Z`, tagged (`vX.Y.Z`), pushed
