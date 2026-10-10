@@ -31,7 +31,7 @@ neodev build --quick --image     # build kernel + bl + image
 neodev build --image             # build everything + image (preferred)
 neodev run                       # QEMU + OVMF + GDB :1234
 neodev test                      # run automated tests
-scripts/build-test.sh            # rebuild-safe build + test (cargo build + image + test)
+scripts/build-test.sh            # neodev build --quick --image + neodev test
 neodev list                      # show discovered projects
 neodev clean                     # clean artifacts
 ```
@@ -126,10 +126,10 @@ making changes.
 
 ### Git Workflow (commits)
 
-1. `scripts/build-test.sh` — rebuild-safe: `cargo build` (kernel) →
-   `neodev build --quick --image` → `neodev test`. Use it instead of raw
-   `neodev test`: `neodev build --quick` does not reliably rebuild the kernel and
-   can package/test a **stale `kernel.elf`** (NeoDev#36).
+1. `scripts/build-test.sh` — `neodev build --quick --image` (rebuilds the kernel
+   in the release profile, the bootloader and the image → refreshes `kernel.elf`)
+   then `neodev test`. Always build the image before testing: `neodev test` loads
+   the root `kernel.elf`.
 2. `scripts/check-skills.sh`
 3. `npx markdownlint '**/*.md' --config .markdownlint.json`
 4. `scripts/sync-roadmap.sh check`
