@@ -47,6 +47,9 @@ pub struct BootInfo {
 
 Sequence from `src/boot/mod.rs` `init()`:
 
+> **Nota:** las referencias `:NNN` de la columna «Key Code» son orientativas y
+> pueden quedar desfasadas tras refactors; el orden de fases es lo normativo.
+
 | Phase | Description | Key Code |
 | ------- | ------------- | ---------- |
 | 0 | Verify boot info magic + version. Halt on bad magic | `rust_start():106` |

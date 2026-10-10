@@ -20,7 +20,7 @@
 | MSI-X | Message Signalled Interrupts eXtended — PCIe MSI-X capability |
 | MCFG | Memory-mapped Configuration space — ACPI table for ECAM base address |
 | NEM | NeoDOS External Module — driver format with certification pipeline |
-| NeoFS | NeoDOS File System — custom journaling filesystem (v2 = NE2) |
+| NeoFS | NeoDOS File System — copy-on-write filesystem (v2 = NE2; no journal) |
 | NLT | NeoDOS Language Technology — i18n format and toolchain |
 | NXE | NeoDOS eXecutable — user-mode binary format (ELF + NXE metadata) |
 | NXL | NeoDOS Library — dynamic library (.NXL) loaded by NXE binaries |

@@ -10,10 +10,10 @@ use alloc::string::ToString;
 
 // ═══════════════════════════════════════════════════════════════════════
 // Registry syscall handlers (Cm — Configuration Manager)
-// RAX 67-76
+// RAX 50-59
 // ═══════════════════════════════════════════════════════════════════════
 
-/// RAX 67: cm_open_key(path_ptr) -> handle
+/// RAX 50: cm_open_key(path_ptr) -> handle
 /// Open a registry key by path under \Registry.
 /// First tries direct Ob namespace lookup (for mount points).
 /// If not found, resolves through a hive mount point for deep key paths
@@ -132,7 +132,7 @@ pub(super) fn handler_cm_open_key(regs: Registers) -> u64 {
     }
 }
 
-/// RAX 68: cm_create_key(fd, name_ptr) -> handle
+/// RAX 51: cm_create_key(fd, name_ptr) -> handle
 /// Create a subkey under the key referenced by fd.
 pub(super) fn handler_cm_create_key(regs: Registers) -> u64 {
     let fd = regs.rbx as u8;
@@ -186,7 +186,7 @@ pub(super) fn handler_cm_create_key(regs: Registers) -> u64 {
     }
 }
 
-/// RAX 69: cm_query_value(fd, name_ptr, buf_ptr, buf_len) -> size
+/// RAX 52: cm_query_value(fd, name_ptr, buf_ptr, buf_len) -> size
 /// Query a value on the key referenced by fd.
 pub(super) fn handler_cm_query_value(regs: Registers) -> u64 {
     let fd = regs.rbx as u8;
@@ -250,7 +250,7 @@ pub(super) fn handler_cm_query_value(regs: Registers) -> u64 {
     }
 }
 
-/// RAX 70: cm_set_value(fd, name_ptr, value_type, data_ptr, data_len)
+/// RAX 53: cm_set_value(fd, name_ptr, value_type, data_ptr, data_len)
 /// Set a value on the key referenced by fd.
 pub(super) fn handler_cm_set_value(regs: Registers) -> u64 {
     let fd = regs.rbx as u8;
@@ -293,7 +293,7 @@ pub(super) fn handler_cm_set_value(regs: Registers) -> u64 {
     }
 }
 
-/// RAX 71: cm_enum_key(fd, index, buf_ptr) -> 0 or error
+/// RAX 54: cm_enum_key(fd, index, buf_ptr) -> 0 or error
 /// Enumerate subkeys of the key referenced by fd.
 pub(super) fn handler_cm_enum_key(regs: Registers) -> u64 {
     let fd = regs.rbx as u8;
@@ -329,7 +329,7 @@ pub(super) fn handler_cm_enum_key(regs: Registers) -> u64 {
     }
 }
 
-/// RAX 72: cm_enum_value(fd, index, buf_ptr) -> 0 or error
+/// RAX 55: cm_enum_value(fd, index, buf_ptr) -> 0 or error
 /// Enumerate values of the key referenced by fd.
 pub(super) fn handler_cm_enum_value(regs: Registers) -> u64 {
     let fd = regs.rbx as u8;
@@ -365,7 +365,7 @@ pub(super) fn handler_cm_enum_value(regs: Registers) -> u64 {
     }
 }
 
-/// RAX 73: cm_delete_key(fd)
+/// RAX 56: cm_delete_key(fd)
 pub(super) fn handler_cm_delete_key(regs: Registers) -> u64 {
     let fd = regs.rbx as u8;
 
@@ -385,7 +385,7 @@ pub(super) fn handler_cm_delete_key(regs: Registers) -> u64 {
     }
 }
 
-/// RAX 74: cm_flush_key(fd)
+/// RAX 57: cm_flush_key(fd)
 pub(super) fn handler_cm_flush_key(regs: Registers) -> u64 {
     let fd = regs.rbx as u8;
 
@@ -405,7 +405,7 @@ pub(super) fn handler_cm_flush_key(regs: Registers) -> u64 {
     }
 }
 
-/// RAX 75: cm_load_hive(name_ptr, mount_point_ptr) [admin]
+/// RAX 58: cm_load_hive(name_ptr, mount_point_ptr) [admin]
 pub(super) fn handler_cm_load_hive(regs: Registers) -> u64 {
     let name_ptr = regs.rbx;
     let mount_ptr = regs.rcx;
@@ -425,7 +425,7 @@ pub(super) fn handler_cm_load_hive(regs: Registers) -> u64 {
     }
 }
 
-/// RAX 76: cm_unload_hive(mount_point_ptr) [admin]
+/// RAX 59: cm_unload_hive(mount_point_ptr) [admin]
 pub(super) fn handler_cm_unload_hive(regs: Registers) -> u64 {
     let mount_ptr = regs.rbx;
 

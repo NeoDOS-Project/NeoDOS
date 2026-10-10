@@ -3,6 +3,17 @@
 version = 4
 
 [[package]]
+name = "libmath"
+version = "0.1.0"
+dependencies = [
+ "libneodos",
+]
+
+[[package]]
+name = "libneodiag"
+version = "0.1.0"
+
+[[package]]
 name = "libneodos"
 version = "0.2.1"
 dependencies = [
@@ -17,5 +28,7 @@ version = "0.1.0"
 name = "neotop"
 version = "0.1.0"
 dependencies = [
+ "libmath",
+ "libneodiag",
  "libneodos",
 ]

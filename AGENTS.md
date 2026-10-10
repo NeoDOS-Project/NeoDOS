@@ -275,7 +275,7 @@ For every subsystem, consult its doc — not this file:
 | Driver Migration | `docs/drivers/driver-migration.md` | Driver migration guide |
 | KCR Compliance | `docs/drivers/kcr-compliance.md` | Kernel Certification Requirements |
 | Filesystem | `docs/filesystem/overview.md` | NeoFS, VFS, IoStack, FAT32, page cache |
-| NeoFS v2 | `docs/filesystem/neofs-v2.md` | NE2 design, indirect blocks, journaling |
+| NeoFS v2 | `docs/filesystem/neofs-v2.md` | NE2 design, indirect blocks, copy-on-write |
 | VFS Patterns | `docs/filesystem/vfs-patterns.md` | VFS usage patterns and conventions |
 | Network | `docs/networking/stack.md` | TCP/IP stack, sockets, DHCP, e1000 |
 | Network Userland | `docs/networking/userland.md` | Network userland architecture |

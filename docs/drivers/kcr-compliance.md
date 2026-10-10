@@ -1,4 +1,4 @@
-# Kernel Core Runtime (KCR) — HAL ABI v0.3 Compliance Report
+# Kernel Core Runtime (KCR) — HAL ABI v0.4 Compliance Report
 
 **Date**: 2026-05-19  
 **Validator**: Static analysis (source + binary)  
@@ -8,7 +8,7 @@
 
 ## 1. COMPLIANCE STATUS: **PASS** ✅
 
-The Kernel Core Runtime conforms to the HAL ABI v0.3 contract.
+The Kernel Core Runtime conforms to the HAL ABI v0.4 contract.
 
 All hardware access in the KCR (kernel code outside `src/hal/`) is routed through
 HAL functions. No direct port I/O, raw asm hardware access, or undocumented

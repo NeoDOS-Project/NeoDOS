@@ -6,6 +6,14 @@ version = 4
 name = "drives"
 version = "0.1.0"
 dependencies = [
+ "libmath",
+ "libneodos",
+]
+
+[[package]]
+name = "libmath"
+version = "0.1.0"
+dependencies = [
  "libneodos",
 ]
 

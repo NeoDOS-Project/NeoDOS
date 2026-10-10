@@ -10,6 +10,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "libneoutil"
+version = "0.1.0"
+
+[[package]]
 name = "libnlt"
 version = "0.1.0"
 
@@ -18,4 +22,5 @@ name = "nxverify"
 version = "0.1.0"
 dependencies = [
  "libneodos",
+ "libneoutil",
 ]
