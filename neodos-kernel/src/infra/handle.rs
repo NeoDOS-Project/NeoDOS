@@ -258,9 +258,17 @@ impl HandleTable {
             }
         }
         if let (Some(f), None) = (first, second) {
+            // Need to grow the table by one handle. Enforce the same 255-entry
+            // cap as `alloc_handle` and use the exact new index: the previous
+            // `self.entries.len() as u8 - 1` truncated/underflowed at len >= 256
+            // and aliased fd 0 (#668).
+            let len = self.entries.len();
+            if len > 255 {
+                return None;
+            }
             self.entries.push(e2);
             self.entries[f as usize] = e1;
-            return Some((f, self.entries.len() as u8 - 1));
+            return Some((f, len as u8));
         }
         match (first, second) {
             (Some(a), Some(b)) => {
@@ -341,6 +349,27 @@ pub fn register_tests() {
         let fd = ht.alloc_handle(HandleEntry::file(1, 42));
         test_eq!(fd, Some(3));
         test_eq!(ht.get(3).native_id().unwrap_or(0), 42);
+    });
+
+    test_case!("alloc_two_handles_respects_capacity", {
+        // #668: alloc_two_handles must not exceed the 255-entry cap or truncate
+        // the returned fd through u8. The old grow path pushed past the cap at
+        // len >= 256 and returned `len as u8 - 1` (aliasing fd 0).
+        let mut ht = HandleTable::with_defaults();
+        let mut n = 0;
+        while ht.alloc_handle(HandleEntry::stdin()).is_some() {
+            n += 1;
+            if n > 1000 {
+                break;
+            }
+        }
+        test_eq!(ht.len(), 256);
+        // Exactly one free slot with the table already at the cap: growing by
+        // one would exceed it, so alloc_two_handles must refuse.
+        ht.set(3, HandleEntry::closed());
+        test_true!(ht.alloc_two_handles(HandleEntry::stdin(), HandleEntry::stdout()).is_none());
+        // The single free slot is still usable by alloc_handle.
+        test_eq!(ht.alloc_handle(HandleEntry::stdin()), Some(3));
     });
 
     test_case!("handle_table_default", {

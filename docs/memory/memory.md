@@ -108,7 +108,7 @@ Source: `src/memory/slab.rs`. 9 power-of-2 size classes (`CACHE_SIZES = [8, 16, 
 Each slab page is 4 KB with a 32-byte header at offset 0:
 
 ```rust
-pub struct SlabHeader {
+pub struct SlabPage {
     magic: u32,        // "SLAB" (0x534C_4142)
     slot_size: u16,
     capacity: u16,
@@ -135,8 +135,9 @@ Objects larger than 2048 bytes fall through to `linked_list_allocator::LockedHea
 `SlabAllocator` implements `GlobalAlloc` so all `#[global_allocator]` requests
 use slabs for small allocations and the linked-list heap for large ones.
 
-14 tests: per-size alloc/free, multi-page slab expansion, mixed-size stress,
-large-object fallback, and a 100k-iteration stress test.
+Tests: per-size alloc/free, multi-page slab expansion, mixed-size stress,
+large-object fallback, and a 100k-iteration stress test (see
+`memory/mod.rs` and `testing.rs`).
 
 ## Demand Paging
 
@@ -164,7 +165,7 @@ On first write to any 4 KB-aligned heap address, the page fault handler allocate
 a physical frame and maps it as USER_ACCESSIBLE.
 
 ```rust
-pub fn heap_alloc_page(virt: u64) -> bool;
+pub fn heap_alloc_page(virt: u64) -> Option<u64>;
 pub fn heap_free_page(virt: u64);
 pub fn heap_free_range(start: u64, end: u64);
 ```

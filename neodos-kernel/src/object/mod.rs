@@ -12,7 +12,7 @@ pub mod security;
 
 pub use types::{ObError, ObId, ObType, OB_NAME_LEN};
 pub use types::{ObObjectSnapshot, ObEnumEntry};
-pub(crate) use table::{ObObject, ObObjectTable, ObOperations, FileHandleOps, FILE_HANDLE_OPS, OB_TABLE, OB_SECURITY, init_object_manager, ob_create_object, ob_destroy_object, ob_lookup, ob_open_object, ob_close_object, ob_reference, ob_dereference, ob_count, ob_enum_snapshot, ob_set_object_name, ob_set_security, ob_create_object_path};
+pub(crate) use table::{ObObject, ObObjectTable, ObOperations, FileHandleOps, FILE_HANDLE_OPS, OB_TABLE, OB_SECURITY, init_object_manager, ob_create_object, ob_destroy_object, ob_lookup, ob_open_object, ob_close_object, ob_reference, ob_dereference, ob_refcount_stats, ob_set_refcount_for_test, ob_count, ob_enum_snapshot, ob_set_object_name, ob_set_security, ob_create_object_path};
 pub use security::ob_open_path;
 pub use enum_mod::ob_enum_directory;
 
@@ -36,7 +36,7 @@ pub fn ob_dispatch_wait(object_id: ObId) -> Option<bool> {
 }
 
 pub fn register_object_tests() {
-    use crate::{test_case, test_eq, test_true};
+    use crate::{test_case, test_eq, test_false, test_true};
     namespace::register_namespace_tests();
 
     test_case!("ob_create_lookup", {
@@ -74,6 +74,75 @@ pub fn register_object_tests() {
         let result = ob_destroy_object(id);
         test_true!(result.is_err());
         test_eq!(result.unwrap_err(), ObError::NotFound);
+    });
+
+    // #661 probe: an ObOperations whose on_destroy records what it can observe
+    // about its own object. After the fix the object must already be unlinked.
+    static PROBE_CALLS: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+    static PROBE_REACHABLE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+    static PROBE_REF_OK: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+    struct ProbeOnDestroyOps;
+    impl ObOperations for ProbeOnDestroyOps {
+        fn on_destroy(&self, id: ObId, _native_id: u64) {
+            use core::sync::atomic::Ordering;
+            PROBE_CALLS.fetch_add(1, Ordering::SeqCst);
+            if ob_lookup(id).is_some() {
+                PROBE_REACHABLE.store(true, Ordering::SeqCst);
+            }
+            if ob_reference(id).is_ok() {
+                PROBE_REF_OK.store(true, Ordering::SeqCst);
+            }
+        }
+    }
+    static PROBE_OPS: ProbeOnDestroyOps = ProbeOnDestroyOps;
+
+    test_case!("ob_close_finalize_unlinks_before_callback", {
+        // #661: the object must be unlinked BEFORE on_destroy runs, so it cannot
+        // be resurrected by a concurrent reference/open and on_destroy cannot
+        // run twice.
+        use core::sync::atomic::Ordering;
+        PROBE_CALLS.store(0, Ordering::SeqCst);
+        PROBE_REACHABLE.store(false, Ordering::SeqCst);
+        PROBE_REF_OK.store(false, Ordering::SeqCst);
+        let id = ob_create_object(ObType::Event, "finalize_probe", 0, 0, Some(&PROBE_OPS)).unwrap();
+        ob_close_object(id).unwrap();
+        test_eq!(PROBE_CALLS.load(Ordering::SeqCst), 1);
+        test_false!(PROBE_REACHABLE.load(Ordering::SeqCst));
+        test_false!(PROBE_REF_OK.load(Ordering::SeqCst));
+        test_true!(ob_lookup(id).is_none());
+        // A second close is NotFound and must NOT invoke on_destroy again.
+        test_eq!(ob_close_object(id).unwrap_err(), ObError::NotFound);
+        test_eq!(PROBE_CALLS.load(Ordering::SeqCst), 1);
+    });
+
+    test_case!("ob_destroy_removes_security_descriptor", {
+        // #664: the SecurityDescriptor is released on destroy (no leak, no
+        // bleed onto a reused ObId).
+        use crate::security::acl::SecurityDescriptor;
+        let id = ob_create_object(ObType::Event, "sd_probe", 0, 0, None).unwrap();
+        ob_set_security(id, SecurityDescriptor::new()).unwrap();
+        test_true!(OB_SECURITY.lock().contains_key(&id));
+        ob_destroy_object(id).unwrap();
+        test_true!(!OB_SECURITY.lock().contains_key(&id));
+    });
+
+    test_case!("ob_refcount_overflow_underflow_observable", {
+        // #663: refcount saturation and underflow are observable, not silent.
+        let (o0, u0) = ob_refcount_stats();
+        let id = ob_create_object(ObType::Event, "rc_probe", 0, 0, None).unwrap();
+        // Underflow: decrement an already-zero count.
+        ob_dereference(id).unwrap(); // 1 -> 0
+        ob_dereference(id).unwrap(); // 0 -> underflow counted
+        let (_o1, u1) = ob_refcount_stats();
+        test_eq!(u1 - u0, 1);
+        // Overflow: reference at u32::MAX saturates and is counted.
+        ob_set_refcount_for_test(id, u32::MAX).unwrap();
+        ob_reference(id).unwrap();
+        let (o2, _u2) = ob_refcount_stats();
+        test_eq!(o2 - o0, 1);
+        // Restore a destroyable count and clean up.
+        ob_set_refcount_for_test(id, 1).unwrap();
+        ob_destroy_object(id).unwrap();
     });
 
     test_case!("ob_lookup_not_found", {

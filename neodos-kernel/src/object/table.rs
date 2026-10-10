@@ -5,6 +5,13 @@ use spin::Mutex;
 use lazy_static::lazy_static;
 use crate::object::types::{ObError, ObId, ObType, OB_NAME_LEN, ObObjectSnapshot, ObEnumEntry};
 use crate::id_index::IdIndex;
+use core::sync::atomic::{AtomicU64, Ordering};
+
+// ── Reference-count observability (#663) ────────────────────────────────────
+// A saturating or underflowing object refcount is a lifecycle bug; it must
+// never be silent. Exposed via `ob_refcount_stats()`.
+static OB_REF_OVERFLOW: AtomicU64 = AtomicU64::new(0);
+static OB_REF_UNDERFLOW: AtomicU64 = AtomicU64::new(0);
 
 pub trait ObOperations: Send + Sync {
     fn on_destroy(&self, _id: ObId, _native_id: u64) {}
@@ -132,31 +139,66 @@ impl ObObjectTable {
         self.slots.get_mut(idx)?.as_mut()
     }
 
-    /// Increment reference count. Returns new count.
+    /// Increment reference count. Returns new count. Saturation at `u32::MAX`
+    /// is counted in `OB_REF_OVERFLOW` (and logged) instead of being silently
+    /// pinned.
     pub fn reference(&mut self, id: ObId) -> Result<u32, ObError> {
         self.lookup_mut(id)
             .map(|o| {
+                if o.refcount == u32::MAX {
+                    OB_REF_OVERFLOW.fetch_add(1, Ordering::Relaxed);
+                    kwarn!(crate::log::LogSubsys::Object,
+                        "object refcount overflow (u32::MAX) id={}", id);
+                }
                 o.refcount = o.refcount.saturating_add(1);
                 o.refcount
             })
             .ok_or(ObError::NotFound)
     }
 
-    /// Decrement reference count. Returns new count.
+    /// Decrement reference count. Returns new count. A decrement of an
+    /// already-zero count is counted in `OB_REF_UNDERFLOW` (and logged) instead
+    /// of silently returning 0.
     pub fn dereference(&mut self, id: ObId) -> Result<u32, ObError> {
         self.lookup_mut(id)
             .map(|o| {
                 if o.refcount > 0 {
                     o.refcount -= 1;
+                } else {
+                    OB_REF_UNDERFLOW.fetch_add(1, Ordering::Relaxed);
+                    kwarn!(crate::log::LogSubsys::Object,
+                        "object refcount underflow (already 0) id={}", id);
                 }
                 o.refcount
             })
             .ok_or(ObError::NotFound)
     }
 
-    /// Destroy an object. Fails if refcount > 1 (i.e., caller still holds
-    /// the initial creation reference plus any extra references).
-    pub fn destroy(&mut self, id: ObId) -> Result<(), ObError> {
+    /// Test-only: force an object's reference count, so the overflow/
+    /// underflow guards can be exercised deterministically without acquiring
+    /// 2^32 references. Never used on a production path.
+    #[doc(hidden)]
+    pub fn set_refcount_for_test(&mut self, id: ObId, n: u32) -> Result<(), ObError> {
+        self.lookup_mut(id).ok_or(ObError::NotFound).map(|o| o.refcount = n)
+    }
+
+    /// Validate and unlink an object for destruction, returning its
+    /// `(ops, native_id)` so the caller can run `on_destroy` **outside** the
+    /// table lock.
+    ///
+    /// Fails with `RefCountHeld` if the object still has extra references
+    /// (refcount > 1). On success the slot is cleared while the lock is held,
+    /// so the object is unreachable and cannot be resurrected by a concurrent
+    /// `reference` before its `on_destroy` runs.
+    ///
+    /// The caller MUST invoke the returned callback without holding `OB_TABLE`:
+    /// some ops re-enter the Object Manager (e.g. `PipeObOps::on_destroy` ->
+    /// `PIPE_MANAGER.free_pipe` -> `ob_destroy_object`), which self-deadlocks on
+    /// the non-reentrant table mutex.
+    pub fn take_for_destroy(
+        &mut self,
+        id: ObId,
+    ) -> Result<(Option<&'static dyn ObOperations>, u64), ObError> {
         let idx = self.index.get(id as u64).ok_or(ObError::NotFound)?;
 
         let refcount = self.slots[idx].as_ref().map_or(0, |o| o.refcount);
@@ -164,40 +206,18 @@ impl ObObjectTable {
             return Err(ObError::RefCountHeld);
         }
 
-        // Extract ops and native_id before dropping the slot
+        // Extract ops and native_id before dropping the slot.
         let ops = self.slots[idx].as_ref().and_then(|o| o.ops);
         let native_id = self.slots[idx].as_ref().map_or(0, |o| o.native_id);
-
-        if let Some(cb) = ops {
-            cb.on_destroy(id, native_id);
-        }
 
         self.slots[idx] = None;
         self.index.remove(id as u64);
         self.count -= 1;
-        Ok(())
-    }
-
-    /// Extract destroy info (ops + native_id) without clearing the slot.
-    /// Used by ob_close_object to call the callback outside the lock.
-    pub fn extract_destroy_info(&mut self, id: ObId) -> Result<(Option<&'static dyn ObOperations>, u64), ObError> {
-        let idx = self.index.get(id as u64).ok_or(ObError::NotFound)?;
-        let refcount = self.slots[idx].as_ref().map_or(0, |o| o.refcount);
-        if refcount > 0 {
-            return Err(ObError::RefCountHeld);
-        }
-        let ops = self.slots[idx].as_ref().and_then(|o| o.ops);
-        let native_id = self.slots[idx].as_ref().map_or(0, |o| o.native_id);
+        // Drop any SecurityDescriptor so it cannot leak, and cannot bleed onto a
+        // reused ObId (#664). Lock order: OB_TABLE -> OB_SECURITY; there is no
+        // path that takes OB_SECURITY then OB_TABLE, so this cannot deadlock.
+        OB_SECURITY.lock().remove(&id);
         Ok((ops, native_id))
-    }
-
-    /// Finalize destroy — clear the slot after the callback has been called.
-    pub fn finalize_destroy(&mut self, id: ObId) {
-        if let Some(idx) = self.index.get(id as u64) {
-            self.index.remove(id as u64);
-            self.slots[idx] = None;
-            self.count -= 1;
-        }
     }
 
     pub fn len(&self) -> usize {
@@ -270,12 +290,21 @@ pub fn ob_create_object(
 }
 
 pub fn ob_destroy_object(id: ObId) -> Result<(), ObError> {
-    let result = OB_TABLE.lock().destroy(id);
-    if result.is_ok() {
-        // VFS-1.3: Remove stale namespace entry for this ObId
-        let _ = crate::object::namespace::ob_remove_by_id(id);
+    // Phase 1: validate + unlink under the table lock.
+    let (ops, native_id) = {
+        let mut table = OB_TABLE.lock();
+        table.take_for_destroy(id)?
+    };
+    // Phase 2: run the type callback WITHOUT holding OB_TABLE. Some ops re-enter
+    // the Object Manager (PipeObOps::on_destroy -> PIPE_MANAGER.free_pipe ->
+    // ob_destroy_object); running them under the non-reentrant table mutex
+    // would self-deadlock (#662).
+    if let Some(cb) = ops {
+        cb.on_destroy(id, native_id);
     }
-    result
+    // VFS-1.3: Remove stale namespace entry for this ObId.
+    let _ = crate::object::namespace::ob_remove_by_id(id);
+    Ok(())
 }
 
 pub fn ob_lookup(id: ObId) -> Option<ObObject> {
@@ -288,30 +317,25 @@ pub fn ob_open_object(id: ObId, _access: u32) -> Result<(), ObError> {
 }
 
 pub fn ob_close_object(id: ObId) -> Result<(), ObError> {
-    let mut table = OB_TABLE.lock();
-    let cnt = table.dereference(id)?;
-    if cnt > 0 {
-        return Ok(());
-    }
-    // Refcount reached 0 — extract destroy info and drop lock before callback
-    let (ops, native_id) = table.extract_destroy_info(id)?;
-    if ops.is_none() && native_id == 0 {
-        // No callback, simple cleanup
-        table.finalize_destroy(id);
-        drop(table);
-        // VFS-1.3: Remove stale namespace entry
-        let _ = crate::object::namespace::ob_remove_by_id(id);
-        return Ok(());
-    }
-    drop(table);
-    // Call on_destroy WITHOUT holding OB_TABLE lock (avoids deadlock with ob_destroy_object)
+    // Phase 1: drop the final reference and unlink the object under the lock.
+    // Unlinking while the lock is held closes the finalize window (#661): once
+    // the refcount reaches 0 the object is unreachable, so a concurrent
+    // reference/open cannot resurrect it and a second close/destroy cannot run
+    // on_destroy again.
+    let (ops, native_id) = {
+        let mut table = OB_TABLE.lock();
+        let cnt = table.dereference(id)?;
+        if cnt > 0 {
+            return Ok(());
+        }
+        table.take_for_destroy(id)?
+    };
+    // Phase 2: run on_destroy WITHOUT holding OB_TABLE (some ops re-enter the
+    // Object Manager; see ob_destroy_object / PipeObOps, #662).
     if let Some(cb) = ops {
         cb.on_destroy(id, native_id);
     }
-    let mut table = OB_TABLE.lock();
-    table.finalize_destroy(id);
-    drop(table);
-    // VFS-1.3: Remove stale namespace entry
+    // VFS-1.3: Remove stale namespace entry for this ObId.
     let _ = crate::object::namespace::ob_remove_by_id(id);
     Ok(())
 }
@@ -322,6 +346,20 @@ pub fn ob_reference(id: ObId) -> Result<u32, ObError> {
 
 pub fn ob_dereference(id: ObId) -> Result<u32, ObError> {
     OB_TABLE.lock().dereference(id)
+}
+
+/// `(overflow, underflow)` reference-count anomaly counters (#663).
+pub fn ob_refcount_stats() -> (u64, u64) {
+    (
+        OB_REF_OVERFLOW.load(Ordering::Relaxed),
+        OB_REF_UNDERFLOW.load(Ordering::Relaxed),
+    )
+}
+
+/// Test-only: force an object's reference count (see `set_refcount_for_test`).
+#[doc(hidden)]
+pub fn ob_set_refcount_for_test(id: ObId, n: u32) -> Result<(), ObError> {
+    OB_TABLE.lock().set_refcount_for_test(id, n)
 }
 
 pub fn ob_count() -> usize {

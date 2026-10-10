@@ -71,7 +71,7 @@ device). `free_frame()` MUST only be called by the owner.
 
 **INV-6. EVERY PROCESS SLOT IS EITHER FREE OR VALID.**
 No half-initialized slots. The scheduler recycles a slot only after `cleanup_terminated_process`
-completes all resource freeing. After recycle, the slot's PID generation counter is incremented.
+completes all resource freeing.
 
 **INV-7. NO INTERRUPT-STACK EXECUTION OF SCHEDULER CODE.**
 The scheduler, frame allocator, and slab allocator must never execute on the interrupt stack.
@@ -278,8 +278,11 @@ was the wild-`iretq` `INVALID_OPCODE` on SMP2.
 ### 6.3 Process Slot Management
 
 **Rule 6.3.1**: Process and thread slots are allocated dynamically (there is no fixed `MAX_PROCESSES`); slot indices are reused and MUST NOT be treated as stable identity.
-**Rule 6.3.2**: Each slot has a `pid_gen: u32` counter incremented on recycle. This prevents
-use-after-free of stale PIDs.
+**Rule 6.3.2**: PIDs and TIDs are monotonically increasing and NEVER reused (`next_pid`/`next_tid`
+only ever increment), which is what prevents stale-PID use-after-free. A per-slot `pid_gen` counter
+is therefore NOT required today and is not implemented; if PID reuse is ever introduced, the slot
+MUST gain a generation counter and the zombie queue / KPRCB identity checks MUST become
+generation-tagged (#665, audit F-02-D).
 **Rule 6.3.3**: `cleanup_terminated_process` is called exactly once per process lifecycle:
 after `sys_exit` and before slot recycle.
 
