@@ -1558,4 +1558,103 @@ pub fn register() {
             test_eq!(sched.kthreads[slot].as_ref().unwrap().state, ThreadState::Running);
         }
     });
+
+    // ── NEODOS-01 (#631): zombie queue observability and boundedness ─────────
+    test_case!("neodos01_zombie_queue_dedup_is_single_entry", {
+        use crate::scheduler::lifecycle::ZombieQueue;
+        let mut q = ZombieQueue::new();
+        test_true!(q.enqueue(42));
+        test_true!(!q.enqueue(42)); // duplicate is refused
+        test_true!(!q.enqueue(0));  // pid 0 is never enqueued
+        test_eq!(q.len(), 1);
+        test_true!(!q.is_empty());
+    });
+    test_case!("neodos01_zombie_reclaim_skips_running", {
+        use crate::scheduler::lifecycle::ZombieQueue;
+        let mut q = ZombieQueue::new();
+        q.enqueue(1);
+        q.enqueue(2);
+        q.enqueue(3);
+        // pid 2 still running; 1 and 3 are reclaimable.
+        let pos = q.find_reclaimable(0, |p| p == 2).unwrap();
+        test_eq!(q.take_at(pos).unwrap(), 1);
+        let pos = q.find_reclaimable(0, |p| p == 2).unwrap();
+        test_eq!(q.take_at(pos).unwrap(), 3);
+        test_true!(q.find_reclaimable(0, |p| p == 2).is_none());
+        test_eq!(q.len(), 1);
+    });
+    test_case!("neodos01_zombie_requeue_is_idempotent", {
+        use crate::scheduler::lifecycle::ZombieQueue;
+        let mut q = ZombieQueue::new();
+        q.enqueue(7);
+        test_eq!(q.take_at(0).unwrap(), 7);
+        q.requeue(7);
+        q.requeue(7); // must not duplicate
+        test_eq!(q.len(), 1);
+    });
+    test_case!("neodos01_zombie_hard_cap_and_backpressure", {
+        use crate::scheduler::lifecycle::{ZombieQueue, ZOMBIE_HARD_CAP, MAX_ZOMBIES};
+        let mut q = ZombieQueue::new();
+        // Fill to the soft watermark; every entry is "running".
+        for p in 1..=MAX_ZOMBIES as u32 { q.enqueue(p); }
+        test_eq!(q.len(), MAX_ZOMBIES);
+        test_true!(!q.over_hard_cap());
+        test_true!(q.backpressured(|_| true));
+        // A single reclaimable entry clears backpressure.
+        test_true!(!q.backpressured(|p| p == 1));
+        // Cross the deterministic hard cap with unique PIDs.
+        while q.len() < ZOMBIE_HARD_CAP {
+            let next = (q.len() as u32) + 1000;
+            q.enqueue(next);
+        }
+        test_true!(q.over_hard_cap());
+        // Nothing reclaimable (all still running) -> no candidate.
+        test_true!(q.find_reclaimable(0, |_| true).is_none());
+    });
+    test_case!("neodos01_zombie_stress_4x_max_no_slot_leak", {
+        use crate::scheduler::lifecycle::{ZombieQueue, MAX_ZOMBIES};
+        let mut sched = Scheduler::new();
+        let base_pid: u32 = 10_000;
+        let n = MAX_ZOMBIES * 4; // 4×MAX_ZOMBIES = 256 exits
+
+        // 4×MAX real, already-terminated EPROCESS/KTHREAD pairs. `new_kernel`
+        // owns no external resources (no user slot / heap / handles), so the
+        // reaper only has to free the slot + kernel stack: exactly the leak
+        // surface of the zombie path.
+        for i in 0..n {
+            let pid = base_pid + i as u32;
+            let ep_slot = sched.alloc_eprocess_slot().unwrap();
+            sched.eprocesses[ep_slot] = Some(Eprocess::new_kernel(pid));
+            let th_slot = sched.alloc_kthread_slot().unwrap();
+            let mut k = Kthread::new_ring3(pid, pid, 0x400000, 0x800000);
+            k.state = ThreadState::Terminated;
+            sched.kthreads[th_slot] = Some(Box::new(k));
+        }
+        test_eq!(sched.eprocesses.iter().flatten().count(), n + 1); // + boot (pid 0)
+
+        // Feed all 256 dead PIDs through the zombie queue, then drain it exactly
+        // like the reaper does (`recycle_terminated`).
+        let mut q = ZombieQueue::new();
+        for i in 0..n {
+            q.enqueue(base_pid + i as u32);
+        }
+        let mut reclaimed = 0usize;
+        while let Some(pos) = q.find_reclaimable(0, |_| false) {
+            let pid = q.take_at(pos).unwrap();
+            test_true!(sched.recycle_terminated(pid));
+            reclaimed += 1;
+        }
+        test_eq!(reclaimed, n);
+        test_eq!(q.len(), 0);
+
+        // Zero slot leak: only the boot EPROCESS and the boot+idle KTHREADs
+        // remain, and none of the 256 pids is still tracked.
+        test_eq!(sched.eprocesses.iter().flatten().count(), 1);
+        test_eq!(sched.kthreads.iter().flatten().count(), 2);
+        for i in 0..n {
+            let pid = base_pid + i as u32;
+            test_true!(sched.find_eprocess(pid).is_none());
+            test_true!(sched.thread_tids_for_pid(pid).is_empty());
+        }
+    });
 }

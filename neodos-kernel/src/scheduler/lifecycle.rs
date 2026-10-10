@@ -11,111 +11,183 @@ use crate::object::ObId;
 use crate::scheduler::types::{Eprocess, Kthread, ThreadState, PRIORITY_NORMAL, TIME_SLICES, KERNEL_STACK_SIZE};
 use crate::scheduler::stack::{AlignedKStack, init_ring0_frame};
 use crate::scheduler::Scheduler;
+use core::sync::atomic::{AtomicU64, Ordering};
 
-/// F-06: bounded zombie queue to prevent unbounded growth under storm.
-/// Each zombie is an EPROCESS/KTHREAD that has been terminated but whose
-/// slots (including kernel stacks) cannot be freed until no CPU is running
-/// on that pid. Under rapid spawn/exit, defer_reap() pushes faster than
-/// schedule() could previously pop (1 per schedule), leading to Vec growth
-/// without bound and heap/user slot exhaustion.
-const MAX_ZOMBIES: usize = 64;
+/// Soft watermark: queue length at which a spawn attempts a synchronous
+/// reclaim before it is considered backpressured (see `spawn_usermode`).
+pub const MAX_ZOMBIES: usize = 64;
+
+/// Deterministic hard cap for the zombie queue (NEODOS-01 / #631).
+///
+/// A terminated PID is enqueued only while it still runs on some CPU, so the
+/// number of *genuinely unreapable* entries is bounded by the CPU count.
+/// Crossing this cap therefore means reaping lag or stale entries; it is
+/// surfaced through `ZOMBIE_OVERFLOW` and an error log (never silently), and
+/// the scheduler-aware paths force a synchronous reclaim to fall back under it.
+pub const ZOMBIE_HARD_CAP: usize = MAX_ZOMBIES * 2;
 
 /// NeoInit's PID. INV-10: it MUST NEVER BE KILLED (source-of-truth.md §INV-10).
 pub const INIT_PID: u32 = 1;
 
+// ── Zombie-lifecycle observability counters (NEODOS-01 / #631) ──────────────
+static ZOMBIE_ENQUEUED: AtomicU64 = AtomicU64::new(0);
+static ZOMBIE_DEDUP_SKIPPED: AtomicU64 = AtomicU64::new(0);
+static ZOMBIE_REQUEUED: AtomicU64 = AtomicU64::new(0);
+static ZOMBIE_STALE_DROPPED: AtomicU64 = AtomicU64::new(0);
+static ZOMBIE_OVERFLOW: AtomicU64 = AtomicU64::new(0);
+static ZOMBIE_BACKPRESSURE: AtomicU64 = AtomicU64::new(0);
+
+/// Snapshot of the zombie queue state and its lifecycle counters.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ZombieStats {
+    pub len: usize,
+    pub enqueued: u64,
+    pub dedup_skipped: u64,
+    pub requeued: u64,
+    pub stale_dropped: u64,
+    pub overflow: u64,
+    pub backpressure_hits: u64,
+}
+
+/// Zombie queue state machine.
+///
+/// Kept free of the "is this PID running?" side effect: that predicate is a
+/// parameter of the query/reclaim helpers, so the policy can be unit-tested
+/// deterministically (see `scheduler::tests::regressions`).
+pub struct ZombieQueue {
+    pids: Vec<u32>,
+}
+
+#[allow(clippy::new_without_default)]
+impl ZombieQueue {
+    pub fn new() -> Self {
+        ZombieQueue { pids: Vec::with_capacity(MAX_ZOMBIES) }
+    }
+
+    #[inline]
+    pub fn len(&self) -> usize { self.pids.len() }
+
+    #[inline]
+    pub fn is_empty(&self) -> bool { self.pids.is_empty() }
+
+    #[inline]
+    pub fn over_hard_cap(&self) -> bool { self.pids.len() >= ZOMBIE_HARD_CAP }
+
+    /// Enqueue `pid` at most once. Returns `false` when it was a duplicate.
+    pub fn enqueue(&mut self, pid: u32) -> bool {
+        if pid == 0 { return false; }
+        if self.pids.iter().any(|&p| p == pid) {
+            ZOMBIE_DEDUP_SKIPPED.fetch_add(1, Ordering::Relaxed);
+            return false;
+        }
+        self.pids.push(pid);
+        ZOMBIE_ENQUEUED.fetch_add(1, Ordering::Relaxed);
+        true
+    }
+
+    /// Re-queue a PID that is still alive (dedup; counted separately).
+    pub fn requeue(&mut self, pid: u32) {
+        if pid == 0 { return; }
+        if !self.pids.iter().any(|&p| p == pid) {
+            self.pids.push(pid);
+            ZOMBIE_REQUEUED.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    /// Index of the first enqueued PID that is neither `exclude` nor currently
+    /// running, according to `is_running`.
+    pub fn find_reclaimable<F: Fn(u32) -> bool>(
+        &self,
+        exclude: u32,
+        is_running: F,
+    ) -> Option<usize> {
+        self.pids.iter().position(|&p| p != exclude && !is_running(p))
+    }
+
+    /// Remove and return the PID at `pos`, if any.
+    pub fn take_at(&mut self, pos: usize) -> Option<u32> {
+        if pos < self.pids.len() { Some(self.pids.remove(pos)) } else { None }
+    }
+
+    /// True when the queue is at the soft watermark and no entry can be
+    /// reclaimed (every entry is still running).
+    pub fn backpressured<F: Fn(u32) -> bool>(&self, is_running: F) -> bool {
+        if self.pids.len() < MAX_ZOMBIES { return false; }
+        !self.pids.iter().any(|&p| !is_running(p))
+    }
+}
+
 lazy_static! {
-    static ref ZOMBIE_PIDS: Mutex<Vec<u32>> = Mutex::new(Vec::with_capacity(MAX_ZOMBIES));
+    static ref ZOMBIE_QUEUE: Mutex<ZombieQueue> = Mutex::new(ZombieQueue::new());
 }
 
-/// Defer EPROCESS slot recycling until after context switch.
-/// The pid's Kthread stacks remain valid while current thread still executes.
-/// F-DEV-02: fixed bounded queue without loss — previous drain discarded PIDs
-/// without recycle_terminated, leaking eprocesses/kthreads/Ob objects.
-/// Correctness requires queue with no silent loss: we never drain without
-/// recycling. If hard cap exceeded we keep the queue oversized and warn;
-/// reap_pending_zombies will drain all eligible on next schedule (F-06 loop).
-/// Sync reclaim or spawn backpressure (see defer_reap_with_scheduler) bounds it.
-pub fn defer_reap(pid: u32) {
-    if pid == 0 { return; }
-
-    // Deduplicate queue entries. A recycled pid should only be reaped once.
-    // Repeating the same PID without a corresponding recycle is a queue-growth
-    // bug and can leave the scheduler with stale, unrecoverable entries.
-    {
-        let zombies = ZOMBIE_PIDS.lock();
-        if zombies.iter().any(|&queued_pid| queued_pid == pid) {
-            return;
-        }
-    }
-
-    // Best-effort reaping before we append another pending PID. This keeps the
-    // queue bounded in the common case without ever discarding a live PID.
-    if let Some(mut sched) = crate::scheduler::current_scheduler().try_lock() {
-        let before = zombie_queue_len();
-        let cur_pid = sched.current_pid();
-        reap_pending_zombies(&mut *sched, cur_pid);
-        if zombie_queue_len() < before {
-            kwarn!(crate::log::LogSubsys::Sched,
-                "zombie queue drained from {} to {} before enqueueing pid {}",
-                before, zombie_queue_len(), pid);
-        }
-    }
-
-    let mut zombies = ZOMBIE_PIDS.lock();
-    if zombies.len() >= MAX_ZOMBIES {
-        kwarn!(crate::log::LogSubsys::Sched,
-            "zombie backpressure: queue len {} >= MAX {} (best-effort drain before enqueue)",
-            zombies.len(), MAX_ZOMBIES);
-    }
-    zombies.push(pid);
-    if zombies.len() > MAX_ZOMBIES * 4 {
-        kwarn!(crate::log::LogSubsys::Sched,
-            "zombie storm: queue len {} exceeds hard cap {} (awaiting reap, no silent loss)",
-            zombies.len(), MAX_ZOMBIES * 4);
-        // F-DEV-02: do NOT drain without recycle — that leaked PID slots forever.
-        // Queue stays oversized until reap_pending_zombies drains eligible entries.
+/// Snapshot the zombie queue state and lifecycle counters.
+pub fn zombie_queue_stats() -> ZombieStats {
+    let q = ZOMBIE_QUEUE.lock();
+    ZombieStats {
+        len: q.len(),
+        enqueued: ZOMBIE_ENQUEUED.load(Ordering::Relaxed),
+        dedup_skipped: ZOMBIE_DEDUP_SKIPPED.load(Ordering::Relaxed),
+        requeued: ZOMBIE_REQUEUED.load(Ordering::Relaxed),
+        stale_dropped: ZOMBIE_STALE_DROPPED.load(Ordering::Relaxed),
+        overflow: ZOMBIE_OVERFLOW.load(Ordering::Relaxed),
+        backpressure_hits: ZOMBIE_BACKPRESSURE.load(Ordering::Relaxed),
     }
 }
 
-/// F-DEV-02: sync reclaim variant called with scheduler lock held (terminate_current).
-/// Enqueues pid via defer_reap, then synchronously reclaims oldest eligible zombies
-/// while holding &mut Scheduler to keep the queue bounded without loss.
+/// Defer EPROCESS slot recycling until after context switch (NEODOS-01 / #631).
+///
+/// The PID's KTHREAD stacks remain valid while the current thread still
+/// executes, so the slot cannot be recycled until no CPU runs the PID. Called
+/// with the scheduler lock held by every enqueue path (`terminate_current`,
+/// `kill_pid`, `cleanup_terminated_process`). It enqueues the PID (dedup) and
+/// then synchronously reclaims the oldest not-running zombies until the queue
+/// falls back under `ZOMBIE_HARD_CAP`, so the cap is actually enforced.
+///
+/// The queue must never silently lose a live PID (F-DEV-02), so enqueue is
+/// infallible; unreclaimable overflow is surfaced through `ZOMBIE_OVERFLOW`.
 pub fn defer_reap_with_scheduler(sched: &mut Scheduler, pid: u32) {
-    defer_reap(pid);
-    // Bound the queue synchronously by recycling oldest not-running zombies.
-    // This is called with SCHEDULER already locked, so recycle_terminated is safe.
+    if pid == 0 { return; }
+    ZOMBIE_QUEUE.lock().enqueue(pid);
+
     loop {
-        let over = { ZOMBIE_PIDS.lock().len() > MAX_ZOMBIES * 2 };
-        if !over { break; }
-        let pos_opt = {
-            let zombies = ZOMBIE_PIDS.lock();
-            // Find first zombie that is not running on any CPU and not the newly queued pid
-            // (new pid is still running on current CPU until context switch, so skip it)
-            zombies.iter().position(|&p| p != pid && !crate::arch::x64::cpu_local::is_pid_running_on_any_cpu(p))
+        let pos = {
+            let q = ZOMBIE_QUEUE.lock();
+            if !q.over_hard_cap() { break; }
+            // Skip the newly queued pid: it is still running on this CPU until
+            // the context switch, so it must not be reclaimed here.
+            q.find_reclaimable(pid, |p| crate::arch::x64::cpu_local::is_pid_running_on_any_cpu(p))
         };
-        let pos = match pos_opt {
+        let pos = match pos {
             Some(p) => p,
-            None => break, // all remaining zombies still running — cannot reclaim
-        };
-        let pid_to_reclaim = { ZOMBIE_PIDS.lock().remove(pos) };
-        if crate::arch::x64::cpu_local::is_pid_running_on_any_cpu(pid_to_reclaim) {
-            let mut zombies = ZOMBIE_PIDS.lock();
-            if !zombies.iter().any(|&queued_pid| queued_pid == pid_to_reclaim) {
-                zombies.push(pid_to_reclaim);
+            None => {
+                // Every remaining zombie still executes on some CPU: it cannot
+                // be reclaimed here. The queue is bounded by the CPU count in
+                // practice, so this is an observable anomaly, not a loss.
+                ZOMBIE_OVERFLOW.fetch_add(1, Ordering::Relaxed);
+                kerror!(LogSubsys::Sched,
+                    "zombie hard cap {} reached; all {} entries still running (pid {})",
+                    ZOMBIE_HARD_CAP, zombie_queue_len(), pid);
+                break;
             }
+        };
+        let pid_to_reclaim = match ZOMBIE_QUEUE.lock().take_at(pos) {
+            Some(p) => p,
+            None => break,
+        };
+        // Double-check after dropping the queue lock.
+        if crate::arch::x64::cpu_local::is_pid_running_on_any_cpu(pid_to_reclaim) {
+            ZOMBIE_QUEUE.lock().requeue(pid_to_reclaim);
             break;
         }
         if !sched.recycle_terminated(pid_to_reclaim) {
-            // The queue entry was stale or already consumed by another path.
-            // Keep it alive only if the PID is still live; otherwise warn and
-            // discard the stale record so we do not silently lose a valid queue item.
+            // A stale queue entry is not a silent loss: keep it only if the PID
+            // is still live, otherwise drop it as a stale record.
             if crate::arch::x64::cpu_local::is_pid_running_on_any_cpu(pid_to_reclaim) {
-                let mut zombies = ZOMBIE_PIDS.lock();
-                if !zombies.iter().any(|&queued_pid| queued_pid == pid_to_reclaim) {
-                    zombies.push(pid_to_reclaim);
-                }
+                ZOMBIE_QUEUE.lock().requeue(pid_to_reclaim);
             } else {
-                kwarn!(crate::log::LogSubsys::Sched,
+                ZOMBIE_STALE_DROPPED.fetch_add(1, Ordering::Relaxed);
+                kwarn!(LogSubsys::Sched,
                     "stale zombie pid {} dropped from queue after reclaim miss",
                     pid_to_reclaim);
             }
@@ -126,22 +198,19 @@ pub fn defer_reap_with_scheduler(sched: &mut Scheduler, pid: u32) {
 
 /// Expose queue length for spawn backpressure checks.
 pub fn zombie_queue_len() -> usize {
-    ZOMBIE_PIDS.lock().len()
+    ZOMBIE_QUEUE.lock().len()
 }
 
-/// Check if spawn should be backpressured: queue at MAX and oldest still running.
-/// Caller should attempt sync reclaim first; if still full, return NoMem.
+/// Check if spawn should be backpressured: the queue is at the soft watermark
+/// and no zombie can be reclaimed (all still running). Records a backpressure
+/// hit so the condition is observable.
 pub fn is_zombie_backpressured() -> bool {
-    let zombies = ZOMBIE_PIDS.lock();
-    if zombies.len() < MAX_ZOMBIES { return false; }
-    // If oldest eligible zombie is not running, we could reclaim, so not truly backpressured
-    // Check if any zombie is reclaimable
-    for &p in zombies.iter() {
-        if !crate::arch::x64::cpu_local::is_pid_running_on_any_cpu(p) {
-            return false; // reclaimable, not backpressured
-        }
+    let bp = ZOMBIE_QUEUE.lock()
+        .backpressured(|p| crate::arch::x64::cpu_local::is_pid_running_on_any_cpu(p));
+    if bp {
+        ZOMBIE_BACKPRESSURE.fetch_add(1, Ordering::Relaxed);
     }
-    true
+    bp
 }
 
 /// Try to reap *all* zombies that are not running on ANY CPU.
@@ -155,52 +224,46 @@ pub fn is_zombie_backpressured() -> bool {
 /// drain the whole eligible set per schedule, so a burst of 1000 exits is reaped
 /// in one schedule, not 1000 schedules.
 pub fn reap_pending_zombies(sched: &mut Scheduler, exclude_pid: u32) {
-    // Quick check without lock to avoid taking ZOMBIE_PIDS when empty
-    if ZOMBIE_PIDS.lock().is_empty() { return; }
+    // Quick check without the queue lock when there is nothing to do.
+    if ZOMBIE_QUEUE.lock().is_empty() { return; }
 
-    // Drain loop: keep trying to reap while there is an eligible zombie.
+    // Drain loop: keep reaping while there is an eligible zombie.
     loop {
-        let pid_to_reap = {
-            let mut zombies = ZOMBIE_PIDS.lock();
-            if zombies.is_empty() { break; }
-            // Find first zombie not running on any CPU and not the stacked pid
-            let pos = zombies.iter().position(|&p| {
-                if p == exclude_pid { return false; }
-                !crate::arch::x64::cpu_local::is_pid_running_on_any_cpu(p)
-            });
-            match pos {
-                Some(pos) => Some(zombies.remove(pos)),
-                None => None,
-            }
+        let pos = {
+            let q = ZOMBIE_QUEUE.lock();
+            if q.is_empty() { break; }
+            // First zombie not running on any CPU and not the stacked pid.
+            q.find_reclaimable(exclude_pid, |p| {
+                crate::arch::x64::cpu_local::is_pid_running_on_any_cpu(p)
+            })
         };
-        match pid_to_reap {
-            Some(pid) => {
-                // Double-check after dropping ZOMBIE_PIDS lock
-                if crate::arch::x64::cpu_local::is_pid_running_on_any_cpu(pid) {
-                    ZOMBIE_PIDS.lock().push(pid);
-                    continue;
-                }
-                // Recycle may take other locks (Ob), but not ZOMBIE_PIDS, so safe.
-                if !sched.recycle_terminated(pid) {
-                    // A stale queue entry is not a silent loss: if the PID is still
-                    // live somewhere, requeue it for the next pass; otherwise warn and
-                    // discard the stale record.
-                    if crate::arch::x64::cpu_local::is_pid_running_on_any_cpu(pid) {
-                        let mut zombies = ZOMBIE_PIDS.lock();
-                        if !zombies.iter().any(|&queued_pid| queued_pid == pid) {
-                            zombies.push(pid);
-                        }
-                    } else {
-                        kwarn!(crate::log::LogSubsys::Sched,
-                            "stale zombie pid {} already reaped; dropping stale queue entry",
-                            pid);
-                    }
-                    continue;
-                }
-                // Continue loop to reap next eligible zombie
-            }
+        let pid = match pos {
+            Some(p) => match ZOMBIE_QUEUE.lock().take_at(p) {
+                Some(pid) => pid,
+                None => break,
+            },
             None => break,
+        };
+        // Double-check after dropping the queue lock.
+        if crate::arch::x64::cpu_local::is_pid_running_on_any_cpu(pid) {
+            ZOMBIE_QUEUE.lock().requeue(pid);
+            continue;
         }
+        // Recycle may take other locks (Ob), but not the zombie queue, so safe.
+        if !sched.recycle_terminated(pid) {
+            // A stale queue entry is not a silent loss: if the PID is still live
+            // somewhere, requeue it; otherwise drop the stale record.
+            if crate::arch::x64::cpu_local::is_pid_running_on_any_cpu(pid) {
+                ZOMBIE_QUEUE.lock().requeue(pid);
+            } else {
+                ZOMBIE_STALE_DROPPED.fetch_add(1, Ordering::Relaxed);
+                kwarn!(LogSubsys::Sched,
+                    "stale zombie pid {} already reaped; dropping stale queue entry",
+                    pid);
+            }
+            continue;
+        }
+        // Continue loop to reap the next eligible zombie.
     }
 }
 
@@ -705,7 +768,9 @@ impl Scheduler {
         }
 
         if running {
-            defer_reap(pid);
+            // Scheduler lock is held here: use the bounded, scheduler-aware
+            // reclaim so the hard cap is enforced synchronously.
+            defer_reap_with_scheduler(self, pid);
         }
 
         // #358: forced termination must converge through the same deferred
