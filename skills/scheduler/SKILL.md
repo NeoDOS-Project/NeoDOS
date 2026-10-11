@@ -93,6 +93,68 @@ invariants.
    neodev check-deps
    ```
 
+## Validation policy (mandatory)
+
+Any change affecting the scheduler, context switching, thread lifecycle,
+wait/wakeup paths, timer handling, CPU-local state or scheduler synchronization
+MUST follow this policy.
+
+1. **Required regression coverage**
+   - Add or update tests for the changed invariant.
+   - Exercise thread creation, execution, blocking, wakeup and termination where
+     relevant.
+   - Check that runnable work continues to make progress.
+   - Check lock ordering and resource lifetime where affected.
+   - Include a deterministic regression test for every reproducible defect.
+
+2. **SMP validation**
+   - Run the relevant test suite with **1, 2 and 4 vCPUs**.
+   - Multi-vCPU testing is mandatory for changes affecting shared scheduler
+     state, inter-CPU coordination, wakeups, reclamation or synchronization.
+   - A passing single-CPU test is not sufficient evidence for an SMP-sensitive
+     change.
+
+3. **Progress and starvation testing**
+   - Where relevant, run sustained workloads with multiple runnable threads and
+     competing work producers.
+   - Verify that runnable threads keep making progress, wakeups are not lost,
+     timers and preemption keep functioning, no thread or CPU remains
+     indefinitely starved without an explicit design justification, deferred
+     reclamation and cleanup continue under load, and shell command execution
+     stays responsive during background service activity.
+   - Use bounded timeouts and progress counters. Do not rely exclusively on
+     sleeps or arbitrary delays.
+
+4. **Stress testing proportional to risk**
+   - Scheduling policy, context switching, CPU coordination or thread
+     lifecycle changes: perform repeated stress runs and preserve the results.
+   - Localized changes: run the focused regression suite and all affected
+     scheduler tests.
+   - High-risk changes: include repeated boot-and-workload tests in supported
+     virtual machines, with 1, 2 and 4 vCPUs where practical.
+   - If the required environment is unavailable, report the limitation
+     explicitly; do not claim unexecuted coverage.
+
+5. **Build and integration checks**
+   - Run the repository-prescribed build, test, dependency and skills checks.
+   - Compare failures against the verified baseline. Investigate newly
+     introduced failures and intermittent hangs rather than dismissing them as
+     flaky.
+   - Inspect the complete diff and verify that every modified synchronization
+     and lifecycle path preserves its invariants.
+
+6. **Merge readiness**
+   - A scheduler change is not ready for PR merely because it compiles or
+     passes unit tests. The PR must document: the invariant changed and why;
+     the regression tests and stress workloads executed; the results for 1, 2
+     and 4 vCPUs where applicable; progress, starvation, timeout and failure
+     observations; and any validation not performed and why.
+   - Do not merge or declare the change stable while unexplained hangs, lost
+     wakeups, scheduler stalls or new regressions remain.
+
+**Principle: scheduler correctness requires demonstrated progress, not just
+successful execution of tests.**
+
 ## Best practices
 
 - Keep state transitions atomic; a Running thread must be on exactly one CPU.
@@ -114,6 +176,8 @@ invariants.
 
 ## Final checklist
 
+- [ ] Validation policy followed (1, 2 and 4 vCPUs; stress/progress runs)
+- [ ] PR documents invariant, workloads, results and unvalidated items
 - [ ] State machine transitions valid (no `Blocked → Running`)
 - [ ] Timeslice values aligned with priority levels
 - [ ] Run-queue/steal path keeps `highest_ready_priority` invariant

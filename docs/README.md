@@ -108,6 +108,7 @@
 | [VirtualBox](development/virtualbox.md) | VirtualBox setup guide |
 | [Configuration](development/configuration.md) | Build configuration options |
 | [Testing](development/testing.md) | Test suites, how to add tests |
+| [Capability Discovery](development/capability-discovery.md) | Mandatory agent workflow: discover, verify, file Issues, report |
 | [Contributing](development/contributing.md) | Contribution guide, workflow, conventions |
 | [Triple Fault Audit](development/triple-fault-audit.md) | Diagnóstico técnico y auditoría del reinicio por Triple Fault |
 | [GPF netd Audit — Fase 1](development/audit-gpf-netd-fase1-2026-08-30.md) | Auditoría forense Fase 1: GPF en `iretq` al seleccionar `netd` — verificada instrucción-a-instrucción |
