@@ -47,215 +47,113 @@ automáticamente en Issues. GitHub Issues es la fuente de verdad de planificaci�
 (Los antiguos `docs/IMPROVEMENTS.md` y `docs/IMPROVEMENTS_COMPLETED.md` fueron eliminados
 en la reestructuración de docs; consulta `docs/README.md` para la documentación actual.)
 
-### Sincronización
+### Sincronización (idempotente)
 
 ```bash
-scripts/sync-roadmap.sh sync          # Sincroniza todo: labels + milestones + issues
-scripts/sync-roadmap.sh labels        # Solo labels
-scripts/sync-roadmap.sh milestones    # Solo milestones
-scripts/sync-roadmap.sh issues        # Solo issues
-scripts/sync-roadmap.sh changelog     # Genera changelog desde milestones/issues
-scripts/sync-roadmap.sh check         # Verifica conexión y archivos
+scripts/sync-roadmap.sh sync          # labels + milestones + issues
+scripts/sync-roadmap.sh labels        # solo labels
+scripts/sync-roadmap.sh milestones    # solo milestones
+scripts/sync-roadmap.sh issues        # solo issues
+scripts/sync-roadmap.sh changelog     # changelog desde milestones/issues
+scripts/sync-roadmap.sh check         # conexión + archivos locales
 ```
 
-Completamente idempotente. Ejecutable múltiples veces sin crear duplicados.
-
-### Flujo de desarrollo
-
-1. Nueva idea → añadir a `roadmap/improvements.md` → `sync-roadmap.sh sync`.
-2. La IA o el comando crean la Issue en GitHub.
-3. Trabajar en feature branch: `feat/NOMBRE-DE-LA-ISSUE`.
-4. Commits: `git commit -m "feat: descripción (#123)"` con referencia a la Issue.
-5. PR → `develop` → merge. El PR cierra la Issue automáticamente.
-6. Al completar: verificar que **todos** los criterios de aceptación (checkboxes) de
-   la Issue se cumplen, marcarlos en el cuerpo de la Issue, y `sync-roadmap.sh sync`
-   actualiza `improvements.md`. Si algún criterio no se cumple, no cerrar la Issue:
-   dejar el PR sin `Closes` y reportar el punto pendiente.
-
-### Releases
-
-Cada versión es una Milestone. Cuando todas sus Issues están cerradas, la versión
-está terminada. El changelog se genera con `sync-roadmap.sh changelog`.
+Ejecutable múltiples veces sin crear duplicados.
 
 ### Ramas
 
 1. `develop` — integración (default).
-2. `feat/*`, `fix/*`, `refactor/*` — ramas de trabajo referenciando Issues.
-3. `release/vX.Y.Z` — rama de release desde `develop` → PR → `master`.
+2. `feat/*`, `fix/*`, `refactor/*`, `investigation/*`, `audit/*`, `docs/*` — ramas
+   de trabajo referenciando Issues.
+3. `release/vX.Y.Z` — release desde `develop` → PR → `master`.
 4. `master` — releases estables.
 
 ### Branching Rule
 
 **Every new feature, bug fix, investigation, refactor, audit, or architectural
 change MUST be developed on its own dedicated Git branch.** Do not work directly
-on `develop` for new work. Do not reuse an unrelated existing branch for a new
-task. The branch is the task-isolation mechanism and must stay focused on a
-single piece of work.
+on `develop`; do not reuse an unrelated branch. The branch is the task-isolation
+mechanism and must stay focused on a single piece of work.
 
-Required workflow:
-
-1. Ensure the working tree is in a known (clean) state.
-2. Update/sync from the appropriate base branch when necessary.
-3. Create a dedicated branch for the work.
-4. Perform all changes and commits exclusively on that branch.
-5. Validate the work.
-6. Merge the branch back through the normal Git workflow only after validation.
-
-Branch naming follows project conventions:
-
-```text
-feat/<short-description>
-fix/<short-description>
-investigation/<short-description>
-refactor/<short-description>
-audit/<short-description>
-docs/<short-description>
-```
-
-When the work corresponds to a GitHub Issue, the branch should reference that
-Issue when practical, e.g. `fix/service-graceful-shutdown-358`.
+1. Ensure the working tree is clean and synced from the appropriate base branch.
+2. Create a dedicated branch (`feat/`, `fix/`, `investigation/`, `refactor/`,
+   `audit/`, `docs/<short-description>`); when the work corresponds to a GitHub
+   Issue, reference it, e.g. `fix/service-graceful-shutdown-358`.
+3. Perform all changes and commits exclusively on that branch, then validate.
+4. Merge back through the normal Git workflow only after validation.
 
 **Exception:** purely administrative/read-only operations that do not modify
 project files or Git history (inspecting the repository, searching code, reading
-issues, running tests, checking `git status`, reviewing logs, analysing
-architecture without modifying files) may be performed without a branch. When in
-doubt, **branch first**.
-
-If the current branch already contains unrelated work, stop and report it before
+issues, running tests, `git status`, reviewing logs, analysing architecture)
+may be performed without a branch. When in doubt, **branch first**. If the
+current branch already contains unrelated work, stop and report it before
 making changes.
 
-### Git Workflow (commits)
+### Flujo de desarrollo
 
-1. `scripts/build-test.sh` — `neodev build --quick --image` (rebuilds the kernel
-   in the release profile, the bootloader and the image → refreshes `kernel.elf`)
-   then `neodev test`. Always build the image before testing: `neodev test` loads
-   the root `kernel.elf`.
-2. `scripts/check-skills.sh`
-3. `npx markdownlint '**/*.md' --config .markdownlint.json`
-4. `scripts/sync-roadmap.sh check`
-5. If all pass: `git add -A && git commit -m "feat|fix|refactor: descripción (#123)" && git push`
-6. Open PR → `develop`, get approval, merge (squash).
-7. On completion: mark every satisfied acceptance-criteria checkbox in the Issue, update `CHANGELOG.md`, run `sync-roadmap.sh sync`, update relevant `docs/*.md`.
+1. Nueva idea → `roadmap/improvements.md` → `sync-roadmap.sh sync` crea la Issue.
+2. Commits: `git commit -m "feat: descripción (#123)"` referenciando la Issue.
+3. Verificación antes de commit (todo debe pasar):
+
+   ```bash
+   scripts/build-test.sh          # neodev build --quick --image + neodev test
+   scripts/check-skills.sh
+   npx markdownlint '**/*.md' --config .markdownlint.json
+   scripts/sync-roadmap.sh check
+   ```
+
+   `neodev test` carga el `kernel.elf` raíz, así que construye siempre la imagen
+   antes de testear. Si todo pasa:
+   `git add -A && git commit -m "feat|fix|refactor: descripción (#123)" && git push`.
+4. PR → `develop`, aprobación y merge (squash). El PR cierra la Issue **solo** si
+   se cumplen todos sus criterios de aceptación (regla 13); al terminar, marcar
+   los checkboxes, actualizar `CHANGELOG.md` y los `docs/*.md` relevantes, y
+   `sync-roadmap.sh sync`.
+
+### Releases
+
+Cada versión es una Milestone; cuando todas sus Issues están cerradas, la versión
+está terminada. El changelog se genera con `sync-roadmap.sh changelog`.
+
+## Mandatory Scheduler Change Validation Policy
+
+Any change affecting the scheduler, context switching, thread lifecycle,
+wait/wakeup paths, timer handling, CPU-local state or scheduler synchronization
+MUST follow the validation policy in
+[`skills/scheduler/SKILL.md`](skills/scheduler/SKILL.md): regression coverage for
+the changed invariant, **1 / 2 / 4-vCPU** runs, progress and starvation testing,
+stress runs proportional to risk, build + full-diff checks, and a PR that
+documents the invariant, workloads and any unvalidated items.
+
+**Principle: scheduler correctness requires demonstrated progress, not just
+successful execution of tests.**
 
 ## Proactive Capability Discovery
 
-While working on **any** NeoDOS task, the agent must actively observe the whole
-system and detect relevant capabilities that are missing, partial, limited, or
-insufficient — even when the discovery is unrelated to the current task or
-belongs to another subsystem.
-
-Scope of what to watch for: missing APIs, missing kernel capabilities, missing
-userland capabilities, incomplete infrastructure, architectural limitations,
-pending integrations, tools that should exist, significant technical debt, and
-dependencies that do not exist yet.
-
-The agent **never** turns a discovery into an implementation on its own. The
-mandatory workflow is:
+While working on **any** task, actively watch the whole system for capabilities
+that are missing, partial, limited or insufficient — missing kernel/userland
+APIs, incomplete infrastructure, architectural limitations, pending
+integrations, missing tools, significant technical debt — even when the gap is
+unrelated to the current task. **Never implement a discovery on your own.**
 
 ```text
-Discover → Verify → Search existing Issue → Create Issue if necessary → Document → Continue current task
+Discover → Verify → Search existing Issue → Create if necessary → Document → Continue current task
 ```
 
-### 1. Discover
+- **Verify** against the repository (code, syscalls, docs, tests, tools,
+  configuration) — never stale docs; then run
+  `gh issue list --search "<terms>"` before creating anything. If an equivalent
+  Issue exists, reference it instead of duplicating it.
+- **Blocking gap** → create/reference the Issue and document the blocker; never
+  build a fake, temporary or architecturally wrong workaround.
+- **Non-blocking gap** → create/reference the Issue, document it and continue;
+  never widen the scope of the current task.
+- **End-of-task report** must be split into: `## Implemented`,
+  `## Discovered Capabilities`, `## Existing Issues`, `## New Issues`,
+  `## Blockers`, `## Follow-up Work`.
 
-When something looks like it is missing, briefly decide whether it is a real
-gap (e.g. "no network-interface enumeration API", "no Ctrl+C handling in the
-shell", "no persistent configuration storage", "no per-process memory query").
-Do not open an Issue for every trivial helper — the capability needs enough
-substance to stand as its own task.
-
-### 2. Verify
-
-Before opening an Issue, confirm the capability truly does not exist, using the
-repository as the source of truth: code, APIs, syscalls, docs, tests, existing
-tools, configuration, infrastructure. Do not assume absence just because it is
-not obvious, and do not invent APIs from stale documentation.
-
-### 3. Search existing Issues
-
-```bash
-gh issue list --search "<relevant terms>"
-```
-
-Try several term combinations. If an equivalent Issue exists, do **not**
-duplicate it: reference it and link it to the current task when relevant.
-
-### 4. Create Issue
-
-If the capability is genuinely absent and no equivalent Issue exists, create a
-GitHub Issue useful enough to become a standalone task. Include, when
-applicable:
-
-```text
-## Context
-## Missing capability
-## Evidence
-## Why it matters
-## Current implementation
-## Possible approaches
-## Scope
-## Related work
-```
-
-Title style: clear, project conventions, e.g.
-`[NETWORK] Add network interface enumeration API`,
-`[SHELL] Add Ctrl+C / interrupt handling`,
-`[MEMORY] Expose process memory information`.
-
-Do not implement the capability as part of the current task unless the user
-explicitly asked for it.
-
-### 5. Blocking vs Non-blocking
-
-Distinguish the two cases explicitly.
-
-- **Blocking capability** — the gap prevents completing the current task
-  correctly: `Detect → Verify → Search Issue → Create/reference Issue → Document
-  blocker`. Never build a fake, temporary, or architecturally wrong
-  implementation just to sidestep the block.
-- **Non-blocking capability** — relevant but not blocking: `Detect → Verify →
-  Search Issue → Create/reference Issue → Document → Continue current task`.
-  A non-blocking gap must **never** cause the agent to widen the scope of the
-  current task.
-
-### 6. Never implement discoveries automatically
-
-Discovering a missing capability is **not** authorization to build it. Example:
-while implementing DNS, the agent notices NeoShell has no Ctrl+C — it must
-verify, search for an Issue, create `[SHELL] Add Ctrl+C / interrupt handling`
-if absent, document it, and **continue with DNS**.
-
-### 7. End-of-task report
-
-Every agent must separate its final report into:
-
-```text
-## Implemented
-## Discovered Capabilities
-## Existing Issues
-## New Issues
-## Blockers
-## Follow-up Work
-```
-
-This distinguishes what was implemented, what was discovered, what was already
-tracked, what just entered the backlog, and what blocked progress.
-
-### Architectural principle
-
-GitHub Issues is also the mechanism for **progressive architecture discovery**:
-the agent helps grow the backlog while working, without turning every task into
-an excuse to expand scope.
-
-```text
-Current Task
-      │
-      ├── Required capability  → implement if authorized
-      │
-      └── Discovered capability → Issue + continue
-```
-
-> **Discover → Verify → Issue → Document → Continue** — not *Discover → Implement everything*.
+Full specification (Issue template, examples, architectural rationale):
+[`docs/development/capability-discovery.md`](docs/development/capability-discovery.md).
 
 ## Architecture
 

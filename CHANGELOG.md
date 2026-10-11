@@ -78,6 +78,15 @@
   `SeAccessCheck` is USR-P5a. Also added a focused test for the `ob_create` type
   map (covers the `ObType::Session` acceptance from #19). 3 new tests.
 
+### Changed
+
+- **AGENTS.md slimmed down; long agent policies moved to their homes.**
+  The Mandatory Scheduler Change Validation Policy now lives in
+  `skills/scheduler/SKILL.md` and the Proactive Capability Discovery workflow in
+  `docs/development/capability-discovery.md` (indexed in `docs/README.md`); the
+  GitHub workflow section was de-duplicated. AGENTS.md keeps the permanent rules
+  and short pointers only.
+
 ### Fixed
 
 - **`neotop` i18n: oversized i18n `.bss` spilled into the process stack (#576).**
