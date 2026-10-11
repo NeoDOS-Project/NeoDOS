@@ -24,7 +24,7 @@ mod ansi;
 mod tests;
 
 use ansi::{ANSI_STATE, ANSI_NORMAL, ANSI_ESC, handle_ansi_byte, current_fg_rgb, current_bg_rgb, ANSI_FG, ANSI_BG, ANSI_BOLD, ANSI_COLORS};
-pub use tests::register_ansi_tests;
+pub use tests::{register_ansi_tests, register_render_tests};
 
 // ── VgaWriter (fmt::Write) ─────────────────────────────────────────────────
 pub struct VgaWriter;
@@ -216,16 +216,32 @@ pub fn print_str(s: &str) {
 }
 
 pub fn draw_cursor(visible: bool) {
-    let max_row = console_max_row();
-    let max_col = console_width();
-    let r = ROW.load(Ordering::SeqCst).min(max_row - 1);
-    let c = COL.load(Ordering::SeqCst).min(max_col - 1);
-    let fg = current_fg_rgb();
-    let bg = current_bg_rgb();
+    // Cursor blinking is driven from the BSP timer IRQ (`cursor_timer_tick`).
+    // INV-3: an IRQ handler MUST NOT block on a spinlock that non-IRQ context
+    // can hold with interrupts enabled. If the timer interrupts a thread inside
+    // `scroll()`/`draw_char()` while it holds `RENDERER`, a blocking
+    // `RENDERER.lock()` here would spin forever on the same CPU with interrupts
+    // disabled and wedge the BSP (the observed system-wide freeze). Use
+    // `try_lock` and skip this blink frame when the renderer is busy; the next
+    // blink tick retries.
+    let guard = match RENDERER.try_lock() {
+        Some(g) => g,
+        None => return,
+    };
+    let Some(r) = guard.as_ref() else { return };
+    // Read the framebuffer geometry from the held guard instead of calling
+    // `console_max_row`/`console_width`, which would take the lock again.
+    let max_row = (r.fb.height / font::FONT_HEIGHT).clamp(1, VGA_HEIGHT);
+    let max_col = (r.fb.width / font::FONT_WIDTH).clamp(1, VGA_WIDTH);
+    let row = ROW.load(Ordering::SeqCst).min(max_row - 1);
+    let col = COL.load(Ordering::SeqCst).min(max_col - 1);
+    let x = col * font::FONT_WIDTH;
+    let y = row * font::FONT_HEIGHT;
     if visible {
-        font::draw_char(b'_', c * font::FONT_WIDTH, r * font::FONT_HEIGHT, fg, bg);
+        font::draw_char_on(r, b'_', x, y, current_fg_rgb(), current_bg_rgb());
     } else {
-        font::draw_char(b' ', c * font::FONT_WIDTH, r * font::FONT_HEIGHT, bg, bg);
+        let bg = current_bg_rgb();
+        font::draw_char_on(r, b' ', x, y, bg, bg);
     }
 }
 

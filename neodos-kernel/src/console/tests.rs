@@ -4,6 +4,47 @@ use core::sync::atomic::Ordering;
 use super::*;
 use super::ansi::*;
 
+/// Rendering-path tests (graphics lock / IRQ safety).
+pub fn register_render_tests() {
+    use crate::test_case;
+    use crate::test_eq;
+
+    // Regression for the VBox "freeze after network init": the BSP timer IRQ
+    // calls `cursor_timer_tick` -> `draw_cursor`, which used to take the
+    // graphical-console lock with a blocking `lock()`. A thread that held that
+    // lock (e.g. `scroll()` during a network-service console write) would be
+    // interrupted by the timer, and the handler would spin forever on the same
+    // CPU with interrupts disabled, wedging the BSP and freezing the system.
+    //
+    // Simulate the interrupted lock holder and run the IRQ-side path. Pre-fix
+    // this never returns (deadlock); post-fix `draw_cursor` `try_lock`s, skips
+    // the frame, and returns.
+    test_case!("cursor_blink_irq_does_not_block_on_held_renderer", {
+        let saved_enabled = CURSOR_BLINK_ENABLED.load(Ordering::SeqCst);
+        let saved_visible = CURSOR_VISIBLE.load(Ordering::SeqCst);
+        let saved_counter = CURSOR_BLINK_COUNTER.load(Ordering::SeqCst);
+
+        CURSOR_BLINK_ENABLED.store(true, Ordering::SeqCst);
+        CURSOR_BLINK_COUNTER.store(0, Ordering::SeqCst);
+
+        {
+            // The "interrupted thread" holds the renderer lock.
+            let guard = crate::graphics::RENDERER.lock();
+            // First tick is a blink boundary (counter 0 % INTERVAL == 0) and
+            // would render the cursor if the lock were free.
+            super::cursor_timer_tick();
+            drop(guard);
+        }
+
+        // The tick ran to completion (no deadlock) and advanced the counter.
+        test_eq!(CURSOR_BLINK_COUNTER.load(Ordering::SeqCst), 1);
+
+        CURSOR_BLINK_ENABLED.store(saved_enabled, Ordering::SeqCst);
+        CURSOR_VISIBLE.store(saved_visible, Ordering::SeqCst);
+        CURSOR_BLINK_COUNTER.store(saved_counter, Ordering::SeqCst);
+    });
+}
+
 // ── ANSI tests ────────────────────────────────────────────────────────────
 pub fn register_ansi_tests() {
     use crate::test_case;
