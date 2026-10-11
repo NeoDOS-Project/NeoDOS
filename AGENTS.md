@@ -4,7 +4,7 @@
 
 ## Permanent Rules (MUST always follow)
 
-1. **No automatic builds.** Only build/test when explicitly asked.
+1. **No automatic builds by the agent.** Only build/test when explicitly asked. CI (`.github/workflows/ci.yml`) may compile the kernel and run static checks, but never publishes artifacts, builds images or boots VMs.
 2. **Test before commit:** `cargo build` in `neodos-kernel/` → `neodev test` → `neodev check-deps` → `scripts/check-skills.sh` → `npx markdownlint '**/*.md' --config .markdownlint.json`.
 3. **Never modify public API without updating docs.** Syscalls, ObInfoClass, NEM ABI, structs in `libneodos/`.
 4. **NT-like design philosophy:** Object Manager (`Ob`) is the central abstraction for syscalls, handles, security, and namespace.
