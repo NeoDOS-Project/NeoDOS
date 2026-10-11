@@ -60,14 +60,6 @@ pub fn register_registry_tests() {
         test_eq!(call_event_by_id(0x0000_FEED, 1, 0, 0).unwrap(), 0);
         test_true!(call_event_by_id(0xDEAD_BEEF, 1, 0, 0).is_err());
     });
-    test_case!("neodos07_mount_manager_consistent", {
-        use crate::fs::vfs::mount::MountManager;
-        // A fresh mount manager is empty and drive-letter lookup is exact, so the
-        // volume registry never reports a mount that is not present.
-        let mgr = MountManager::new();
-        test_eq!(mgr.count(), 0);
-        test_true!(mgr.find_by_letter('C').is_none());
-    });
 }
 
 pub fn signal_device_event(device_id: u32) {

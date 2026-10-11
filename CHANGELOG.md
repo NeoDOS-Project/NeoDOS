@@ -87,6 +87,11 @@
   GitHub workflow section was de-duplicated. AGENTS.md keeps the permanent rules
   and short pointers only.
 
+- **`drivers/` no longer depends on `fs::vfs` (rule 12).** The
+  `neodos07_mount_manager_consistent` test moved to `fs/vfs/mount.rs`
+  (`vfs_mount_manager_consistent`), so `neodev check-deps` is green again without
+  growing `check-deps-baseline.txt`.
+
 ### Fixed
 
 - **`neotop` i18n: oversized i18n `.bss` spilled into the process stack (#576).**
