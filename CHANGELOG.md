@@ -80,6 +80,27 @@
 
 ### Fixed
 
+- **IRQ-reentrant graphical-console lock caused a system-wide freeze after
+  network init.** The BSP timer IRQ renders the blinking cursor via
+  `console::cursor_timer_tick` → `draw_cursor`, which took the
+  `graphics::RENDERER` `spin::Mutex` with a blocking `lock()`. A thread that held
+  the lock (e.g. `scroll()` during the burst of console writes from
+  `netd`/`dhcpd`/`ntpd` while the shell has cursor blink enabled) could be
+  interrupted by the timer; the handler then spun forever on the same CPU with
+  interrupts disabled, wedging the BSP. In VirtualBox the shell stopped echoing
+  input and the cursor stopped advancing right after the network services
+  finished starting; a second CPU was then observed spinning in `font::draw_char`
+  (QEMU `-d int`). Fixed by using `try_lock` in the cursor path and adding a
+  lock-free glyph blit helper, with a regression test that deadlocks pre-fix.
+
+- **AP bring-up triple fault ("AP-bringup layout cliff", #522).** The AP
+  trampoline enabled long mode (`EFER.LME`) but not no-execute (`EFER.NXE`).
+  With NXE clear, bit 63 of a leaf PTE is reserved, so the first AP access
+  through such a page raised `#PF(RSVD)` → `#DF` → triple fault (with `-no-reboot`,
+  QEMU exits and the VM never boots). Whether the AP stack landed on an NX leaf
+  depended on frame-allocation order, so a small kernel change could kill every
+  AP. Fixed by enabling `LME | NXE` before paging is enabled.
+
 - **`neotop` i18n: oversized i18n `.bss` spilled into the process stack (#576).**
   The i18n table pool plus its three load scratch buffers totalled ~203 KiB of
   static `.bss` (`(MAX_TABLES + 3) * MAX_FILE`). `neotop`'s large stack buffers
