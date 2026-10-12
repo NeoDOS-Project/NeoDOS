@@ -29,6 +29,13 @@ jobs:
   kernel:
     name: Build kernel
     runs-on: ubuntu-latest
+    env:
+      # neodos-kernel/rust-toolchain.toml says `channel = "nightly"`, which would
+      # otherwise override the pinned toolchain installed below and make cargo
+      # use an arbitrary nightly without the x86_64-unknown-none target
+      # ("can't find crate for `core`"). RUSTUP_TOOLCHAIN takes precedence over
+      # the rust-toolchain file, so the build uses the pinned toolchain + target.
+      RUSTUP_TOOLCHAIN: ${{ env.KERNEL_TOOLCHAIN }}
     steps:
       - uses: actions/checkout@v4
 
@@ -36,6 +43,14 @@ jobs:
         with:
           toolchain: ${{ env.KERNEL_TOOLCHAIN }}
           targets: x86_64-unknown-none
+
+      - name: Ensure x86_64-unknown-none target
+        working-directory: neodos-kernel
+        run: rustup target add x86_64-unknown-none
+
+      - name: Show toolchain
+        working-directory: neodos-kernel
+        run: rustup show active-toolchain && rustc --version
 
       - uses: Swatinem/rust-cache@v2
         with:
