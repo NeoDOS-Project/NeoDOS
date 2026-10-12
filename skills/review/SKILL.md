@@ -106,4 +106,5 @@ changes before they land.
 - [ ] `unsafe` blocks have safety comments
 - [ ] IRQ/exception paths take no blocking lock that interruptible code could
       hold (INV-3 Rule 3.5.1): IRQ-reachable locks are IRQ-safe at every site,
-      or the handler uses `try_lock`
+      or the handler uses `try_lock`. Guarded by `scripts/check-irq-locks.sh` —
+      add a rule there when a new lock becomes IRQ-reachable.

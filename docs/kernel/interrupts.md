@@ -54,7 +54,9 @@ keyboard, serial, mouse, IPI, MSI, exceptions):
   interrupts.
 
 See `docs/architecture/source-of-truth.md` (INV-3, Rule 3.5.1) and
-`docs/investigation/console-irq-lock-freeze-2026-10-11.md`.
+`docs/investigation/console-irq-lock-freeze-2026-10-11.md`. CI enforces the
+sanctioned-accessor rule with `scripts/check-irq-locks.sh` (add a rule there when
+a new lock becomes IRQ-reachable).
 
 ### Invariant INV-14
 

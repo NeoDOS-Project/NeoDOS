@@ -87,9 +87,11 @@ jobs:
         run: neodev check-deps
 
   guards:
-    name: Skills guard
+    name: Static guards
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: scripts/check-skills.sh
         run: ./scripts/check-skills.sh
+      - name: scripts/check-irq-locks.sh (INV-3 / Rule 3.5.1)
+        run: ./scripts/check-irq-locks.sh
