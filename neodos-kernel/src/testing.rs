@@ -286,6 +286,8 @@ pub fn register_tests() {
     crate::timers::hpet::register_tests();
     // A2.2: I/O APIC tests
     crate::interrupts::ioapic::register_tests();
+    // MSI / MSI-X delivery tests (#676)
+    crate::interrupts::msi::register_msi_tests();
     // NT5.5: Unified resource namespace (URN) tests
     crate::urn::register_urn_tests();
     // A3.3: Watchdog subsystem tests

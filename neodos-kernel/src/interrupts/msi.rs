@@ -43,6 +43,13 @@ lazy_static! {
         let mut bm = [false; MAX_VECTOR];
         for b in bm.iter_mut().take(FIRST_MSI_VECTOR) { *b = true; }
         bm[0x80] = true;   // syscall gate
+        // IPI vectors 0xF0-0xF2 have fixed IDT entries (reschedule, TLB
+        // shootdown, call-function). If the allocator handed one to a device,
+        // the IPI handler would run instead of `msi_dispatch` and the device
+        // interrupt would be lost — and we would clobber an IPI.
+        bm[0xF0] = true;
+        bm[0xF1] = true;
+        bm[0xF2] = true;
         Mutex::new(bm)
     };
 }
@@ -315,7 +322,12 @@ pub fn msi_request(
     // 2. Allocate a free IDT vector.
     let vector = msi_alloc_vector().ok_or("No free MSI vectors available")?;
 
-    // 3. Configure PCI registers — delegate to pci.nem if active, else direct.
+    // 3. Register the handler BEFORE enabling MSI in the device, so a message
+    //    that fires immediately is never dispatched to a missing handler
+    //    (msi_dispatch would otherwise treat it as spurious and discard it).
+    crate::arch::x64::idt::msi_register_handler(vector, handler);
+
+    // 4. Configure PCI registers — delegate to pci.nem if active, else direct.
     if pci_nem_is_active() {
         configure_msi_via_eventbus(bus, dev, func, cap, vector);
         // pci.nem will fire back EVENT_MSI_CONFIGURED asynchronously.
@@ -330,9 +342,6 @@ pub fn msi_request(
             bus, dev, func, vector
         );
     }
-
-    // 4. Register the interrupt handler in the IDT dispatch table.
-    crate::arch::x64::idt::msi_register_handler(vector, handler);
 
     Ok(vector)
 }
@@ -351,4 +360,50 @@ pub fn msi_release(bus: u8, dev: u8, func: u8, vector: u8) {
         "Released {:02x}:{:02x}.{} vector {:#04x}",
         bus, dev, func, vector
     );
+}
+
+// ─── Tests ────────────────────────────────────────────────────────────────────
+
+pub fn register_msi_tests() {
+    use crate::test_case;
+    use crate::test_eq;
+    use crate::test_true;
+
+    // The allocator must never hand out the syscall gate (0x80) or an IPI
+    // vector (0xF0-0xF2): those have fixed IDT handlers and a device MSI on
+    // them would be lost (and an IPI clobbered).
+    test_case!("msi_allocator_reserves_syscall_and_ipi_vectors", {
+        let mut allocated = alloc::vec::Vec::new();
+        for _ in 0..64 {
+            match msi_alloc_vector() {
+                Some(v) => {
+                    test_true!(v != 0x80);
+                    test_true!(!(0xF0..=0xF2).contains(&v));
+                    allocated.push(v);
+                }
+                None => break,
+            }
+        }
+        for v in allocated {
+            msi_free_vector(v);
+        }
+    });
+
+    // Register -> dispatch -> unregister round trip through the (now IRQ-safe)
+    // handler table.
+    test_case!("msi_register_dispatch_unregister", {
+        static CALLS: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
+        fn handler(_v: u8) {
+            CALLS.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+        }
+        let v = msi_alloc_vector().expect("no free MSI vector");
+        test_true!(!crate::arch::x64::idt::msi_handler_registered(v));
+        crate::arch::x64::idt::msi_register_handler(v, handler);
+        test_true!(crate::arch::x64::idt::msi_handler_registered(v));
+        crate::arch::x64::idt::msi_dispatch(v);
+        test_eq!(CALLS.load(core::sync::atomic::Ordering::Relaxed), 1u64);
+        crate::arch::x64::idt::msi_unregister_handler(v);
+        test_true!(!crate::arch::x64::idt::msi_handler_registered(v));
+        msi_free_vector(v);
+    });
 }

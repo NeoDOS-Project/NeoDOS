@@ -15,6 +15,13 @@ pub fn set_lapic_eoi_addr(addr: u64) {
     LAPIC_EOI_ADDR.store(addr, Ordering::Release);
 }
 
+/// Return the published LAPIC EOI register address (0 = not published yet).
+/// EOI lives at `LAPIC base + 0xB0`, so the LAPIC MMIO base is
+/// `lapic_eoi_addr() & !0xFFF`.
+pub fn lapic_eoi_addr() -> u64 {
+    LAPIC_EOI_ADDR.load(Ordering::Acquire)
+}
+
 /// Record whether the I/O APIC replaced the legacy PIC. Called by the
 /// interrupt-controller subsystem.
 pub fn set_ioapic_active(active: bool) {
