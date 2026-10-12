@@ -14,7 +14,7 @@
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
-use libdns::{is_localhost, is_unspecified, validate_hostname};
+use libdns::{is_local_name, is_localhost, is_unspecified, validate_hostname};
 use libneodos::registry::RegistryKey;
 use libnet_config::{build_interface_path, VALUE_DNS1, VALUE_DNS2, VALUE_DNS3};
 
@@ -147,16 +147,44 @@ fn localhost_result() -> DnsResult {
     }
 }
 
+/// Registry default hostname, treated as "not set" for local-name matching
+/// (#485). The kernel reports it when `ComputerName` was never stored.
+const HOSTNAME_PLACEHOLDER: &str = "NeoDOS-PC";
+
+/// The local machine's hostname, or `None` when it is empty or still the
+/// registry default placeholder. Used to resolve the machine's own name
+/// locally without querying DNS (#485).
+fn local_hostname() -> Option<String> {
+    let mut buf = [0u8; 128];
+    let n = libneodos::sys_get_hostname(&mut buf).ok()?;
+    if n == 0 {
+        return None;
+    }
+    // The kernel copies the name NUL-terminated; trim the terminator.
+    let end = buf[..n].iter().position(|&b| b == 0).unwrap_or(n);
+    let name = core::str::from_utf8(&buf[..end]).ok()?;
+    if name.is_empty() || name.eq_ignore_ascii_case(HOSTNAME_PLACEHOLDER) {
+        return None;
+    }
+    Some(name.to_string())
+}
+
 /// Resolve `hostname` using the configured DNS servers, in preference order.
 ///
-/// `localhost` resolves locally. `NXDOMAIN` from any server is returned
-/// immediately. Other per-server failures fall through to the next server; if
-/// all servers fail, the last error is returned.
+/// `localhost` and the machine's own hostname resolve locally. `NXDOMAIN` from
+/// any server is returned immediately. Other per-server failures fall through to
+/// the next server; if all servers fail, the last error is returned.
 pub fn resolve(hostname: &str) -> Result<DnsResult, DnsError> {
     validate_hostname(hostname)?;
 
     if is_localhost(hostname) {
         return Ok(localhost_result());
+    }
+
+    if let Some(local) = local_hostname() {
+        if is_local_name(hostname, &local) {
+            return Ok(localhost_result());
+        }
     }
 
     let servers = read_servers()?;
@@ -190,7 +218,8 @@ pub fn resolve(hostname: &str) -> Result<DnsResult, DnsError> {
 /// Resolve `hostname` using an explicit DNS server.
 ///
 /// The unspecified address (`0.0.0.0`) is rejected with [`DnsError::NoServer`];
-/// a query is never sent to it.
+/// a query is never sent to it. `localhost` and the machine's own hostname
+/// resolve locally.
 pub fn resolve_with_server(hostname: &str, server: [u8; 4]) -> Result<DnsResult, DnsError> {
     validate_hostname(hostname)?;
 
@@ -200,6 +229,12 @@ pub fn resolve_with_server(hostname: &str, server: [u8; 4]) -> Result<DnsResult,
 
     if is_localhost(hostname) {
         return Ok(localhost_result());
+    }
+
+    if let Some(local) = local_hostname() {
+        if is_local_name(hostname, &local) {
+            return Ok(localhost_result());
+        }
     }
 
     if let Some(addr) = cache_lookup(hostname, server) {

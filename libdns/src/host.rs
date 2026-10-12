@@ -63,7 +63,26 @@ pub fn is_unspecified(ip: [u8; 4]) -> bool {
     ip == [0, 0, 0, 0]
 }
 
+/// Drop a single trailing dot (FQDN form) so `host.` and `host` compare equal.
+/// A lone `.` is returned unchanged (it is not a valid name anyway).
+fn strip_final_dot(name: &str) -> &str {
+    match name.strip_suffix('.') {
+        Some(rest) if !rest.is_empty() => rest,
+        _ => name,
+    }
+}
+
 /// `true` for the `localhost` pseudo-name, resolved locally without a query.
+/// A single trailing dot (FQDN form) is tolerated (#485).
 pub fn is_localhost(name: &str) -> bool {
-    name.eq_ignore_ascii_case("localhost")
+    strip_final_dot(name).eq_ignore_ascii_case("localhost")
+}
+
+/// `true` when `name` denotes the local machine's own `hostname`.
+///
+/// Comparison is case-insensitive and tolerates a single trailing dot on either
+/// side (FQDN form). An empty `hostname` never matches (#485).
+pub fn is_local_name(name: &str, hostname: &str) -> bool {
+    let host = strip_final_dot(hostname);
+    !host.is_empty() && strip_final_dot(name).eq_ignore_ascii_case(host)
 }

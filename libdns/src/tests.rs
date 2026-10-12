@@ -255,6 +255,41 @@
         assert_eq!(validate_hostname(&long_label), Err(DnsError::InvalidHostname));
     }
 
+    // ── Local name matching (#485) ──
+
+    #[test]
+    fn is_localhost_tolerates_trailing_dot() {
+        assert!(is_localhost("localhost"));
+        assert!(is_localhost("LOCALHOST"));
+        assert!(is_localhost("localhost."));
+        assert!(is_localhost("LocalHost."));
+        assert!(!is_localhost("localhost.localdomain"));
+        assert!(!is_localhost("notlocalhost"));
+        assert!(!is_localhost(""));
+        assert!(!is_localhost("."));
+    }
+
+    #[test]
+    fn is_local_name_matches_own_hostname_case_insensitively() {
+        assert!(is_local_name("NeoDOS-PC", "NeoDOS-PC"));
+        assert!(is_local_name("neodos-pc", "NeoDOS-PC"));
+        assert!(is_local_name("NEODOS-PC", "neodos-pc"));
+        assert!(is_local_name("NeoDOS-PC.", "NeoDOS-PC"));
+        assert!(is_local_name("neodos-pc", "NeoDOS-PC."));
+    }
+
+    #[test]
+    fn is_local_name_rejects_non_local_and_empty() {
+        assert!(!is_local_name("other-pc", "NeoDOS-PC"));
+        assert!(!is_local_name("example.com", "NeoDOS-PC"));
+        assert!(!is_local_name("sub.neodos-pc", "NeoDOS-PC"));
+        assert!(!is_local_name("NeoDOS-PC", "NeoDOS-PC2"));
+        // An empty (unset) hostname never matches — not even the empty name.
+        assert!(!is_local_name("", ""));
+        assert!(!is_local_name("anything", ""));
+        assert!(!is_local_name(".", "NeoDOS-PC"));
+    }
+
     // ── Server selection / transport ──
 
     #[test]
