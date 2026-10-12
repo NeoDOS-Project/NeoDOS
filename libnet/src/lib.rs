@@ -224,6 +224,11 @@ pub fn get_hostname(buf: &mut [u8]) -> u32 {
     }
 }
 
+/// Registry default computer name. The kernel reports it when `ComputerName`
+/// was never stored, so it is treated as "not set" for local-name resolution
+/// (#485) and for automatic hostname discovery (#487).
+pub const DEFAULT_HOSTNAME: &str = "NeoDOS-PC";
+
 // ── DNS resolution (shared resolver lives in `dns`) ──
 
 /// Resolve a hostname to a single IPv4 address.

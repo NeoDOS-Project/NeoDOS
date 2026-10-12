@@ -395,6 +395,28 @@ Esto evita duplicar la lógica de configuración y permite que `neocfg` configur
 la red sin conocer internals de NIC. El Registry sigue siendo la única fuente de
 verdad (sin segunda fuente).
 
+### 2.7 Hostname — detección automática (#487)
+
+El hostname del sistema vive en `CurrentControlSet\Control\ComputerName` y se
+lee/escribe con `sys_get_hostname` / `sys_set_hostname` (`SetHostname`, admin).
+Arranca con el placeholder `NeoDOS-PC` (`libnet::DEFAULT_HOSTNAME`).
+
+`dhcpd` lo descubre al obtener concesión, en este orden:
+
+1. **DHCP opción 12 (Host Name)** — se solicita en la *parameter request list*
+   y, si el servidor la devuelve, se sanea (solo `[A-Za-z0-9._-]`, sin
+   separadores al principio/final, ≤63) y se publica con `SetHostname`
+   (persistencia + `hostname` / `sys_get_hostname`).
+2. **Fallback derivado de la MAC** — si no hay opción 12 (o no hubo DHCP), se
+   usa `neodos-<12 hex>` (p. ej. `neodos-525400123456`), de modo que la máquina
+   siempre tiene un nombre estable.
+
+La lógica pura (`sanitize_hostname_into` / `derived_hostname_into` /
+`hostname_byte_ok` / `HOSTNAME_MAX`) vive en `libnet-config` (host-testeable); el
+kernel valida el mismo alfabeto en `SetHostname`. Nunca se sobrescribe un
+hostname que el usuario ya haya fijado (solo se actúa si el actual está vacío o
+sigue siendo el placeholder). Un hostname propio resuelve localmente (#485).
+
 ---
 
 ## 3. Herramientas NXE de Red

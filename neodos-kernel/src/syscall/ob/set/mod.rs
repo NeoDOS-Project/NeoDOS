@@ -138,6 +138,22 @@ pub fn register_ob_set_tests() {
         test_true!(!validate_datetime(0, 0, 0, 31, 4, 24)); // Apr 31
     });
 
+    // #487: hostname normalization/validation for `SetHostname`.
+    test_case!("ob_set_hostname_validation", {
+        test_true!(net::validate_hostname("neodos-pc").is_ok());
+        test_true!(net::validate_hostname("neodos-525400123456").is_ok());
+        test_true!(net::validate_hostname("host.example.com").is_ok());
+        test_true!(net::validate_hostname("_svc-1").is_ok());
+        test_true!(net::validate_hostname("x").is_ok());
+        test_true!(net::validate_hostname("neodos-pc\0").is_ok());
+        test_true!(net::validate_hostname("").is_err());
+        test_true!(net::validate_hostname("-bad").is_err());
+        test_true!(net::validate_hostname("bad-").is_err());
+        test_true!(net::validate_hostname("has space").is_err());
+        test_true!(net::validate_hostname("bad!char").is_err());
+        test_true!(net::validate_hostname("a/b").is_err());
+    });
+
     test_case!("neodos06_ob_class_coverage", {
         // Complete coverage guard (NEODOS-06/#636, CH-06/#510, AUD-006/#526):
         // every ObInfoClass variant must be routed by a query domain. PowerState

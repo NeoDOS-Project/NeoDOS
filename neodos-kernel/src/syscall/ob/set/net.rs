@@ -16,6 +16,27 @@ pub(super) fn handles(info_class: u32) -> bool {
         || info_class == ObSetInfoClass::SetHostname as u32
 }
 
+/// Validate/normalize a hostname submitted through `SetHostname` (#487):
+/// non-empty, at most 63 bytes, RFC 952/1035 label characters only
+/// (`[A-Za-z0-9._-]`) and no leading/trailing `-`. Returns the name with any
+/// trailing NUL removed. `libdns::is_local_name` (#485) matches these
+/// case-insensitively.
+pub(super) fn validate_hostname(name: &str) -> Result<&str, ()> {
+    let s = name.trim_end_matches('\0');
+    if s.is_empty() || s.len() > 63 {
+        return Err(());
+    }
+    if s.starts_with('-') || s.ends_with('-') {
+        return Err(());
+    }
+    for b in s.bytes() {
+        if !(b.is_ascii_alphanumeric() || b == b'-' || b == b'_' || b == b'.') {
+            return Err(());
+        }
+    }
+    Ok(s)
+}
+
 /// Dispatch the `net` info classes.
 pub(super) fn dispatch(
     info_class: u32,
@@ -199,9 +220,10 @@ pub(super) fn dispatch(
                     Ok(s) => s.trim_end_matches('\0'),
                     Err(_) => return err_to_u64(SyscallError::Inval),
                 };
-                if s.is_empty() {
-                    return err_to_u64(SyscallError::Inval);
-                }
+                let s = match validate_hostname(s) {
+                    Ok(s) => s,
+                    Err(_) => return err_to_u64(SyscallError::Inval),
+                };
                 let mut v = alloc::vec![0u8; s.len() + 1];
                 v[..s.len()].copy_from_slice(s.as_bytes());
                 v
