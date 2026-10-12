@@ -67,7 +67,6 @@ fn capture_nic(mac_last: u8) -> CaptureNic {
 
 
 mod net;
-mod dns;
 mod socket;
 
 pub fn register_net_tests() {
@@ -119,6 +118,5 @@ pub fn register_net_tests() {
 
 
     net::register();
-    dns::register();
     socket::register();
 }

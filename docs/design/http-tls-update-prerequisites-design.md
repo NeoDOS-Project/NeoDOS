@@ -19,7 +19,7 @@ not design the userland features themselves (see the sibling docs).
 | Source | What it establishes |
 | --- | --- |
 | `neodos-kernel/src/syscall/ob/set/net.rs` | `SocketConnect=18` now calls `socket_connect_user` (TCP → `socket_connect`/SYN; UDP → records peer + `Connected`). Previously it only flipped a flag. **Fixed.** |
-| `neodos-kernel/src/net/socket.rs` | `socket_connect(id, remote)` performs the real connect (TCP: `tcp_connect`/SYN; UDP: records remote); used only by kernel DNS + tests |
+| `neodos-kernel/src/net/socket.rs` | `socket_connect(id, remote)` performs the real connect (TCP: `tcp_connect`/SYN; UDP: records remote); used only by kernel tests (kernel DNS retired, #312) |
 | `neodos-kernel/src/net/tcp.rs` | full state machine, `tcp_connect`, `tcp_tick` flush, RTO; `tcp_send` buffers only |
 | `neodos-kernel/src/hal/mod.rs`, `hal/raw/cpu.rs` | `has_rdrand`, `rdrand` (10-retry); kernel-only, used for ASLR; **no RDSEED**, no Ring-3 exposure |
 | `neodos-kernel/src/fs/vfs/mod.rs` | `FileSystem` trait has `read/write/create/rename/...` but **no `sync`/`fsync`** |
@@ -71,8 +71,8 @@ Change `neodos-kernel/src/syscall/ob/set/net.rs` for
   `0` on success, `-Io` if the connect could not be initiated. The handshake
   completes asynchronously; `tcp_handle_ack` wakes `SocketConnect` waiters
   (existing `wake_socket_connect_waiters`).
-- **UDP:** preserve current semantics (record remote + mark connected), matching
-  the kernel DNS path that already uses `socket_connect` for UDP.
+- **UDP:** preserve the current semantics (record remote + mark connected) that
+  `socket_connect` already implements.
 
 No new class or syscall: this is a correctness fix to an existing handler. A
 companion read-only query to observe connection progress already exists

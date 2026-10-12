@@ -281,10 +281,10 @@ top of the kernel's UDP sockets. The protocol is implemented once in the
 | Userland transport + config | `libnet/src/dns.rs` | UDP via `net.nxl`, Registry servers (`DnsServer`, `DnsServer2/3`), bounded cache, `resolve()` / `resolve_with_server()` |
 | Tools | `userbin/nslookup`, `userbin/ping` | Consume the shared resolver API |
 
-The kernel `src/net/dns.rs` module remains as an internal kernel-side parser and
-cache used by tests/`dns_tick`; it is not exposed to userland and does not
-duplicate the userland resolver path. Unifying it with `libdns` is tracked in
-issue #68.
+The kernel-side DNS parser/cache (`src/net/dns.rs`) has been **retired (#312)**:
+it was only reachable from `dns_tick()`/tests and duplicated `libdns`. DNS now
+has a single implementation — `libdns` (wire format) + `libnet::dns` (transport)
+— and the kernel only polls the NIC and runs ARP/TCP ticks.
 
 See `docs/networking/userland.md` §3.4–3.5 for the API, configuration and error
 taxonomy.

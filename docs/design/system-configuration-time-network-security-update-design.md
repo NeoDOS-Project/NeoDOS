@@ -119,7 +119,7 @@ Status vocabulary used throughout (per the task's requirement to distinguish):
 | `libntp` | SNTPv4 parse + RFC 5905 offset/delay + UTC↔Unix↔civil; host tests | `libntp/src/lib.rs`; 19/19 tests pass | No authentication; second resolution; no discipline | High |
 | `ntpd.nxe` | Persistent SNTP service, Registry config, backoff, status publishing | `userbin/ntpd/src/main.rs`; `docs/services/ntpd.md` | Error masking (`clock set denied`); step-only (no slew); no auth | High |
 | Locale date/time formatting | `i18n_format_date`/`i18n_format_time` + `libnlt` `[region]` engine exist | `libneodos/src/i18n.rs`; `libnlt/src/region.rs` (+tests) | No `[region]` shipped in `data/locale/*`; not called by `datetime` | High |
-| DNS resolution (userland) | UDP transport + cache in `libnet`; protocol in `libdns`; busy/yield/RDTSC wait | `libnet/src/dns.rs`; `libdns/src/*`; 27 pass / 1 ignored | No blocking wait; no TCP fallback; kernel parser duplicated (#312) | High |
+| DNS resolution (userland) | UDP transport + cache in `libnet`; protocol in `libdns`; busy/yield/RDTSC wait | `libnet/src/dns.rs`; `libdns/src/*`; 27 pass / 1 ignored | No blocking wait; no TCP fallback; kernel parser retired (#312) | High |
 | Kernel TCP state machine | Handshake/ACK/FIN/RTO/buffers; loopback e2e test | `neodos-kernel/src/net/tcp.rs`; `net/tests/net.rs:513` | Userland connect broken; no accept; no OOO reassembly; no window scale/congestion; no TIME_WAIT | High |
 | **Userland TCP connect** | **Broken**: `SocketConnect` never calls `socket_connect` | `neodos-kernel/src/syscall/ob/set/net.rs:28-49` vs `net/socket.rs:191` (`socket_connect` callers: DNS/tests only) | Route TCP connect to `tcp_connect` | High |
 | Blocking socket wait / timeout | Absent: `ob_wait` → `NoSys` for sockets; `sys_poll` → `POLLERR` | `neodos-kernel/src/syscall/ob/wait.rs:71`; `handlers.rs:584-662`; `#307` | Full capability | High |
@@ -825,7 +825,7 @@ Ordering is evidence-driven; Phase 1 is independent of Phases 2–5.
 | #361 | [NET] NTP authentication (NTS/MAC) | Open — needs crypto |
 | #307 | [NET] Blocking/pollable socket waits with timeout | Open — HTTP prerequisite |
 | #593 | [NET] Share the UDP exchange helper (DNS/ntpd) | Open — reuse for HTTP |
-| #312 | [NET] Retire duplicated kernel DNS parser | Open |
+| #312 | [NET] Retire duplicated kernel DNS parser | Done — kernel `net/dns.rs` removed |
 | #315 | [NET] TCP send bypasses gateway | Open, but code already uses `nic_next_hop` → **likely stale; verify before working** |
 | #362/#372 | [NET] Define/implement netd as service | Open — future transport service boundary |
 | #89 | NXE-ECO-15: signature verification infrastructure | Open — update signatures |
