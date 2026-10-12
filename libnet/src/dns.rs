@@ -34,10 +34,11 @@ pub const DNS_MAX_RETRIES: usize = 1;
 pub const DNS_RECV_POLLS: usize = 200;
 /// RDTSC budget for waiting for a DNS reply (roughly 0.7–2 s depending on TSC).
 pub const DNS_RECV_TICKS: u64 = 2_000_000_000;
-/// Safety cap on the receive wait loop iterations.
-pub const DNS_RECV_MAX_SPINS: u32 = 2_000_000;
-/// How many times to retry the UDP send while waiting for ARP resolution.
-pub const DNS_SEND_ATTEMPTS: usize = 50;
+/// Safety cap on the receive wait loop iterations (shared; #593).
+pub const DNS_RECV_MAX_SPINS: u32 = crate::udp::RECV_MAX_SPINS;
+/// How many times to retry the UDP send while waiting for ARP resolution
+/// (shared; #593).
+pub const DNS_SEND_ATTEMPTS: usize = crate::udp::SEND_ATTEMPTS;
 
 /// Registry value names holding DNS servers, in preference order (canonical
 /// names from the `libnet-config` contract; `0.0.0.0` = unset).
@@ -75,75 +76,20 @@ impl DnsTransport for NetTransport {
         query: &[u8],
         resp: &mut [u8],
     ) -> Result<usize, DnsError> {
-        let table = crate::get_table().ok_or(DnsError::Network)?;
-
-        // SocketType::Udp is encoded as 2 in the Ob attrs (see net.nxl).
-        let fd = (table.socket_create)(2);
-        if fd < 0 {
-            return Err(DnsError::Network);
-        }
-
-        if (table.socket_bind)(fd, 0, 0) < 0 {
-            let _ = (table.socket_close)(fd);
-            return Err(DnsError::ServerUnreachable);
-        }
-
-        let server_ip = u32::from_be_bytes(server);
-        if (table.socket_connect)(fd, server_ip, DNS_PORT) < 0 {
-            let _ = (table.socket_close)(fd);
-            return Err(DnsError::ServerUnreachable);
-        }
-
-        // `arp_resolve` is fire-and-forget: on a cache miss it transmits an ARP
-        // request and returns None immediately. The reply is processed later by
-        // netd. Yield and retry the send so the ARP cache can be populated
-        // before we give up (otherwise the first datagram to a new peer always
-        // fails).
-        let mut sent = -1i32;
-        for _ in 0..DNS_SEND_ATTEMPTS {
-            sent = unsafe { (table.socket_send)(fd, query.as_ptr(), query.len() as u32) };
-            if sent >= 0 {
-                break;
-            }
-            libneodos::syscall::sys_yield();
-            for _ in 0..2000 {
-                core::hint::spin_loop();
-            }
-        }
-        if sent < 0 {
-            let _ = (table.socket_close)(fd);
-            return Err(DnsError::ServerUnreachable);
-        }
-
-        // netd drives packet polling; we must wait for the reply here. A bare
-        // `sys_yield` loop returns too early (yield does not sleep), so pace the
-        // wait with a real time budget using RDTSC, mirroring the kernel's
-        // ICMP/ARP timeouts.
-        let start = unsafe { core::arch::x86_64::_rdtsc() };
-        let mut received = 0usize;
-        let mut spins: u32 = 0;
-        loop {
-            let n = unsafe { (table.socket_recv)(fd, resp.as_mut_ptr(), resp.len() as u32) };
-            if n > 0 {
-                received = n as usize;
-                break;
-            }
-            spins += 1;
-            if spins > DNS_RECV_MAX_SPINS {
-                break;
-            }
-            if unsafe { core::arch::x86_64::_rdtsc() }.wrapping_sub(start) > DNS_RECV_TICKS {
-                break;
-            }
-            libneodos::syscall::sys_yield();
-        }
-
-        let _ = (table.socket_close)(fd);
-
-        if received == 0 {
-            Err(DnsError::Timeout)
-        } else {
-            Ok(received)
+        use crate::udp::UdpError;
+        // Shared UDP exchange (#593): create → bind → connect → send with ARP
+        // retry → timed receive → close.
+        match crate::udp::exchange(
+            u32::from_be_bytes(server),
+            DNS_PORT,
+            query,
+            resp,
+            DNS_RECV_TICKS,
+        ) {
+            Ok(n) => Ok(n),
+            Err(UdpError::Create) => Err(DnsError::Network),
+            Err(UdpError::Timeout) => Err(DnsError::Timeout),
+            Err(_) => Err(DnsError::ServerUnreachable),
         }
     }
 }
