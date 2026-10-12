@@ -648,7 +648,10 @@ impl NvmeDriver {
 
         // QEMU expects cqid in CDW10[15:0], qsize in CDW10[31:16] (swapped vs spec)
         let cq_cdw10 = (io_cq_id as u32) | ((IOCQ_ENTRIES as u32 - 1) << 16);
-        let cq_cdw11 = 1u32; // PC=1
+        // PC=1 (physically contiguous), IEN=1 (interrupts enabled, IV=0 →
+        // MSI-X table entry 0). The driver still polls; enabling the interrupt
+        // lets the MSI-X delivery path be exercised.
+        let cq_cdw11 = 3u32;
         kinfo!(LogSubsys::Nvme, "Create IOCQ {}...", io_cq_id);
         if drv.admin_cmd(ADMIN_CREATE_IO_CQ, 0, cq_cdw10, cq_cdw11, iocq_phys).is_err() {
             kerror!(LogSubsys::Nvme, "Create IOCQ failed");
@@ -683,11 +686,23 @@ impl NvmeDriver {
 
         kinfo!(LogSubsys::Nvme, "Ready: {} sectors x {}B, QID {}→{}", nsze, 1u64 << lbads, io_sq_id, io_cq_id);
 
-        if let Ok(vec) = crate::interrupts::msi::msi_request(drv.bus, drv.dev, drv.func, nvme_irq_handler) {
+        // Prefer MSI-X (QEMU's NVMe exposes cap 0x11 but not baseline MSI cap
+        // 0x05); fall back to MSI for devices that only implement it.
+        let vector = match crate::interrupts::msi::configure_msix_entries(
+            drv.bus, drv.dev, drv.func, 1, nvme_irq_handler,
+        ) {
+            Ok(vecs) => vecs.into_iter().next(),
+            Err(e) => {
+                kdebug!(LogSubsys::Nvme, "MSI-X unavailable ({}); trying MSI", e);
+                crate::interrupts::msi::msi_request(drv.bus, drv.dev, drv.func, nvme_irq_handler)
+                    .ok()
+            }
+        };
+        if let Some(vec) = vector {
             drv.msi_vector = Some(vec);
-            kinfo!(LogSubsys::Nvme, "MSI vector {} configured", vec);
+            kinfo!(LogSubsys::Nvme, "Interrupt vector {} configured", vec);
         } else {
-            kerror!(LogSubsys::Nvme, "Warning: Failed to configure MSI");
+            kerror!(LogSubsys::Nvme, "Warning: Failed to configure MSI/MSI-X");
         }
 
         [Some(drv)]
