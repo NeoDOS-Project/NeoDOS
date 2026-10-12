@@ -5,6 +5,7 @@ extern crate alloc;
 
 pub mod config;
 pub mod dns;
+pub mod udp;
 
 use core::sync::atomic::{AtomicU64, Ordering};
 use libneodos::loadlib;

@@ -346,60 +346,25 @@ struct SyncResult {
 }
 
 fn ntp_sync(ip: [u8; 4], timeout_ms: u32) -> Result<SyncResult, &'static str> {
-    let fd = libnet::socket_create(2); // SocketType::Udp
-    if fd < 0 {
-        return Err("socket create failed");
-    }
-    if libnet::socket_bind(fd, 0, 0) < 0 {
-        let _ = libnet::socket_close(fd);
-        return Err("socket bind failed");
-    }
-    if libnet::socket_connect(fd, u32::from_be_bytes(ip), libntp::NTP_PORT) < 0 {
-        let _ = libnet::socket_close(fd);
-        return Err("socket connect failed");
-    }
-
     let t1 = rtc_now_ns().unwrap_or(0);
     let t1_secs = (t1 / 1_000_000_000) as i64;
     let request = libntp::build_request(libntp::unix_secs_to_ntp(t1_secs));
 
-    // ARP may still be resolving; retry the send like the DNS resolver does.
-    let mut sent = false;
-    for _ in 0..50 {
-        if libnet::socket_send(fd, &request) >= 0 {
-            sent = true;
-            break;
-        }
-        let _ = syscall::sys_yield();
-        for _ in 0..2000 {
-            core::hint::spin_loop();
-        }
-    }
-    if !sent {
-        let _ = libnet::socket_close(fd);
-        return Err("send failed");
-    }
-
+    // Shared UDP exchange (#593): create → bind → connect → send with ARP retry
+    // → timed receive → close.
     let mut buf = [0u8; libntp::NTP_PACKET_SIZE];
     let budget = timeout_ms as u64 * TICKS_PER_MS;
-    let start = rdtsc();
-    let mut received = 0usize;
-    loop {
-        let n = libnet::socket_recv(fd, &mut buf);
-        if n > 0 {
-            received = n as usize;
-            break;
-        }
-        if rdtsc().wrapping_sub(start) >= budget {
-            break;
-        }
-        let _ = syscall::sys_yield();
-    }
-    let _ = libnet::socket_close(fd);
-
-    if received == 0 {
-        return Err("timeout");
-    }
+    let received = match libnet::udp::exchange(
+        u32::from_be_bytes(ip),
+        libntp::NTP_PORT,
+        &request,
+        &mut buf,
+        budget,
+    ) {
+        Ok(n) => n,
+        Err(libnet::udp::UdpError::Timeout) => return Err("timeout"),
+        Err(_) => return Err("send failed"),
+    };
 
     let reply = libntp::parse_reply(&buf[..received], libntp::unix_secs_to_ntp(t1_secs))
         .map_err(|_| "invalid NTP response")?;
