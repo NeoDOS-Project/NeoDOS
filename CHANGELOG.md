@@ -93,6 +93,16 @@
   (QEMU `-d int`). Fixed by using `try_lock` in the cursor path and adding a
   lock-free glyph blit helper, with a regression test that deadlocks pre-fix.
 
+- **IRQ lock-safety hardening (INV-3 / Rule 3.5.1).** Every `graphics::RENDERER`
+  acquisition now goes through `graphics::with_renderer`, which disables
+  interrupts for the critical section; this also covers the keyboard
+  `Alt+F1..F8` VT-switch path (`redraw_from_shadow`), not just the timer cursor
+  blink (which keeps `try_lock`). The IRP pool lock (`irp::IRP_POOL.inner`) is
+  acquired IRQ-safe too, so the timer DPC completion path cannot deadlock
+  against a driver holding it. The rule — no IRQ handler may block on a lock
+  that interruptible code on the same CPU can hold — is codified in
+  `docs/architecture/source-of-truth.md` and the review checklist.
+
 - **AP bring-up triple fault ("AP-bringup layout cliff", #522).** The AP
   trampoline enabled long mode (`EFER.LME`) but not no-execute (`EFER.NXE`).
   With NXE clear, bit 63 of a leaf PTE is reserved, so the first AP access

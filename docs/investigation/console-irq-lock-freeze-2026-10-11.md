@@ -91,3 +91,20 @@ layout cliff" noted in #522). Fixed by enabling `LME | NXE` in the trampoline.
 On this host the QEMU 2-vCPU test previously passed for `develop` but failed for
 any build that shifted `ap_entry`/frame-allocation order; the NXE fix removes
 that whole class of failure. VirtualBox validated the end-user workflow.
+
+## Audit: other IRQ-reachable locks (Rule 3.5.1)
+
+After codifying the rule, the IRQ entry points (timer, keyboard, serial, mouse,
+IPI, MSI, exceptions) were audited for blocking locks that interruptible code
+can hold:
+
+| Lock | IRQ path | Non-IRQ holders IRQ-safe? | Status |
+| --- | --- | --- | --- |
+| `graphics::RENDERER` | timer cursor blink; **keyboard `Alt+F1..F8` VT switch** (`redraw_from_shadow`) | no (`println!`, boot, syscalls) | **fixed** — every site now uses `graphics::with_renderer` (IF-safe); the IRQ cursor path uses `try_lock` |
+| `irp::IRP_POOL.inner` | timer → DPC → `apc::irp_complete_with_apc` | no (driver/work-queue callers) | **fixed** — all sites via `irp::with_pool` (IF-safe) |
+| `idt::MSI_HANDLER_TABLE` | `msi_dispatch` (vectors 48..255) | no (`msi_register_handler`) | **latent** — the MSI IDT stubs are not installed, so `msi_dispatch` is currently unreachable; must be made IRQ-safe before MSI delivery is enabled |
+| `globals::VFS` / `PAGE_CACHE` / `BLOCK_DEVICES` / `cm::CM_MANAGER` | timer → watchdog dump; keyboard `Ctrl+Alt+Del` → shutdown/reboot flush | `preempt_disable()` only, held with IF=1 | **latent (terminal paths)** — only on watchdog expiry / Ctrl+Alt+Del; the proper fix is to defer watchdog/shutdown work out of IRQ context |
+
+Verified IRQ-safe: `SCHEDULER`, `SERIAL1`, `KBD` (uses `try_lock` in IRQ),
+`object::TIMER_MANAGER` (syscall-only callers, IF=0 gate), and all
+lock-free paths (`EVENT_BUS`, crash/trace rings, per-CPU DPC ring).
