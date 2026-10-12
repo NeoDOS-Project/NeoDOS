@@ -1059,7 +1059,7 @@ proceso Ring 3.
 
 ```text
 netd    (Ring 3) ── observa NIC / link state (NicInfo) y expone estado
-netpump (Ring 0) ── network_poll_all() + arp_tick + dns_tick  (RX pump)
+netpump (Ring 0) ── network_poll_all() + arp_tick + tcp_tick  (RX pump)
 ```
 
 - v1: identidad de proceso/servicio, bucle con `yield` y monitorización de

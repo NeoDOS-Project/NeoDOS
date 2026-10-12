@@ -7,7 +7,6 @@ pub mod udp;
 pub mod tcp;
 pub mod socket;
 pub mod nic;
-pub mod dns;
 pub mod counters;
 pub mod loopback;
 mod tests;
@@ -130,14 +129,13 @@ pub fn net_tick() {
     ktrace!(LogSubsys::Net, "tick");
     network_poll_all();
     arp::arp_tick();
-    dns::dns_tick();
     tcp::tcp_tick();
 
     let t = TICK_COUNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
     // Heartbeat every ~100 ticks: proves netd is actually scheduled and running.
     // Without this, netd could be spawned but never picked by the scheduler.
     if t == 1 {
-        kinfo!(LogSubsys::Net, "[NET] netpump alive — first tick (network_poll_all + arp_tick + dns_tick)");
+        kinfo!(LogSubsys::Net, "[NET] netpump alive — first tick (network_poll_all + arp_tick + tcp_tick)");
     } else if t % 1000 == 0 {
         crate::net::counters::dump_counters();
     }
