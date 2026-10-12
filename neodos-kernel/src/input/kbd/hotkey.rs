@@ -6,10 +6,11 @@ pub fn dispatch_hotkey(code: u8, modifiers: u8) -> bool {
     let alt = (modifiers & KBD_ALT) != 0;
     let shift = (modifiers & KBD_SHIFT) != 0;
 
-    // Ctrl+Alt+Del → shutdown
+    // Ctrl+Alt+Del → request shutdown (deferred out of IRQ context by `input`)
     if ctrl && alt && code == 0x53 {
-        kinfo!(LogSubsys::Kbd, "Ctrl+Alt+Del — shutting down...");
-        crate::object::power::power_shutdown();
+        kinfo!(LogSubsys::Kbd, "Ctrl+Alt+Del — requesting shutdown (deferred)");
+        crate::input::request_shutdown();
+        return true;
     }
 
     // Alt+F1-F4 → VT switch (scancodes 0x3B-0x3E)

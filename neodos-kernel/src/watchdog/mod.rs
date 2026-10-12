@@ -207,8 +207,11 @@ fn watchdog_write_dump_to_disk() {
     let ts = header.timestamp;
     let _path = alloc::format!("C:\\Logs\\WDT_{}.dmp", ts);
 
-    // Best-effort disk write — wrap in with_vfs closure
-    let result: Result<(), ()> = crate::globals::with_vfs(|vfs| {
+    // Best-effort, NON-BLOCKING disk write: the watchdog runs from the timer IRQ
+    // and must never spin on the VFS lock that an interrupted thread may hold
+    // (INV-3, Rule 3.5.1). If the filesystem is busy we skip the disk copy — the
+    // dump is already in RAM and on serial.
+    match crate::globals::try_with_vfs(|vfs| {
         // Ensure C:\Logs exists
         if vfs.resolve_path("C:\\Logs").is_err() {
             let _ = vfs.mkdir("C:\\Logs");
@@ -223,21 +226,24 @@ fn watchdog_write_dump_to_disk() {
         };
         let _ = vfs.create("C:\\Logs\\WDT_.dmp");
         let _ = vfs.write(2, 1, 0, header_bytes);
-        Ok(())
-    });
-
-    if result.is_ok() {
-        WATCHDOG_DUMP_WRITES.fetch_add(1, Ordering::Relaxed);
-        kinfo!(LogSubsys::Watchdog, "Crash dump written");
-    } else {
-        kerror!(LogSubsys::Watchdog, "Failed to write crash dump to disk (I/O error)");
+    }) {
+        Ok(()) => {
+            WATCHDOG_DUMP_WRITES.fetch_add(1, Ordering::Relaxed);
+            kinfo!(LogSubsys::Watchdog, "Crash dump written");
+        }
+        Err(()) => {
+            kerror!(LogSubsys::Watchdog, "VFS busy — skipping crash-dump disk write");
+        }
     }
 }
 
 /// Force a controlled system reset via ACPI or QEMU debug port.
+///
+/// Uses the emergency path that skips the registry/page-cache flush: those take
+/// blocking locks and the watchdog runs in the timer IRQ (INV-3, Rule 3.5.1).
 fn watchdog_reset_system() -> ! {
     kerror!(LogSubsys::Watchdog, "*** SYSTEM RESET due to watchdog timeout ***");
-    crate::object::power::power_reboot();
+    crate::power::coordinator::emergency_reboot();
 }
 
 // ── Stats ──
@@ -351,5 +357,16 @@ pub fn register_watchdog_tests() {
         test_true!(ticks_needed > 0);
         // Should be less than 2^32 (within 32-bit HPET comparator range)
         test_true!(ticks_needed <= 0xFFFF_FFFF);
+    });
+
+    // #677: the watchdog runs from the timer IRQ and its dump path must NOT
+    // block on the VFS lock (an interrupted thread can hold it with IF=1). With
+    // the lock held, `try_with_vfs` must return `Err` immediately; the old
+    // blocking `with_vfs` would deadlock the tester's own thread here.
+    test_case!("watchdog_try_with_vfs_is_non_blocking", {
+        let guard = crate::globals::VFS.lock();
+        let res = crate::globals::try_with_vfs(|_| ());
+        drop(guard);
+        test_true!(res.is_err());
     });
 }

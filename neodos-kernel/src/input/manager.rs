@@ -131,6 +131,21 @@ pub fn request_foreground_interrupt() -> bool {
         pid as usize as *mut u8,
     )
 }
+/// Deferred system shutdown, queued from the keyboard IRQ (Ctrl+Alt+Del).
+///
+/// `power_shutdown()` flushes the registry hives, the page cache and the VFS with
+/// blocking `spin::Mutex` acquisitions. Running it in the keyboard IRQ (IF=0)
+/// could spin forever on a lock an interrupted thread holds with IF=1 (INV-3,
+/// Rule 3.5.1), so it is executed later from the work queue (the same pattern as
+/// Ctrl+C / `interrupt_foreground_work`).
+fn power_shutdown_work(_: *mut u8) {
+    crate::object::power::power_shutdown(); // -> ! (powers off the machine)
+}
+
+pub fn request_shutdown() {
+    let _ = crate::work_queue::WORK_QUEUE.push_high(power_shutdown_work, core::ptr::null_mut());
+}
+
 pub fn vt_active_occupancy() -> usize {
     vt_active_occupancy_for(active_vt())
 }
