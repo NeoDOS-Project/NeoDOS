@@ -89,6 +89,9 @@ changes before they land.
   (`scripts/check-skills.sh` catches both).
 - Catching raw handle dereferences instead of table lookups.
 - Missing safety comments on `unsafe`.
+- An IRQ/exception path taking a blocking `spin::Mutex` that thread code holds
+  with interrupts enabled — the handler can spin forever on the interrupted CPU
+  (INV-3, Rule 3.5.1).
 
 ## Final checklist
 
@@ -101,3 +104,6 @@ changes before they land.
 - [ ] `npx markdownlint '**/*.md' --config .markdownlint.json` passes
 - [ ] No secrets, no stray binaries, no unintended changes
 - [ ] `unsafe` blocks have safety comments
+- [ ] IRQ/exception paths take no blocking lock that interruptible code could
+      hold (INV-3 Rule 3.5.1): IRQ-reachable locks are IRQ-safe at every site,
+      or the handler uses `try_lock`
