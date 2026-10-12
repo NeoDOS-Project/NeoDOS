@@ -52,8 +52,26 @@ IRQ handlers MUST NOT call `alloc`, `Box::new`, `Vec::push`, or any heap-allocat
 Ring buffers and lock-free queues used in IRQ context MUST be pre-allocated at boot.
 
 **INV-3. NO BLOCKING IN IRQ CONTEXT.**
-IRQ handlers MUST NOT acquire spinlocks that can contend with non-IRQ context (use
-`spin::Mutex` with IRQ-safe guard or `without_interrupts`). IRQ handlers MUST NOT call `schedule()`.
+An IRQ handler runs with interrupts disabled on the CPU it interrupted. It MUST NOT
+block waiting for a lock that interruptible (interrupts-enabled) code could be holding
+on that same CPU: a blocking acquire would spin forever, because the interrupted code
+cannot run to release it, and the CPU is wedged. Concretely:
+
+- **Rule 3.5.1 (IRQ lock safety).** Every lock reachable from an IRQ handler MUST be
+  either (a) acquired IRQ-safe at *all* sites — wrapped in
+  `crate::hal::without_interrupts`, held via `IrqMutex` / IRQL >= `DISPATCH_LEVEL`, or
+  taken from another IRQ handler — or (b) acquired in the handler with `try_lock()` and
+  skipped when contended.
+- A lock that non-IRQ code takes with interrupts *enabled* MUST NOT be taken with a
+  blocking acquire from an IRQ handler. If such a lock is needed in IRQ context, either
+  make all non-IRQ acquisitions IRQ-safe or use `try_lock()` in the handler.
+- IRQ handlers MUST NOT call `schedule()` and MUST NOT allocate (see INV-2).
+
+> Worked example: the graphical-console cursor is drawn from the BSP timer IRQ
+> (`console::cursor_timer_tick -> draw_cursor`). When `draw_cursor` used a blocking
+> `graphics::RENDERER.lock()` while thread code held `RENDERER` with interrupts enabled
+> (e.g. `console::scroll()`), the timer handler spun forever and froze the system. Fixed
+> by `try_lock()` in the handler; see `docs/investigation/console-irq-lock-freeze-2026-10-11.md`.
 
 **INV-4. NO SCHEDULER INVOCATION FROM RING 0 (KERNEL) EXCEPT EXPLICIT SITES.**
 The scheduler is invoked at exactly these points:

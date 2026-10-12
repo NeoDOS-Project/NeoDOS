@@ -252,8 +252,7 @@ fn irp_complete_apc_dpc_callback(ctx: *mut u8) {
 /// Called from DPC context at DISPATCH_LEVEL.
 pub fn irp_complete_with_apc(irp_id: IrpId, tid: u32) {
     // Extract IRP status and callback before freeing
-    let (status, callback, cb_ctx) = {
-        let mut pool = crate::irp::IRP_POOL.inner.lock();
+    let (status, callback, cb_ctx) = crate::irp::with_pool(|pool| {
         if let Some(irp) = pool.get_mut(irp_id) {
             irp.status = crate::irp::IrpStatus::Completed;
             let status = irp.status;
@@ -263,7 +262,7 @@ pub fn irp_complete_with_apc(irp_id: IrpId, tid: u32) {
         } else {
             (crate::irp::IrpStatus::Error(1), None, core::ptr::null_mut())
         }
-    };
+    });
 
     // Allocate result payload for the user APC callback
     let result = Box::new(IrpApcResult {

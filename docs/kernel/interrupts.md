@@ -38,6 +38,24 @@ at_dispatch(|| {
 
 `IrqMutex<T>` wraps a `spin::Mutex<T>` with automatic IRQL management. Locking raises to DISPATCH_LEVEL; dropping the guard restores the previous level. Used for data structures shared between PASSIVE and DISPATCH contexts (e.g., work queues, scheduler globals, pipe buffers).
 
+### IRQ lock safety (INV-3 / Rule 3.5.1)
+
+An IRQ handler runs with interrupts disabled on the CPU it interrupted. It MUST
+NOT block on a lock that interruptible (IF=1) code could be holding on that same
+CPU — the interrupted code cannot run to release it, so the handler spins forever
+and the CPU wedges. For every lock reachable from an IRQ handler (timer,
+keyboard, serial, mouse, IPI, MSI, exceptions):
+
+- Make the lock IRQ-safe at **all** sites — wrap non-IRQ acquisitions in
+  `hal::without_interrupts`, use `IrqMutex` / `raise_irql(DISPATCH_LEVEL)`, or
+  ensure the only callers already run with IF=0 (syscall gate).
+- Or use `try_lock()` in the handler and skip when contended.
+- `preempt_disable()` is **not** sufficient — it prevents descheduling, not
+  interrupts.
+
+See `docs/architecture/source-of-truth.md` (INV-3, Rule 3.5.1) and
+`docs/investigation/console-irq-lock-freeze-2026-10-11.md`.
+
 ### Invariant INV-14
 
 A page fault occurring while IRQL >= DISPATCH_LEVEL triggers a `BUGCHECK(KI_EXCEPTION_ACCESS_VIOLATION)`. All pageable data must be accessed only at PASSIVE or APC level.

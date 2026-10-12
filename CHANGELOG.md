@@ -6,6 +6,12 @@
 
 ### Added
 
+- **GitHub Actions CI (`.github/workflows/ci.yml`).** Compile-oriented: builds the
+  kernel with a pinned nightly, runs `neodev check-deps` (rule 12) and
+  `scripts/check-skills.sh`. It never publishes artifacts, builds images or boots
+  VMs. `neodev` is installed from a pinned NeoDev revision — upstream has no
+  releases yet, tracked in NeoDev#37.
+
 - **`scripts/check-skills.sh`: keep `skills/*/SKILL.md` in sync with docs/code
   (#605).** Lightweight drift guard that fails when a skill cites a missing
   `scripts/<name>`, an obsolete heuristic (e.g. `RAX >= 77`, Registry RAX
@@ -93,6 +99,37 @@
   growing `check-deps-baseline.txt`.
 
 ### Fixed
+
+- **IRQ-reentrant graphical-console lock caused a system-wide freeze after
+  network init.** The BSP timer IRQ renders the blinking cursor via
+  `console::cursor_timer_tick` → `draw_cursor`, which took the
+  `graphics::RENDERER` `spin::Mutex` with a blocking `lock()`. A thread that held
+  the lock (e.g. `scroll()` during the burst of console writes from
+  `netd`/`dhcpd`/`ntpd` while the shell has cursor blink enabled) could be
+  interrupted by the timer; the handler then spun forever on the same CPU with
+  interrupts disabled, wedging the BSP. In VirtualBox the shell stopped echoing
+  input and the cursor stopped advancing right after the network services
+  finished starting; a second CPU was then observed spinning in `font::draw_char`
+  (QEMU `-d int`). Fixed by using `try_lock` in the cursor path and adding a
+  lock-free glyph blit helper, with a regression test that deadlocks pre-fix.
+
+- **IRQ lock-safety hardening (INV-3 / Rule 3.5.1).** Every `graphics::RENDERER`
+  acquisition now goes through `graphics::with_renderer`, which disables
+  interrupts for the critical section; this also covers the keyboard
+  `Alt+F1..F8` VT-switch path (`redraw_from_shadow`), not just the timer cursor
+  blink (which keeps `try_lock`). The IRP pool lock (`irp::IRP_POOL.inner`) is
+  acquired IRQ-safe too, so the timer DPC completion path cannot deadlock
+  against a driver holding it. The rule — no IRQ handler may block on a lock
+  that interruptible code on the same CPU can hold — is codified in
+  `docs/architecture/source-of-truth.md` and the review checklist.
+
+- **AP bring-up triple fault ("AP-bringup layout cliff", #522).** The AP
+  trampoline enabled long mode (`EFER.LME`) but not no-execute (`EFER.NXE`).
+  With NXE clear, bit 63 of a leaf PTE is reserved, so the first AP access
+  through such a page raised `#PF(RSVD)` → `#DF` → triple fault (with `-no-reboot`,
+  QEMU exits and the VM never boots). Whether the AP stack landed on an NX leaf
+  depended on frame-allocation order, so a small kernel change could kill every
+  AP. Fixed by enabling `LME | NXE` before paging is enabled.
 
 - **`neotop` i18n: oversized i18n `.bss` spilled into the process stack (#576).**
   The i18n table pool plus its three load scratch buffers totalled ~203 KiB of

@@ -233,19 +233,27 @@ pub const FONT: [[u8; 16]; 256] = {
     f
 };
 
-use crate::graphics::RENDERER;
+use super::{with_renderer, Renderer};
 
-pub fn draw_char(c: u8, x: usize, y: usize, fg: u32, bg: u32) {
-    if let Some(ref r) = *RENDERER.lock() {
-        let font_char = FONT[c as usize];
-        for (row, byte) in font_char.iter().enumerate() {
-            for col in 0..8 {
-                if (byte & (0x80 >> col)) != 0 {
-                    r.put_pixel(x + col, y + row, fg);
-                } else {
-                    r.put_pixel(x + col, y + row, bg);
-                }
-            }
+/// Blit one 8x16 glyph at `(x, y)`. The caller MUST already hold a `RENDERER`
+/// guard (or a `try_lock` guard). Split out of [`draw_char`] so the timer-IRQ
+/// cursor path (`console::draw_cursor`) can reuse the glyph loop without taking
+/// the lock again — an IRQ handler must never block on a lock a thread may hold
+/// (INV-3).
+pub fn draw_char_on(r: &Renderer, c: u8, x: usize, y: usize, fg: u32, bg: u32) {
+    let font_char = FONT[c as usize];
+    for (row, byte) in font_char.iter().enumerate() {
+        for col in 0..8 {
+            let color = if (byte & (0x80 >> col)) != 0 { fg } else { bg };
+            r.put_pixel(x + col, y + row, color);
         }
     }
+}
+
+pub fn draw_char(c: u8, x: usize, y: usize, fg: u32, bg: u32) {
+    with_renderer(|r| {
+        if let Some(r) = r {
+            draw_char_on(r, c, x, y, fg, bg);
+        }
+    });
 }

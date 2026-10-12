@@ -276,6 +276,8 @@ pub fn register_tests() {
     register_irql_tests();
     // B4.4 B2 ANSI terminal tests
     crate::console::register_ansi_tests();
+    // Console rendering / graphics-lock IRQ-safety regression tests
+    crate::console::register_render_tests();
     // NT6 Security Reference Monitor tests
     crate::security::register_security_tests();
     // A2.1: PCIe ECAM tests

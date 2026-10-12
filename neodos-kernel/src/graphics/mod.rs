@@ -45,6 +45,20 @@ use spin::Mutex;
 
 pub static RENDERER: Mutex<Option<Renderer>> = Mutex::new(None);
 
+/// Run `f` with exclusive access to the renderer and interrupts disabled for the
+/// duration, restoring the caller's interrupt state on return.
+///
+/// Every renderer user runs through this (or `RENDERER.try_lock()`), so the lock
+/// is *never* held with interrupts enabled. That is what makes the IRQ paths
+/// that render — the BSP timer cursor blink and the keyboard VT switch
+/// (`Alt+F1..F8`) — safe: the timer/keyboard IRQ cannot interrupt a thread while
+/// it holds `RENDERER`, so the handler can never spin forever on the interrupted
+/// CPU (INV-3, Rule 3.5.1).
+#[inline]
+pub fn with_renderer<R>(f: impl FnOnce(Option<&Renderer>) -> R) -> R {
+    crate::hal::without_interrupts(|| f(RENDERER.lock().as_ref()))
+}
+
 pub fn init(fb: FramebufferInfo) {
     if fb.base_address == 0 || fb.size == 0 {
         // No valid framebuffer — don't initialise the renderer.
@@ -54,5 +68,5 @@ pub fn init(fb: FramebufferInfo) {
     }
     let renderer = Renderer::new(fb);
     renderer.clear(0x000000); // Black
-    *RENDERER.lock() = Some(renderer);
+    crate::hal::without_interrupts(|| *RENDERER.lock() = Some(renderer));
 }

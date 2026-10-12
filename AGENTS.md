@@ -1,10 +1,10 @@
 # NeoDOS — AI Agent Context
 
-**Version:** v0.51.5 | **Tests:** 890 (kernel) | **ABI:** v8 | **SSDT:** RAX 0-99 (37 assigned) | **Dev Server:** [neodos-dev-server](https://github.com/NeoDOS-Project/neodos-dev-server) | **NeoTools:** [NeoTools](https://github.com/NeoDOS-Project/NeoTools)
+**Version:** v0.51.5 | **Tests:** 937 (kernel) | **ABI:** v8 | **SSDT:** RAX 0-99 (37 assigned) | **Dev Server:** [neodos-dev-server](https://github.com/NeoDOS-Project/neodos-dev-server) | **NeoTools:** [NeoTools](https://github.com/NeoDOS-Project/NeoTools)
 
 ## Permanent Rules (MUST always follow)
 
-1. **No automatic builds.** Only build/test when explicitly asked.
+1. **No automatic builds by the agent.** Only build/test when explicitly asked. CI (`.github/workflows/ci.yml`) may compile the kernel and run static checks, but never publishes artifacts, builds images or boots VMs.
 2. **Test before commit:** `cargo build` in `neodos-kernel/` → `neodev test` → `neodev check-deps` → `scripts/check-skills.sh` → `npx markdownlint '**/*.md' --config .markdownlint.json`.
 3. **Never modify public API without updating docs.** Syscalls, ObInfoClass, NEM ABI, structs in `libneodos/`.
 4. **NT-like design philosophy:** Object Manager (`Ob`) is the central abstraction for syscalls, handles, security, and namespace.
@@ -17,6 +17,7 @@
 11. **Branch first.** Every feature, bug fix, investigation, refactor, audit, or architectural change MUST be developed on its own dedicated branch. Never work directly on `develop`. See [Branching Rule](#branching-rule).
 12. **Module layout.** One directory = one subsystem, with dependencies flowing only downward (enforced by `neodev check-deps`). Never reuse a module name across layers. Use `mod.rs` for directory modules. During incremental moves, keep historical `crate::<name>` paths working via re-exports in the parent, and refresh `check-deps-baseline.txt` for the moved paths.
 13. **Issue acceptance criteria are the definition of done.** If an Issue has checkboxes (acceptance criteria), the work MUST satisfy **all** of them before it is considered complete — never close or claim an Issue done with unchecked criteria. When finished, **mark every satisfied checkbox in the Issue body** (e.g. `gh issue edit`, or edit the PR body if the checkboxes live there). If any criterion cannot be met, leave the Issue open (do not use `Closes #N`) and report the unmet item explicitly.
+14. **IRQ lock safety (INV-3 / Rule 3.5.1).** No interrupt handler may block waiting for a lock that interruptible (IF=1) code on the same CPU could hold. Every lock reachable from an IRQ handler MUST be IRQ-safe at **all** sites (`without_interrupts` / `IrqMutex` / IRQL ≥ `DISPATCH_LEVEL`) or acquired with `try_lock` in the handler. `preempt_disable()` is **not** sufficient. Details in `docs/architecture/source-of-truth.md`; checklist in `skills/review/SKILL.md`.
 
 ## Quick Reference
 
