@@ -6,6 +6,12 @@
 
 ### Added
 
+- **GitHub Actions CI (`.github/workflows/ci.yml`).** Compile-oriented: builds the
+  kernel with a pinned nightly, runs `neodev check-deps` (rule 12) and
+  `scripts/check-skills.sh`. It never publishes artifacts, builds images or boots
+  VMs. `neodev` is installed from a pinned NeoDev revision — upstream has no
+  releases yet, tracked in NeoDev#37.
+
 - **`scripts/check-skills.sh`: keep `skills/*/SKILL.md` in sync with docs/code
   (#605).** Lightweight drift guard that fails when a skill cites a missing
   `scripts/<name>`, an obsolete heuristic (e.g. `RAX >= 77`, Registry RAX
@@ -77,6 +83,20 @@
   the parent's level with a fresh timestamp. Integrity enforcement in
   `SeAccessCheck` is USR-P5a. Also added a focused test for the `ob_create` type
   map (covers the `ObType::Session` acceptance from #19). 3 new tests.
+
+### Changed
+
+- **AGENTS.md slimmed down; long agent policies moved to their homes.**
+  The Mandatory Scheduler Change Validation Policy now lives in
+  `skills/scheduler/SKILL.md` and the Proactive Capability Discovery workflow in
+  `docs/development/capability-discovery.md` (indexed in `docs/README.md`); the
+  GitHub workflow section was de-duplicated. AGENTS.md keeps the permanent rules
+  and short pointers only.
+
+- **`drivers/` no longer depends on `fs::vfs` (rule 12).** The
+  `neodos07_mount_manager_consistent` test moved to `fs/vfs/mount.rs`
+  (`vfs_mount_manager_consistent`), so `neodev check-deps` is green again without
+  growing `check-deps-baseline.txt`.
 
 ### Fixed
 

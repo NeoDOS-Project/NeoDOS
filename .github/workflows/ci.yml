@@ -1,0 +1,78 @@
+name: CI
+
+# Compile-oriented CI: verify the kernel builds, the dependency invariants hold
+# and the skills stay in sync. It never publishes artifacts, builds disk images
+# or boots a VM — that stays local (see AGENTS.md rule 1 and the scheduler
+# validation policy).
+
+on:
+  pull_request:
+    branches: [develop, master]
+  push:
+    branches: [develop]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Keep in sync with neodos-kernel/rust-toolchain.toml. Pinned so a nightly
+  # update cannot turn the build red on its own.
+  KERNEL_TOOLCHAIN: nightly-2026-07-14
+  # Pinned NeoDev commit (no releases / no crates.io package upstream).
+  NEODEV_REV: ef75018c6d489ce320a14db5974ea0487c9d60d8
+
+jobs:
+  kernel:
+    name: Build kernel
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.KERNEL_TOOLCHAIN }}
+          targets: x86_64-unknown-none
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: neodos-kernel
+
+      - name: cargo build (dev profile)
+        working-directory: neodos-kernel
+        run: cargo build
+
+  deps:
+    name: check-deps
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # NeoDev is an external tool (NeoDOS-Project/NeoDev) with no published
+      # release, so it is built from a pinned revision and cached by that rev.
+      - name: Cache neodev
+        id: cache-neodev
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/neodev
+            ~/.cargo/registry
+          key: neodev-${{ runner.os }}-${{ env.NEODEV_REV }}
+
+      - name: Install neodev
+        if: steps.cache-neodev.outputs.cache-hit != 'true'
+        run: cargo install --git https://github.com/NeoDOS-Project/NeoDev.git --rev "$NEODEV_REV" --locked
+
+      - name: neodev check-deps
+        run: neodev check-deps
+
+  guards:
+    name: Skills guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: scripts/check-skills.sh
+        run: ./scripts/check-skills.sh
