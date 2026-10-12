@@ -147,10 +147,6 @@ fn localhost_result() -> DnsResult {
     }
 }
 
-/// Registry default hostname, treated as "not set" for local-name matching
-/// (#485). The kernel reports it when `ComputerName` was never stored.
-const HOSTNAME_PLACEHOLDER: &str = "NeoDOS-PC";
-
 /// The local machine's hostname, or `None` when it is empty or still the
 /// registry default placeholder. Used to resolve the machine's own name
 /// locally without querying DNS (#485).
@@ -163,7 +159,7 @@ fn local_hostname() -> Option<String> {
     // The kernel copies the name NUL-terminated; trim the terminator.
     let end = buf[..n].iter().position(|&b| b == 0).unwrap_or(n);
     let name = core::str::from_utf8(&buf[..end]).ok()?;
-    if name.is_empty() || name.eq_ignore_ascii_case(HOSTNAME_PLACEHOLDER) {
+    if name.is_empty() || name.eq_ignore_ascii_case(crate::DEFAULT_HOSTNAME) {
         return None;
     }
     Some(name.to_string())
