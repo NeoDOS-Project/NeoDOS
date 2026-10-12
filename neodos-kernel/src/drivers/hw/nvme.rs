@@ -255,7 +255,7 @@ impl NvmeDriver {
 
     #[allow(clippy::too_many_arguments)]
     #[inline(never)]
-    fn admin_cmd_raw(asq: u64, acq: u64, sq_doorbell: *mut u32, acq_head: u16, _acq_phase: bool,
+    fn admin_cmd_raw(asq: u64, acq: u64, sq_doorbell: *mut u32, acq_head: u16, acq_phase: bool,
                      opcode: u8, nsid: u32, cdw10: u32, cdw11: u32, prp1: u64, _timeout_ms: u32,
                      asq_tail: &mut u16)
         -> Result<(u32, u16, u16, bool), u16>
@@ -273,22 +273,26 @@ impl NvmeDriver {
             *asq_tail = (*asq_tail + 1) % ASQ_ENTRIES;
             crate::hal::mmio::write32(sq_doorbell as usize, *asq_tail as u32);
 
-            // Poll CQE
+            // Poll CQE. A fresh CQE is only valid once its phase bit matches the
+            // expected phase: the zeroed CQ has CID 0 / phase 0, which would
+            // otherwise collide with the first command (cid 0) before the device
+            // has posted the real completion (#682).
             let cqe = acq + (acq_head as u64) * CQE_SIZE as u64;
             let cqe32 = cqe as *mut u32;
             for i in 0..100000000 {
                 let w3 = cqe32.add(3).read_volatile();
                 let cq_cid = (w3 & 0xFFFF) as u16; // CID in DW3 bits 15:0 (QEMU NVMe convention)
-                if cq_cid == cid {
+                let cqe_phase = ((w3 >> 16) & 0x1) != 0;
+                if cqe_phase == acq_phase && cq_cid == cid {
                     let w0 = cqe32.add(0).read_volatile();
                     let w1 = cqe32.add(1).read_volatile();
                     let w2 = cqe32.add(2).read_volatile();
                     let status_field = (w3 >> 16) as u16;
-                    let phase = (status_field & 0x1) != 0;
                     let status = status_field >> 1;
-                    kdebug!(LogSubsys::Nvme, "CQE[{}]: {:08x} {:08x} {:08x} {:08x} cid={} phase={} status={}", acq_head, w0, w1, w2, w3, cq_cid, phase, status);
+                    kdebug!(LogSubsys::Nvme, "CQE[{}]: {:08x} {:08x} {:08x} {:08x} cid={} phase={} status={}", acq_head, w0, w1, w2, w3, cq_cid, cqe_phase, status);
                     let new_head = (acq_head + 1) % ACQ_ENTRIES;
-                    return Ok((w0, status, new_head, phase));
+                    let new_phase = if new_head == 0 { !acq_phase } else { acq_phase };
+                    return Ok((w0, status, new_head, new_phase));
                 }
                 // Yield to QEMU via port 0x80 to let NVMe emulation run (TCG)
                 if i & 0x7FFF == 0 {
@@ -458,7 +462,10 @@ impl NvmeDriver {
 
         let mut drv = NvmeDriver {
             regs_virt: bar, dstrd, timeout_ms,
-            asq_phys, acq_phys, asq_tail: 0, acq_head: 0, acq_phase: false,
+            // The admin CQ is zeroed by the host; the controller sets the phase
+            // bit of its first completion to 1, so the expected initial phase is
+            // `true` (same as the I/O CQ).
+            asq_phys, acq_phys, asq_tail: 0, acq_head: 0, acq_phase: true,
             iosq_phys: 0, iocq_phys: 0,
             iosq_tail: 0, iocq_head: 0, iocq_phase: true,
             io_sq_id: 1, io_cq_id: 1,
