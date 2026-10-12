@@ -233,7 +233,7 @@ pub const FONT: [[u8; 16]; 256] = {
     f
 };
 
-use super::{Renderer, RENDERER};
+use super::{with_renderer, Renderer};
 
 /// Blit one 8x16 glyph at `(x, y)`. The caller MUST already hold a `RENDERER`
 /// guard (or a `try_lock` guard). Split out of [`draw_char`] so the timer-IRQ
@@ -251,7 +251,9 @@ pub fn draw_char_on(r: &Renderer, c: u8, x: usize, y: usize, fg: u32, bg: u32) {
 }
 
 pub fn draw_char(c: u8, x: usize, y: usize, fg: u32, bg: u32) {
-    if let Some(ref r) = *RENDERER.lock() {
-        draw_char_on(r, c, x, y, fg, bg);
-    }
+    with_renderer(|r| {
+        if let Some(r) = r {
+            draw_char_on(r, c, x, y, fg, bg);
+        }
+    });
 }

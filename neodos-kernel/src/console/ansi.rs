@@ -1,7 +1,6 @@
 //! ANSI colour handling, parser state and CSI execution.
 
 use core::sync::atomic::{AtomicU8, AtomicU32, AtomicBool, Ordering};
-use crate::graphics::RENDERER;
 use crate::font;
 use crate::console::{ROW, COL, console_max_row, console_width};
 
@@ -242,9 +241,11 @@ fn execute_ansi_csi(cmd: u8) {
                     // Clear entire screen
                     ROW.store(0, Ordering::SeqCst);
                     COL.store(0, Ordering::SeqCst);
-                    if let Some(ref r) = *RENDERER.lock() {
-                        r.clear(current_bg_rgb());
-                    }
+                    crate::graphics::with_renderer(|r| {
+                        if let Some(r) = r {
+                            r.clear(current_bg_rgb());
+                        }
+                    });
                 }
                 // mode 0 and 1 are not implemented
             }

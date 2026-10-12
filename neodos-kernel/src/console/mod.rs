@@ -100,24 +100,35 @@ pub fn restore_state(state: &ConsoleState) {
 }
 
 pub fn redraw_from_shadow(shadow: &crate::input::vt::VtShadowBuffer) {
-    if let Some(ref r) = *RENDERER.lock() { r.clear(ANSI_COLORS[0]); }
-    for row in 0..console_max_row().min(crate::input::vt::VT_CONSOLE_ROWS) {
-        for col in 0..console_width().min(crate::input::vt::VT_CONSOLE_COLS) {
-            let ch = shadow.chars[row][col];
-            if ch != 0 {
-                font::draw_char(ch, col * font::FONT_WIDTH, row * font::FONT_HEIGHT, ANSI_COLORS[7], ANSI_COLORS[0]);
+    // Runs from the keyboard IRQ (Alt+F1..F8 VT switch). Hold the renderer once,
+    // IRQ-safe, and blit the held guard (INV-3, Rule 3.5.1).
+    crate::graphics::with_renderer(|r| {
+        let Some(r) = r else { return };
+        r.clear(ANSI_COLORS[0]);
+        let max_row = (r.fb.height / font::FONT_HEIGHT)
+            .clamp(1, VGA_HEIGHT)
+            .min(crate::input::vt::VT_CONSOLE_ROWS);
+        let max_col = (r.fb.width / font::FONT_WIDTH)
+            .clamp(1, VGA_WIDTH)
+            .min(crate::input::vt::VT_CONSOLE_COLS);
+        for row in 0..max_row {
+            for col in 0..max_col {
+                let ch = shadow.chars[row][col];
+                if ch != 0 {
+                    font::draw_char_on(
+                        r, ch, col * font::FONT_WIDTH, row * font::FONT_HEIGHT,
+                        ANSI_COLORS[7], ANSI_COLORS[0]);
+                }
             }
         }
-    }
+    });
 }
 
 fn console_max_row() -> usize {
-    if let Some(ref r) = *RENDERER.lock() {
-        let max_rows = r.fb.height / font::FONT_HEIGHT;
-        max_rows.clamp(1, VGA_HEIGHT)
-    } else {
-        VGA_HEIGHT
-    }
+    crate::graphics::with_renderer(|r| match r {
+        Some(r) => (r.fb.height / font::FONT_HEIGHT).clamp(1, VGA_HEIGHT),
+        None => VGA_HEIGHT,
+    })
 }
 
 
@@ -184,7 +195,8 @@ fn draw_char_at(c: u8, row: usize, col: usize) {
 }
 
 fn scroll() {
-    if let Some(ref r) = *RENDERER.lock() {
+    crate::graphics::with_renderer(|r| {
+        let Some(r) = r else { return };
         let fb = r.fb.base_address as *mut u32;
         let stride = r.fb.stride;
         let row_h = font::FONT_HEIGHT;
@@ -205,7 +217,7 @@ fn scroll() {
             // Fill new blank row with background color
             crate::hal::raw::raw_rep_stosd(last, row_h * stride, bg);
         }
-    }
+    });
 }
 
 pub fn print_str(s: &str) {
@@ -276,17 +288,18 @@ pub fn cursor_blink_enabled() -> bool {
 pub fn clear_screen() {
     ROW.store(0, Ordering::SeqCst);
     COL.store(0, Ordering::SeqCst);
-    if let Some(ref r) = *RENDERER.lock() {
-        r.clear(current_bg_rgb());
-    }
+    crate::graphics::with_renderer(|r| {
+        if let Some(r) = r {
+            r.clear(current_bg_rgb());
+        }
+    });
 }
 
 fn console_width() -> usize {
-    if let Some(ref r) = *RENDERER.lock() {
-        (r.fb.width / font::FONT_WIDTH).clamp(1, VGA_WIDTH)
-    } else {
-        VGA_WIDTH
-    }
+    crate::graphics::with_renderer(|r| match r {
+        Some(r) => (r.fb.width / font::FONT_WIDTH).clamp(1, VGA_WIDTH),
+        None => VGA_WIDTH,
+    })
 }
 
 #[macro_export]
