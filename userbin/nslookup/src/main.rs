@@ -51,22 +51,11 @@ fn write_err(s: &[u8]) {
     let _ = syscall::sys_write(2, s);
 }
 
+// Shared IPv4 formatting (#592); this is only the console shim.
 fn write_ip(ip: [u8; 4]) {
-    for (i, &o) in ip.iter().enumerate() {
-        if i > 0 { write_str(b"."); }
-        let mut buf = [0u8; 3];
-        let mut n = 0;
-        let mut v = o as u32;
-        loop {
-            buf[n] = b'0' + (v % 10) as u8;
-            n += 1;
-            v /= 10;
-            if v == 0 { break; }
-        }
-        for j in (0..n).rev() {
-            write_str(&buf[j..=j]);
-        }
-    }
+    let mut buf = [0u8; 16];
+    let n = libnet::config::format_ip(libnet::config::ip_from_octets(ip), &mut buf);
+    write_str(&buf[..n]);
 }
 
 /// Localized message for each distinct resolver failure.

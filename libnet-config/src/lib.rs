@@ -186,7 +186,20 @@ pub fn format_ip(ip: u32, buf: &mut [u8]) -> usize {
     pos
 }
 
-/// True when `ip` (big-endian u32) is in the APIPA range 169.254.0.0/16.
+/// Convert the canonical big-endian IPv4 `u32` to the four-octet wire form
+/// (`[u8; 4]`) used by `libdns`/`libnet` and the network services (#592).
+#[inline]
+pub fn ip_to_octets(ip: u32) -> [u8; 4] {
+    ip.to_be_bytes()
+}
+
+/// Convert four octets (wire form) to the canonical big-endian IPv4 `u32`
+/// (#592).
+#[inline]
+pub fn ip_from_octets(octets: [u8; 4]) -> u32 {
+    u32::from_be_bytes(octets)
+}
+
 /// Prefix length of a contiguous subnet mask (`None` if not contiguous).
 pub fn mask_to_prefix(mask: u32) -> Option<u8> {
     let prefix = mask.leading_ones();
@@ -279,6 +292,18 @@ mod tests {
         assert_eq!(&buf[..n], b"0.0.0.0");
         let n = format_ip(0xC0A8_0101, &mut buf);
         assert_eq!(&buf[..n], b"192.168.1.1");
+    }
+
+    #[test]
+    fn ip_octet_bridge_roundtrip() {
+        let ip = parse_ip("192.168.1.7").unwrap();
+        assert_eq!(ip_to_octets(ip), [192, 168, 1, 7]);
+        assert_eq!(ip_from_octets([192, 168, 1, 7]), ip);
+        assert_eq!(ip_from_octets([10, 0, 1, 1]), parse_ip("10.0.1.1").unwrap());
+        assert_eq!(ip_to_octets(ip_from_octets([1, 2, 3, 4])), [1, 2, 3, 4]);
+        // 0.0.0.0 / broadcast round-trip.
+        assert_eq!(ip_to_octets(0), [0, 0, 0, 0]);
+        assert_eq!(ip_to_octets(0xFFFF_FFFF), [255, 255, 255, 255]);
     }
 
     #[test]

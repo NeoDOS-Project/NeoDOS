@@ -198,23 +198,11 @@ fn write_dec_u32(mut v: u32) {
     write_str(&buf[i + 1..=9]);
 }
 
+// Shared IPv4 formatting (#592); only the console shim.
 fn write_ip(ip: u32) {
-    let octets = ip.to_be_bytes();
-    for (i, &o) in octets.iter().enumerate() {
-        if i > 0 { write_str(b"."); }
-        let mut buf = [0u8; 3];
-        let mut n = 0;
-        let mut v = o as u32;
-        loop {
-            buf[n] = b'0' + (v % 10) as u8;
-            n += 1;
-            v /= 10;
-            if v == 0 { break; }
-        }
-        for j in (0..n).rev() {
-            let _ = write_str(&buf[j..=j]);
-        }
-    }
+    let mut buf = [0u8; 16];
+    let n = libnet::config::format_ip(ip, &mut buf);
+    let _ = write_str(&buf[..n]);
 }
 
 fn yield_for(batches: u32) {

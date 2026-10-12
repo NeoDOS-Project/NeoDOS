@@ -112,13 +112,11 @@ fn write_i64(mut v: i64) {
     write_str(&buf[i + 1..=19]);
 }
 
+// Shared IPv4 formatting (#592); only the console shim.
 fn write_ip(ip: [u8; 4]) {
-    for (i, o) in ip.iter().enumerate() {
-        if i > 0 {
-            write_str(b".");
-        }
-        write_u32(*o as u32);
-    }
+    let mut buf = [0u8; 16];
+    let n = libnet::config::format_ip(libnet::config::ip_from_octets(ip), &mut buf);
+    write_str(&buf[..n]);
 }
 
 // ── Timing ──
