@@ -192,17 +192,16 @@ pub fn configure_msix_entry(
     let table_end = table_phys + table_size_bytes;
     let map_size = ((table_end + 0xFFF) & !0xFFF) - page_aligned;
 
-    unsafe {
-        if !map_msix_table_mmio(page_aligned, map_size) {
-            return Err("Failed to map MSI-X table MMIO");
+    // Map the table through a fixed low virtual window, so tables above 4 GiB
+    // (e.g. NVMe BAR0 at 0xC000000000) are usable without extending the
+    // identity map.
+    let virt_table = unsafe {
+        match map_msix_table_mmio(page_aligned, map_size) {
+            Some(base) => base + (table_phys - page_aligned),
+            None => return Err("Failed to map MSI-X table MMIO"),
         }
-    }
+    };
 
-    if table_phys >= 0x1_0000_0000 {
-        return Err("MSI-X table above 4 GiB not yet supported");
-    }
-
-    let virt_table = table_phys;
     let entry_addr = virt_table + (entry_index as u64) * 16;
     unsafe {
         // The MSI-X table lives in device MMIO (mapped UC-). Write each entry
@@ -229,27 +228,37 @@ pub fn configure_msix_entry(
     Ok(())
 }
 
-/// Map the MSI-X table MMIO region as UC- (uncacheable).
-unsafe fn map_msix_table_mmio(phys: u64, size: u64) -> bool {
+/// Fixed low virtual window used to map MSI-X tables. Tables can live above
+/// 4 GiB (NVMe BAR0 is at 0xC000000000), and `map_mmio_4k` needs existing page
+/// tables at the *virtual* address, so this 2 MiB window inside the low
+/// identity region is split to 4 KiB pages first. Only one table is mapped at a
+/// time (sufficient for the current single MSI-X consumer).
+const MSIX_TABLE_VIRT: u64 = 0xFFC0_0000;
+const MSIX_TABLE_MAP_MAX: u64 = 0x20_0000; // 2 MiB
+
+/// Map the MSI-X table MMIO region as UC- (uncacheable) at [`MSIX_TABLE_VIRT`].
+/// Returns the virtual base corresponding to `phys`, or `None` on failure.
+unsafe fn map_msix_table_mmio(phys: u64, size: u64) -> Option<u64> {
     use x86_64::structures::paging::PageTableFlags;
 
-    if phys + size > 0x1_0000_0000 {
-        return false;
+    if size == 0 || size > MSIX_TABLE_MAP_MAX {
+        return None;
     }
 
-    let start_aligned = phys & !0x1F_FFFF;
-    let end_aligned = ((phys + size + 0x1F_FFFF) & !0x1F_FFFF).min(0x1_0000_0000);
-
-    let mut addr = start_aligned;
-    while addr < end_aligned {
+    let mut addr = MSIX_TABLE_VIRT & !0x1F_FFFF;
+    let end = (MSIX_TABLE_VIRT + size + 0x1F_FFFF) & !0x1F_FFFF;
+    while addr < end {
         if crate::arch::x64::paging::split_2mb_page(addr).is_err() {
-            return false;
+            return None;
         }
         addr += 0x200_000;
     }
 
     let flags = PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::NO_CACHE;
-    crate::arch::x64::paging::map_mmio_4k(phys, phys, size, flags)
+    if !crate::arch::x64::paging::map_mmio_4k(MSIX_TABLE_VIRT, phys, size, flags) {
+        return None;
+    }
+    Some(MSIX_TABLE_VIRT)
 }
 
 /// Configure a range of MSI-X entries for a device.
@@ -303,6 +312,53 @@ pub fn init() {
         on_msi_configured,
         "msi_configured_ack",
     );
+}
+
+/// Bounded boot self-check of the whole MSI delivery path: allocate a scratch
+/// vector, register a probe handler, send a self-IPI to it and confirm the
+/// handler ran through the shared IDT stub (`msi_generic_handler` → LAPIC ISR →
+/// `msi_dispatch`). Requires interrupts enabled; the scratch vector is freed
+/// afterwards.
+pub fn run_delivery_self_check() {
+    use core::sync::atomic::{AtomicBool, Ordering};
+    static HIT: AtomicBool = AtomicBool::new(false);
+    fn probe(_v: u8) {
+        HIT.store(true, Ordering::SeqCst);
+    }
+
+    let eoi = crate::hal::lapic_eoi_addr();
+    if eoi == 0 {
+        kinfo!(LogSubsys::Msi, "delivery self-check: skipped (no LAPIC)");
+        return;
+    }
+    let Some(v) = msi_alloc_vector() else {
+        kerror!(LogSubsys::Msi, "delivery self-check: no free vector");
+        return;
+    };
+    HIT.store(false, Ordering::SeqCst);
+    crate::arch::x64::idt::msi_register_handler(v, probe);
+
+    // Self-IPI: delivery mode=fixed, destination shorthand=self, vector=v.
+    let base = eoi & !0xFFF;
+    unsafe {
+        crate::hal::mmio::write32((base + 0x300) as usize, (v as u32) | (1 << 18));
+    }
+    let mut ok = false;
+    for _ in 0..5_000_000 {
+        if HIT.load(Ordering::SeqCst) {
+            ok = true;
+            break;
+        }
+        core::hint::spin_loop();
+    }
+
+    crate::arch::x64::idt::msi_unregister_handler(v);
+    msi_free_vector(v);
+    if ok {
+        kinfo!(LogSubsys::Msi, "delivery self-check: PASS (vector {})", v);
+    } else {
+        kerror!(LogSubsys::Msi, "delivery self-check: FAIL (vector {})", v);
+    }
 }
 
 // ─── High-level facade ────────────────────────────────────────────────────────

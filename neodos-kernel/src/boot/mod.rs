@@ -248,6 +248,8 @@ pub unsafe fn init(boot_info: &BootInfo) -> ! {
     crate::serial_println!("[INT] about to STI, CR3=0x{:x} GS=0x{:x}", crate::hal::read_cr3(), crate::hal::safe::GsBase::read());
     hal::enable_interrupts();
     crate::serial_println!("[INT] STI done");
+    // MSI/MSI-X delivery path self-check (needs interrupts enabled), #676.
+    crate::interrupts::msi::run_delivery_self_check();
 
     // ============================================
     // PHASE 6 / PHASE 3: Custom Page Tables & User Memory
