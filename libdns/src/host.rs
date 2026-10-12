@@ -34,7 +34,12 @@ pub fn validate_hostname(name: &str) -> Result<(), DnsError> {
     Ok(())
 }
 
-/// Parse a dotted-decimal IPv4 address.
+/// Parse a dotted-decimal IPv4 address into the four-octet wire form.
+///
+/// `libdns` is deliberately dependency-free, so this is the `[u8; 4]`
+/// counterpart of the canonical `libnet_config::parse_ip` (`u32`, big-endian)
+/// used by `libnet::config` and the network tools; the two representations are
+/// bridged by `libnet_config::ip_to_octets` / `ip_from_octets` (#592).
 pub fn parse_dotted_ip(s: &str) -> Option<[u8; 4]> {
     let mut octets = [0u8; 4];
     let mut count = 0usize;

@@ -70,35 +70,12 @@ fn write_dec_u64(mut v: u64) {
     write_str(&buf[i + 1..=19]);
 }
 
+// IPv4 formatting/parsing is shared: `libnet::config` re-exports the canonical
+// `libnet-config` helpers (#592). This is only the console shim.
 fn write_ip(ip: u32) {
-    let octets = ip.to_be_bytes();
-    for (i, &o) in octets.iter().enumerate() {
-        if i > 0 { write_str(b"."); }
-        let mut buf = [0u8; 3];
-        let mut n = 0;
-        let mut v = o as u32;
-        loop {
-            buf[n] = b'0' + (v % 10) as u8;
-            n += 1;
-            v /= 10;
-            if v == 0 { break; }
-        }
-        for j in (0..n).rev() {
-            write_str(&buf[j..=j]);
-        }
-    }
-}
-
-fn parse_ip_address(s: &str) -> Option<u32> {
-    let parts: Vec<&str> = s.split('.').collect();
-    if parts.len() != 4 { return None; }
-    let mut ip: u32 = 0;
-    for part in &parts {
-        let octet: u32 = part.parse().ok()?;
-        if octet > 255 { return None; }
-        ip = (ip << 8) | octet;
-    }
-    Some(ip)
+    let mut buf = [0u8; 16];
+    let n = libnet::config::format_ip(ip, &mut buf);
+    write_str(&buf[..n]);
 }
 
 /// Heuristic: a token made only of digits and dots is a (possibly invalid)
@@ -185,7 +162,7 @@ pub extern "C" fn _start() -> ! {
         syscall::sys_exit(1);
     }
 
-    let dest_ip = match parse_ip_address(host) {
+    let dest_ip = match libnet::config::parse_ip(host) {
         Some(ip) => ip,
         None => {
             // Not a numeric IPv4 address. Reject malformed numeric input, then
