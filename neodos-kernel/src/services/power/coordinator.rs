@@ -30,3 +30,12 @@ pub fn reboot() -> ! {
     crate::eventbus::EVENT_BUS.dispatch_pending();
     crate::hal::reboot();
 }
+
+/// Emergency reset used from IRQ/terminal context (watchdog expiry). Skips the
+/// registry and page-cache flush, which take blocking locks that the interrupted
+/// CPU may hold (INV-3, Rule 3.5.1) — the machine is already declared hung, so
+/// resetting without flushing is preferable to deadlocking the timer IRQ.
+pub fn emergency_reboot() -> ! {
+    kerror!(LogSubsys::Power, "Emergency reboot (no registry/cache flush)");
+    crate::hal::reboot();
+}
