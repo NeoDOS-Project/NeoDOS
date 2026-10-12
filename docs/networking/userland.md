@@ -401,7 +401,12 @@ El hostname del sistema vive en `CurrentControlSet\Control\ComputerName` y se
 lee/escribe con `sys_get_hostname` / `sys_set_hostname` (`SetHostname`, admin).
 Arranca con el placeholder `NeoDOS-PC` (`libnet::DEFAULT_HOSTNAME`).
 
-`dhcpd` lo descubre al obtener concesión, en este orden:
+- **Manual**: `hostname` muestra el nombre; `hostname <nombre>` lo fija
+  (`sys_set_hostname`, persistido en el Registry). El kernel valida/normaliza
+  (RFC 952/1035: `[A-Za-z0-9._-]`, sin `-` al inicio/final, ≤63) y devuelve
+  error legible para nombres inválidos.
+
+`dhcpd` lo descubre automáticamente al obtener concesión, en este orden:
 
 1. **DHCP opción 12 (Host Name)** — se solicita en la *parameter request list*
    y, si el servidor la devuelve, se sanea (solo `[A-Za-z0-9._-]`, sin

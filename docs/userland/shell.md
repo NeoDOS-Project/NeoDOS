@@ -139,6 +139,7 @@ All 43 user-mode binaries, each a standalone `.NXE` ELF file in `userbin/<name>/
 | dhcp | network | DHCP client |
 | cpuinfo | system | CPU information display |
 | datetime | system | Date/time display and set |
+| hostname | system | Display or set the system hostname (Registry `ComputerName`, admin) |
 | ver | system | Version information |
 | echo | utility | Print text |
 | cls | utility | Clear screen |

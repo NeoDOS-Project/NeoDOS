@@ -5,7 +5,21 @@ language = "es-ES"
 [ids]
 IDS_USAGE = 1001
 IDS_ERR_READ = 1002
+IDS_USAGE_LINE2 = 1003
+IDS_USAGE_LINE3 = 1004
+IDS_USAGE_LINE4 = 1005
+IDS_SET_OK = 1006
+IDS_ERR_SET = 1007
+IDS_ERR_INVALID = 1008
+IDS_ERR_PERM = 1009
 
 [strings]
-IDS_USAGE = "Muestra o establece el nombre del equipo."
+IDS_USAGE = "HOSTNAME [nombre]"
 IDS_ERR_READ = "hostname: no se pudo leer el nombre del equipo del sistema."
+IDS_USAGE_LINE2 = "  Muestra o establece el nombre del equipo."
+IDS_USAGE_LINE3 = "  HOSTNAME            muestra el nombre actual"
+IDS_USAGE_LINE4 = "  HOSTNAME mi-equipo  establece el nombre a mi-equipo"
+IDS_SET_OK = "Nombre de equipo establecido: "
+IDS_ERR_SET = "hostname: no se pudo establecer el nombre del equipo."
+IDS_ERR_INVALID = "hostname: nombre no válido (letras, dígitos, '.', '-', '_'; máx. 63)."
+IDS_ERR_PERM = "hostname: permiso denegado (se requiere administrador)."
