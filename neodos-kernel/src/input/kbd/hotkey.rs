@@ -1,27 +1,15 @@
 use crate::kbd::{KBD_SHIFT, KBD_CTRL, KBD_ALT};
 use crate::log::LogSubsys;
 
-/// Deferred Ctrl+Alt+Del shutdown.
-///
-/// `power_shutdown()` flushes the registry hives, the page cache and the VFS —
-/// with blocking `spin::Mutex` acquisitions. Running it in the keyboard IRQ
-/// (IF=0) could spin forever on a lock an interrupted thread holds with IF=1
-/// (INV-3, Rule 3.5.1). It is therefore queued and executed from a safe context
-/// by the work queue (the same pattern as Ctrl+C / `interrupt_foreground_work`).
-fn deferred_power_shutdown(_: *mut u8) {
-    crate::object::power::power_shutdown(); // -> ! (powers off the machine)
-}
-
 pub fn dispatch_hotkey(code: u8, modifiers: u8) -> bool {
     let ctrl = (modifiers & KBD_CTRL) != 0;
     let alt = (modifiers & KBD_ALT) != 0;
     let shift = (modifiers & KBD_SHIFT) != 0;
 
-    // Ctrl+Alt+Del → request shutdown (deferred out of IRQ context)
+    // Ctrl+Alt+Del → request shutdown (deferred out of IRQ context by `input`)
     if ctrl && alt && code == 0x53 {
         kinfo!(LogSubsys::Kbd, "Ctrl+Alt+Del — requesting shutdown (deferred)");
-        let _ = crate::work_queue::WORK_QUEUE
-            .push_high(deferred_power_shutdown, core::ptr::null_mut());
+        crate::input::request_shutdown();
         return true;
     }
 
