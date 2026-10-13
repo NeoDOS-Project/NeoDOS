@@ -455,7 +455,7 @@ pub fn register_tests() {
         test_eq!(layout::lookup_codepoint(&es, 0x2b, 0), Some('ç' as u16));
         test_eq!(layout::lookup_codepoint(&es, 0x33, KBD_SHIFT), Some(';' as u16));
 
-        // Dead keys: ` (grave), ´ (acute) and ~ (AltGr+4).
+        // Dead keys: ` (grave), ´ (acute) and ~ (AltGr+4, `es(deadtilde)`).
         test_true!(layout::is_dead_key(&es, 0x1a, 0));
         test_true!(layout::is_dead_key(&es, 0x28, 0));
         test_true!(layout::is_dead_key(&es, 0x05, KBD_ALTGR));

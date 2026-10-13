@@ -902,21 +902,17 @@ object::namespace::ob_insert_object("\\Device\\Keyboard", kbd_id);
 
 ## Appendix A: Archivos .kbd soportados inicialmente
 
-Los layouts se generan desde los mismos archivos `.klc` existentes, pero convertidos a formato `.kbd` con una herramienta (`tools/kbdcompile/`):
+Los layouts se generan con `tools/xkbcompile` desde los XKB del sistema
+(`/usr/share/X11/xkb/symbols/*`), sin ficheros `.klc` intermedios:
 
-| Archivo | Layout | LangTag | Scancodes | Compose |
-| --- | --- | --- | --- | --- |
-| `US.kbd` | US | en-US | 256 | 0 |
-| `Spanish.kbd` | Spanish | es-ES | 256 | 54 |
+| Archivo | Layout XKB | Nombre | LangTag | Teclas | Compose |
+| --- | --- | --- | --- | --- | --- |
+| `en-US.kbd` | `us(basic)` | en-US | en-US | 47 | 0 |
+| `es-ES.kbd` | `es(deadtilde)` | es-ES | es-ES | 46 | 634 |
 
-La herramienta `kbdcompile` toma un `.klc` y produce un `.kbd` binario.
-
-Alternativa abierta y offline: `tools/xkbcompile` convierte un layout XKB
-(`/usr/share/X11/xkb/symbols/*`) a `.kbd` directamente, sin pasar por `.klc`:
-
-```text
-xkbcompile es basic --name es-ES --lang es-ES --out data/keyboard/es-ES.kbd
-```
+`scripts/gen-keyboard-layouts.sh` los regenera y
+`scripts/check-keyboard-layouts.sh` verifica en CI que no estén vacíos ni
+desincronizados.
 
 XKB cubre muchos idiomas con licencia abierta; sus límites (un solo grupo,
 niveles 1-3, keysyms exóticos) están en `tools/xkbcompile/README.md`.

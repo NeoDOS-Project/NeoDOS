@@ -73,17 +73,21 @@ impl KbdLayout {
 const KBD_MAGIC: [u8; 4] = [b'K', b'B', b'D', 0];
 
 pub fn load_kbd(path: &str) -> Result<KbdLayout, ()> {
-    let mut buf = [0u8; 8192];
-    let size = crate::globals::with_vfs(|vfs| -> Result<usize, ()> {
+    let data: Vec<u8> = crate::globals::with_vfs(|vfs| -> Result<Vec<u8>, ()> {
         let (drive_idx, node) = vfs.resolve_path(path).map_err(|_| ())?;
         if node.mode & crate::fs::vfs::MODE_FILE == 0 {
             return Err(());
         }
-        let mut tmp = [0u8; 8192];
-        let n = vfs.read(drive_idx, node.inode, 0, &mut tmp).map_err(|_| ())?;
-        buf[..n].copy_from_slice(&tmp[..n]);
-        Ok(n)
+        // Size the buffer from the inode: layout files grow with their compose
+        // table, so a fixed cap would silently truncate them.
+        let mut buf = Vec::new();
+        buf.resize((node.size as usize).max(4096), 0u8);
+        let n = vfs.read(drive_idx, node.inode, 0, &mut buf).map_err(|_| ())?;
+        buf.truncate(n);
+        Ok(buf)
     }).map_err(|_| ())?;
+    let buf: &[u8] = &data;
+    let size = data.len();
 
     if size < 16 {
         return Err(());
@@ -171,8 +175,13 @@ pub fn load_layouts() -> usize {
     layouts.push(fallback);
 
     // Disk layouts (locale-tagged) override the built-in fallback when present.
-    for path in ["C:\\System\\Keyboard\\en-US.kbd", "C:\\System\\Keyboard\\es-ES.kbd"] {
-        if let Ok(layout) = load_kbd(path) {
+    // Generate/verify all locales with scripts/gen-keyboard-layouts.sh; only
+    // these are enabled because loading many layouts at boot stresses the page
+    // cache and triggers #709, so more are enabled once that is fixed.
+    const LAYOUT_TAGS: &[&str] = &["en-US", "es-ES"];
+    for tag in LAYOUT_TAGS {
+        let path = alloc::format!("C:\\System\\Keyboard\\{tag}.kbd");
+        if let Ok(layout) = load_kbd(&path) {
             match layouts.iter().position(|l| l.name_str() == layout.name_str()) {
                 Some(i) => layouts[i] = layout,
                 None => layouts.push(layout),

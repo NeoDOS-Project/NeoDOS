@@ -196,6 +196,7 @@ fn resolve(
     let body = find_section(&text, section).ok_or_else(|| {
         format!("{}: section '{}' not found", path.display(), section.unwrap_or("<default>"))
     })?;
+    let body = strip_comments(&body);
 
     for stmt in split_statements(&body) {
         let s = stmt.trim();
@@ -261,6 +262,17 @@ fn find_section(text: &str, name: Option<&str>) -> Option<String> {
     } else {
         None
     }
+}
+
+/// Drop `//` line comments (XKB names never contain `//`).
+fn strip_comments(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for line in text.lines() {
+        let cut = line.find("//").unwrap_or(line.len());
+        out.push_str(&line[..cut]);
+        out.push('\n');
+    }
+    out
 }
 
 /// Split a section body into `;`-terminated statements (respecting quotes and
@@ -598,6 +610,50 @@ fn named_keysym(name: &str) -> Option<u16> {
         "ellipsis" => 0x2026,
         "trademark" => 0x2122,
         "bullet" => 0x2022,
+        // Latin Extended-A (Polish, Czech, ...)
+        "aogonek" => 0x0105,
+        "Aogonek" => 0x0104,
+        "cacute" => 0x0107,
+        "Cacute" => 0x0106,
+        "eogonek" => 0x0119,
+        "Eogonek" => 0x0118,
+        "lstroke" => 0x0142,
+        "Lstroke" => 0x0141,
+        "nacute" => 0x0144,
+        "Nacute" => 0x0143,
+        "sacute" => 0x015B,
+        "Sacute" => 0x015A,
+        "zacute" => 0x017A,
+        "Zacute" => 0x0179,
+        "zdot" | "zabovedot" => 0x017C,
+        "Zdot" | "Zabovedot" => 0x017B,
+        "ccaron" => 0x010D,
+        "Ccaron" => 0x010C,
+        "dcaron" => 0x010F,
+        "Dcaron" => 0x010E,
+        "ecaron" => 0x011B,
+        "Ecaron" => 0x011A,
+        "ncaron" => 0x0148,
+        "Ncaron" => 0x0147,
+        "rcaron" => 0x0159,
+        "Rcaron" => 0x0158,
+        "scaron" => 0x0161,
+        "Scaron" => 0x0160,
+        "tcaron" => 0x0165,
+        "Tcaron" => 0x0164,
+        "uring" => 0x016F,
+        "Uring" => 0x016E,
+        "zcaron" => 0x017E,
+        "Zcaron" => 0x017D,
+        "abreve" => 0x0103,
+        "Abreve" => 0x0102,
+        "dstroke" => 0x0111,
+        "Dstroke" => 0x0110,
+        "scedilla" => 0x015F,
+        "Scedilla" => 0x015E,
+        "gbreve" => 0x011F,
+        "Gbreve" => 0x011E,
+        "idotless" => 0x0131,
         _ => return None,
     })
 }
