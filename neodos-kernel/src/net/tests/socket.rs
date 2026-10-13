@@ -61,4 +61,23 @@ pub fn register() {
         SOCKET_MANAGER.lock().free_socket(id);
         SOCKET_MANAGER.lock().free_socket(id2);
     });
+
+    test_case!("net_socket_poll_readiness", {
+        // sys_poll readiness helpers (#307).
+        let sock = SOCKET_MANAGER.lock().alloc_socket(SocketType::Udp).unwrap();
+        test_true!(!super::super::socket::socket_poll_readable(sock));
+        test_true!(!super::super::socket::socket_poll_writable(sock));
+        {
+            let mut mgr = SOCKET_MANAGER.lock();
+            let s = mgr.get_socket_mut(sock).unwrap();
+            s.recv_buf.extend_from_slice(b"x");
+            s.direction = SocketDirection::Connected;
+        }
+        test_true!(super::super::socket::socket_poll_readable(sock));
+        test_true!(super::super::socket::socket_poll_writable(sock));
+        test_true!(!super::super::socket::socket_poll_hup(sock));
+        SOCKET_MANAGER.lock().get_socket_mut(sock).unwrap().direction = SocketDirection::Closed;
+        test_true!(super::super::socket::socket_poll_hup(sock));
+        SOCKET_MANAGER.lock().free_socket(sock);
+    });
 }

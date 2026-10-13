@@ -693,6 +693,22 @@ pub(super) fn handler_poll(regs: super::Registers) -> u64 {
             || entry.obj_type() == Some(crate::object::ObType::Directory) {
             if fd_entry.events & POLLIN != 0 { rev |= POLLIN; }
             if fd_entry.events & POLLOUT != 0 { rev |= POLLOUT; }
+        } else if entry.obj_type() == Some(crate::object::ObType::Socket) {
+            // Sockets report real readiness instead of POLLERR (#307).
+            if let Some(obj) = crate::object::ob_lookup(entry.object_id) {
+                let sid = obj.native_id as u32;
+                if crate::net::socket::socket_poll_readable(sid) && fd_entry.events & POLLIN != 0 {
+                    rev |= POLLIN;
+                }
+                if crate::net::socket::socket_poll_writable(sid) && fd_entry.events & POLLOUT != 0 {
+                    rev |= POLLOUT;
+                }
+                if crate::net::socket::socket_poll_hup(sid) {
+                    rev |= POLLHUP;
+                }
+            } else {
+                rev |= POLLERR;
+            }
         } else {
             rev |= POLLERR;
         }
