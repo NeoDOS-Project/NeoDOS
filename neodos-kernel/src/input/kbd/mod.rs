@@ -118,6 +118,23 @@ impl NeoKbd {
         }).map(|i| i as u32)
     }
 
+    /// Resolve a configured layout name against the loaded layouts: by name,
+    /// then by language tag, then mapping pre-locale-tag names (`US`,
+    /// `Spanish`). Kept dynamic so it tracks whatever is actually loaded.
+    pub fn resolve_layout_index(&self, name: &str) -> Option<u32> {
+        if let Some(i) = self.find_layout_index(name) {
+            return Some(i);
+        }
+        if let Some(i) = self
+            .layouts
+            .iter()
+            .position(|l| l.lang_tag_str().eq_ignore_ascii_case(name))
+        {
+            return Some(i as u32);
+        }
+        legacy_layout_alias(name).and_then(|alias| self.find_layout_index(alias))
+    }
+
     pub fn set_layout_by_name(&mut self, name: &str) -> Result<(), ()> {
         let idx = self.find_layout_index(name).ok_or(())?;
         self.state.active_layout_index = idx;
@@ -319,6 +336,17 @@ lazy_static! {
     pub static ref KBD: Mutex<NeoKbd> = Mutex::new(NeoKbd::new());
 }
 
+/// Map a pre-locale-tag layout name to its current tag (legacy Registry values).
+fn legacy_layout_alias(name: &str) -> Option<&'static str> {
+    if name.eq_ignore_ascii_case("us") {
+        Some("en-US")
+    } else if name.eq_ignore_ascii_case("spanish") || name.eq_ignore_ascii_case("sp") {
+        Some("es-ES")
+    } else {
+        None
+    }
+}
+
 pub fn kbd_init() {
     kinfo!(LogSubsys::Kbd, "Initializing Keyboard Manager (NeoKBD)...");
 
@@ -335,11 +363,21 @@ pub fn kbd_init() {
     let config = config::kbd_load_config();
     let mut kbd = KBD.lock();
     kbd.config = config;
-    if let Some(idx) = kbd.find_layout_index(&kbd.config.layout_name) {
+
+    // Resolve the persisted layout against the layouts actually loaded, then
+    // persist the canonical name when it changed. This migrates legacy values
+    // (`US`/`Spanish`) to `en-US`/`es-ES` and normalises unknown values to the
+    // default, so the Registry converges instead of keeping a stale name.
+    if !kbd.layouts.is_empty() {
+        let requested = kbd.config.layout_name.clone();
+        let idx = kbd.resolve_layout_index(&requested).unwrap_or(0);
         kbd.state.active_layout_index = idx;
-    } else if !kbd.layouts.is_empty() {
-        kbd.state.active_layout_index = 0;
-        kbd.config.layout_name = kbd.layouts[0].name_str().to_string();
+        let canonical = kbd.layouts[idx as usize].name_str().to_string();
+        let changed = canonical != requested;
+        kbd.config.layout_name = canonical;
+        if changed {
+            let _ = config::kbd_save_config(&kbd.config);
+        }
     }
     if kbd.config.numlock_on_boot {
         kbd.state.modifiers |= KBD_NUMLOCK;
@@ -385,6 +423,11 @@ pub fn register_tests() {
         test_eq!(kbd.find_layout_index("EN-us"), Some(0));
         test_eq!(kbd.find_layout_index("es-ES"), Some(1));
         test_eq!(kbd.find_layout_index("de-DE"), None);
+        // Dynamic resolution: legacy aliases map onto the loaded layouts.
+        test_eq!(kbd.resolve_layout_index("Spanish"), Some(1));
+        test_eq!(kbd.resolve_layout_index("SP"), Some(1));
+        test_eq!(kbd.resolve_layout_index("US"), Some(0));
+        test_eq!(kbd.resolve_layout_index("de-DE"), None);
         test_eq!(kbd.active_layout().map(|l| l.name_str()), Some("en-US"));
 
         test_true!(kbd.set_layout_by_name("es-ES").is_ok());

@@ -3,21 +3,6 @@ use crate::kbd::KbdConfig;
 
 const REG_PATH: &str = "\\Registry\\Machine\\System\\Keyboard";
 
-/// Map legacy layout names (`US`, `Spanish`, `SP`) to their locale-tag form.
-fn normalize_layout_name(name: &str) -> &str {
-    if name.eq_ignore_ascii_case("us") || name.eq_ignore_ascii_case("en-us") {
-        "en-US"
-    } else if name.eq_ignore_ascii_case("spanish")
-        || name.eq_ignore_ascii_case("sp")
-        || name.eq_ignore_ascii_case("es")
-        || name.eq_ignore_ascii_case("es-es")
-    {
-        "es-ES"
-    } else {
-        name
-    }
-}
-
 pub fn kbd_load_config() -> KbdConfig {
     let mut config = KbdConfig::default();
 
@@ -28,7 +13,7 @@ pub fn kbd_load_config() -> KbdConfig {
             if let Some(vc) = crate::cm::cm_query_value(native_id, "Layout").ok() {
                 if let Some(s) = vc.as_str() {
                     if !s.is_empty() {
-                        config.layout_name = normalize_layout_name(s).to_string();
+                        config.layout_name = s.to_string();
                     }
                 }
             }
