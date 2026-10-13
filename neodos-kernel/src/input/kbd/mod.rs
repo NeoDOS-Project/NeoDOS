@@ -10,6 +10,7 @@ mod unicode;
 pub(crate) mod config;
 pub(crate) mod event;
 mod hotkey;
+pub mod ring;
 
 pub use layout::KbdLayout;
 
@@ -229,6 +230,20 @@ impl NeoKbd {
             3, scancode as u64, self.state.modifiers as u64, 0,
         );
 
+        // Raw event for Ring 3 (#466): every make/break, with vk + modifiers.
+        {
+            let ev = ring::KeyEvent {
+                scancode: code as u16,
+                vk: ring::vk_from_scancode(code, is_extended),
+                codepoint: 0,
+                modifiers: self.state.modifiers,
+                pressed: is_make as u8,
+                flags: if is_extended { ring::KBD_EV_EXTENDED } else { 0 },
+                _pad: 0,
+            };
+            crate::input::manager::push_key_event(ev);
+        }
+
         if !is_make {
             return;
         }
@@ -239,6 +254,11 @@ impl NeoKbd {
 
         // Extended keys (arrows, etc.) should not generate printable chars via normal table
         if is_extended {
+            return;
+        }
+
+        // Raw mode (#466): suppress cooked byte delivery for this VT.
+        if crate::input::manager::raw_mode(crate::input::manager::active_vt()) {
             return;
         }
 

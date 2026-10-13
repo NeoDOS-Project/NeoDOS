@@ -23,6 +23,7 @@ const TAG_SEMAPHORE: u32 = 0x0008;
 const TAG_SOCKET_READ: u32    = 0x0009;
 const TAG_SOCKET_CONNECT: u32 = 0x000A;
 const TAG_SOCKET_ACCEPT: u32  = 0x000B;
+const TAG_KEYBOARD: u32       = 0x000C;
 
 #[inline(always)]
 fn make_magic(tag: u32, id: u32) -> u64 {
@@ -60,6 +61,8 @@ pub enum WaitReason {
     SocketConnect { socket_id: u32 },
     /// Waiting to accept a new connection (socket_id)
     SocketAccept { socket_id: u32 },
+    /// Waiting for a raw keyboard event on VT `vt` (#466).
+    Keyboard { vt: u32 },
 }
 
 impl WaitReason {
@@ -78,6 +81,7 @@ impl WaitReason {
             WaitReason::SocketRead { socket_id }   => make_magic(TAG_SOCKET_READ, socket_id),
             WaitReason::SocketConnect { socket_id } => make_magic(TAG_SOCKET_CONNECT, socket_id),
             WaitReason::SocketAccept { socket_id }  => make_magic(TAG_SOCKET_ACCEPT, socket_id),
+            WaitReason::Keyboard { vt }             => make_magic(TAG_KEYBOARD, vt),
         }
     }
 
@@ -96,6 +100,7 @@ impl WaitReason {
             TAG_SOCKET_READ    => WaitReason::SocketRead { socket_id: id },
             TAG_SOCKET_CONNECT => WaitReason::SocketConnect { socket_id: id },
             TAG_SOCKET_ACCEPT  => WaitReason::SocketAccept { socket_id: id },
+            TAG_KEYBOARD       => WaitReason::Keyboard { vt: id },
             _ => return None,
         })
     }

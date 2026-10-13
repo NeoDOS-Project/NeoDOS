@@ -13,6 +13,9 @@ pub fn register_tests() {
     use crate::test_eq;
     use crate::test_ne;
 
+    // Raw keyboard event ring + VK mapping (#466).
+    crate::input::kbd::ring::register_tests();
+
     test_case!("input_empty_pop", {
         let buf = InputBuffer::new();
         test_eq!(buf.pop(), None);
