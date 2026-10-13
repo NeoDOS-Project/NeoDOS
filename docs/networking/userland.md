@@ -770,6 +770,16 @@ daemon solo aporta transporte, configuración y estado. La documentación
 completa (configuración, ciclo de vida, estado y limitaciones) está en
 [`docs/services/ntpd.md`](../services/ntpd.md).
 
+**Modo one-shot (`ntpdate`).** Invocado como `ntpd once` (o `-q`/`--once`),
+`ntpd` realiza una única sincronización y sale (0 si sincronizó, 1 si no). Es el
+papel de `ntpdate`: no hay un binario aparte, se reutiliza el mismo daemon.
+
+**Servidores.** La lista se configura por Registry en
+`Ntpd\Parameters\Servers` (separados por `;`). El hive por defecto trae
+`pool.ntp.org;time.cloudflare.com;time.google.com` — los fallbacks van en la
+configuración, no en el código, para que el primer sync sea fiable detrás de
+NAT. `Interval` (segundos) y `Timeout` (ms) también son valores del Registry.
+
 ---
 
 ## 4. NeoInit System Configuration
