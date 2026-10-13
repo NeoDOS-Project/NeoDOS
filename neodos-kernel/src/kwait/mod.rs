@@ -138,6 +138,68 @@ pub fn kwait_wake(reason: &WaitReason) {
     unsafe { irql::lower_irql(old_irql) };
 }
 
+/// Finite-timeout waiters: `(magic, deadline_tsc)`.
+///
+/// Serviced by the network pump (which runs continuously), not by the
+/// scheduler timer, so a timed socket wait is woken without changing core
+/// scheduler behaviour. The wake is a normal `kwait_wake`; the caller
+/// re-checks readiness afterwards (the timeout does not carry a distinct
+/// return code — see `docs/networking/stack.md`).
+static WAIT_DEADLINES: spin::Mutex<alloc::vec::Vec<(u64, u64)>> =
+    spin::Mutex::new(alloc::vec::Vec::new());
+
+/// Register a finite deadline for a wait magic. `deadline_tsc` is an absolute
+/// TSC value (0 = never). Idempotent per magic: a re-registered wait replaces
+/// the previous deadline, so a stale timeout can never fire a later wait that
+/// reuses the same wait reason.
+pub fn register_deadline(magic: u64, deadline_tsc: u64) {
+    if deadline_tsc == 0 {
+        return;
+    }
+    let mut d = WAIT_DEADLINES.lock();
+    for e in d.iter_mut() {
+        if e.0 == magic {
+            e.1 = deadline_tsc;
+            return;
+        }
+    }
+    d.push((magic, deadline_tsc));
+}
+
+/// Drop any finite deadline associated with `magic`. Called on normal readiness
+/// so an already-satisfied wait does not fire a timeout later.
+pub fn cancel_deadline(magic: u64) {
+    WAIT_DEADLINES.lock().retain(|(m, _)| *m != magic);
+}
+
+/// Wake any waiters whose deadline has passed. Called from `net_tick` with the
+/// current TSC. Returns the number of deadlines expired.
+pub fn deadline_tick(now: u64) -> usize {
+    let mut expired: alloc::vec::Vec<u64> = alloc::vec::Vec::new();
+    {
+        let mut d = WAIT_DEADLINES.lock();
+        d.retain(|(m, dl)| {
+            if now.wrapping_sub(*dl) < (1u64 << 63) {
+                expired.push(*m);
+                false
+            } else {
+                true
+            }
+        });
+    }
+    for m in &expired {
+        if let Some(reason) = WaitReason::decode_magic(*m) {
+            kwait_wake(&reason);
+        }
+    }
+    expired.len()
+}
+
+/// Number of registered finite deadlines (diagnostics/tests).
+pub fn pending_deadlines() -> usize {
+    WAIT_DEADLINES.lock().len()
+}
+
 // ── Tests ──
 
 pub fn register_kwait_tests() {
@@ -376,5 +438,47 @@ pub fn register_kwait_tests() {
             s.current_tid = orig.2;
         });
         let _ = magic;
+    });
+
+    test_case!("kwait_deadline_expires", {
+        let reason = WaitReason::SocketRead { socket_id: 4242 };
+        let magic = reason.encode_magic();
+        let before = pending_deadlines();
+        register_deadline(magic, 1000);
+        test_eq!(pending_deadlines(), before + 1);
+        // Not yet expired.
+        test_eq!(deadline_tick(999), 0);
+        test_eq!(pending_deadlines(), before + 1);
+        // Expired: the entry is consumed exactly once.
+        test_eq!(deadline_tick(1000), 1);
+        test_eq!(pending_deadlines(), before);
+        // A zero deadline is ignored (indefinite wait).
+        register_deadline(WaitReason::SocketAccept { socket_id: 1 }.encode_magic(), 0);
+        test_eq!(pending_deadlines(), before);
+    });
+
+    test_case!("kwait_deadline_idempotent_and_cancel", {
+        let magic = WaitReason::SocketRead { socket_id: 7777 }.encode_magic();
+        let before = pending_deadlines();
+        // Re-registering the same magic replaces the deadline (no duplicate).
+        register_deadline(magic, 1000);
+        register_deadline(magic, 5000);
+        test_eq!(pending_deadlines(), before + 1);
+        // Cancellation on normal readiness drops it.
+        cancel_deadline(magic);
+        test_eq!(pending_deadlines(), before);
+    });
+
+    test_case!("kwait_deadline_does_not_wake_reused_magic_early", {
+        let magic = WaitReason::SocketRead { socket_id: 8888 }.encode_magic();
+        let before = pending_deadlines();
+        register_deadline(magic, 10_000);
+        // A later wait on the same socket supersedes the old deadline.
+        register_deadline(magic, 1_000_000);
+        // A tick past the OLD deadline must not consume the new one.
+        test_eq!(deadline_tick(10_001), 0);
+        test_eq!(pending_deadlines(), before + 1);
+        test_eq!(deadline_tick(1_000_000), 1);
+        test_eq!(pending_deadlines(), before);
     });
 }

@@ -47,12 +47,61 @@ Connection lifecycle: `build_tcp_segment()`, `send_tcp_segment()`, `tcp_send_syn
 Data path (#486): `tcp_send()` buffers; `tcp_tick()` (from `net_tick`) flushes
 up to MSS per connection, tracks `send_base`/`send_next`, advances the window
 on ACKs, retransmits on a 200 ms TSC-based RTO (8 retries max), and drives
-FIN (`fin_pending` when closing with unsent data). Incoming data is stored in
-the connection buffer, ACKed, and wakes `SocketRead` waiters; incoming FINs
-park in CloseWait. `tcp_dispatch()` never holds `SOCKET_MANAGER` across
-protocol actions (nested locks deadlocked SYN handling). Covered by the
-`net_tcp_loopback_e2e` test (handshake + both directions + orderly close over
-loopback, no NIC). Off-subnet TCP still limited by next-hop/MAC scope (#315).
+FIN (`fin_pending` when closing with unsent data). `SynReceived` connections
+also retransmit their SYN-ACK and time out with the same bound. Incoming data
+is stored in the connection buffer, ACKed, and wakes `SocketRead` waiters;
+incoming FINs park in CloseWait. `tcp_dispatch()` never holds `SOCKET_MANAGER`
+across protocol actions (nested locks deadlocked SYN handling).
+
+### RX dispatch and locking
+
+`network_poll_all()` drains a bounded batch of frames **while holding
+`NIC_REGISTRY`**, then dispatches them **after releasing it**. The dispatcher
+must not hold the registry: the TCP send path re-locks it (`nic_next_hop`,
+`nic_default_id`, `nic_send_packet`), and `spin::Mutex` is non-reentrant, so
+holding it deadlocked netpump on the first TCP segment received over a real
+NIC. `net_handle_incoming_packet(nic_id, frame)` takes the interface id (not a
+borrowed interface) and emits replies through `net_send_frame()`, which routes
+loopback frames through the loopback queue.
+
+### RX validation
+
+Received IPv4 datagrams are bounded by the header's total length (so Ethernet
+padding never enters a transport checksum), the IPv4 header checksum is
+verified, and TCP/UDP checksums are verified (`tcp_checksum_valid`,
+`udp_checksum_valid`; a zero UDP checksum means "not computed" and is
+accepted). Invalid frames are counted as RX errors and dropped.
+
+### Connection teardown
+
+`socket_free` calls `tcp_release_connection`: a connection that still has
+buffered/unacknowledged data is not freed immediately — it is marked
+`reap_pending` and `tcp_tick` transmits the remaining payload and FIN before
+reaping it once Closed. Freed immediately only when already drained. This
+prevents losing the last write when an application closes right after `send`.
+There is no TIME_WAIT / delayed-ACK handling yet.
+
+### Socket wait (Ring 3)
+
+`ObSetInfoClass::SocketListen`/`SocketClose` carry no payload and are accepted
+with an empty buffer by the generic `ob_set_info` validation. `ob_wait` on a
+socket blocks on `WaitReason::SocketConnect` / `SocketAccept` / `SocketRead`
+(`socket_wait_reason`), and the handshake, inbound data, FIN and connection
+failure all wake the corresponding waiters. Before this, `ob_wait` returned
+`NoSys` for sockets, so Ring 3 callers had to busy-poll `socket_recv`.
+
+### Tests and validation
+
+Covered by the kernel tests `net_tcp_loopback_e2e` (handshake + both
+directions + orderly close over loopback), `net_tcp_nic_path_syn_synack_no_deadlock`
+(real dispatch path through a scripted NIC), `net_tcp_synack_retransmit_bounded`,
+`net_tcp_nic_bad_checksum_dropped`, `net_tcp_close_flushes_buffered_data`, and
+the checksum-validation tests. Off-subnet TCP uses `nic_next_hop` (gateway-
+aware); #315 is resolved. The Ring 3 utilities `netsrv`/`netcli` (real client
+and echo server: connect/accept, finite timeouts, clean close) and the
+`tcptest` self-test validate the public socket ABI. In VirtualBox NAT (e1000,
+guest 10.0.2.15) `netcli 10.0.2.2 5555` reached a host echo server and a host
+client reached `netsrv 6666` through a NAT port-forward.
 
 ## ObType Integration
 
@@ -67,6 +116,7 @@ loopback, no NIC). Off-subnet TCP still limited by next-hop/MAC scope (#315).
 | 19 | `TcpStatus` | TCP connection state |
 | 20 | `NicInfo` | NIC metadata: MAC, IP, link status, vendor/device PCI IDs, driver name, description |
 | 23 | `SocketRecv` | Received data (non-blocking read) |
+| 43 | `SocketAccept` | Accept a pending connection from a listener (4-byte fd out) |
 
 ### ObSetInfoClass (mutate)
 
@@ -93,6 +143,36 @@ Socket objects support KWait (kernel wait) for blocking I/O operations:
 | `SocketAccept` | New connection arrives on listening socket |
 
 Blocking syscalls suspend the calling thread via KWait and wake when the corresponding event fires.
+
+### Ring 3 listener / accept semantics
+
+A listening socket stays in `Listen`; each incoming pure SYN (SYN without
+ACK) creates a **distinct** socket + TCP connection, sends the SYN-ACK and
+queues the connection on the listener (`MAX_ACCEPT_BACKLOG = 8`; excess SYNs
+are dropped, the listener stays usable). `ob_query_info(SocketAccept)` pops an
+*established* connection, wraps it in a new `Socket` Ob object/handle and
+returns the new fd (EAGAIN when none is ready). This allows sequential — and,
+up to the backlog and `MAX_SOCKETS`, concurrent — connections without
+cross-talk. A SYN-ACK is never routed to a listener; it reaches the client
+connection.
+
+### Blocking and timeouts
+
+`ob_wait` on a socket blocks on `SocketAccept` (listener), `SocketConnect`
+(handshake in progress) or `SocketRead` (data/EOF). A non-zero `ob_wait`
+timeout arms a TSC deadline serviced by the RX pump (`net_tick` →
+`kwait::deadline_tick`), which wakes the waiter when it expires. **The timeout
+wake carries no distinct status** (`ob_wait` returns 0); the caller must
+re-check readiness. Indefinite waits (`timeout = 0`) are unchanged.
+
+### Send / receive return values
+
+`SocketSend` returns the number of bytes buffered; a full send buffer returns
+`EIO` (retry after draining). `SocketRecv` returns bytes copied, or `EAGAIN`
+when none are buffered. There is **no distinct EOF**: `SocketRecv` returns
+`EAGAIN` both when no data is available and when the peer has closed; the
+connection state (`TcpStatus`) distinguishes `CloseWait`/`Closed`. Zero-length
+sends/recvs are rejected as `EINVAL`.
 
 ## Packet Flow
 

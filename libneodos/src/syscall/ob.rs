@@ -70,6 +70,10 @@ pub enum ObInfoClass {
     /// #358: whether a graceful shutdown has been requested for the caller's
     /// service (1 byte: 0 = normal, 1 = shutdown requested).
     ProcessShutdownState = 42,
+    /// Accept a pending connection from a listening TCP socket. The 4-byte
+    /// output buffer receives the new connection's fd (u32). Returns EAGAIN
+    /// (`-8`) when none is pending.
+    SocketAccept = 43,
 }
 
 pub mod ob_type {
@@ -347,6 +351,16 @@ pub fn sys_ob_wait(fd: u8) -> Result<(), i64> {
     let handles = [fd as u64];
     let fd_ptr = handles.as_ptr() as u64;
     let r = unsafe { ob_syscall_3!(45, 1u64, fd_ptr, 0u64) };
+    if r < 0 { Err(r) } else { Ok(()) }
+}
+
+/// sys_ob_wait with a finite timeout (milliseconds; 0 = indefinite).
+/// On timeout the call returns `Ok(())`; the caller must re-check readiness
+/// (the kernel does not return a distinct timeout status).
+pub fn sys_ob_wait_timeout(fd: u8, timeout_ms: u64) -> Result<(), i64> {
+    let handles = [fd as u64];
+    let fd_ptr = handles.as_ptr() as u64;
+    let r = unsafe { ob_syscall_4!(45, 1u64, fd_ptr, 0u64, timeout_ms) };
     if r < 0 { Err(r) } else { Ok(()) }
 }
 

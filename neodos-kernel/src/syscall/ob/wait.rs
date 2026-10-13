@@ -10,7 +10,7 @@ pub fn handler_ob_wait(regs: crate::syscall::Registers) -> u64 {
     let handle_count = regs.rbx as usize;
     let handles_ptr = regs.rcx;
     let wait_type = regs.rdx as u32;
-    let _timeout_ms = regs.r8;
+    let timeout_ms = regs.r8;
 
     if handle_count == 0 || handles_ptr == 0 {
         return err_to_u64(SyscallError::Inval);
@@ -69,6 +69,27 @@ pub fn handler_ob_wait(regs: crate::syscall::Registers) -> u64 {
         crate::object::ObType::Thread => {
             let tid = obj.native_id as u32;
             crate::kwait::WaitReason::ThreadJoin { tid }
+        }
+        crate::object::ObType::Socket => {
+            // First generic blocking wait for sockets: SocketConnect (client /
+            // in-progress handshake), SocketAccept (listener) and SocketRead
+            // (data). Previously sockets returned NoSys, forcing Ring 3 callers
+            // to busy-poll `socket_recv`.
+            let socket_id = obj.native_id as u32;
+            match crate::net::socket::socket_wait_reason(socket_id) {
+                Ok(None) => return 0,
+                Ok(Some(reason)) => {
+                    // Finite timeout: arm a deadline the RX pump will fire. The
+                    // wake is a normal signal; the caller must re-check
+                    // readiness (timeouts carry no distinct status).
+                    if timeout_ms > 0 {
+                        let deadline = crate::net::tcp::tcp_deadline_from_ms(timeout_ms);
+                        crate::kwait::register_deadline(reason.encode_magic(), deadline);
+                    }
+                    reason
+                }
+                Err(()) => return err_to_u64(SyscallError::BadF),
+            }
         }
         _ => return err_to_u64(SyscallError::NoSys),
     };

@@ -144,6 +144,10 @@ pub struct TcpConnection {
     pub window: u16,
     pub retransmit_count: u32,
     pub ob_id: u64,
+    /// Owner socket destroyed while data was still draining: `tcp_tick` may
+    /// free this connection once it reaches `Closed`. Never set for a
+    /// connection that is merely unreferenced during allocation.
+    pub reap_pending: bool,
 }
 
 pub struct TcpControlBlock {
@@ -178,7 +182,7 @@ impl TcpControlBlock {
                     recv_buf: VecDeque::new(),
                     window: TCP_DEFAULT_WINDOW,
                     retransmit_count: 0,
-                    ob_id: 0,
+                    ob_id: 0, reap_pending: false,
                 });
                 return Some(id);
             }
@@ -194,7 +198,7 @@ impl TcpControlBlock {
                 recv_buf: VecDeque::new(),
                 window: TCP_DEFAULT_WINDOW,
                 retransmit_count: 0,
-                ob_id: 0,
+                ob_id: 0, reap_pending: false,
             }));
             Some(id)
         } else {
@@ -259,6 +263,23 @@ fn tsc_per_us() -> u64 {
     (crate::boot_benchmark::get_tsc_khz() / 1000).max(1)
 }
 
+/// Current TSC, for modules that are not allowed to depend on
+/// `boot_benchmark` directly (dependency-graph isolation).
+pub fn tcp_now_tsc() -> u64 {
+    crate::boot_benchmark::rdtsc()
+}
+
+/// Convert a millisecond timeout into absolute TSC ticks (`ms * 1000µs *
+/// cycles/µs`), saturating on overflow. Pure helper so the scale is testable.
+pub fn tsc_ticks_from_ms(ms: u64, tsc_per_us: u64) -> u64 {
+    ms.saturating_mul(1000).saturating_mul(tsc_per_us)
+}
+
+/// Absolute TSC deadline for a millisecond timeout.
+pub fn tcp_deadline_from_ms(ms: u64) -> u64 {
+    crate::boot_benchmark::rdtsc().wrapping_add(tsc_ticks_from_ms(ms, tsc_per_us()))
+}
+
 /// Resolve the source IP for an outgoing segment.
 fn resolve_src_ip(remote: Ipv4Addr, local: Ipv4Addr) -> Ipv4Addr {
     if !local.is_unspecified() {
@@ -294,6 +315,60 @@ pub fn tcp_alloc_connection() -> Option<u32> {
 
 pub fn tcp_free_connection(id: u32) {
     TCP.lock().free_connection(id);
+}
+
+/// Called when the owning socket is destroyed. Free the connection immediately
+/// only when it has fully drained (Closed with no buffered/unacked data);
+/// otherwise leave it for `tcp_tick` so the still-buffered payload and the FIN
+/// are transmitted. Freeing unconditionally silently dropped the last write
+/// when an application closed right after `send`.
+pub fn tcp_release_connection(id: u32) {
+    let mut tcp = TCP.lock();
+    let done = match tcp.get_connection(id) {
+        Some(c) => {
+            c.state == TcpState::Closed
+                && c.send_buf.is_empty()
+                && c.send_seq == c.send_base
+        }
+        None => return,
+    };
+    if done {
+        tcp.free_connection(id);
+    } else if let Some(c) = tcp.get_connection_mut(id) {
+        // Still draining: let tcp_tick finish transmitting the payload/FIN and
+        // reap the connection once it reaches Closed.
+        c.reap_pending = true;
+    }
+}
+
+/// Reap connections whose owner socket is gone and that have finished closing.
+/// Only connections explicitly released with pending data are candidates, so a
+/// connection between `tcp_alloc_connection` and `socket_set_tcp_conn` (still
+/// unowned, but active) is never touched.
+fn reap_orphans() {
+    let mut orphans: alloc::vec::Vec<u32> = alloc::vec::Vec::new();
+    {
+        let tcp = TCP.lock();
+        for c in tcp.connections.iter().flatten() {
+            if c.reap_pending && c.state == TcpState::Closed && c.send_buf.is_empty() {
+                orphans.push(c.id);
+            }
+        }
+    }
+    if orphans.is_empty() {
+        return;
+    }
+    let mgr = crate::net::socket::SOCKET_MANAGER.lock();
+    for id in orphans {
+        let owned = mgr
+            .sockets
+            .iter()
+            .flatten()
+            .any(|s| s.tcp_conn_id == Some(id));
+        if !owned {
+            TCP.lock().free_connection(id);
+        }
+    }
 }
 
 pub fn tcp_bind(id: u32, local: SocketAddrV4) -> bool {
@@ -379,6 +454,24 @@ fn send_syn_segment(id: u32, local: SocketAddrV4, remote: SocketAddrV4, seq: u32
     )
 }
 
+/// Retransmit a SYN-ACK for a server-side connection in `SynReceived`.
+/// `seq` is the SYN's sequence (send_base), `ack` the expected client next seq.
+pub fn send_synack_segment(local: SocketAddrV4, remote: SocketAddrV4, seq: u32, ack: u32) -> bool {
+    let src_ip = resolve_src_ip(remote.ip, local.ip);
+    if src_ip.is_unspecified() {
+        return false;
+    }
+    let dst_mac = match tcp_mac_for(remote.ip) {
+        Some(m) => m,
+        None => return false,
+    };
+    send_tcp_segment(
+        dst_mac, src_ip.0, remote.ip.0,
+        local.port, remote.port, seq, ack,
+        TCP_FLAG_SYN | TCP_FLAG_ACK, TCP_DEFAULT_WINDOW, &[],
+    )
+}
+
 pub fn tcp_send(id: u32, data: &[u8]) -> Result<usize, ()> {
     let mut tcp = TCP.lock();
     let conn = tcp.get_connection_mut(id).ok_or(())?;
@@ -409,6 +502,15 @@ pub fn tcp_recv(id: u32, buf: &mut [u8]) -> Result<usize, ()> {
 
 pub fn tcp_get_state(id: u32) -> Option<TcpState> {
     TCP.lock().get_connection(id).map(|c| c.state)
+}
+
+/// True when `id` has application data buffered for reading. Used by the
+/// socket wait primitive to avoid blocking on data that already arrived.
+pub fn tcp_recv_pending(id: u32) -> bool {
+    TCP.lock()
+        .get_connection(id)
+        .map(|c| !c.recv_buf.is_empty())
+        .unwrap_or(false)
 }
 
 pub fn tcp_close(id: u32) {
@@ -509,6 +611,7 @@ pub fn tcp_tick() {
             match conn.state {
                 TcpState::Established
                 | TcpState::SynSent
+                | TcpState::SynReceived
                 | TcpState::FinWait1
                 | TcpState::LastAck => {
                     let in_flight =
@@ -575,6 +678,21 @@ pub fn tcp_tick() {
             }
             continue;
         }
+        // SYN-ACK (re)transmit while the final ACK is missing. Without this a
+        // server whose SYN-ACK was lost parks in SynReceived forever and any
+        // accept/read waiter never wakes.
+        if job.state == TcpState::SynReceived {
+            if job.unacked_span > 0 && expired {
+                if job.retries >= TCP_MAX_RETRIES {
+                    close_dead(job.id);
+                    continue;
+                }
+                if send_synack_segment(job.local, job.remote, job.base, job.rack) {
+                    touch_tx(job.id, now, job.retries + 1);
+                }
+            }
+            continue;
+        }
         // Fresh data flush.
         if !chunk.is_empty() {
             let src_ip = resolve_src_ip(job.remote.ip, job.local.ip);
@@ -622,6 +740,8 @@ pub fn tcp_tick() {
             );
         }
     }
+    // Free connections that drained after their socket was destroyed.
+    reap_orphans();
 }
 
 /// Snapshot helpers: brief TCP critical sections (FLUSH_LOCK already held).
@@ -664,10 +784,18 @@ fn close_dead(id: u32) {
         }
     }
     let mut mgr = crate::net::socket::SOCKET_MANAGER.lock();
+    let mut wake = alloc::vec::Vec::new();
     for slot in mgr.sockets.iter_mut().flatten() {
         if slot.tcp_conn_id == Some(id) {
             slot.direction = crate::net::types::SocketDirection::Closed;
+            wake.push(slot.id);
         }
+    }
+    // A failed connection must surface (not hang) to any waiter.
+    for sid in wake {
+        mgr.wake_socket_connect_waiters(sid);
+        mgr.wake_socket_accept_waiters(sid);
+        mgr.wake_socket_readers(sid);
     }
 }
 
@@ -753,7 +881,7 @@ pub struct TcpPacket {
     pub urgent_ptr: u16,
 }
 
-fn compute_tcp_checksum_raw(src: [u8; 4], dst: [u8; 4], segment: &[u8]) -> u16 {
+pub fn compute_tcp_checksum_raw(src: [u8; 4], dst: [u8; 4], segment: &[u8]) -> u16 {
     let mut sum = 0u32;
     sum = sum.wrapping_add((src[0] as u32) << 8 | src[1] as u32);
     sum = sum.wrapping_add((src[2] as u32) << 8 | src[3] as u32);
@@ -775,6 +903,30 @@ fn compute_tcp_checksum_raw(src: [u8; 4], dst: [u8; 4], segment: &[u8]) -> u16 {
     }
     let cs = !(sum as u16);
     if cs == 0 { 0xFFFF } else { cs }
+}
+
+/// Verify a received TCP segment's checksum (pseudo-header + header + payload).
+/// `segment` is the TCP header and payload, bounded by the IPv4 total length.
+pub fn tcp_checksum_valid(src_ip: [u8; 4], dst_ip: [u8; 4], segment: &[u8]) -> bool {
+    let mut sum = 0u32;
+    sum = sum.wrapping_add((src_ip[0] as u32) << 8 | src_ip[1] as u32);
+    sum = sum.wrapping_add((src_ip[2] as u32) << 8 | src_ip[3] as u32);
+    sum = sum.wrapping_add((dst_ip[0] as u32) << 8 | dst_ip[1] as u32);
+    sum = sum.wrapping_add((dst_ip[2] as u32) << 8 | dst_ip[3] as u32);
+    sum = sum.wrapping_add(IPV4_PROTO_TCP as u32);
+    sum = sum.wrapping_add(segment.len() as u32);
+    let mut i = 0;
+    while i + 1 < segment.len() {
+        sum = sum.wrapping_add(u16::from_be_bytes([segment[i], segment[i + 1]]) as u32);
+        i += 2;
+    }
+    if i < segment.len() {
+        sum = sum.wrapping_add((segment[i] as u32) << 8);
+    }
+    while sum >> 16 != 0 {
+        sum = (sum & 0xFFFF) + (sum >> 16);
+    }
+    (sum as u16) == 0xFFFF
 }
 
 pub fn build_tcp_segment(src_ip: [u8; 4], dst_ip: [u8; 4], src_port: u16, dst_port: u16,
@@ -922,11 +1074,15 @@ pub fn tcp_send_syn_ack(socket_id: usize, src_port: u16, dst_port: u16, their_se
             conn.last_tx_tsc = crate::boot_benchmark::rdtsc();
         }
     }
-    let dst_mac = match tcp_mac_for(crate::net::types::Ipv4Addr(dst_ip)) {
+    // The reply must travel us -> peer. `dst_ip` is our address (the SYN's
+    // destination) and `src_ip` is the peer's; resolving the MAC of `dst_ip`
+    // (us) would ARP our own address and silently drop the SYN-ACK. Loopback
+    // masked this because both addresses are 127.0.0.1.
+    let dst_mac = match tcp_mac_for(crate::net::types::Ipv4Addr(src_ip)) {
         Some(m) => m,
         None => return,
     };
-    send_tcp_segment(dst_mac, src_ip, dst_ip, src_port, dst_port,
+    send_tcp_segment(dst_mac, dst_ip, src_ip, src_port, dst_port,
         my_seq, their_seq.wrapping_add(1), TCP_FLAG_SYN | TCP_FLAG_ACK, TCP_DEFAULT_WINDOW, &[]);
 }
 
@@ -982,8 +1138,12 @@ pub fn tcp_handle_ack(socket_id: usize, their_seq: u32, their_ack: u32, window: 
             | TcpState::FinWait2
             | TcpState::CloseWait
             | TcpState::LastAck => {
-                if their_ack > conn.send_base && their_ack <= conn.send_seq {
-                    let acked = their_ack.wrapping_sub(conn.send_base) as usize;
+                // Wraparound-safe window check: `acked` must be in (0, in_flight].
+                // Plain `>`/`<=` break once sequence numbers wrap past u32::MAX.
+                let acked = their_ack.wrapping_sub(conn.send_base);
+                let in_flight = conn.send_seq.wrapping_sub(conn.send_base);
+                if acked != 0 && acked <= in_flight {
+                    let acked = acked as usize;
                     let drop_n = acked.min(conn.send_buf.len());
                     conn.send_buf.drain(..drop_n);
                     conn.send_base = their_ack;
@@ -1017,6 +1177,13 @@ pub fn tcp_handle_ack(socket_id: usize, their_seq: u32, their_ack: u32, window: 
     if became_established {
         let mut mgr = crate::net::socket::SOCKET_MANAGER.lock();
         mgr.wake_socket_connect_waiters(sid);
+        mgr.wake_socket_accept_waiters(sid);
+        mgr.wake_socket_readers(sid);
+        // Accepted connections wake their listener's accept waiters so a
+        // blocked `accept` can pick the now-established connection.
+        if let Some(listener_id) = mgr.get_socket(sid).and_then(|s| s.listener_id) {
+            mgr.wake_socket_accept_waiters(listener_id);
+        }
     }
     // Completing handshake ACK (no locks held).
     if let Some((local, remote, seq, ack)) = hs_ack {

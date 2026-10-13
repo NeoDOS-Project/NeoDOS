@@ -8,6 +8,7 @@ pub(super) fn handles(info_class: u32) -> bool {
         || info_class == ObInfoClass::SocketAddr as u32
         || info_class == ObInfoClass::TcpStatus as u32
         || info_class == ObInfoClass::SocketRecv as u32
+        || info_class == ObInfoClass::SocketAccept as u32
         || info_class == ObInfoClass::NicInfo as u32
         || info_class == ObInfoClass::NetStats as u32
         || info_class == ObInfoClass::Hostname as u32
@@ -156,6 +157,58 @@ pub(super) fn dispatch(
                 }
                 Err(_) => err_to_u64(SyscallError::Again),
             }
+        }
+        // ── SocketAccept (43): accept an incoming connection from a listener ──
+        _ if info_class == ObInfoClass::SocketAccept as u32 => {
+            if entry.object_id == 0 { return err_to_u64(SyscallError::BadF); }
+            if buf_size < 4 { return err_to_u64(SyscallError::Inval); }
+            let obj = match crate::object::ob_lookup(entry.object_id) {
+                Some(o) => o,
+                None => return err_to_u64(SyscallError::BadF),
+            };
+            if obj.obj_type != crate::object::ObType::Socket {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let listener_id = obj.native_id as u32;
+            let conn_socket_id = match crate::net::socket::socket_accept_take(listener_id) {
+                Some(id) => id,
+                None => return err_to_u64(SyscallError::Again),
+            };
+            // Wrap the accepted socket in a fresh Ob object + handle for the
+            // caller. The listener keeps listening for further connections.
+            let path = alloc::format!("\\TcpAccept-{}", conn_socket_id);
+            let ob_id = match crate::object::ob_create_object_path(
+                &path, crate::object::ObType::Socket, conn_socket_id, None,
+            ) {
+                Ok(id) => id,
+                Err(e) => {
+                    crate::net::socket::socket_free(conn_socket_id);
+                    return err_to_u64(crate::syscall::ob_err_to_syscall(e));
+                }
+            };
+            let h = crate::handle::HandleEntry::ob_object(ob_id, conn_socket_id);
+            let fd = crate::hal::without_interrupts(|| {
+                let s = crate::scheduler::current_scheduler();
+                let mut lock = s.lock();
+                if let Some(ep) = lock.current_eprocess_mut() {
+                    crate::handle::alloc_handle(&mut ep.handle_table, h)
+                } else {
+                    None
+                }
+            });
+            let fd = match fd {
+                Some(fd) => fd,
+                None => {
+                    let _ = crate::object::ob_close_object(ob_id);
+                    crate::net::socket::socket_free(conn_socket_id);
+                    return err_to_u64(SyscallError::NoMem);
+                }
+            };
+            if copy_to_user(buf_ptr, &(fd as u32).to_ne_bytes()).is_err() {
+                rollback_accept(fd, ob_id, conn_socket_id);
+                return err_to_u64(SyscallError::Fault);
+            }
+            4u64
         }
         _ if info_class == ObInfoClass::NicInfo as u32 => {
             #[repr(C)]
@@ -338,4 +391,16 @@ pub(super) fn dispatch(
         }
         _ => err_to_u64(SyscallError::Inval),
     }
+}
+
+/// Undo a partially-completed `SocketAccept`.
+///
+/// Called when the accepted fd could not be transferred to the caller. Frees
+/// the handle slot, closes the Ob object and releases the socket (which drops
+/// the TCP connection and detaches it from the listener backlog). The order
+/// mirrors `handler_close`: close the object once, then clear the handle.
+fn rollback_accept(fd: u8, ob_id: crate::object::ObId, socket_id: u32) {
+    crate::syscall::set_current_handle(fd, crate::handle::HandleEntry::closed());
+    let _ = crate::object::ob_close_object(ob_id);
+    crate::net::socket::socket_free(socket_id);
 }

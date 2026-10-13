@@ -68,6 +68,7 @@ fn capture_nic(mac_last: u8) -> CaptureNic {
 
 mod net;
 mod socket;
+mod nictcp;
 
 pub fn register_net_tests() {
 
@@ -119,4 +120,5 @@ pub fn register_net_tests() {
 
     net::register();
     socket::register();
+    nictcp::register();
 }

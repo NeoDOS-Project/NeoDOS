@@ -170,6 +170,11 @@ pub enum ObInfoClass {
     /// caller's service. Returns a single byte: 0 = normal, 1 = shutdown
     /// requested. Read on the caller's own Process object.
     ProcessShutdownState = 42,
+    /// Accept a completed incoming connection from a listening TCP socket.
+    /// The 4-byte output buffer receives the new connection's object handle
+    /// (u32) as a direct fd. Returns `Again` (EAGAIN) when no connection is
+    /// pending. Read on the listener's Socket object.
+    SocketAccept = 43,
 }
 
 /// Info classes for sys_ob_set_info (RAX=43).

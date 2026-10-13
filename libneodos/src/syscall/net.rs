@@ -66,6 +66,17 @@ pub fn ob_socket_listen(fd: u8) -> Result<(), i64> {
     sys_ob_set_info(fd, ObSetInfoClass::SocketListen, &[])
 }
 
+/// ob_socket_accept: accept a pending connection from a listening socket.
+/// Returns the new connection's fd. Returns `EAGAIN` when none is pending.
+pub fn ob_socket_accept(listener_fd: u8) -> Result<u8, i64> {
+    let mut buf = [0u8; 4];
+    let n = sys_ob_query_info(listener_fd, ObInfoClass::SocketAccept, &mut buf)?;
+    if n < 4 {
+        return Err(super::EINVAL);
+    }
+    Ok(u32::from_ne_bytes(buf) as u8)
+}
+
 /// ob_socket_send: send data via ob_set_info(SocketSend).
 /// Returns number of bytes sent on success.
 pub fn ob_socket_send(fd: u8, data: &[u8]) -> Result<usize, i64> {
