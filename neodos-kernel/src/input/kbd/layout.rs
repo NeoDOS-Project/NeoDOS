@@ -157,7 +157,7 @@ pub fn load_layouts() -> usize {
     let fallback = KbdLayout {
         name: {
             let mut n = [0u8; 32];
-            n[..2].copy_from_slice(b"US");
+            n[..5].copy_from_slice(b"en-US");
             n
         },
         lang_tag: {
@@ -170,20 +170,12 @@ pub fn load_layouts() -> usize {
     };
     layouts.push(fallback);
 
-    // Try loading from C:\System\Keyboard\*.kbd
-    let dir_path = "C:\\System\\Keyboard";
-    let has_dir = crate::globals::with_vfs(|vfs| -> bool {
-        vfs.resolve_path(dir_path).is_ok()
-    });
-
-    if has_dir {
-        // Try Spanish.kbd
-        if let Ok(layout) = load_kbd("C:\\System\\Keyboard\\Spanish.kbd") {
-            // Replace the fallback US if it's Spanish (or keep both)
-            if layouts.iter().any(|l| l.name_str() == "Spanish") {
-                // already loaded
-            } else {
-                layouts.push(layout);
+    // Disk layouts (locale-tagged) override the built-in fallback when present.
+    for path in ["C:\\System\\Keyboard\\en-US.kbd", "C:\\System\\Keyboard\\es-ES.kbd"] {
+        if let Ok(layout) = load_kbd(path) {
+            match layouts.iter().position(|l| l.name_str() == layout.name_str()) {
+                Some(i) => layouts[i] = layout,
+                None => layouts.push(layout),
             }
         }
     }
@@ -243,19 +235,23 @@ pub fn is_dead_key(layout: &KbdLayout, scancode: u8, modifiers: u8) -> bool {
     flags == 1
 }
 
-pub fn compose(dead: u16, base: u16) -> u16 {
-    // Try to find a compose entry matching this dead+base combination
-    let kbd = crate::kbd::KBD.lock();
-    if let Some(layout) = kbd.active_layout() {
-        for entry in &layout.compose {
-            if entry.dead == dead && entry.base == base {
-                return entry.result;
-            }
+/// Compose `base` with a pending `dead` key using `layout`'s compose table.
+pub fn compose_in(layout: &KbdLayout, dead: u16, base: u16) -> u16 {
+    for entry in &layout.compose {
+        if entry.dead == dead && entry.base == base {
+            return entry.result;
         }
     }
-    // No compose match found; return '?' or the base character
-    if dead == base { dead }
-    else { b'?' as u16 }
+    // No compose match found; return the base character (or itself).
+    if dead == base { dead } else { b'?' as u16 }
+}
+
+pub fn compose(dead: u16, base: u16) -> u16 {
+    let kbd = crate::kbd::KBD.lock();
+    match kbd.active_layout() {
+        Some(layout) => compose_in(layout, dead, base),
+        None => if dead == base { dead } else { b'?' as u16 },
+    }
 }
 
 fn builtin_us_layout() -> [KeyEntry; 256] {

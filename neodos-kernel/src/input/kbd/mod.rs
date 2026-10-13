@@ -67,7 +67,7 @@ pub struct KbdConfig {
 impl Default for KbdConfig {
     fn default() -> Self {
         KbdConfig {
-            layout_name: "US".to_string(),
+            layout_name: "en-US".to_string(),
             repeat_delay: 500,
             repeat_rate: 30,
             numlock_on_boot: true,
@@ -121,7 +121,8 @@ impl NeoKbd {
     pub fn set_layout_by_name(&mut self, name: &str) -> Result<(), ()> {
         let idx = self.find_layout_index(name).ok_or(())?;
         self.state.active_layout_index = idx;
-        self.config.layout_name = name.to_string();
+        // Canonicalise to the layout's own name (e.g. "es-ES", not "spanish").
+        self.config.layout_name = self.layouts[idx as usize].name_str().to_string();
         let _ = config::kbd_save_config(&self.config);
         let _ = crate::eventbus::EVENT_BUS.push_event(
             crate::eventbus::EVENT_KEYB_LAYOUT,
@@ -356,4 +357,78 @@ pub fn kbd_init() {
     event::register_kbd_event_handler();
 
     kinfo!(LogSubsys::Kbd, "Ready (layout: {})", layout_name);
+}
+
+// ── Tests ──────────────────────────────────────────────────────────
+
+pub fn register_tests() {
+    use crate::{test_case, test_eq, test_true};
+
+    // Layout switching: lookup is case-insensitive, switching updates the
+    // active index and canonicalises the persisted config name.
+    test_case!("kbd_switch_layout_by_name", {
+        let mut kbd = NeoKbd::new();
+        let mk = |name: &str| {
+            let mut lay = KbdLayout {
+                name: [0u8; 32],
+                lang_tag: [0u8; 16],
+                entries: [layout::KeyEntry::empty(); 256],
+                compose: Vec::new(),
+            };
+            lay.name[..name.len()].copy_from_slice(name.as_bytes());
+            lay
+        };
+        kbd.layouts.push(mk("en-US"));
+        kbd.layouts.push(mk("es-ES"));
+
+        test_eq!(kbd.find_layout_index("en-US"), Some(0));
+        test_eq!(kbd.find_layout_index("EN-us"), Some(0));
+        test_eq!(kbd.find_layout_index("es-ES"), Some(1));
+        test_eq!(kbd.find_layout_index("de-DE"), None);
+        test_eq!(kbd.active_layout().map(|l| l.name_str()), Some("en-US"));
+
+        test_true!(kbd.set_layout_by_name("es-ES").is_ok());
+        test_eq!(kbd.state.active_layout_index, 1);
+        test_eq!(kbd.active_layout().map(|l| l.name_str()), Some("es-ES"));
+        test_eq!(kbd.config.layout_name.as_str(), "es-ES");
+    });
+
+    // Both locale-tagged layouts must be present (disk image provides them).
+    test_case!("kbd_locale_layouts_loaded", {
+        let kbd = KBD.lock();
+        test_true!(kbd.find_layout_index("en-US").is_some());
+        test_true!(kbd.find_layout_index("es-ES").is_some());
+    });
+
+    // #394: typing with the Spanish layout produces Spanish characters.
+    test_case!("kbd_spanish_layout_types", {
+        let idx = KBD.lock().find_layout_index("es-ES");
+        test_true!(idx.is_some());
+        let es = KBD.lock().layouts[idx.unwrap_or(0) as usize].clone();
+
+        // ñ / Ñ / ç and the shifted ; on the Spanish table.
+        test_eq!(layout::lookup_codepoint(&es, 0x27, 0), Some('ñ' as u16));
+        test_eq!(layout::lookup_codepoint(&es, 0x27, KBD_SHIFT), Some('Ñ' as u16));
+        test_eq!(layout::lookup_codepoint(&es, 0x2b, 0), Some('ç' as u16));
+        test_eq!(layout::lookup_codepoint(&es, 0x33, KBD_SHIFT), Some(';' as u16));
+
+        // Dead keys: ` (grave), ´ (acute) and ~ (AltGr+4).
+        test_true!(layout::is_dead_key(&es, 0x1a, 0));
+        test_true!(layout::is_dead_key(&es, 0x28, 0));
+        test_true!(layout::is_dead_key(&es, 0x05, KBD_ALTGR));
+
+        // Composition: acute+a, tilde+n, diaeresis+u.
+        test_eq!(layout::compose_in(&es, '´' as u16, 'a' as u16), 'á' as u16);
+        test_eq!(layout::compose_in(&es, '~' as u16, 'n' as u16), 'ñ' as u16);
+        test_eq!(layout::compose_in(&es, '¨' as u16, 'u' as u16), 'ü' as u16);
+    });
+
+    // The English layout keeps its US punctuation.
+    test_case!("kbd_us_layout_types", {
+        let idx = KBD.lock().find_layout_index("en-US");
+        test_true!(idx.is_some());
+        let en = KBD.lock().layouts[idx.unwrap_or(0) as usize].clone();
+        test_eq!(layout::lookup_codepoint(&en, 0x27, 0), Some(';' as u16));
+        test_eq!(layout::lookup_codepoint(&en, 0x27, KBD_SHIFT), Some(':' as u16));
+    });
 }

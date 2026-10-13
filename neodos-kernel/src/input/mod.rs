@@ -15,6 +15,8 @@ pub fn register_tests() {
 
     // Raw keyboard event ring + VK mapping (#466).
     crate::input::kbd::ring::register_tests();
+    // Layout switching + locale layouts (#394).
+    crate::input::kbd::register_tests();
 
     test_case!("input_empty_pop", {
         let buf = InputBuffer::new();

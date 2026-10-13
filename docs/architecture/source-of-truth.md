@@ -628,7 +628,7 @@ layout translation. NeoKBD handles scancode → Unicode conversion, dead key com
 modifier tracking, and hotkey dispatch (Ctrl+Alt+Del → poweroff, Alt+F1-F8 → VT switch).
 
 **Rule 11.6.3**: Layout switching is via `ob_set_info(KeyboardSetLayout=43)` on
-`\Device\Keyboard` with a layout name string (e.g., "Spanish", "US"). The `neokey.nxe`
+`\Device\Keyboard` with a layout name string (e.g., "es-ES", "en-US"). The `neokey.nxe`
 binary provides the user interface: `NEOKEY layout <name>`, `NEOKEY layouts`, `NEOKEY show`.
 
 **Rule 11.6.4**: Keyboard configuration (active layout, repeat delay/rate, NumLock/CapsLock
