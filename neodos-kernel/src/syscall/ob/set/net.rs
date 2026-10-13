@@ -187,6 +187,8 @@ pub(super) fn dispatch(
                 kdebug!(LogSubsys::Object, "SetNicMask: iface={} mask={}", iface_idx, mask);
                 crate::net::nic::nic_set_mask(iface_idx, mask);
             }
+            // Notify the network applier instead of forcing it to poll (#364).
+            crate::net::notify_config_changed();
             0
         }
         // ── SetNicGateway (28): set NIC default gateway (0.0.0.0 = unset) ──
@@ -200,6 +202,8 @@ pub(super) fn dispatch(
             let gw = crate::net::types::Ipv4Addr([hdr[4], hdr[5], hdr[6], hdr[7]]);
             kdebug!(LogSubsys::Object, "SetNicGateway: iface={} gw={}", iface_idx, gw);
             crate::net::nic::nic_set_gateway(iface_idx, gw);
+            // Notify the network applier instead of forcing it to poll (#364).
+            crate::net::notify_config_changed();
             0
         }
         _ if info_class == ObSetInfoClass::SetHostname as u32 => {
