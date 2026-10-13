@@ -386,6 +386,13 @@ send path (both were latent because DHCP only uses broadcast):
   `ObSetInfoClass::SetNicGateway` (28) from DHCP Option 3 / static config, and
   persisted in `Network\Interfaces\0\Gateway`. `socket_send_udp_raw` and
   `icmp_ping` both use `nic_next_hop`. There is no implicit `10.0.1.1` fallback.
+  **Bound-interface selection (#317):** UDP (`socket_send_udp_raw_on`) and TCP
+  (`tcp_nic_for` → `resolve_src_ip` / `tcp_mac_for` / `send_tcp_segment`) now
+  select the source address/MAC, the next hop
+  (`nic_next_hop_for(nic_id, dst)`) and the ARP resolution
+  (`arp_resolve_on(nic_id, target)`) from the socket's bound `nic_id`
+  (`ObSetInfoClass::SocketBindNic` = 29), falling back to the default NIC when
+  unbound. `icmp_ping` has no socket and keeps using the default NIC.
 - **Datagram dispatch.** `udp_dispatch` matched connected sockets only by
   `remote.port`; it now matches the socket's **local port** (`dst_port`) and,
   when set, the remote port, so a previous socket cannot capture replies

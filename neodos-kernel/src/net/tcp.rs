@@ -281,27 +281,43 @@ pub fn tcp_deadline_from_ms(ms: u64) -> u64 {
 }
 
 /// Resolve the source IP for an outgoing segment.
-fn resolve_src_ip(remote: Ipv4Addr, local: Ipv4Addr) -> Ipv4Addr {
+/// The NIC a TCP connection should send on: its owning socket's bound NIC,
+/// else the default NIC (#317).
+fn tcp_nic_for(tcp_id: u32) -> Option<u32> {
+    let bound = {
+        let mgr = crate::net::socket::SOCKET_MANAGER.lock();
+        mgr.sockets
+            .iter()
+            .flatten()
+            .find(|s| s.tcp_conn_id == Some(tcp_id))
+            .and_then(|s| s.nic_id)
+    };
+    bound.or_else(crate::net::nic::nic_default_id)
+}
+
+fn resolve_src_ip(remote: Ipv4Addr, local: Ipv4Addr, nic: Option<u32>) -> Ipv4Addr {
     if !local.is_unspecified() {
         return local;
     }
     if remote.is_loopback() {
         return Ipv4Addr::localhost();
     }
-    match crate::net::nic::nic_default_id() {
+    match nic {
         Some(id) => crate::net::nic::nic_get_ip(id).unwrap_or(Ipv4Addr::unspecified()),
         None => Ipv4Addr::unspecified(),
     }
 }
 
-/// MAC for a TCP reply/send: loopback is synthetic, otherwise the ARP entry
-/// for the next hop (gateway-aware, same rule as ICMP).
-fn tcp_mac_for(dst: Ipv4Addr) -> Option<[u8; 6]> {
+/// MAC for a TCP reply/send on `nic`: loopback is synthetic, otherwise the ARP
+/// entry for the next hop (gateway-aware, same rule as ICMP), resolved on the
+/// same interface (#317).
+fn tcp_mac_for(dst: Ipv4Addr, nic: Option<u32>) -> Option<[u8; 6]> {
     if dst.is_loopback() {
         return Some(crate::net::types::MacAddr::loopback().0);
     }
-    let target = crate::net::nic::nic_next_hop(dst)?;
-    crate::net::arp::arp_resolve(target).map(|m| m.0)
+    let id = nic?;
+    let target = crate::net::nic::nic_next_hop_for(id, dst)?;
+    crate::net::arp::arp_resolve_on(id, target).map(|m| m.0)
 }
 
 /// Advertised window from free receive space.
@@ -431,11 +447,12 @@ pub fn tcp_connect(id: u32, remote: SocketAddrV4) -> bool {
 /// Transmit a SYN for `id` (initial or retransmit). Returns false when there
 /// is no route/MAC yet; the tick retries.
 fn send_syn_segment(id: u32, local: SocketAddrV4, remote: SocketAddrV4, seq: u32) -> bool {
-    let src_ip = resolve_src_ip(remote.ip, local.ip);
+    let nic = tcp_nic_for(id);
+    let src_ip = resolve_src_ip(remote.ip, local.ip, nic);
     if src_ip.is_unspecified() {
         return false;
     }
-    let dst_mac = match tcp_mac_for(remote.ip) {
+    let dst_mac = match tcp_mac_for(remote.ip, nic) {
         Some(m) => m,
         None => return false,
     };
@@ -450,25 +467,25 @@ fn send_syn_segment(id: u32, local: SocketAddrV4, remote: SocketAddrV4, seq: u32
     send_tcp_segment(
         dst_mac, src_ip.0, remote.ip.0,
         local.port, remote.port, seq, 0,
-        TCP_FLAG_SYN, TCP_DEFAULT_WINDOW, &[],
+        TCP_FLAG_SYN, TCP_DEFAULT_WINDOW, &[], nic,
     )
 }
 
 /// Retransmit a SYN-ACK for a server-side connection in `SynReceived`.
 /// `seq` is the SYN's sequence (send_base), `ack` the expected client next seq.
-pub fn send_synack_segment(local: SocketAddrV4, remote: SocketAddrV4, seq: u32, ack: u32) -> bool {
-    let src_ip = resolve_src_ip(remote.ip, local.ip);
+pub fn send_synack_segment(local: SocketAddrV4, remote: SocketAddrV4, seq: u32, ack: u32, nic: Option<u32>) -> bool {
+    let src_ip = resolve_src_ip(remote.ip, local.ip, nic);
     if src_ip.is_unspecified() {
         return false;
     }
-    let dst_mac = match tcp_mac_for(remote.ip) {
+    let dst_mac = match tcp_mac_for(remote.ip, nic) {
         Some(m) => m,
         None => return false,
     };
     send_tcp_segment(
         dst_mac, src_ip.0, remote.ip.0,
         local.port, remote.port, seq, ack,
-        TCP_FLAG_SYN | TCP_FLAG_ACK, TCP_DEFAULT_WINDOW, &[],
+        TCP_FLAG_SYN | TCP_FLAG_ACK, TCP_DEFAULT_WINDOW, &[], nic,
     )
 }
 
@@ -556,24 +573,24 @@ pub fn tcp_close(id: u32) {
         }
     };
     if let CloseOp::FinNow(local, remote, seq, ack, _next) = op {
-        send_fin_segment(local, remote, seq, ack);
+        send_fin_segment(local, remote, seq, ack, tcp_nic_for(id));
     }
 }
 
 /// Transmit a FIN for an established/closing connection.
-fn send_fin_segment(local: SocketAddrV4, remote: SocketAddrV4, seq: u32, ack: u32) -> bool {
-    let src_ip = resolve_src_ip(remote.ip, local.ip);
+fn send_fin_segment(local: SocketAddrV4, remote: SocketAddrV4, seq: u32, ack: u32, nic: Option<u32>) -> bool {
+    let src_ip = resolve_src_ip(remote.ip, local.ip, nic);
     if src_ip.is_unspecified() {
         return false;
     }
-    let dst_mac = match tcp_mac_for(remote.ip) {
+    let dst_mac = match tcp_mac_for(remote.ip, nic) {
         Some(m) => m,
         None => return false,
     };
     send_tcp_segment(
         dst_mac, src_ip.0, remote.ip.0,
         local.port, remote.port, seq, ack,
-        TCP_FLAG_FIN | TCP_FLAG_ACK, TCP_DEFAULT_WINDOW, &[],
+        TCP_FLAG_FIN | TCP_FLAG_ACK, TCP_DEFAULT_WINDOW, &[], nic,
     )
 }
 
@@ -665,6 +682,8 @@ pub fn tcp_tick() {
     let rto_ticks = TCP_RTO_US.saturating_mul(per_us);
     for (job, chunk) in jobs.iter().zip(payloads.iter()) {
         let expired = now.wrapping_sub(job.last_tx) >= rto_ticks;
+        // Bound interface for this connection (#317).
+        let nic = tcp_nic_for(job.id);
         // SYN (re)transmit while unanswered.
         if job.state == TcpState::SynSent {
             if job.unacked_span > 0 && expired {
@@ -687,7 +706,7 @@ pub fn tcp_tick() {
                     close_dead(job.id);
                     continue;
                 }
-                if send_synack_segment(job.local, job.remote, job.base, job.rack) {
+                if send_synack_segment(job.local, job.remote, job.base, job.rack, nic) {
                     touch_tx(job.id, now, job.retries + 1);
                 }
             }
@@ -695,16 +714,16 @@ pub fn tcp_tick() {
         }
         // Fresh data flush.
         if !chunk.is_empty() {
-            let src_ip = resolve_src_ip(job.remote.ip, job.local.ip);
+            let src_ip = resolve_src_ip(job.remote.ip, job.local.ip, nic);
             if !src_ip.is_unspecified() {
-                if let Some(dst_mac) = tcp_mac_for(job.remote.ip) {
+                if let Some(dst_mac) = tcp_mac_for(job.remote.ip, nic) {
                     let win = adv_window(job.rused);
                     if send_tcp_segment(
                         dst_mac, src_ip.0, job.remote.ip.0,
                         job.local.port, job.remote.port,
                         job.next, job.rack,
                         TCP_FLAG_PSH | TCP_FLAG_ACK, win,
-                        chunk,
+                        chunk, nic,
                     ) {
                         commit_sent(job.id, job.next, chunk.len() as u32, now);
                     }
@@ -723,7 +742,7 @@ pub fn tcp_tick() {
             // CloseWait is not in the snapshot set; Established only here,
             // but keep the shape for the shared helper.
             if let Some(next_state) = next_state {
-                if send_fin_segment(job.local, job.remote, job.next, job.rack) {
+                if send_fin_segment(job.local, job.remote, job.next, job.rack, nic) {
                     commit_fin(job.id, next_state, now);
                 }
             }
@@ -849,11 +868,12 @@ fn retransmit_oldest(
     if payload.is_empty() && !fin_here {
         return;
     }
-    let src_ip = resolve_src_ip(remote.ip, local.ip);
+    let nic = tcp_nic_for(id);
+    let src_ip = resolve_src_ip(remote.ip, local.ip, nic);
     if src_ip.is_unspecified() {
         return;
     }
-    let dst_mac = match tcp_mac_for(remote.ip) {
+    let dst_mac = match tcp_mac_for(remote.ip, nic) {
         Some(m) => m,
         None => return,
     };
@@ -861,7 +881,7 @@ fn retransmit_oldest(
         dst_mac, src_ip.0, remote.ip.0,
         local.port, remote.port, base, rack,
         flags, adv_window(rused),
-        &payload,
+        &payload, nic,
     ) {
         touch_tx(id, now, retries + 1);
     }
@@ -960,7 +980,8 @@ pub fn build_tcp_segment(src_ip: [u8; 4], dst_ip: [u8; 4], src_port: u16, dst_po
 }
 
 pub fn send_tcp_segment(dst_mac: [u8; 6], src_ip: [u8; 4], dst_ip: [u8; 4],
-    src_port: u16, dst_port: u16, seq: u32, ack: u32, flags: u8, win: u16, payload: &[u8]) -> bool
+    src_port: u16, dst_port: u16, seq: u32, ack: u32, flags: u8, win: u16, payload: &[u8],
+    nic: Option<u32>) -> bool
 {
     let segment = build_tcp_segment(src_ip, dst_ip, src_port, dst_port, seq, ack, flags, win, payload);
     let ip_payload_len = segment.len();
@@ -996,7 +1017,7 @@ pub fn send_tcp_segment(dst_mac: [u8; 6], src_ip: [u8; 4], dst_ip: [u8; 4],
         return true;
     }
 
-    let nic_id = match crate::net::nic::nic_default_id() { Some(id) => id, None => return false };
+    let nic_id = match nic.or_else(crate::net::nic::nic_default_id) { Some(id) => id, None => return false };
     let mut registry = crate::net::nic::NIC_REGISTRY.lock();
     let nic = match registry.get_mut(nic_id) { Some(n) => n, None => return false };
     let src_mac = nic.mac_address();
@@ -1078,12 +1099,12 @@ pub fn tcp_send_syn_ack(socket_id: usize, src_port: u16, dst_port: u16, their_se
     // destination) and `src_ip` is the peer's; resolving the MAC of `dst_ip`
     // (us) would ARP our own address and silently drop the SYN-ACK. Loopback
     // masked this because both addresses are 127.0.0.1.
-    let dst_mac = match tcp_mac_for(crate::net::types::Ipv4Addr(src_ip)) {
+    let dst_mac = match tcp_mac_for(crate::net::types::Ipv4Addr(src_ip), None) {
         Some(m) => m,
         None => return,
     };
     send_tcp_segment(dst_mac, dst_ip, src_ip, src_port, dst_port,
-        my_seq, their_seq.wrapping_add(1), TCP_FLAG_SYN | TCP_FLAG_ACK, TCP_DEFAULT_WINDOW, &[]);
+        my_seq, their_seq.wrapping_add(1), TCP_FLAG_SYN | TCP_FLAG_ACK, TCP_DEFAULT_WINDOW, &[], None);
 }
 
 /// Handle an incoming ACK (#486). Caller must NOT hold SOCKET_MANAGER.
@@ -1187,13 +1208,14 @@ pub fn tcp_handle_ack(socket_id: usize, their_seq: u32, their_ack: u32, window: 
     }
     // Completing handshake ACK (no locks held).
     if let Some((local, remote, seq, ack)) = hs_ack {
-        let src_ip = resolve_src_ip(remote.ip, local.ip);
+        let nic = tcp_nic_for(tcp_id);
+        let src_ip = resolve_src_ip(remote.ip, local.ip, nic);
         if !src_ip.is_unspecified() {
-            if let Some(dst_mac) = tcp_mac_for(remote.ip) {
+            if let Some(dst_mac) = tcp_mac_for(remote.ip, nic) {
                 send_tcp_segment(
                     dst_mac, src_ip.0, remote.ip.0,
                     local.port, remote.port, seq, ack,
-                    TCP_FLAG_ACK, TCP_DEFAULT_WINDOW, &[],
+                    TCP_FLAG_ACK, TCP_DEFAULT_WINDOW, &[], nic,
                 );
             }
         }
@@ -1253,14 +1275,15 @@ pub fn tcp_handle_data(
             .map(|s| s.id)
             .unwrap_or(0)
     };
-    let dst_mac = match tcp_mac_for(src_ip) {
+    let nic = tcp_nic_for(tcp_id);
+    let dst_mac = match tcp_mac_for(src_ip, nic) {
         Some(m) => m,
         None => return reply.accepted,
     };
     send_tcp_segment(
         dst_mac, dst_ip.0, src_ip.0,
         dst_port, src_port, conn_seq_for(tcp_id), reply.ack,
-        TCP_FLAG_ACK, reply.window, &[],
+        TCP_FLAG_ACK, reply.window, &[], nic,
     );
     if reply.accepted && sid != 0 {
         let mut mgr = crate::net::socket::SOCKET_MANAGER.lock();
@@ -1308,11 +1331,12 @@ pub fn tcp_handle_fin(tcp_id: u32, seq: u32, src_ip: Ipv4Addr, dst_ip: Ipv4Addr,
         }
     };
     if do_ack {
-        if let Some(dst_mac) = tcp_mac_for(src_ip) {
+        let nic = tcp_nic_for(tcp_id);
+        if let Some(dst_mac) = tcp_mac_for(src_ip, nic) {
             send_tcp_segment(
                 dst_mac, dst_ip.0, src_ip.0,
                 dst_port, src_port, send_seq, ack,
-                TCP_FLAG_ACK, TCP_DEFAULT_WINDOW, &[],
+                TCP_FLAG_ACK, TCP_DEFAULT_WINDOW, &[], nic,
             );
         }
     }

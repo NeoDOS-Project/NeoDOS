@@ -189,14 +189,16 @@ impl NicRegistry {
         }
     }
 
-    /// IPv4 next hop for `dest_ip` on the default NIC:
+    /// IPv4 next hop for `dest_ip` on a specific NIC (#317):
     /// - on-link                     -> `dest_ip`
     /// - off-link with a gateway     -> configured gateway
     /// - off-link with gateway unset -> `None` (no valid next hop)
     /// - broadcast                   -> `dest_ip`
-    pub fn next_hop_ip(&self, dest_ip: Ipv4Addr) -> Option<Ipv4Addr> {
-        let id = self.default_nic_id()?;
-        let slot = &self.nics[id as usize];
+    pub fn next_hop_ip_for(&self, nic_id: u32, dest_ip: Ipv4Addr) -> Option<Ipv4Addr> {
+        if (nic_id as usize) >= MAX_NICS {
+            return None;
+        }
+        let slot = &self.nics[nic_id as usize];
         if slot.interface.is_none() {
             return None;
         }
@@ -212,6 +214,12 @@ impl NicRegistry {
         } else {
             Some(slot.gateway)
         }
+    }
+
+    /// IPv4 next hop for `dest_ip` on the default NIC.
+    pub fn next_hop_ip(&self, dest_ip: Ipv4Addr) -> Option<Ipv4Addr> {
+        let id = self.default_nic_id()?;
+        self.next_hop_ip_for(id, dest_ip)
     }
 
     /// MAC of the next hop for `dest_ip` if it is already in the ARP cache.
@@ -365,6 +373,17 @@ pub fn nic_set_gateway(nic_id: u32, gateway: Ipv4Addr) {
 /// without a configured gateway).
 pub fn nic_next_hop(dest_ip: Ipv4Addr) -> Option<Ipv4Addr> {
     NIC_REGISTRY.lock().next_hop_ip(dest_ip)
+}
+
+/// IPv4 next hop for `dest_ip` on a specific NIC (#317).
+pub fn nic_next_hop_for(nic_id: u32, dest_ip: Ipv4Addr) -> Option<Ipv4Addr> {
+    NIC_REGISTRY.lock().next_hop_ip_for(nic_id, dest_ip)
+}
+
+/// MAC address of a specific NIC (source MAC for bound-interface sends).
+pub fn nic_mac(nic_id: u32) -> Option<MacAddr> {
+    let mut reg = NIC_REGISTRY.lock();
+    reg.get_mut(nic_id).map(|n| n.mac_address())
 }
 
 /// Local routing decision for `dest_ip` (#484).

@@ -466,7 +466,7 @@ pub fn socket_accept_incoming(
     let local = SocketAddrV4::new(our_ip, our_port);
     let remote = SocketAddrV4::new(peer_ip, peer_port);
     let _ = crate::net::tcp::send_synack_segment(
-        local, remote, SRV_ISS, their_seq.wrapping_add(1),
+        local, remote, SRV_ISS, their_seq.wrapping_add(1), nic,
     );
     SOCKET_MANAGER.lock().wake_socket_accept_waiters(listener_id);
     true
@@ -644,15 +644,15 @@ pub fn socket_send_udp_raw_on(
         }
     }
 
-    // Next hop (single source of truth, see `nic_next_hop`): on-link -> the
-    // destination; off-link -> the configured gateway; off-link without a
-    // gateway -> clean failure (never ARP the remote destination).
-    let arp_target = nic_next_hop(dst_ip).ok_or(())?;
+    // Next hop on the socket's bound NIC (#317; single source of truth via
+    // `nic_next_hop_for`): on-link -> the destination; off-link -> the
+    // interface's gateway; off-link without a gateway -> clean failure.
+    let arp_target = crate::net::nic::nic_next_hop_for(nic_id, dst_ip).ok_or(())?;
 
     let dst_mac = if dst_ip.is_broadcast() {
         MacAddr::broadcast()
     } else {
-        arp_resolve(arp_target).ok_or(())?
+        crate::net::arp::arp_resolve_on(nic_id, arp_target).ok_or(())?
     };
 
     let udp_data = crate::net::udp::build_udp_datagram(

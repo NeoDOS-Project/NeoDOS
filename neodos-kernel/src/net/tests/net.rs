@@ -504,7 +504,7 @@ pub fn register() {
             [0x02, 0, 0, 0, 0, 0x01],
             [127, 0, 0, 1], [127, 0, 0, 1],
             40001, 40002, 1000, 0,
-            super::super::tcp::TCP_FLAG_SYN, 65535, &[],
+            super::super::tcp::TCP_FLAG_SYN, 65535, &[], None,
         ));
         test_eq!(super::super::loopback::loopback_pending(), 0);
     });
@@ -694,5 +694,144 @@ pub fn register() {
         z[6] = 0;
         z[7] = 0;
         test_true!(super::super::udp::udp_checksum_valid([10, 0, 1, 10], [10, 0, 1, 21], &z));
+    });
+
+    test_case!("net_multi_nic_next_hop_per_interface", {
+        use super::super::nic::{nic_register, nic_unregister, NIC_REGISTRY};
+        let n0 = nic_register(alloc::boxed::Box::new(capture_nic(0xA0))).unwrap();
+        let n1 = nic_register(alloc::boxed::Box::new(capture_nic(0xB0))).unwrap();
+        {
+            let mut reg = NIC_REGISTRY.lock();
+            reg.set_ip(n0, Ipv4Addr::new([10, 0, 0, 10]));
+            reg.set_mask(n0, Ipv4Addr::new([255, 255, 255, 0]));
+            reg.set_gateway(n0, Ipv4Addr::new([10, 0, 0, 1]));
+            reg.set_ip(n1, Ipv4Addr::new([10, 1, 0, 10]));
+            reg.set_mask(n1, Ipv4Addr::new([255, 255, 255, 0]));
+            reg.set_gateway(n1, Ipv4Addr::new([10, 1, 0, 1]));
+        }
+        // On-link -> the destination itself.
+        test_eq!(
+            super::super::nic::nic_next_hop_for(n0, Ipv4Addr::new([10, 0, 0, 20])),
+            Some(Ipv4Addr::new([10, 0, 0, 20]))
+        );
+        test_eq!(
+            super::super::nic::nic_next_hop_for(n1, Ipv4Addr::new([10, 1, 0, 20])),
+            Some(Ipv4Addr::new([10, 1, 0, 20]))
+        );
+        // Off-link -> that interface's OWN gateway (not the default NIC's).
+        test_eq!(
+            super::super::nic::nic_next_hop_for(n0, Ipv4Addr::new([8, 8, 8, 8])),
+            Some(Ipv4Addr::new([10, 0, 0, 1]))
+        );
+        test_eq!(
+            super::super::nic::nic_next_hop_for(n1, Ipv4Addr::new([8, 8, 8, 8])),
+            Some(Ipv4Addr::new([10, 1, 0, 1]))
+        );
+        // A destination on-link for NIC0 is off-link (via NIC1's gateway) for NIC1.
+        test_eq!(
+            super::super::nic::nic_next_hop_for(n1, Ipv4Addr::new([10, 0, 0, 20])),
+            Some(Ipv4Addr::new([10, 1, 0, 1]))
+        );
+        nic_unregister(n0);
+        nic_unregister(n1);
+    });
+
+    test_case!("net_udp_send_honors_bound_nic", {
+        use super::super::arp::ArpPacket;
+        use super::super::ethernet::{EthernetHeader, ETH_HDR_LEN, ETH_TYPE_ARP};
+        use super::super::nic::{nic_register, nic_unregister, NIC_REGISTRY};
+        let s0 = alloc::sync::Arc::new(spin::Mutex::new(alloc::vec::Vec::new()));
+        let s1 = alloc::sync::Arc::new(spin::Mutex::new(alloc::vec::Vec::new()));
+        let n0 = nic_register(alloc::boxed::Box::new(CaptureNic {
+            mac: MacAddr::new([0x02, 0, 0, 0, 0xA0, 0x00]),
+            ip: Ipv4Addr::unspecified(),
+            sent: s0.clone(),
+        }))
+        .unwrap();
+        let n1 = nic_register(alloc::boxed::Box::new(CaptureNic {
+            mac: MacAddr::new([0x02, 0, 0, 0, 0xB0, 0x00]),
+            ip: Ipv4Addr::unspecified(),
+            sent: s1.clone(),
+        }))
+        .unwrap();
+        {
+            let mut reg = NIC_REGISTRY.lock();
+            reg.set_ip(n0, Ipv4Addr::new([10, 0, 0, 10]));
+            reg.set_mask(n0, Ipv4Addr::new([255, 255, 255, 0]));
+            reg.set_gateway(n0, Ipv4Addr::new([10, 0, 0, 1]));
+            reg.set_ip(n1, Ipv4Addr::new([10, 1, 0, 10]));
+            reg.set_mask(n1, Ipv4Addr::new([255, 255, 255, 0]));
+            reg.set_gateway(n1, Ipv4Addr::new([10, 1, 0, 1]));
+        }
+        // Off-link datagram bound to NIC0: ARP must target NIC0's gateway and
+        // leave through NIC0 only.
+        let local = SocketAddrV4::new(Ipv4Addr::new([10, 0, 0, 10]), 40000);
+        let remote = SocketAddrV4::new(Ipv4Addr::new([8, 8, 8, 8]), 53);
+        let _ = super::super::socket::socket_send_udp_raw_on(local, remote, b"x", Some(n0));
+        let f0 = s0.lock().clone();
+        let f1 = s1.lock().clone();
+        test_eq!(f0.len(), 1);
+        test_eq!(f1.len(), 0);
+        let eth: &EthernetHeader = unsafe { &*(f0[0].as_ptr() as *const EthernetHeader) };
+        test_eq!(eth.ethertype(), ETH_TYPE_ARP);
+        test_eq!(eth.src_mac(), MacAddr::new([0x02, 0, 0, 0, 0xA0, 0x00]));
+        let arp: &ArpPacket = unsafe { &*(f0[0].as_ptr().add(ETH_HDR_LEN) as *const ArpPacket) };
+        test_eq!(arp.target_ip_addr(), Ipv4Addr::new([10, 0, 0, 1]));
+        nic_unregister(n0);
+        nic_unregister(n1);
+    });
+
+    test_case!("net_tcp_connect_uses_bound_nic", {
+        use super::super::ethernet::{EthernetHeader, ETH_HDR_LEN, ETH_TYPE_IPV4};
+        use super::super::nic::{nic_register, nic_unregister, NIC_REGISTRY};
+        let s0 = alloc::sync::Arc::new(spin::Mutex::new(alloc::vec::Vec::new()));
+        let s1 = alloc::sync::Arc::new(spin::Mutex::new(alloc::vec::Vec::new()));
+        let n0 = nic_register(alloc::boxed::Box::new(CaptureNic {
+            mac: MacAddr::new([0x02, 0, 0, 0, 0xA0, 0x01]),
+            ip: Ipv4Addr::unspecified(),
+            sent: s0.clone(),
+        }))
+        .unwrap();
+        let n1 = nic_register(alloc::boxed::Box::new(CaptureNic {
+            mac: MacAddr::new([0x02, 0, 0, 0, 0xB0, 0x01]),
+            ip: Ipv4Addr::unspecified(),
+            sent: s1.clone(),
+        }))
+        .unwrap();
+        {
+            let mut reg = NIC_REGISTRY.lock();
+            reg.set_ip(n0, Ipv4Addr::new([10, 0, 0, 10]));
+            reg.set_mask(n0, Ipv4Addr::new([255, 255, 255, 0]));
+            reg.set_gateway(n0, Ipv4Addr::new([10, 0, 0, 1]));
+            reg.set_ip(n1, Ipv4Addr::new([10, 1, 0, 10]));
+            reg.set_mask(n1, Ipv4Addr::new([255, 255, 255, 0]));
+            reg.set_gateway(n1, Ipv4Addr::new([10, 1, 0, 1]));
+        }
+        // Seed ARP for NIC0's gateway so the SYN can leave immediately.
+        super::super::arp::arp_insert(Ipv4Addr::new([10, 0, 0, 1]), MacAddr::new([0x02, 0, 0, 0, 0xAA, 0x01]));
+
+        let sock = SOCKET_MANAGER.lock().alloc_socket(SocketType::Tcp).unwrap();
+        let tcp = tcp_alloc_connection().unwrap();
+        socket_set_tcp_conn(sock, tcp);
+        test_true!(socket_bind(sock, SocketAddrV4::new(Ipv4Addr::unspecified(), 0)));
+        test_true!(super::super::socket::socket_set_nic(sock, n0));
+        test_true!(socket_connect(sock, SocketAddrV4::new(Ipv4Addr::new([8, 8, 8, 8]), 80)));
+
+        let f0 = s0.lock().clone();
+        let f1 = s1.lock().clone();
+        test_eq!(f1.len(), 0);
+        test_eq!(f0.len(), 1);
+        let eth: &EthernetHeader = unsafe { &*(f0[0].as_ptr() as *const EthernetHeader) };
+        test_eq!(eth.ethertype(), ETH_TYPE_IPV4);
+        test_eq!(eth.src_mac(), MacAddr::new([0x02, 0, 0, 0, 0xA0, 0x01]));
+        let ip: &Ipv4Header = unsafe { &*(f0[0].as_ptr().add(ETH_HDR_LEN) as *const Ipv4Header) };
+        test_eq!(ip.src_ip(), Ipv4Addr::new([10, 0, 0, 10]));
+        test_eq!(ip.dst_ip(), Ipv4Addr::new([8, 8, 8, 8]));
+
+        SOCKET_MANAGER.lock().free_socket(sock);
+        tcp_free_connection(tcp);
+        super::super::arp::ARP_CACHE.lock().remove(Ipv4Addr::new([10, 0, 0, 1]));
+        nic_unregister(n0);
+        nic_unregister(n1);
     });
 }
