@@ -125,6 +125,8 @@ pub fn kwait_block(reason: WaitReason) {
 /// for those whose `waiting_for` matches the encoded magic.
 pub fn kwait_wake(reason: &WaitReason) {
     let magic = reason.encode_magic();
+    // A woken waiter no longer needs its finite timeout (events, sockets, ...).
+    cancel_deadline(magic);
     let old_irql = unsafe { irql::raise_irql(DISPATCH_LEVEL) };
     let mut scheduler = scheduler::current_scheduler().lock();
     for k in scheduler.kthreads.iter_mut().flatten() {

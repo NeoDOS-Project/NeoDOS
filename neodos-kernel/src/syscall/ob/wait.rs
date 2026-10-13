@@ -78,16 +78,7 @@ pub fn handler_ob_wait(regs: crate::syscall::Registers) -> u64 {
             let socket_id = obj.native_id as u32;
             match crate::net::socket::socket_wait_reason(socket_id) {
                 Ok(None) => return 0,
-                Ok(Some(reason)) => {
-                    // Finite timeout: arm a deadline the RX pump will fire. The
-                    // wake is a normal signal; the caller must re-check
-                    // readiness (timeouts carry no distinct status).
-                    if timeout_ms > 0 {
-                        let deadline = crate::net::tcp::tcp_deadline_from_ms(timeout_ms);
-                        crate::kwait::register_deadline(reason.encode_magic(), deadline);
-                    }
-                    reason
-                }
+                Ok(Some(reason)) => reason,
                 Err(()) => return err_to_u64(SyscallError::BadF),
             }
         }
@@ -138,6 +129,15 @@ pub fn handler_ob_wait(regs: crate::syscall::Registers) -> u64 {
             });
             return 0;
         }
+    }
+    // Arm a finite timeout for ANY object wait (socket, event, pipe, ...), not
+    // just sockets: an event wait without a deadline blocks forever, which
+    // stalled the network applier's notification fallback (#364).
+    if timeout_ms > 0 {
+        crate::kwait::register_deadline(
+            reason.encode_magic(),
+            crate::net::tcp::tcp_deadline_from_ms(timeout_ms),
+        );
     }
     crate::kwait::kwait_block(reason);
     0
