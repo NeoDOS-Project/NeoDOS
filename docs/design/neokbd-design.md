@@ -909,7 +909,17 @@ Los layouts se generan desde los mismos archivos `.klc` existentes, pero convert
 | `US.kbd` | US | en-US | 256 | 0 |
 | `Spanish.kbd` | Spanish | es-ES | 256 | 54 |
 
-La herramienta `kbdcompile` toma un `.klc` y produce un `.kbd` binario. Se invoca en el build de la imagen, no en runtime.
+La herramienta `kbdcompile` toma un `.klc` y produce un `.kbd` binario.
+
+Alternativa abierta y offline: `tools/xkbcompile` convierte un layout XKB
+(`/usr/share/X11/xkb/symbols/*`) a `.kbd` directamente, sin pasar por `.klc`:
+
+```text
+xkbcompile es basic --name es-ES --lang es-ES --out data/keyboard/es-ES.kbd
+```
+
+XKB cubre muchos idiomas con licencia abierta; sus límites (un solo grupo,
+niveles 1-3, keysyms exóticos) están en `tools/xkbcompile/README.md`.
 
 ---
 
