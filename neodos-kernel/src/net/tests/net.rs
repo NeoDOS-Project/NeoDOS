@@ -647,6 +647,18 @@ pub fn register() {
         tcp_free_connection(srv_tcp);
         tcp_free_connection(srv_listen_tcp);
     });
+    test_case!("net_tcp_timeout_scale", {
+        // A millisecond timeout must convert with the ms->us factor of 1000:
+        // ticks = ms * 1000 * cycles_per_us. Regression: the old conversion
+        // omitted *1000, arming deadlines 1000x too early.
+        test_eq!(super::super::tcp::tsc_ticks_from_ms(1, 1000), 1_000_000);
+        test_eq!(super::super::tcp::tsc_ticks_from_ms(5, 1000), 5_000_000);
+        test_eq!(super::super::tcp::tsc_ticks_from_ms(200, 1000), 200_000_000);
+        // Saturates rather than overflowing.
+        test_eq!(super::super::tcp::tsc_ticks_from_ms(u64::MAX, u64::MAX), u64::MAX);
+        // Zero stays zero (indefinite wait).
+        test_eq!(super::super::tcp::tsc_ticks_from_ms(0, 1000), 0);
+    });
     test_case!("net_ipv4_header_checksum_validation", {
         let hdr = build_ipv4_header(Ipv4Addr::new([10, 0, 1, 10]), Ipv4Addr::new([10, 0, 1, 20]), 6, 20, 0);
         let bytes = unsafe {

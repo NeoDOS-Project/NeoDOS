@@ -205,6 +205,7 @@ pub(super) fn dispatch(
                 }
             };
             if copy_to_user(buf_ptr, &(fd as u32).to_ne_bytes()).is_err() {
+                rollback_accept(fd, ob_id, conn_socket_id);
                 return err_to_u64(SyscallError::Fault);
             }
             4u64
@@ -390,4 +391,16 @@ pub(super) fn dispatch(
         }
         _ => err_to_u64(SyscallError::Inval),
     }
+}
+
+/// Undo a partially-completed `SocketAccept`.
+///
+/// Called when the accepted fd could not be transferred to the caller. Frees
+/// the handle slot, closes the Ob object and releases the socket (which drops
+/// the TCP connection and detaches it from the listener backlog). The order
+/// mirrors `handler_close`: close the object once, then clear the handle.
+fn rollback_accept(fd: u8, ob_id: crate::object::ObId, socket_id: u32) {
+    crate::syscall::set_current_handle(fd, crate::handle::HandleEntry::closed());
+    let _ = crate::object::ob_close_object(ob_id);
+    crate::net::socket::socket_free(socket_id);
 }

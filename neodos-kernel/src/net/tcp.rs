@@ -269,9 +269,15 @@ pub fn tcp_now_tsc() -> u64 {
     crate::boot_benchmark::rdtsc()
 }
 
-/// Convert a millisecond timeout into an absolute TSC deadline.
+/// Convert a millisecond timeout into absolute TSC ticks (`ms * 1000µs *
+/// cycles/µs`), saturating on overflow. Pure helper so the scale is testable.
+pub fn tsc_ticks_from_ms(ms: u64, tsc_per_us: u64) -> u64 {
+    ms.saturating_mul(1000).saturating_mul(tsc_per_us)
+}
+
+/// Absolute TSC deadline for a millisecond timeout.
 pub fn tcp_deadline_from_ms(ms: u64) -> u64 {
-    crate::boot_benchmark::rdtsc().wrapping_add(ms.saturating_mul(tsc_per_us()))
+    crate::boot_benchmark::rdtsc().wrapping_add(tsc_ticks_from_ms(ms, tsc_per_us()))
 }
 
 /// Resolve the source IP for an outgoing segment.
@@ -1132,8 +1138,12 @@ pub fn tcp_handle_ack(socket_id: usize, their_seq: u32, their_ack: u32, window: 
             | TcpState::FinWait2
             | TcpState::CloseWait
             | TcpState::LastAck => {
-                if their_ack > conn.send_base && their_ack <= conn.send_seq {
-                    let acked = their_ack.wrapping_sub(conn.send_base) as usize;
+                // Wraparound-safe window check: `acked` must be in (0, in_flight].
+                // Plain `>`/`<=` break once sequence numbers wrap past u32::MAX.
+                let acked = their_ack.wrapping_sub(conn.send_base);
+                let in_flight = conn.send_seq.wrapping_sub(conn.send_base);
+                if acked != 0 && acked <= in_flight {
+                    let acked = acked as usize;
                     let drop_n = acked.min(conn.send_buf.len());
                     conn.send_buf.drain(..drop_n);
                     conn.send_base = their_ack;

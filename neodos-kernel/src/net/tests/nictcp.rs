@@ -18,7 +18,7 @@ use spin::Mutex;
 
 use super::super::nic::{nic_register, nic_unregister, NetworkInterface, NIC_REGISTRY};
 use super::super::socket::{
-    socket_bind, socket_close, socket_listen, socket_set_tcp_conn, SOCKET_MANAGER,
+    socket_bind, socket_close, socket_connect, socket_listen, socket_set_tcp_conn, SOCKET_MANAGER,
 };
 use super::super::tcp::{
     tcp_alloc_connection, tcp_free_connection, tcp_get_state, tcp_recv, tcp_send, tcp_tick,
@@ -706,5 +706,149 @@ pub fn register() {
         tcp_free_connection(srv_listen_tcp);
         super::super::arp::ARP_CACHE.lock().remove(peer_ip);
         nic_unregister(nic_id);
+    });
+
+    test_case!("net_tcp_ack_wraparound", {
+        // An ACK that crosses the u32 sequence wrap must still advance the
+        // window. Regression: the plain `their_ack > send_base` test ignored it.
+        let sock = SOCKET_MANAGER.lock().alloc_socket(SocketType::Tcp).unwrap();
+        let tcp_id = tcp_alloc_connection().unwrap();
+        socket_set_tcp_conn(sock, tcp_id);
+        {
+            let mut tbl = super::super::tcp::TCP.lock();
+            let c = tbl.get_connection_mut(tcp_id).unwrap();
+            c.state = TcpState::Established;
+            c.local = SocketAddrV4::new(Ipv4Addr::localhost(), 40000);
+            c.remote = SocketAddrV4::new(Ipv4Addr::localhost(), 50000);
+            c.send_base = u32::MAX - 3;
+            c.send_seq = c.send_base.wrapping_add(14);
+            c.recv_seq = 500;
+            c.window = 65535;
+            c.send_buf.clear();
+            for b in 0..14u8 {
+                c.send_buf.push_back(b);
+            }
+        }
+        SOCKET_MANAGER.lock().get_socket_mut(sock).unwrap().direction = SocketDirection::Connected;
+        let idx = SOCKET_MANAGER
+            .lock()
+            .sockets
+            .iter()
+            .position(|s| s.as_ref().map(|x| x.id) == Some(sock))
+            .unwrap();
+        let ack = (u32::MAX - 3).wrapping_add(6); // wraps to 2
+        super::super::tcp::tcp_handle_ack(idx, 500, ack, 65535);
+        let c = super::super::tcp::tcp_get_connection(tcp_id).unwrap();
+        test_eq!(c.send_base, ack);
+        test_eq!(c.send_buf.len(), 8);
+
+        SOCKET_MANAGER.lock().free_socket(sock);
+        tcp_free_connection(tcp_id);
+    });
+
+    test_case!("net_tcp_duplicate_and_out_of_order", {
+        // Duplicate and gap segments must not be delivered twice or out of
+        // order; the in-order next byte is still accepted.
+        let tcp_id = tcp_alloc_connection().unwrap();
+        {
+            let mut tbl = super::super::tcp::TCP.lock();
+            let c = tbl.get_connection_mut(tcp_id).unwrap();
+            c.state = TcpState::Established;
+            c.local = SocketAddrV4::new(Ipv4Addr::localhost(), 40000);
+            c.remote = SocketAddrV4::new(Ipv4Addr::localhost(), 50000);
+            c.recv_seq = 100;
+            c.send_base = 10;
+            c.send_seq = 10;
+        }
+        let loop_ip = Ipv4Addr::localhost();
+        test_true!(super::super::tcp::tcp_handle_data(
+            tcp_id, 100, b"AAAA", loop_ip, loop_ip, 50000, 40000
+        ));
+        let mut buf = [0u8; 16];
+        let n = tcp_recv(tcp_id, &mut buf).unwrap();
+        test_eq!(&buf[..n], b"AAAA");
+        // Duplicate (old seq) is rejected and not delivered again.
+        test_true!(!super::super::tcp::tcp_handle_data(
+            tcp_id, 100, b"AAAA", loop_ip, loop_ip, 50000, 40000
+        ));
+        test_true!(tcp_recv(tcp_id, &mut buf).is_err());
+        // A gap is dropped (no out-of-order reassembly).
+        test_true!(!super::super::tcp::tcp_handle_data(
+            tcp_id, 200, b"XXXX", loop_ip, loop_ip, 50000, 40000
+        ));
+        test_true!(tcp_recv(tcp_id, &mut buf).is_err());
+        // The in-order continuation is accepted.
+        test_true!(super::super::tcp::tcp_handle_data(
+            tcp_id, 104, b"BB", loop_ip, loop_ip, 50000, 40000
+        ));
+        let n = tcp_recv(tcp_id, &mut buf).unwrap();
+        test_eq!(&buf[..n], b"BB");
+        tcp_free_connection(tcp_id);
+    });
+
+    test_case!("net_tcp_loopback_large_transfer", {
+        // A payload spanning several segments must transfer intact.
+        use super::super::loopback::loopback_pump;
+        let srv_sock = SOCKET_MANAGER.lock().alloc_socket(SocketType::Tcp).unwrap();
+        let srv_listen = tcp_alloc_connection().unwrap();
+        socket_set_tcp_conn(srv_sock, srv_listen);
+        socket_bind(srv_sock, SocketAddrV4::new(Ipv4Addr::new([127, 0, 0, 1]), 50121));
+        socket_listen(srv_sock);
+
+        let cli_sock = SOCKET_MANAGER.lock().alloc_socket(SocketType::Tcp).unwrap();
+        let cli = tcp_alloc_connection().unwrap();
+        socket_set_tcp_conn(cli_sock, cli);
+        socket_bind(cli_sock, SocketAddrV4::new(Ipv4Addr::new([127, 0, 0, 1]), 0));
+        socket_connect(cli_sock, SocketAddrV4::new(Ipv4Addr::new([127, 0, 0, 1]), 50121));
+
+        let mut srv_conn = 0u32;
+        for _ in 0..4000 {
+            tcp_tick();
+            loopback_pump();
+            if super::super::socket::listener_has_pending(srv_sock) {
+                srv_conn = super::super::socket::socket_accept_take(srv_sock).unwrap();
+                break;
+            }
+        }
+        test_true!(srv_conn != 0);
+        let srv_tcp = SOCKET_MANAGER
+            .lock()
+            .get_socket(srv_conn)
+            .unwrap()
+            .tcp_conn_id
+            .unwrap();
+
+        let total = 5000usize;
+        let mut payload = alloc::vec::Vec::with_capacity(total);
+        for i in 0..total {
+            payload.push((i % 251) as u8);
+        }
+        let mut off = 0usize;
+        let mut received: alloc::vec::Vec<u8> = alloc::vec::Vec::with_capacity(total);
+        for _ in 0..40000 {
+            if off < payload.len() {
+                if let Ok(n) = tcp_send(cli, &payload[off..]) {
+                    off += n;
+                }
+            }
+            tcp_tick();
+            loopback_pump();
+            let mut buf = [0u8; 1024];
+            while let Ok(n) = tcp_recv(srv_tcp, &mut buf) {
+                received.extend_from_slice(&buf[..n]);
+            }
+            if off >= payload.len() && received.len() >= payload.len() {
+                break;
+            }
+        }
+        test_eq!(received.len(), payload.len());
+        test_true!(received == payload);
+
+        SOCKET_MANAGER.lock().free_socket(cli_sock);
+        SOCKET_MANAGER.lock().free_socket(srv_conn);
+        SOCKET_MANAGER.lock().free_socket(srv_sock);
+        tcp_free_connection(cli);
+        tcp_free_connection(srv_tcp);
+        tcp_free_connection(srv_listen);
     });
 }
