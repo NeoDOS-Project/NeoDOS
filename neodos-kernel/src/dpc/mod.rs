@@ -82,7 +82,7 @@ impl DpcQueue {
         if self.count as usize >= DPC_QUEUE_SIZE {
             return false;
         }
-        self.entries[self.tail as usize] = DpcEntry { function, context };
+        self.entries[(self.tail as usize) % DPC_QUEUE_SIZE] = DpcEntry { function, context };
         compiler_fence(Ordering::Release);
         self.tail = self.tail.wrapping_add(1);
         self.count += 1;
@@ -97,7 +97,7 @@ impl DpcQueue {
             self.pending = false;
             return None;
         }
-        let entry = self.entries[self.head as usize];
+        let entry = self.entries[(self.head as usize) % DPC_QUEUE_SIZE];
         compiler_fence(Ordering::Release);
         self.head = self.head.wrapping_add(1);
         self.count -= 1;
@@ -399,6 +399,50 @@ fn test_dpc_dispatch_pending_global_api() -> Result<(), &'static str> {
     Ok(())
 }
 
+fn test_dpc_ring_wraparound() -> Result<(), &'static str> {
+    // Regression #642: head/tail must index modulo DPC_QUEUE_SIZE. Before the
+    // fix, the 129th cumulative enqueue on one queue indexed out of bounds and
+    // panicked (drains do not reset the indices).
+    use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    static FIFO_OK: AtomicBool = AtomicBool::new(true);
+
+    fn cb(ctx: *mut u8) {
+        let expected = ctx as u64;
+        let seen = SEQ.fetch_add(1, Ordering::Relaxed);
+        if seen != expected {
+            FIFO_OK.store(false, Ordering::Relaxed);
+        }
+    }
+
+    let mut q = DpcQueue::new();
+    let mut next: u64 = 0;
+
+    // 1) Single enqueue + full dispatch, 300 times: cumulative indices far
+    //    exceed the 128-entry capacity.
+    for _ in 0..300u64 {
+        test_true!(q.enqueue(cb, next as *mut u8));
+        next += 1;
+        test_eq!(q.dispatch_all(), 1);
+    }
+
+    // 2) Fill to capacity and drain in one dispatch, repeatedly, so the
+    //    producer/consumer wrap within a single drain is exercised too.
+    for _ in 0..40u64 {
+        for _ in 0..(DPC_QUEUE_SIZE as u64) {
+            test_true!(q.enqueue(cb, next as *mut u8));
+            next += 1;
+        }
+        test_eq!(q.dispatch_all(), DPC_QUEUE_SIZE);
+    }
+
+    test_true!(!q.has_pending());
+    test_eq!(q.pending_count(), 0);
+    test_eq!(SEQ.load(Ordering::Relaxed), next);
+    test_true!(FIFO_OK.load(Ordering::Relaxed));
+    Ok(())
+}
+
 /// Register all DPC tests.
 pub fn register_tests() {
     crate::testing::register("dpc_enqueue_dispatch_level", test_dpc_enqueue_dispatch_level);
@@ -407,5 +451,6 @@ pub fn register_tests() {
     crate::testing::register("dpc_callback_execution_order", test_dpc_callback_execution_order);
     crate::testing::register("dpc_stress_100_irqs", test_dpc_stress_100_irqs);
     crate::testing::register("dpc_queue_overflow", test_dpc_queue_overflow);
+    crate::testing::register("dpc_ring_wraparound", test_dpc_ring_wraparound);
     crate::testing::register("dpc_dispatch_pending_global_api", test_dpc_dispatch_pending_global_api);
 }
