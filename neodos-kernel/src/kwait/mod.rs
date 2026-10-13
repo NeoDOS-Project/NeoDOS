@@ -138,6 +138,53 @@ pub fn kwait_wake(reason: &WaitReason) {
     unsafe { irql::lower_irql(old_irql) };
 }
 
+/// Finite-timeout waiters: `(magic, deadline_tsc)`.
+///
+/// Serviced by the network pump (which runs continuously), not by the
+/// scheduler timer, so a timed socket wait is woken without changing core
+/// scheduler behaviour. The wake is a normal `kwait_wake`; the caller
+/// re-checks readiness afterwards (the timeout does not carry a distinct
+/// return code — see `docs/networking/stack.md`).
+static WAIT_DEADLINES: spin::Mutex<alloc::vec::Vec<(u64, u64)>> =
+    spin::Mutex::new(alloc::vec::Vec::new());
+
+/// Register a finite deadline for a wait magic. `deadline_tsc` is an absolute
+/// TSC value (0 = never).
+pub fn register_deadline(magic: u64, deadline_tsc: u64) {
+    if deadline_tsc == 0 {
+        return;
+    }
+    WAIT_DEADLINES.lock().push((magic, deadline_tsc));
+}
+
+/// Wake any waiters whose deadline has passed. Called from `net_tick` with the
+/// current TSC. Returns the number of deadlines expired.
+pub fn deadline_tick(now: u64) -> usize {
+    let mut expired: alloc::vec::Vec<u64> = alloc::vec::Vec::new();
+    {
+        let mut d = WAIT_DEADLINES.lock();
+        d.retain(|(m, dl)| {
+            if now.wrapping_sub(*dl) < (1u64 << 63) {
+                expired.push(*m);
+                false
+            } else {
+                true
+            }
+        });
+    }
+    for m in &expired {
+        if let Some(reason) = WaitReason::decode_magic(*m) {
+            kwait_wake(&reason);
+        }
+    }
+    expired.len()
+}
+
+/// Number of registered finite deadlines (diagnostics/tests).
+pub fn pending_deadlines() -> usize {
+    WAIT_DEADLINES.lock().len()
+}
+
 // ── Tests ──
 
 pub fn register_kwait_tests() {
@@ -376,5 +423,22 @@ pub fn register_kwait_tests() {
             s.current_tid = orig.2;
         });
         let _ = magic;
+    });
+
+    test_case!("kwait_deadline_expires", {
+        let reason = WaitReason::SocketRead { socket_id: 4242 };
+        let magic = reason.encode_magic();
+        let before = pending_deadlines();
+        register_deadline(magic, 1000);
+        test_eq!(pending_deadlines(), before + 1);
+        // Not yet expired.
+        test_eq!(deadline_tick(999), 0);
+        test_eq!(pending_deadlines(), before + 1);
+        // Expired: the entry is consumed exactly once.
+        test_eq!(deadline_tick(1000), 1);
+        test_eq!(pending_deadlines(), before);
+        // A zero deadline is ignored (indefinite wait).
+        register_deadline(WaitReason::SocketAccept { socket_id: 1 }.encode_magic(), 0);
+        test_eq!(pending_deadlines(), before);
     });
 }

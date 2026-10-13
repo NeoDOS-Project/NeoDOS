@@ -130,6 +130,9 @@ pub fn net_tick() {
     network_poll_all();
     arp::arp_tick();
     tcp::tcp_tick();
+    // Wake finite-timeout socket waiters (serviced off the RX pump, not the
+    // scheduler timer).
+    crate::kwait::deadline_tick(crate::boot_benchmark::rdtsc());
 
     let t = TICK_COUNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
     // Heartbeat every ~100 ticks: proves netd is actually scheduled and running.
