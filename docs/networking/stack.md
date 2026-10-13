@@ -47,12 +47,61 @@ Connection lifecycle: `build_tcp_segment()`, `send_tcp_segment()`, `tcp_send_syn
 Data path (#486): `tcp_send()` buffers; `tcp_tick()` (from `net_tick`) flushes
 up to MSS per connection, tracks `send_base`/`send_next`, advances the window
 on ACKs, retransmits on a 200 ms TSC-based RTO (8 retries max), and drives
-FIN (`fin_pending` when closing with unsent data). Incoming data is stored in
-the connection buffer, ACKed, and wakes `SocketRead` waiters; incoming FINs
-park in CloseWait. `tcp_dispatch()` never holds `SOCKET_MANAGER` across
-protocol actions (nested locks deadlocked SYN handling). Covered by the
-`net_tcp_loopback_e2e` test (handshake + both directions + orderly close over
-loopback, no NIC). Off-subnet TCP still limited by next-hop/MAC scope (#315).
+FIN (`fin_pending` when closing with unsent data). `SynReceived` connections
+also retransmit their SYN-ACK and time out with the same bound. Incoming data
+is stored in the connection buffer, ACKed, and wakes `SocketRead` waiters;
+incoming FINs park in CloseWait. `tcp_dispatch()` never holds `SOCKET_MANAGER`
+across protocol actions (nested locks deadlocked SYN handling).
+
+### RX dispatch and locking
+
+`network_poll_all()` drains a bounded batch of frames **while holding
+`NIC_REGISTRY`**, then dispatches them **after releasing it**. The dispatcher
+must not hold the registry: the TCP send path re-locks it (`nic_next_hop`,
+`nic_default_id`, `nic_send_packet`), and `spin::Mutex` is non-reentrant, so
+holding it deadlocked netpump on the first TCP segment received over a real
+NIC. `net_handle_incoming_packet(nic_id, frame)` takes the interface id (not a
+borrowed interface) and emits replies through `net_send_frame()`, which routes
+loopback frames through the loopback queue.
+
+### RX validation
+
+Received IPv4 datagrams are bounded by the header's total length (so Ethernet
+padding never enters a transport checksum), the IPv4 header checksum is
+verified, and TCP/UDP checksums are verified (`tcp_checksum_valid`,
+`udp_checksum_valid`; a zero UDP checksum means "not computed" and is
+accepted). Invalid frames are counted as RX errors and dropped.
+
+### Connection teardown
+
+`socket_free` calls `tcp_release_connection`: a connection that still has
+buffered/unacknowledged data is not freed immediately — it is marked
+`reap_pending` and `tcp_tick` transmits the remaining payload and FIN before
+reaping it once Closed. Freed immediately only when already drained. This
+prevents losing the last write when an application closes right after `send`.
+There is no TIME_WAIT / delayed-ACK handling yet.
+
+### Socket wait (Ring 3)
+
+`ObSetInfoClass::SocketListen`/`SocketClose` carry no payload and are accepted
+with an empty buffer by the generic `ob_set_info` validation. `ob_wait` on a
+socket blocks on `WaitReason::SocketConnect` / `SocketAccept` / `SocketRead`
+(`socket_wait_reason`), and the handshake, inbound data, FIN and connection
+failure all wake the corresponding waiters. Before this, `ob_wait` returned
+`NoSys` for sockets, so Ring 3 callers had to busy-poll `socket_recv`.
+
+### Tests and validation
+
+Covered by the kernel tests `net_tcp_loopback_e2e` (handshake + both
+directions + orderly close over loopback), `net_tcp_nic_path_syn_synack_no_deadlock`
+(real dispatch path through a scripted NIC), `net_tcp_synack_retransmit_bounded`,
+`net_tcp_nic_bad_checksum_dropped`, `net_tcp_close_flushes_buffered_data`, and
+the checksum-validation tests. Off-subnet TCP uses `nic_next_hop` (gateway-
+aware); #315 is resolved. The Ring 3 `tcptest` utility (loopback self-test and
+`server`/`client` modes) validates the public socket ABI and blocking wait. In
+VirtualBox NAT (e1000, guest 10.0.2.15) a Ring 3 client reached a host echo
+server through `10.0.2.2`, and a host client reached a Ring 3 `tcptest server`
+through a NAT port-forward.
 
 ## ObType Integration
 

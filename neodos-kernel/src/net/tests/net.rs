@@ -352,10 +352,10 @@ pub fn register() {
         test_eq!(ObSetInfoClass::SocketBindNic as u32, 29);
     });
     test_case!("net_handle_incoming_no_deadlock", {
-        // This test calls send_packet() on a NIC while holding NIC_REGISTRY.
-        // With real hardware (e1000 NEM), the send path re-enters the kernel
-        // from the isolated region and may deadlock or GPF.  Only run when
-        // no NIC is registered (pure unit test).
+        // The RX dispatcher must be callable without holding NIC_REGISTRY (the
+        // TCP path re-locks it). This exercises the ARP request path. Only run
+        // when no real NIC is registered (a NEM driver send during in-kernel
+        // tests is not part of this unit test's scope).
         {
             use super::super::nic::NIC_REGISTRY;
             let reg = NIC_REGISTRY.lock();
@@ -372,44 +372,43 @@ pub fn register() {
         use super::super::types::{MacAddr, Ipv4Addr};
         use super::super::net_handle_incoming_packet;
 
-        let mut registry = NIC_REGISTRY.lock();
-        if let Some(nic_id) = registry.default_nic_id() {
-            if let Some(nic) = registry.get_mut(nic_id) {
-                let target_ip = Ipv4Addr::new([192, 168, 99, 99]);
+        let nic_id = NIC_REGISTRY.lock().default_nic_id();
+        if let Some(nic_id) = nic_id {
+            let target_ip = Ipv4Addr::new([192, 168, 99, 99]);
 
-                let arp = ArpPacket::new_request(
-                    MacAddr::new([0xde, 0xad, 0xbe, 0xef, 0x00, 0x01]),
-                    Ipv4Addr::new([10, 99, 99, 99]),
-                    target_ip,
-                );
-                let arp_bytes = unsafe {
-                    core::slice::from_raw_parts(
-                        &arp as *const ArpPacket as *const u8,
-                        core::mem::size_of::<ArpPacket>(),
-                    )
-                };
-                let eth = EthernetHeader::new(
-                    MacAddr::broadcast(),
-                    MacAddr::new([0xde, 0xad, 0xbe, 0xef, 0x00, 0x01]),
-                    ETH_TYPE_ARP,
-                );
-                let eth_bytes = unsafe {
-                    core::slice::from_raw_parts(
-                        &eth as *const EthernetHeader as *const u8,
-                        ETH_HDR_LEN,
-                    )
-                };
-                let mut packet = alloc::vec::Vec::with_capacity(ETH_HDR_LEN + core::mem::size_of::<ArpPacket>());
-                packet.extend_from_slice(eth_bytes);
-                packet.extend_from_slice(arp_bytes);
+            let arp = ArpPacket::new_request(
+                MacAddr::new([0xde, 0xad, 0xbe, 0xef, 0x00, 0x01]),
+                Ipv4Addr::new([10, 99, 99, 99]),
+                target_ip,
+            );
+            let arp_bytes = unsafe {
+                core::slice::from_raw_parts(
+                    &arp as *const ArpPacket as *const u8,
+                    core::mem::size_of::<ArpPacket>(),
+                )
+            };
+            let eth = EthernetHeader::new(
+                MacAddr::broadcast(),
+                MacAddr::new([0xde, 0xad, 0xbe, 0xef, 0x00, 0x01]),
+                ETH_TYPE_ARP,
+            );
+            let eth_bytes = unsafe {
+                core::slice::from_raw_parts(
+                    &eth as *const EthernetHeader as *const u8,
+                    ETH_HDR_LEN,
+                )
+            };
+            let mut packet = alloc::vec::Vec::with_capacity(ETH_HDR_LEN + core::mem::size_of::<ArpPacket>());
+            packet.extend_from_slice(eth_bytes);
+            packet.extend_from_slice(arp_bytes);
 
-                net_handle_incoming_packet(nic_id, &mut **nic, &packet);
+            // No lock held across the dispatch.
+            net_handle_incoming_packet(nic_id, &packet);
 
-                let orig_ip = nic.ip_address();
-                nic.set_ip_address(target_ip);
-                net_handle_incoming_packet(nic_id, &mut **nic, &packet);
-                nic.set_ip_address(orig_ip);
-            }
+            let orig_ip = super::super::nic::nic_get_ip(nic_id).unwrap_or(Ipv4Addr::unspecified());
+            NIC_REGISTRY.lock().set_ip(nic_id, target_ip);
+            net_handle_incoming_packet(nic_id, &packet);
+            NIC_REGISTRY.lock().set_ip(nic_id, orig_ip);
         }
     });
     test_case!("net_socket_recv_data", {
@@ -642,5 +641,41 @@ pub fn register() {
         SOCKET_MANAGER.lock().free_socket(srv_sock);
         tcp_free_connection(cli_tcp);
         tcp_free_connection(srv_tcp);
+    });
+    test_case!("net_ipv4_header_checksum_validation", {
+        let hdr = build_ipv4_header(Ipv4Addr::new([10, 0, 1, 10]), Ipv4Addr::new([10, 0, 1, 20]), 6, 20, 0);
+        let bytes = unsafe {
+            core::slice::from_raw_parts(&hdr as *const Ipv4Header as *const u8, super::super::ipv4::IPV4_HDR_MIN_LEN)
+        };
+        test_eq!(compute_ip_checksum(bytes), 0);
+        let mut buf = [0u8; super::super::ipv4::IPV4_HDR_MIN_LEN];
+        buf.copy_from_slice(bytes);
+        buf[10] ^= 0xFF; // corrupt the checksum field
+        test_true!(compute_ip_checksum(&buf) != 0);
+    });
+    test_case!("net_tcp_checksum_validation", {
+        let seg = super::super::tcp::build_tcp_segment(
+            [10, 0, 1, 10], [10, 0, 1, 20], 1234, 80, 100, 0,
+            super::super::tcp::TCP_FLAG_SYN, 65535, b"abc",
+        );
+        test_true!(super::super::tcp::tcp_checksum_valid([10, 0, 1, 10], [10, 0, 1, 20], &seg));
+        // Wrong pseudo-header (different dst) must fail.
+        test_true!(!super::super::tcp::tcp_checksum_valid([10, 0, 1, 10], [10, 0, 1, 21], &seg));
+        let mut bad = seg.clone();
+        let last = bad.len() - 1;
+        bad[last] ^= 0xFF;
+        test_true!(!super::super::tcp::tcp_checksum_valid([10, 0, 1, 10], [10, 0, 1, 20], &bad));
+    });
+    test_case!("net_udp_checksum_validation", {
+        let dg = super::super::udp::build_udp_datagram(
+            [10, 0, 1, 10], [10, 0, 1, 20], 53, 5000, b"hello",
+        );
+        test_true!(super::super::udp::udp_checksum_valid([10, 0, 1, 10], [10, 0, 1, 20], &dg));
+        test_true!(!super::super::udp::udp_checksum_valid([10, 0, 1, 10], [10, 0, 1, 21], &dg));
+        // A zero checksum field means "not computed" (RFC 768) and is accepted.
+        let mut z = dg.clone();
+        z[6] = 0;
+        z[7] = 0;
+        test_true!(super::super::udp::udp_checksum_valid([10, 0, 1, 10], [10, 0, 1, 21], &z));
     });
 }

@@ -70,6 +70,18 @@ pub fn handler_ob_wait(regs: crate::syscall::Registers) -> u64 {
             let tid = obj.native_id as u32;
             crate::kwait::WaitReason::ThreadJoin { tid }
         }
+        crate::object::ObType::Socket => {
+            // First generic blocking wait for sockets: SocketConnect (client /
+            // in-progress handshake), SocketAccept (listener) and SocketRead
+            // (data). Previously sockets returned NoSys, forcing Ring 3 callers
+            // to busy-poll `socket_recv`.
+            let socket_id = obj.native_id as u32;
+            match crate::net::socket::socket_wait_reason(socket_id) {
+                Ok(None) => return 0,
+                Ok(Some(reason)) => reason,
+                Err(()) => return err_to_u64(SyscallError::BadF),
+            }
+        }
         _ => return err_to_u64(SyscallError::NoSys),
     };
     // OB-046 fix: cleanup_terminated_process is now handled by handler_exit

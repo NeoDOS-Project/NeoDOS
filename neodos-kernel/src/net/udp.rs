@@ -70,6 +70,33 @@ pub fn compute_udp_checksum(header: &UdpHeader, src_ip: [u8; 4], dst_ip: [u8; 4]
     if cs == 0 { 0xFFFF } else { cs }
 }
 
+/// Verify a received UDP datagram's checksum. A zero checksum field means the
+/// sender omitted it (RFC 768) and is accepted. `datagram` is header+payload.
+pub fn udp_checksum_valid(src_ip: [u8; 4], dst_ip: [u8; 4], datagram: &[u8]) -> bool {
+    if datagram.len() >= UDP_HDR_LEN && datagram[6] == 0 && datagram[7] == 0 {
+        return true;
+    }
+    let mut sum = 0u32;
+    sum = sum.wrapping_add((src_ip[0] as u32) << 8 | src_ip[1] as u32);
+    sum = sum.wrapping_add((src_ip[2] as u32) << 8 | src_ip[3] as u32);
+    sum = sum.wrapping_add((dst_ip[0] as u32) << 8 | dst_ip[1] as u32);
+    sum = sum.wrapping_add((dst_ip[2] as u32) << 8 | dst_ip[3] as u32);
+    sum = sum.wrapping_add(17u32); // UDP protocol
+    sum = sum.wrapping_add(datagram.len() as u32);
+    let mut i = 0;
+    while i + 1 < datagram.len() {
+        sum = sum.wrapping_add(u16::from_be_bytes([datagram[i], datagram[i + 1]]) as u32);
+        i += 2;
+    }
+    if i < datagram.len() {
+        sum = sum.wrapping_add((datagram[i] as u32) << 8);
+    }
+    while sum >> 16 != 0 {
+        sum = (sum & 0xFFFF) + (sum >> 16);
+    }
+    (sum as u16) == 0xFFFF
+}
+
 /// Build a complete UDP datagram (pseudo-header checksum included).
 /// Returns the UDP header + payload bytes ready for IP encapsulation.
 pub fn build_udp_datagram(

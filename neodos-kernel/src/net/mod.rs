@@ -141,7 +141,46 @@ pub fn net_tick() {
     }
 }
 
-pub fn net_handle_incoming_packet(nic_id: u32, nic: &mut dyn crate::net::nic::NetworkInterface, packet: &[u8]) {
+/// Send a frame on behalf of the RX path **without holding `NIC_REGISTRY`**.
+///
+/// The RX dispatcher must not hold `NIC_REGISTRY` when a protocol handler emits
+/// a reply: the TCP path resolves the next hop and the source MAC through the
+/// registry (`nic_next_hop`, `nic_default_id`) and re-locks it. `spin::Mutex`
+/// is non-reentrant, so nesting deadlocked the netpump thread on the first TCP
+/// segment received over a real NIC (#TCP_E2E). Loopback frames re-enter through
+/// the loopback queue.
+pub fn net_send_frame(nic_id: u32, frame: &[u8]) -> Result<(), ()> {
+    if nic_id == loopback::LOOPBACK_NIC_ID {
+        loopback::loopback_send(frame)
+    } else {
+        crate::net::nic::nic_send_packet(nic_id, frame)
+    }
+}
+
+/// MAC of the interface that received a frame. Loopback uses its synthetic MAC.
+/// Takes `NIC_REGISTRY` only for the lookup, so it is safe from the RX path.
+pub fn net_nic_mac(nic_id: u32) -> Option<crate::net::types::MacAddr> {
+    if nic_id == loopback::LOOPBACK_NIC_ID {
+        return Some(crate::net::types::MacAddr::loopback());
+    }
+    let mut reg = NIC_REGISTRY.lock();
+    reg.get(nic_id).map(|n| n.mac_address())
+}
+
+/// IPv4 address of the interface that received a frame. Loopback is 127.0.0.1.
+pub fn net_nic_ip(nic_id: u32) -> crate::net::types::Ipv4Addr {
+    if nic_id == loopback::LOOPBACK_NIC_ID {
+        return crate::net::types::Ipv4Addr::localhost();
+    }
+    crate::net::nic::nic_get_ip(nic_id).unwrap_or(crate::net::types::Ipv4Addr::unspecified())
+}
+
+/// Dispatch one received Ethernet frame.
+///
+/// Must be called **without** holding `NIC_REGISTRY`: protocol handlers emit
+/// replies through [`net_send_frame`] and may lock the registry themselves.
+/// `nic_id` is the registry id, or [`loopback::LOOPBACK_NIC_ID`].
+pub fn net_handle_incoming_packet(nic_id: u32, packet: &[u8]) {
     let slot = crate::net::counters::stats_slot_for_nic(nic_id);
     if packet.len() < crate::net::ethernet::ETH_HDR_LEN {
         if let Some(slot) = slot {
@@ -177,16 +216,19 @@ pub fn net_handle_incoming_packet(nic_id: u32, nic: &mut dyn crate::net::nic::Ne
             let target_mac = crate::net::types::MacAddr(arp_pkt.target_mac);
             ktrace!(LogSubsys::Arp, "Request RX: op=1 sender_mac={} sender_ip={} target_mac={} target_ip={}",
                 arp_pkt.sender_mac_addr(), arp_pkt.sender_ip_addr(), target_mac, target_ip);
+            let our_ip = net_nic_ip(nic_id);
+            let our_mac = net_nic_mac(nic_id)
+                .unwrap_or_else(crate::net::types::MacAddr::zero);
             ktrace!(LogSubsys::Arp, "Request target={} our_ip={} mac={}",
-                target_ip, nic.ip_address(), nic.mac_address());
-            if nic.ip_address() == target_ip {
+                target_ip, our_ip, our_mac);
+            if our_ip == target_ip {
                 ktrace!(LogSubsys::Arp, "Reply TX: our_mac={} our_ip={} dst_mac={} dst_ip={}",
-                    nic.mac_address(), target_ip,
+                    our_mac, target_ip,
                     arp_pkt.sender_mac_addr(), arp_pkt.sender_ip_addr());
                 crate::net::counters::COUNTERS.arp_replies_tx.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
                 let reply = arp::arp_make_packet(
                     crate::net::arp::ARP_OP_REPLY,
-                    nic.mac_address(), target_ip,
+                    our_mac, target_ip,
                     arp_pkt.sender_mac_addr(), arp_pkt.sender_ip_addr(),
                 );
                 let mut reply_buf = alloc::vec::Vec::with_capacity(
@@ -194,7 +236,7 @@ pub fn net_handle_incoming_packet(nic_id: u32, nic: &mut dyn crate::net::nic::Ne
                 );
                 let eth = crate::net::ethernet::EthernetHeader::new(
                     arp_pkt.sender_mac_addr(),
-                    nic.mac_address(),
+                    our_mac,
                     crate::net::ethernet::ETH_TYPE_ARP,
                 );
                 let eth_bytes = unsafe {
@@ -212,7 +254,7 @@ pub fn net_handle_incoming_packet(nic_id: u32, nic: &mut dyn crate::net::nic::Ne
                 };
                 reply_buf.extend_from_slice(arp_bytes);
                 ktrace!(LogSubsys::Arp, "Reply pkt: {} bytes, about to send via nic.send_packet", reply_buf.len());
-                let _ = nic.send_packet(&reply_buf);
+                let _ = net_send_frame(nic_id, &reply_buf);
             }
         } else if arp_pkt.operation() == crate::net::arp::ARP_OP_REPLY {
             let sender_ip = arp_pkt.sender_ip_addr();
@@ -231,11 +273,30 @@ pub fn net_handle_incoming_packet(nic_id: u32, nic: &mut dyn crate::net::nic::Ne
         if !ip_hdr.is_valid() { return; }
 
         let header_len = ip_hdr.header_len();
-        let payload_offset = ip_offset + header_len;
-        let payload = &packet[payload_offset..];
+        let total_len = ip_hdr.total_len();
+        // Reject malformed length fields and datagrams larger than the captured
+        // frame. Bounding the payload by the IP total length keeps Ethernet
+        // padding out of the transport checksum.
+        if header_len < crate::net::ipv4::IPV4_HDR_MIN_LEN
+            || total_len < header_len
+            || ip_offset + total_len > packet.len()
+        {
+            if let Some(slot) = slot { crate::net::counters::note_rx_err(slot); }
+            return;
+        }
+        // Validate the IPv4 header checksum.
+        if crate::net::ipv4::compute_ip_checksum(&packet[ip_offset..ip_offset + header_len]) != 0 {
+            if let Some(slot) = slot { crate::net::counters::note_rx_err(slot); }
+            return;
+        }
+        let payload = &packet[ip_offset + header_len..ip_offset + total_len];
 
         if ip_hdr.protocol() == crate::net::ipv4::IPV4_PROTO_UDP {
             if payload.len() < core::mem::size_of::<crate::net::udp::UdpHeader>() { return; }
+            if !crate::net::udp::udp_checksum_valid(ip_hdr.src, ip_hdr.dst, payload) {
+                if let Some(slot) = slot { crate::net::counters::note_rx_err(slot); }
+                return;
+            }
             let udp_hdr: &crate::net::udp::UdpHeader = unsafe {
                 &*(payload.as_ptr() as *const crate::net::udp::UdpHeader)
             };
@@ -243,6 +304,10 @@ pub fn net_handle_incoming_packet(nic_id: u32, nic: &mut dyn crate::net::nic::Ne
             socket::udp_dispatch(ip_hdr.src_ip(), udp_hdr.src_port(), udp_hdr.dst_port(), udp_data);
         } else if ip_hdr.protocol() == crate::net::ipv4::IPV4_PROTO_TCP {
             if payload.len() < 20 { return; }
+            if !crate::net::tcp::tcp_checksum_valid(ip_hdr.src, ip_hdr.dst, payload) {
+                if let Some(slot) = slot { crate::net::counters::note_rx_err(slot); }
+                return;
+            }
             socket::tcp_dispatch(ip_hdr.src_ip(), ip_hdr.dst_ip(), payload);
         } else if ip_hdr.protocol() == crate::net::ipv4::IPV4_PROTO_ICMP {
             if payload.len() < core::mem::size_of::<crate::net::icmp::IcmpHeader>() { return; }
@@ -285,7 +350,7 @@ pub fn net_handle_incoming_packet(nic_id: u32, nic: &mut dyn crate::net::nic::Ne
 
                 let eth = crate::net::ethernet::EthernetHeader::new(
                     eth_hdr.src_mac(),
-                    nic.mac_address(),
+                    net_nic_mac(nic_id).unwrap_or_else(crate::net::types::MacAddr::zero),
                     crate::net::ethernet::ETH_TYPE_IPV4,
                 );
                 let eth_bytes = unsafe {
@@ -305,7 +370,7 @@ pub fn net_handle_incoming_packet(nic_id: u32, nic: &mut dyn crate::net::nic::Ne
                 reply_pkt.extend_from_slice(ip_bytes);
                 reply_pkt.extend_from_slice(&reply_icmp);
 
-                let _ = nic.send_packet(&reply_pkt);
+                let _ = net_send_frame(nic_id, &reply_pkt);
             }
         }
     }
@@ -316,21 +381,36 @@ pub fn network_poll_all() {
     // #376: NIC_REGISTRY is a non-IRQ-safe spin lock. If the polling thread is
     // descheduled while holding it, every other CPU that polls RX (e.g. dhcpd's
     // sys_yield -> network_poll_all) spins on it with interrupts disabled and
-    // the CPU wedges. Do not allow preemption across the poll (and the
-    // SOCKET_MANAGER lock taken by udp_dispatch inside it).
+    // the CPU wedges. Do not allow preemption across the poll.
     crate::scheduler::preempt_disable();
     // Refresh link state from the drivers first so the NicInfo query and
     // netapplier's link-up edge detection observe real hardware state. The driver
     // poll runs without NIC_REGISTRY held (lock order: registry → driver).
     crate::net::nic::nic_poll_link_state();
-    let mut registry = NIC_REGISTRY.lock();
-    registry.for_each(|nic_id, nic| {
-        let mut buf = [0u8; 2048];
-        while let Some(len) = nic.poll_packet(&mut buf) {
-            net_handle_incoming_packet(nic_id, &mut **nic, &buf[..len]);
-        }
-    });
-    drop(registry);
+
+    // Drain a bounded batch of RX frames while holding NIC_REGISTRY, then
+    // dispatch *after releasing it*. The dispatcher must not hold the registry:
+    // the TCP path re-enters it (nic_next_hop / nic_default_id / nic_send_packet)
+    // and spin::Mutex is non-reentrant, so holding it deadlocked netpump on the
+    // first TCP segment received over a real NIC.
+    const RX_BATCH_MAX: usize = 64;
+    let mut batch: alloc::vec::Vec<(u32, alloc::vec::Vec<u8>)> = alloc::vec::Vec::new();
+    {
+        let mut registry = NIC_REGISTRY.lock();
+        registry.for_each(|nic_id, nic| {
+            let mut buf = [0u8; 2048];
+            while batch.len() < RX_BATCH_MAX {
+                match nic.poll_packet(&mut buf) {
+                    Some(len) => batch.push((nic_id, buf[..len].to_vec())),
+                    None => break,
+                }
+            }
+        });
+    }
+    for (nic_id, frame) in batch.iter() {
+        net_handle_incoming_packet(*nic_id, frame);
+    }
+
     // Drain loopback outside the NIC_REGISTRY lock: replies re-enter through
     // LoopbackInterface::send_packet and must not deadlock (#484).
     loopback::loopback_pump();

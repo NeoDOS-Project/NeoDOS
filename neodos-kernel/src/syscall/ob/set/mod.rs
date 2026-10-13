@@ -34,6 +34,17 @@ pub fn set_class_handled(info_class: u32) -> bool {
         || time::handles(info_class)
 }
 
+/// Set-info classes that carry no payload: the operation ignores the buffer, so
+/// a null/empty buffer is valid. All other classes require a non-empty,
+/// user-valid buffer. `SocketListen`/`SocketClose` were missing here, so the
+/// public ABI rejected them with `EINVAL` before the handler ran.
+pub fn set_info_allows_empty_payload(info_class: u32) -> bool {
+    info_class == ObSetInfoClass::FileDelete as u32
+        || info_class == ObSetInfoClass::SetForegroundProcess as u32
+        || info_class == ObSetInfoClass::SocketListen as u32
+        || info_class == ObSetInfoClass::SocketClose as u32
+}
+
 pub fn handler_ob_set_info(regs: crate::syscall::Registers) -> u64 {
     let fd = regs.rbx as u8;
     let info_class = regs.rcx as u32;
@@ -45,9 +56,7 @@ pub fn handler_ob_set_info(regs: crate::syscall::Registers) -> u64 {
     }
 
     // Classes that carry no payload accept a null/empty buffer.
-    if info_class != (ObSetInfoClass::FileDelete as u32)
-        && info_class != (ObSetInfoClass::SetForegroundProcess as u32)
-    {
+    if !set_info_allows_empty_payload(info_class) {
         if buf_ptr == 0 || buf_size == 0 {
             if info_class == ObSetInfoClass::SetNicIp as u32 {
                 kdebug!(LogSubsys::Object, "ObSetInfo SetNicIp: REJECTED (null buf)");
@@ -120,6 +129,22 @@ pub fn validate_datetime(second: u8, minute: u8, hour: u8, day: u8, month: u8, y
 
 pub fn register_ob_set_tests() {
     use crate::{test_case, test_true};
+
+    test_case!("ob_set_empty_payload_classes", {
+        use crate::object::types::ObSetInfoClass as C;
+        // No-payload classes accept a null/empty buffer (Ring 3 calls these
+        // with an empty slice). SocketListen/SocketClose were previously
+        // rejected with EINVAL before the handler ran.
+        test_true!(set_info_allows_empty_payload(C::SocketListen as u32));
+        test_true!(set_info_allows_empty_payload(C::SocketClose as u32));
+        test_true!(set_info_allows_empty_payload(C::FileDelete as u32));
+        test_true!(set_info_allows_empty_payload(C::SetForegroundProcess as u32));
+        // Payload-carrying classes still require a non-empty, valid buffer.
+        test_true!(!set_info_allows_empty_payload(C::SocketSend as u32));
+        test_true!(!set_info_allows_empty_payload(C::SocketConnect as u32));
+        test_true!(!set_info_allows_empty_payload(C::SocketBind as u32));
+        test_true!(!set_info_allows_empty_payload(C::SetNicIp as u32));
+    });
 
     test_case!("ob_set_datetime_accepts_valid", {
         test_true!(validate_datetime(0, 0, 0, 1, 1, 0));

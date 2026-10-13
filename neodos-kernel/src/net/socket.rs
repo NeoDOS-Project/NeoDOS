@@ -87,7 +87,9 @@ impl SocketManager {
         }) {
             if let Some(ref socket) = self.sockets[idx] {
                 if let Some(tcp_id) = socket.tcp_conn_id {
-                    crate::net::tcp::tcp_free_connection(tcp_id);
+                    // Drain-then-free: unsent data/FIN are transmitted by
+                    // tcp_tick before the connection is reaped.
+                    crate::net::tcp::tcp_release_connection(tcp_id);
                 }
             }
             self.sockets[idx] = None;
@@ -306,10 +308,78 @@ pub fn socket_close(id: u32) {
     if let Some(socket) = mgr.get_socket_mut(id) {
         socket.direction = SocketDirection::Closed;
     }
+    // Wake anyone parked on this socket so they observe EOF instead of hanging.
+    mgr.wake_socket_readers(id);
+    mgr.wake_socket_connect_waiters(id);
+    mgr.wake_socket_accept_waiters(id);
 }
 
 pub fn socket_next_accept_id(_id: u32) -> Option<u32> {
     None
+}
+
+/// Decide how `ob_wait` should treat a socket.
+///
+/// * `Ok(None)` — the socket is already ready (or closed); the caller should
+///   return success without blocking.
+/// * `Ok(Some(reason))` — block the thread on this [`crate::kwait::WaitReason`].
+/// * `Err(())` — no such socket.
+///
+/// Readiness mirrors what `socket_recv`/`socket_connect` would observe, so a
+/// woken caller never blocks on data that is already buffered.
+pub fn socket_wait_reason(socket_id: u32) -> Result<Option<crate::kwait::WaitReason>, ()> {
+    use crate::net::types::{SocketDirection, SocketType, TcpState};
+    let mgr = SOCKET_MANAGER.lock();
+    let s = mgr.get_socket(socket_id).ok_or(())?;
+    match s.socket_type {
+        SocketType::Tcp => {
+            let tcp_id = s.tcp_conn_id.ok_or(())?;
+            let state = crate::net::tcp::tcp_get_state(tcp_id);
+            match s.direction {
+                SocketDirection::Connecting => {
+                    Ok(Some(crate::kwait::WaitReason::SocketConnect { socket_id }))
+                }
+                SocketDirection::Listening => {
+                    Ok(Some(crate::kwait::WaitReason::SocketAccept { socket_id }))
+                }
+                SocketDirection::None => {
+                    Ok(Some(crate::kwait::WaitReason::SocketRead { socket_id }))
+                }
+                SocketDirection::Connected => match state {
+                    Some(TcpState::Established) => {
+                        if crate::net::tcp::tcp_recv_pending(tcp_id) {
+                            Ok(None)
+                        } else {
+                            Ok(Some(crate::kwait::WaitReason::SocketRead { socket_id }))
+                        }
+                    }
+                    // Half-closed or fully closed: readable (EOF / no more data).
+                    Some(TcpState::CloseWait)
+                    | Some(TcpState::Closed)
+                    | Some(TcpState::LastAck)
+                    | Some(TcpState::FinWait1)
+                    | Some(TcpState::FinWait2) => Ok(None),
+                    // Handshake still in progress (listener flipped to
+                    // Connected on SYN; wait for the completing ACK).
+                    Some(TcpState::SynReceived) => {
+                        Ok(Some(crate::kwait::WaitReason::SocketConnect { socket_id }))
+                    }
+                    _ => Ok(Some(crate::kwait::WaitReason::SocketRead { socket_id })),
+                },
+                // Closed sockets are never blocked on: report ready so callers
+                // observe EOF instead of parking forever.
+                SocketDirection::Closed => Ok(None),
+            }
+        }
+        // UDP/raw: readable when a datagram is buffered.
+        _ => {
+            if s.recv_buf.is_empty() {
+                Ok(Some(crate::kwait::WaitReason::SocketRead { socket_id }))
+            } else {
+                Ok(None)
+            }
+        }
+    }
 }
 
 pub fn socket_get_type(id: u32) -> Option<SocketType> {

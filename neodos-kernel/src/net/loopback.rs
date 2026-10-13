@@ -79,8 +79,7 @@ pub fn loopback_pump() {
             Some(f) => f,
             None => break,
         };
-        let mut lo = LoopbackInterface;
-        super::net_handle_incoming_packet(LOOPBACK_NIC_ID, &mut lo, &frame);
+        super::net_handle_incoming_packet(LOOPBACK_NIC_ID, &frame);
     }
 }
 
