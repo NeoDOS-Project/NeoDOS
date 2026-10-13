@@ -236,6 +236,10 @@ struct NtpConfig {
     servers: Vec<String>,
     interval: u32,
     timeout_ms: u32,
+    /// RFC 5905 symmetric-key authentication: key id + pre-shared key (empty =
+    /// unauthenticated).
+    key_id: u32,
+    key: Vec<u8>,
 }
 
 fn load_config() -> NtpConfig {
@@ -244,6 +248,8 @@ fn load_config() -> NtpConfig {
         servers: alloc::vec![String::from(DEFAULT_SERVER)],
         interval: DEFAULT_INTERVAL,
         timeout_ms: DEFAULT_TIMEOUT_MS,
+        key_id: 0,
+        key: Vec::new(),
     };
 
     if let Ok(fd) = syscall::sys_cm_open_key(REG_PARAM) {
@@ -261,6 +267,21 @@ fn load_config() -> NtpConfig {
         }
         if let Some(v) = read_reg_dword(fd, "Timeout") {
             cfg.timeout_ms = v.max(100);
+        }
+        // RFC 5905 symmetric-key authentication (#361). `Key` is hex; `Mac=off`
+        // disables it even when a key is present.
+        if let Some(v) = read_reg_dword(fd, "KeyId") {
+            cfg.key_id = v;
+        }
+        if let Some(s) = read_reg_string(fd, "Key") {
+            if let Some(k) = libntp::parse_key_hex(&s) {
+                cfg.key = k;
+            }
+        }
+        if let Some(m) = read_reg_string(fd, "Mac") {
+            if m.eq_ignore_ascii_case("off") {
+                cfg.key.clear();
+            }
         }
         let _ = syscall::sys_close(fd);
     }
@@ -345,19 +366,32 @@ struct SyncResult {
     unix_secs: i64,
 }
 
-fn ntp_sync(ip: [u8; 4], timeout_ms: u32) -> Result<SyncResult, &'static str> {
+fn ntp_sync(ip: [u8; 4], timeout_ms: u32, key_id: u32, key: &[u8]) -> Result<SyncResult, &'static str> {
+    let authed = !key.is_empty();
     let t1 = rtc_now_ns().unwrap_or(0);
     let t1_secs = (t1 / 1_000_000_000) as i64;
-    let request = libntp::build_request(libntp::unix_secs_to_ntp(t1_secs));
+    let ntp_ts = libntp::unix_secs_to_ntp(t1_secs);
+
+    // Request: plain 48 bytes, or header + key id + MD5 MAC (#361).
+    let mut request = [0u8; libntp::NTP_AUTH_PACKET_SIZE];
+    let req_len = if authed {
+        let pkt = libntp::build_request_authed(ntp_ts, key_id);
+        request.copy_from_slice(&pkt);
+        libntp::sign_request_md5(&mut request, key);
+        libntp::NTP_AUTH_PACKET_SIZE
+    } else {
+        request[..libntp::NTP_PACKET_SIZE].copy_from_slice(&libntp::build_request(ntp_ts));
+        libntp::NTP_PACKET_SIZE
+    };
 
     // Shared UDP exchange (#593): create → bind → connect → send with ARP retry
     // → timed receive → close.
-    let mut buf = [0u8; libntp::NTP_PACKET_SIZE];
+    let mut buf = [0u8; libntp::NTP_AUTH_PACKET_SIZE];
     let budget = timeout_ms as u64 * TICKS_PER_MS;
     let received = match libnet::udp::exchange(
         u32::from_be_bytes(ip),
         libntp::NTP_PORT,
-        &request,
+        &request[..req_len],
         &mut buf,
         budget,
     ) {
@@ -366,8 +400,16 @@ fn ntp_sync(ip: [u8; 4], timeout_ms: u32) -> Result<SyncResult, &'static str> {
         Err(_) => return Err("send failed"),
     };
 
-    let reply = libntp::parse_reply(&buf[..received], libntp::unix_secs_to_ntp(t1_secs))
-        .map_err(|_| "invalid NTP response")?;
+    let reply = if authed {
+        libntp::parse_reply_authed(&buf[..received], ntp_ts, key_id, key).map_err(|e| match e {
+            libntp::NtpError::AuthMissing => "unauthenticated reply",
+            libntp::NtpError::AuthKeyMismatch => "key id mismatch",
+            libntp::NtpError::AuthFailed => "bad MAC",
+            _ => "invalid NTP response",
+        })?
+    } else {
+        libntp::parse_reply(&buf[..received], ntp_ts).map_err(|_| "invalid NTP response")?
+    };
     let t2 = libntp::ntp_to_unix_ns(reply.receive_ts);
     let t3 = libntp::ntp_to_unix_ns(reply.transmit_ts);
     let t4 = rtc_now_ns().unwrap_or(t1);
@@ -426,6 +468,11 @@ pub extern "C" fn _start() -> ! {
     let once = arg_once();
 
     let cfg = load_config();
+    if !cfg.key.is_empty() {
+        write_str(b"[ntpd] authentication enabled (MD5, key id ");
+        write_u32(cfg.key_id);
+        write_str(b")\r\n");
+    }
     if !cfg.enabled {
         write_str(b"[ntpd] NTP disabled by configuration; idling\r\n");
         if once {
@@ -478,7 +525,7 @@ pub extern "C" fn _start() -> ! {
             write_ip(ip);
             write_str(b")\r\n");
 
-            match ntp_sync(ip, cfg.timeout_ms) {
+            match ntp_sync(ip, cfg.timeout_ms, cfg.key_id, &cfg.key) {
                 Ok(r) => {
                     let offset_ms = (r.offset_ns / 1_000_000) as i64;
                     let delay_ms = (r.delay_ns / 1_000_000) as i64;
