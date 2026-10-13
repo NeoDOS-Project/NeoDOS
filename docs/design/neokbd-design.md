@@ -906,10 +906,12 @@ Los layouts se generan desde los mismos archivos `.klc` existentes, pero convert
 
 | Archivo | Layout | LangTag | Scancodes | Compose |
 | --- | --- | --- | --- | --- |
-| `US.kbd` | US | en-US | 256 | 0 |
-| `Spanish.kbd` | Spanish | es-ES | 256 | 54 |
+| `en-US.kbd` | en-US | en-US | 50 | 0 |
+| `es-ES.kbd` | es-ES | es-ES | 50 | 54 |
 
-La herramienta `kbdcompile` toma un `.klc` y produce un `.kbd` binario. Se invoca en el build de la imagen, no en runtime.
+La herramienta `kbdcompile` toma un `.klc` y produce un `.kbd` binario. Se ejecuta
+a mano con `scripts/gen-keyboard-layouts.sh` y `scripts/check-keyboard-layouts.sh`
+lo valida en CI (no está enganchado al build de imagen; ver #702).
 
 ---
 

@@ -95,3 +95,15 @@ jobs:
         run: ./scripts/check-skills.sh
       - name: scripts/check-irq-locks.sh (INV-3 / Rule 3.5.1)
         run: ./scripts/check-irq-locks.sh
+
+  keyboard-layouts:
+    name: Keyboard layouts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # kbdcompile is a host-side std tool (no target needed).
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: scripts/check-keyboard-layouts.sh (#702)
+        run: ./scripts/check-keyboard-layouts.sh
