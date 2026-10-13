@@ -731,6 +731,51 @@ pub fn register() {
         super::super::arp::ARP_CACHE.lock().remove(Ipv4Addr::new([10, 0, 10, 20]));
         nic_unregister(nic);
     });
+    test_case!("net_rx_mac_filter_drops_foreign_frames", {
+        use super::super::arp::ArpPacket;
+        use super::super::ethernet::{EthernetHeader, ETH_HDR_LEN, ETH_TYPE_ARP};
+        use super::super::nic::{nic_register, nic_unregister};
+        let nic_mac = MacAddr::new([0x02, 0, 0, 0, 0x10, 0xAA]);
+        let our_ip = Ipv4Addr::new([10, 0, 20, 10]);
+        let peer_mac = MacAddr::new([0x02, 0, 0, 0, 0x20, 0x01]);
+        let peer_ip = Ipv4Addr::new([10, 0, 20, 20]);
+        let nic = nic_register(alloc::boxed::Box::new(CaptureNic {
+            mac: nic_mac,
+            ip: our_ip,
+            sent: alloc::sync::Arc::new(spin::Mutex::new(alloc::vec::Vec::new())),
+        }))
+        .unwrap();
+        let frame = |dst: MacAddr, dst_ip: Ipv4Addr| -> alloc::vec::Vec<u8> {
+            let arp = ArpPacket::new_reply(peer_mac, peer_ip, dst, dst_ip);
+            let ab = unsafe {
+                core::slice::from_raw_parts(
+                    &arp as *const ArpPacket as *const u8,
+                    core::mem::size_of::<ArpPacket>(),
+                )
+            };
+            let eth = EthernetHeader::new(dst, peer_mac, ETH_TYPE_ARP);
+            let eb = unsafe {
+                core::slice::from_raw_parts(&eth as *const EthernetHeader as *const u8, ETH_HDR_LEN)
+            };
+            let mut v = alloc::vec::Vec::new();
+            v.extend_from_slice(eb);
+            v.extend_from_slice(ab);
+            v
+        };
+        super::super::arp::ARP_CACHE.lock().remove(peer_ip);
+        // Foreign unicast destination -> dropped before dispatch.
+        super::super::net_handle_incoming_packet(nic, &frame(MacAddr::new([0x02, 0, 0, 0, 0x99, 0x99]), our_ip));
+        test_true!(super::super::arp::arp_lookup(peer_ip).is_none());
+        // Addressed to our MAC -> processed.
+        super::super::net_handle_incoming_packet(nic, &frame(nic_mac, our_ip));
+        test_eq!(super::super::arp::arp_lookup(peer_ip), Some(peer_mac));
+        super::super::arp::ARP_CACHE.lock().remove(peer_ip);
+        // Broadcast destination -> processed.
+        super::super::net_handle_incoming_packet(nic, &frame(MacAddr::broadcast(), our_ip));
+        test_eq!(super::super::arp::arp_lookup(peer_ip), Some(peer_mac));
+        super::super::arp::ARP_CACHE.lock().remove(peer_ip);
+        nic_unregister(nic);
+    });
     test_case!("net_multi_nic_next_hop_per_interface", {
         use super::super::nic::{nic_register, nic_unregister, NIC_REGISTRY};
         let n0 = nic_register(alloc::boxed::Box::new(capture_nic(0xA0))).unwrap();

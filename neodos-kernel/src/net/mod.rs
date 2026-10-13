@@ -206,6 +206,21 @@ pub fn net_handle_incoming_packet(nic_id: u32, packet: &[u8]) {
     ktrace!(LogSubsys::Net, "RX {} bytes, src={} dst={} type=0x{:04x}",
         packet.len(), eth_hdr.src_mac(), eth_hdr.dst_mac(), eth_hdr.ethertype());
 
+    // Drop frames not addressed to this interface, broadcast or multicast
+    // (#310). On bridged/promiscuous segments the NIC hands over foreign
+    // traffic; processing it wastes CPU and can deliver the wrong datagram.
+    let our_mac = match net_nic_mac(nic_id) {
+        Some(m) => m,
+        None => return,
+    };
+    let dst_mac = eth_hdr.dst_mac();
+    if dst_mac != our_mac && !dst_mac.is_broadcast() && !dst_mac.is_multicast() {
+        if let Some(slot) = slot {
+            crate::net::counters::note_rx_err(slot);
+        }
+        return;
+    }
+
     if eth_hdr.is_arp() {
         if packet.len() < crate::net::ethernet::ETH_HDR_LEN + core::mem::size_of::<crate::net::arp::ArpPacket>() {
             return;
