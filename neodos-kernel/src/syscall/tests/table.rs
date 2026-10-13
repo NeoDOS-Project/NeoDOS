@@ -640,5 +640,22 @@ pub fn register_syscall_table_tests() {
         });
         test_true!(result.is_ok());
     });
+
+    test_case!("sys_uptime_monotonic", {
+        // #467: the monotonic uptime is non-decreasing and reports a sane rate.
+        let (m0, hz) = crate::hal::uptime_ms();
+        test_true!(hz >= 18); // at least the PIT fallback rate
+        let (m1, hz1) = crate::hal::uptime_ms();
+        test_true!(m1 >= m0);
+        test_eq!(hz1, hz);
+    });
+
+    test_case!("sys_highres_time_advances", {
+        // #467: TSC-based high-resolution time is non-zero with a sane kHz.
+        let (t0, khz) = crate::net::tcp::tcp_high_res_time();
+        test_true!(khz > 0);
+        let (t1, _) = crate::net::tcp::tcp_high_res_time();
+        test_true!(t1 >= t0);
+    });
 }
 

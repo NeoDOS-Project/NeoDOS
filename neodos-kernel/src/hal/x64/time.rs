@@ -64,6 +64,19 @@ pub extern "C" fn get_tick_rate() -> u64 {
     TICK_RATE_HZ.load(Ordering::Relaxed)
 }
 
+/// Monotonic system uptime in milliseconds, plus the tick rate in Hz (#467).
+///
+/// Backed by the single BSP-only `TIMER_TICKS` counter, so it never decreases
+/// and is SMP-safe (the value is global, not per-CPU).
+pub fn uptime_ms() -> (u64, u32) {
+    let hz = get_tick_rate().max(1);
+    let ms = TIMER_TICKS
+        .load(Ordering::Relaxed)
+        .saturating_mul(1000)
+        / hz;
+    (ms, hz.min(u32::MAX as u64) as u32)
+}
+
 #[no_mangle]
 #[inline(never)]
 pub extern "C" fn init_system_timer() {

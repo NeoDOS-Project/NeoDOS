@@ -58,7 +58,8 @@ pub fn init() {
 fn register_hal_hooks() {
     let rate = match active() {
         TimerSource::Pit => 18,
-        TimerSource::Hpet | TimerSource::ApicTimer => 1_000_000_000 / TICK_INTERVAL_US,
+        // Period is TICK_INTERVAL_US (1000 µs = 1 ms) → 1e6 µs/s / 1000 µs = 1 kHz.
+        TimerSource::Hpet | TimerSource::ApicTimer => 1_000_000 / TICK_INTERVAL_US,
     };
     let sleep = if active() == TimerSource::Hpet {
         Some(hpet_sleep_adapter as fn(u32))

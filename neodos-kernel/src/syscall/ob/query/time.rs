@@ -8,6 +8,8 @@ pub(super) fn handles(info_class: u32) -> bool {
     info_class == ObInfoClass::DateTime as u32
         || info_class == ObInfoClass::TimeZone as u32
         || info_class == ObInfoClass::LocalDateTime as u32
+        || info_class == ObInfoClass::Uptime as u32
+        || info_class == ObInfoClass::HighResTime as u32
 }
 
 /// Dispatch the `time` info classes.
@@ -19,6 +21,58 @@ pub(super) fn dispatch(
     buf_size: usize,
 ) -> u64 {
     match info_class {
+        // ── Uptime (44): monotonic uptime in ms + tick rate (#467) ──
+        _ if info_class == ObInfoClass::Uptime as u32 => {
+            #[repr(C)]
+            struct SysUptime {
+                uptime_ms: u64,
+                tick_hz: u32,
+                _pad: u32,
+            }
+            let sz = core::mem::size_of::<SysUptime>();
+            if buf_size < sz {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let (uptime_ms, tick_hz) = crate::hal::uptime_ms();
+            let info = SysUptime {
+                uptime_ms,
+                tick_hz,
+                _pad: 0,
+            };
+            let bytes = unsafe {
+                core::slice::from_raw_parts(&info as *const SysUptime as *const u8, sz)
+            };
+            if copy_to_user(buf_ptr, bytes).is_err() {
+                return err_to_u64(SyscallError::Fault);
+            }
+            sz as u64
+        }
+        // ── HighResTime (47): calibrated TSC + kHz (#467) ──
+        _ if info_class == ObInfoClass::HighResTime as u32 => {
+            #[repr(C)]
+            struct SysHighRes {
+                tsc: u64,
+                tsc_khz: u32,
+                _pad: u32,
+            }
+            let sz = core::mem::size_of::<SysHighRes>();
+            if buf_size < sz {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let (tsc, tsc_khz) = crate::net::tcp::tcp_high_res_time();
+            let info = SysHighRes {
+                tsc,
+                tsc_khz,
+                _pad: 0,
+            };
+            let bytes = unsafe {
+                core::slice::from_raw_parts(&info as *const SysHighRes as *const u8, sz)
+            };
+            if copy_to_user(buf_ptr, bytes).is_err() {
+                return err_to_u64(SyscallError::Fault);
+            }
+            sz as u64
+        }
         _ if info_class == ObInfoClass::DateTime as u32 => {
             if entry.object_id == 0 {
                 return err_to_u64(SyscallError::Inval);

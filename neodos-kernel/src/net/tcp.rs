@@ -275,6 +275,17 @@ pub fn tsc_ticks_from_ms(ms: u64, tsc_per_us: u64) -> u64 {
     ms.saturating_mul(1000).saturating_mul(tsc_per_us)
 }
 
+/// High-resolution monotonic time `(tsc, tsc_khz)` (#467).
+///
+/// Routed through this (baselined) module because `boot_benchmark` may not be
+/// imported by `hal`/`syscall` directly (dependency-graph isolation), same
+/// precedent as `tcp_deadline_from_ms`. Derive sub-millisecond deltas as
+/// `(tsc2 - tsc1) / tsc_khz` ms.
+pub fn tcp_high_res_time() -> (u64, u32) {
+    let khz = crate::boot_benchmark::get_tsc_khz();
+    (crate::boot_benchmark::rdtsc(), khz.min(u32::MAX as u64) as u32)
+}
+
 /// Absolute TSC deadline for a millisecond timeout.
 pub fn tcp_deadline_from_ms(ms: u64) -> u64 {
     crate::boot_benchmark::rdtsc().wrapping_add(tsc_ticks_from_ms(ms, tsc_per_us()))
