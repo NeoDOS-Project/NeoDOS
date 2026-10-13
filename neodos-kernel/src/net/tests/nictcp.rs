@@ -150,14 +150,14 @@ pub fn register() {
 
         // Server: bind + listen.
         let srv_sock = SOCKET_MANAGER.lock().alloc_socket(SocketType::Tcp).unwrap();
-        let srv_tcp = tcp_alloc_connection().unwrap();
-        socket_set_tcp_conn(srv_sock, srv_tcp);
+        let srv_listen_tcp = tcp_alloc_connection().unwrap();
+        socket_set_tcp_conn(srv_sock, srv_listen_tcp);
         test_true!(socket_bind(
             srv_sock,
             SocketAddrV4::new(Ipv4Addr::unspecified(), listen_port)
         ));
         test_true!(socket_listen(srv_sock));
-        test_eq!(tcp_get_state(srv_tcp), Some(TcpState::Listen));
+        test_eq!(tcp_get_state(srv_listen_tcp), Some(TcpState::Listen));
 
         // Listener: the generic wait primitive parks on accept.
         test_true!(matches!(
@@ -196,14 +196,24 @@ pub fn register() {
         test_true!(tcp.is_syn());
         test_true!(tcp.is_ack());
         test_eq!(tcp.ack(), peer_isn.wrapping_add(1));
-        test_eq!(tcp_get_state(srv_tcp), Some(TcpState::SynReceived));
-        // State was established through the socket lookup; direction flipped.
-        test_eq!(
-            super::super::socket::socket_get_direction(srv_sock),
-            Some(SocketDirection::Connected)
-        );
+        // The listener stays in Listen; a distinct connection is queued.
+        test_eq!(tcp_get_state(srv_listen_tcp), Some(TcpState::Listen));
+        let pending_sock = SOCKET_MANAGER
+            .lock()
+            .get_socket(srv_sock)
+            .unwrap()
+            .accept_backlog
+            .clone();
+        test_eq!(pending_sock.len(), 1);
+        let pending_tcp = SOCKET_MANAGER
+            .lock()
+            .get_socket(pending_sock[0])
+            .unwrap()
+            .tcp_conn_id
+            .unwrap();
+        test_eq!(tcp_get_state(pending_tcp), Some(TcpState::SynReceived));
 
-        // Final ACK -> Established.
+        // Final ACK -> Established (on the queued connection, not the listener).
         let srv_isn = tcp.seq();
         rx.lock().push(tcp_frame(
             peer_mac,
@@ -219,11 +229,18 @@ pub fn register() {
             &[],
         ));
         super::super::network_poll_all();
+        let srv_conn = super::super::socket::socket_accept_take(srv_sock).expect("accept");
+        let srv_tcp = SOCKET_MANAGER
+            .lock()
+            .get_socket(srv_conn)
+            .unwrap()
+            .tcp_conn_id
+            .unwrap();
         test_eq!(tcp_get_state(srv_tcp), Some(TcpState::Established));
 
         // Connected with an empty receive buffer: park on read.
         test_true!(matches!(
-            super::super::socket::socket_wait_reason(srv_sock),
+            super::super::socket::socket_wait_reason(srv_conn),
             Ok(Some(crate::kwait::WaitReason::SocketRead { .. }))
         ));
 
@@ -251,7 +268,7 @@ pub fn register() {
         // After draining, the socket is idle again; with data buffered it was
         // immediately ready (checked before the recv above).
         test_true!(matches!(
-            super::super::socket::socket_wait_reason(srv_sock),
+            super::super::socket::socket_wait_reason(srv_conn),
             Ok(Some(crate::kwait::WaitReason::SocketRead { .. }))
         ));
 
@@ -324,8 +341,10 @@ pub fn register() {
         test_eq!(tcp_get_state(srv_tcp), Some(TcpState::Closed));
 
         // Cleanup global state.
+        SOCKET_MANAGER.lock().free_socket(srv_conn);
         SOCKET_MANAGER.lock().free_socket(srv_sock);
         tcp_free_connection(srv_tcp);
+        tcp_free_connection(srv_listen_tcp);
         super::super::arp::ARP_CACHE.lock().remove(peer_ip);
         nic_unregister(nic_id);
     });
@@ -357,8 +376,8 @@ pub fn register() {
         super::super::arp::arp_insert(peer_ip, peer_mac);
 
         let srv_sock = SOCKET_MANAGER.lock().alloc_socket(SocketType::Tcp).unwrap();
-        let srv_tcp = tcp_alloc_connection().unwrap();
-        socket_set_tcp_conn(srv_sock, srv_tcp);
+        let srv_listen_tcp = tcp_alloc_connection().unwrap();
+        socket_set_tcp_conn(srv_sock, srv_listen_tcp);
         test_true!(socket_bind(
             srv_sock,
             SocketAddrV4::new(Ipv4Addr::unspecified(), listen_port)
@@ -379,6 +398,20 @@ pub fn register() {
             &[],
         ));
         super::super::network_poll_all();
+        // Listener stays listening; the pending SYNs connection is queued.
+        test_eq!(tcp_get_state(srv_listen_tcp), Some(TcpState::Listen));
+        let pending_sock = SOCKET_MANAGER
+            .lock()
+            .get_socket(srv_sock)
+            .unwrap()
+            .accept_backlog
+            .clone()[0];
+        let srv_tcp = SOCKET_MANAGER
+            .lock()
+            .get_socket(pending_sock)
+            .unwrap()
+            .tcp_conn_id
+            .unwrap();
         test_eq!(tcp_get_state(srv_tcp), Some(TcpState::SynReceived));
 
         let synack_count = |sent: &Arc<Mutex<Vec<Vec<u8>>>>| -> usize {
@@ -418,6 +451,7 @@ pub fn register() {
 
         SOCKET_MANAGER.lock().free_socket(srv_sock);
         tcp_free_connection(srv_tcp);
+        tcp_free_connection(srv_listen_tcp);
         super::super::arp::ARP_CACHE.lock().remove(peer_ip);
         nic_unregister(nic_id);
     });
@@ -555,6 +589,121 @@ pub fn register() {
         test_true!(has_payload);
 
         tcp_free_connection(tcp_id);
+        super::super::arp::ARP_CACHE.lock().remove(peer_ip);
+        nic_unregister(nic_id);
+    });
+
+    test_case!("net_tcp_accept_multiple_sequential", {
+        // A listener must stay usable across several connections and never
+        // deliver one client's data to another connection.
+        super::super::loopback::loopback_pump();
+
+        let peer_mac = MacAddr::new([0x02, 0, 0, 0, 0x20, 0x05]);
+        let our_mac = MacAddr::new([0x02, 0, 0, 0, 0x10, 0x05]);
+        let our_ip = Ipv4Addr::new([10, 0, 5, 10]);
+        let peer_ip = Ipv4Addr::new([10, 0, 5, 20]);
+        let listen_port = 6060u16;
+
+        let sent = Arc::new(Mutex::new(Vec::new()));
+        let rx = Arc::new(Mutex::new(Vec::new()));
+        let nic_id = nic_register(alloc::boxed::Box::new(ScriptedNic {
+            mac: our_mac,
+            ip: our_ip,
+            sent: sent.clone(),
+            rx: rx.clone(),
+        }))
+        .expect("register scripted NIC");
+        {
+            let mut reg = NIC_REGISTRY.lock();
+            reg.set_ip(nic_id, our_ip);
+            reg.set_mask(nic_id, Ipv4Addr::new([255, 255, 255, 0]));
+        }
+        super::super::arp::arp_insert(peer_ip, peer_mac);
+
+        let srv_sock = SOCKET_MANAGER.lock().alloc_socket(SocketType::Tcp).unwrap();
+        let srv_listen_tcp = tcp_alloc_connection().unwrap();
+        socket_set_tcp_conn(srv_sock, srv_listen_tcp);
+        test_true!(socket_bind(srv_sock, SocketAddrV4::new(Ipv4Addr::unspecified(), listen_port)));
+        test_true!(socket_listen(srv_sock));
+
+        let peers: [(u16, &[u8]); 2] = [(60001, b"AAA"), (60002, b"BBB")];
+        let mut accepted: alloc::vec::Vec<(u32, u32)> = alloc::vec::Vec::new();
+        for (i, (pport, payload)) in peers.iter().enumerate() {
+            let peer_isn = 1000 + (i as u32) * 100;
+            rx.lock().push(tcp_frame(
+                peer_mac, our_mac, peer_ip.0, our_ip.0, *pport, listen_port,
+                peer_isn, 0, TCP_FLAG_SYN, 65535, &[],
+            ));
+            super::super::network_poll_all();
+
+            let pending = SOCKET_MANAGER.lock().get_socket(srv_sock).unwrap().accept_backlog.clone();
+            test_eq!(pending.len(), 1);
+            let synack_seq = {
+                let frames = sent.lock().clone();
+                let f = frames.iter().rev().find(|f| {
+                    let t = unsafe { tcp_of(f) };
+                    t.dst_port() == *pport && t.is_syn()
+                }).unwrap();
+                unsafe { tcp_of(f) }.seq()
+            };
+
+            rx.lock().push(tcp_frame(
+                peer_mac, our_mac, peer_ip.0, our_ip.0, *pport, listen_port,
+                peer_isn.wrapping_add(1), synack_seq.wrapping_add(1),
+                TCP_FLAG_ACK, 65535, &[],
+            ));
+            super::super::network_poll_all();
+
+            let conn = super::super::socket::socket_accept_take(srv_sock).expect("accept");
+            let ctcp = SOCKET_MANAGER.lock().get_socket(conn).unwrap().tcp_conn_id.unwrap();
+            test_eq!(tcp_get_state(ctcp), Some(TcpState::Established));
+            // Each accepted connection has the correct peer port.
+            test_eq!(
+                SOCKET_MANAGER.lock().get_socket(conn).unwrap().remote.port,
+                *pport
+            );
+
+            rx.lock().push(tcp_frame(
+                peer_mac, our_mac, peer_ip.0, our_ip.0, *pport, listen_port,
+                peer_isn.wrapping_add(1), synack_seq.wrapping_add(1),
+                TCP_FLAG_PSH | TCP_FLAG_ACK, 65535, payload,
+            ));
+            super::super::network_poll_all();
+            let mut buf = [0u8; 8];
+            let n = tcp_recv(ctcp, &mut buf).unwrap();
+            test_eq!(&buf[..n], *payload);
+
+            // Response must be addressed to this peer's port only.
+            test_eq!(tcp_send(ctcp, payload), Ok(payload.len()));
+            tcp_tick();
+            let frames = sent.lock().clone();
+            let found = frames.iter().any(|f| {
+                let t = unsafe { tcp_of(f) };
+                if t.src_port() != listen_port || t.dst_port() != *pport || t.is_syn() {
+                    return false;
+                }
+                let off = super::super::ethernet::ETH_HDR_LEN
+                    + super::super::ipv4::IPV4_HDR_MIN_LEN
+                    + t.data_offset();
+                off <= f.len() && &f[off..] == *payload
+            });
+            test_true!(found);
+            accepted.push((conn, ctcp));
+        }
+
+        // The listener survived both connections.
+        test_eq!(tcp_get_state(srv_listen_tcp), Some(TcpState::Listen));
+        test_eq!(
+            SOCKET_MANAGER.lock().get_socket(srv_sock).unwrap().direction,
+            SocketDirection::Listening
+        );
+
+        for (conn, ctcp) in accepted {
+            SOCKET_MANAGER.lock().free_socket(conn);
+            tcp_free_connection(ctcp);
+        }
+        SOCKET_MANAGER.lock().free_socket(srv_sock);
+        tcp_free_connection(srv_listen_tcp);
         super::super::arp::ARP_CACHE.lock().remove(peer_ip);
         nic_unregister(nic_id);
     });

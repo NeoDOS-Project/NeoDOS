@@ -539,14 +539,14 @@ pub fn register() {
         use super::super::loopback::loopback_pump;
         // Server: bind + listen on 127.0.0.1:50011.
         let srv_sock = SOCKET_MANAGER.lock().alloc_socket(SocketType::Tcp).unwrap();
-        let srv_tcp = tcp_alloc_connection().unwrap();
-        socket_set_tcp_conn(srv_sock, srv_tcp);
+        let srv_listen_tcp = tcp_alloc_connection().unwrap();
+        socket_set_tcp_conn(srv_sock, srv_listen_tcp);
         test_true!(socket_bind(
             srv_sock,
             SocketAddrV4::new(Ipv4Addr::new([127, 0, 0, 1]), 50011)
         ));
         test_true!(socket_listen(srv_sock));
-        test_eq!(tcp_get_state(srv_tcp), Some(TcpState::Listen));
+        test_eq!(tcp_get_state(srv_listen_tcp), Some(TcpState::Listen));
 
         // Client: ephemeral port, connect. SYN goes out synchronously.
         let cli_sock = SOCKET_MANAGER.lock().alloc_socket(SocketType::Tcp).unwrap();
@@ -567,17 +567,20 @@ pub fn register() {
                 || tcp_get_state(cli_tcp) == Some(TcpState::Established)
         );
 
-        // Drive handshake: SYN -> SYN+ACK -> ACK.
+        // Drive handshake: SYN -> SYN+ACK -> ACK. The listener stays in
+        // `Listen`; the server side connection is queued for accept.
         for _ in 0..500 {
             tcp_tick();
             loopback_pump();
             if tcp_get_state(cli_tcp) == Some(TcpState::Established)
-                && tcp_get_state(srv_tcp) == Some(TcpState::Established)
+                && super::super::socket::listener_has_pending(srv_sock)
             {
                 break;
             }
         }
         test_eq!(tcp_get_state(cli_tcp), Some(TcpState::Established));
+        let srv_conn = super::super::socket::socket_accept_take(srv_sock).expect("accept server conn");
+        let srv_tcp = SOCKET_MANAGER.lock().get_socket(srv_conn).unwrap().tcp_conn_id.unwrap();
         test_eq!(tcp_get_state(srv_tcp), Some(TcpState::Established));
 
         // Data client -> server through the real dispatch + ACK path.
@@ -638,9 +641,11 @@ pub fn register() {
         test_eq!(super::super::loopback::loopback_pending(), 0);
 
         SOCKET_MANAGER.lock().free_socket(cli_sock);
+        SOCKET_MANAGER.lock().free_socket(srv_conn);
         SOCKET_MANAGER.lock().free_socket(srv_sock);
         tcp_free_connection(cli_tcp);
         tcp_free_connection(srv_tcp);
+        tcp_free_connection(srv_listen_tcp);
     });
     test_case!("net_ipv4_header_checksum_validation", {
         let hdr = build_ipv4_header(Ipv4Addr::new([10, 0, 1, 10]), Ipv4Addr::new([10, 0, 1, 20]), 6, 20, 0);

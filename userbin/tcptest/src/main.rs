@@ -17,8 +17,8 @@ extern crate alloc;
 use core::alloc::{GlobalAlloc, Layout};
 use libneodos::syscall;
 use libneodos::syscall::{
-    ob_socket_bind, ob_socket_close, ob_socket_connect, ob_socket_create, ob_socket_listen,
-    ob_socket_recv, ob_socket_send, sys_ob_query_info, sys_ob_wait, ObInfoClass,
+    ob_socket_accept, ob_socket_bind, ob_socket_close, ob_socket_connect, ob_socket_create,
+    ob_socket_listen, ob_socket_recv, ob_socket_send, sys_ob_query_info, sys_ob_wait, ObInfoClass,
 };
 
 struct SbrkAlloc;
@@ -152,8 +152,12 @@ fn run_self_test() -> bool {
     ob_socket_bind(client, [0, 0, 0, 0], 0).unwrap_or_else(|_| fail(b"bind client"));
     ob_socket_connect(client, [127, 0, 0, 1], PORT).unwrap_or_else(|_| fail(b"connect client"));
 
-    if !wait_established(client, b"client") || !wait_established(server, b"server") {
+    // The listener stays listening; a distinct connection is queued and must be
+    // accepted before it can be read.
+    let conn = wait_accept(server);
+    if !wait_established(client, b"client") || !wait_established(conn, b"server-conn") {
         let _ = ob_socket_close(client);
+        let _ = ob_socket_close(conn);
         let _ = ob_socket_close(server);
         return false;
     }
@@ -161,14 +165,14 @@ fn run_self_test() -> bool {
     // client -> server
     if !send_all(client, C2S) { return false; }
     let mut buf = [0u8; 64];
-    if !recv_exact(server, &mut buf, C2S.len()) || &buf[..C2S.len()] != C2S {
+    if !recv_exact(conn, &mut buf, C2S.len()) || &buf[..C2S.len()] != C2S {
         write_str(b"[tcptest] c2s payload mismatch\r\n");
         return false;
     }
     write_str(b"[tcptest] client->server ok\r\n");
 
     // server -> client
-    if !send_all(server, S2C) { return false; }
+    if !send_all(conn, S2C) { return false; }
     let mut buf2 = [0u8; 64];
     if !recv_exact(client, &mut buf2, S2C.len()) || &buf2[..S2C.len()] != S2C {
         write_str(b"[tcptest] s2c payload mismatch\r\n");
@@ -177,8 +181,22 @@ fn run_self_test() -> bool {
     write_str(b"[tcptest] server->client ok\r\n");
 
     let _ = ob_socket_close(client);
+    let _ = ob_socket_close(conn);
     let _ = ob_socket_close(server);
     true
+}
+
+/// Block on the listener until a connection is available, then accept it.
+fn wait_accept(listener: u8) -> u8 {
+    for _ in 0..500_000u32 {
+        match ob_socket_accept(listener) {
+            Ok(fd) => return fd,
+            Err(_) => {
+                let _ = sys_ob_wait(listener);
+            }
+        }
+    }
+    fail(b"accept timeout")
 }
 
 fn run_server(port: u16) -> bool {
@@ -188,11 +206,13 @@ fn run_server(port: u16) -> bool {
     let server = create_socket(b"\\TcpSrv");
     ob_socket_bind(server, [0, 0, 0, 0], port).unwrap_or_else(|_| fail(b"server bind"));
     ob_socket_listen(server).unwrap_or_else(|_| fail(b"server listen"));
-    if !wait_established(server, b"server") { return false; }
+    let conn = wait_accept(server);
+    if !wait_established(conn, b"server-conn") { return false; }
     write_str(b"[tcptest] connection established, echoing\r\n");
     let mut buf = [0u8; 256];
-    if !recv_exact(server, &mut buf, 5) { return false; }
-    let _ = send_all(server, &buf[..5]);
+    if !recv_exact(conn, &mut buf, 5) { return false; }
+    let _ = send_all(conn, &buf[..5]);
+    let _ = ob_socket_close(conn);
     let _ = ob_socket_close(server);
     true
 }

@@ -70,6 +70,10 @@ pub enum ObInfoClass {
     /// #358: whether a graceful shutdown has been requested for the caller's
     /// service (1 byte: 0 = normal, 1 = shutdown requested).
     ProcessShutdownState = 42,
+    /// Accept a pending connection from a listening TCP socket. The 4-byte
+    /// output buffer receives the new connection's fd (u32). Returns EAGAIN
+    /// (`-8`) when none is pending.
+    SocketAccept = 43,
 }
 
 pub mod ob_type {

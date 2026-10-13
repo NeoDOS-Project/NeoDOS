@@ -439,7 +439,7 @@ fn send_syn_segment(id: u32, local: SocketAddrV4, remote: SocketAddrV4, seq: u32
 
 /// Retransmit a SYN-ACK for a server-side connection in `SynReceived`.
 /// `seq` is the SYN's sequence (send_base), `ack` the expected client next seq.
-fn send_synack_segment(local: SocketAddrV4, remote: SocketAddrV4, seq: u32, ack: u32) -> bool {
+pub fn send_synack_segment(local: SocketAddrV4, remote: SocketAddrV4, seq: u32, ack: u32) -> bool {
     let src_ip = resolve_src_ip(remote.ip, local.ip);
     if src_ip.is_unspecified() {
         return false;
@@ -1158,6 +1158,11 @@ pub fn tcp_handle_ack(socket_id: usize, their_seq: u32, their_ack: u32, window: 
         mgr.wake_socket_connect_waiters(sid);
         mgr.wake_socket_accept_waiters(sid);
         mgr.wake_socket_readers(sid);
+        // Accepted connections wake their listener's accept waiters so a
+        // blocked `accept` can pick the now-established connection.
+        if let Some(listener_id) = mgr.get_socket(sid).and_then(|s| s.listener_id) {
+            mgr.wake_socket_accept_waiters(listener_id);
+        }
     }
     // Completing handshake ACK (no locks held).
     if let Some((local, remote, seq, ack)) = hs_ack {
