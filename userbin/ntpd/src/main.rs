@@ -406,13 +406,31 @@ fn network_ready() -> bool {
     libnet::iface_info(0, &mut iface) == 0 && iface.ip != [0u8; 4]
 }
 
+/// True when invoked as `ntpd once` / `-q` / `--once` (one-shot, `ntpdate` role).
+fn arg_once() -> bool {
+    let a = libneodos::args::read_args();
+    for w in a.split(|&b| b == b' ' || b == b'\t' || b == b'\0' || b == b'\r' || b == b'\n') {
+        if w.eq_ignore_ascii_case(b"once") || w == b"-q" || w == b"--once" {
+            return true;
+        }
+    }
+    false
+}
+
 #[no_mangle]
 pub extern "C" fn _start() -> ! {
     write_str(b"\r\n[ntpd] NeoDOS NTP Service v0.1\r\n");
 
+    // `ntpd once` (or `-q`): synchronize a single time and exit — the `ntpdate`
+    // role. Without it the daemon runs the periodic loop.
+    let once = arg_once();
+
     let cfg = load_config();
     if !cfg.enabled {
         write_str(b"[ntpd] NTP disabled by configuration; idling\r\n");
+        if once {
+            syscall::sys_exit(1);
+        }
         publish("Disabled", "", 0, 0, 0, 0, "", 0);
         loop {
             // #358: observe graceful shutdown even while idling.
@@ -429,6 +447,10 @@ pub extern "C" fn _start() -> ! {
     loop {
         if !network_ready() {
             write_str(b"[ntpd] network not ready; waiting\r\n");
+            if once {
+                write_str(b"[ntpd] one-shot: network not ready\r\n");
+                syscall::sys_exit(1);
+            }
             publish("WaitingNetwork", "", 0, 0, 0, 0, "network unavailable", sync_count);
             if wait_seconds(backoff) {
                 graceful_exit();
@@ -496,6 +518,10 @@ pub extern "C" fn _start() -> ! {
 
         if synced {
             backoff = INITIAL_BACKOFF_SECS;
+            if once {
+                write_str(b"[ntpd] one-shot sync complete\r\n");
+                syscall::sys_exit(0);
+            }
             if wait_seconds(cfg.interval) {
                 graceful_exit();
             }
@@ -503,6 +529,10 @@ pub extern "C" fn _start() -> ! {
             write_str(b"[ntpd] all servers failed; backoff ");
             write_u32(backoff);
             write_str(b"s\r\n");
+            if once {
+                write_str(b"[ntpd] one-shot sync failed\r\n");
+                syscall::sys_exit(1);
+            }
             if wait_seconds(backoff) {
                 graceful_exit();
             }
