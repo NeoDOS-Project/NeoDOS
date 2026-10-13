@@ -11,6 +11,7 @@ pub(super) fn handles(info_class: u32) -> bool {
         || info_class == ObSetInfoClass::KeyboardSetRepeatRate as u32
         || info_class == ObSetInfoClass::KeyboardSetLeds as u32
         || info_class == ObSetInfoClass::KeyboardSetModifier as u32
+        || info_class == ObSetInfoClass::KeyboardSetRawMode as u32
 }
 
 /// Dispatch the `keyboard` info classes.
@@ -22,6 +23,19 @@ pub(super) fn dispatch(
     buf_size: usize,
 ) -> u64 {
     match info_class {
+        // #466: toggle raw mode for the caller's VT (1 byte: 0/1).
+        _ if info_class == ObSetInfoClass::KeyboardSetRawMode as u32 => {
+            if buf_size < 1 {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let mut b = [0u8; 1];
+            if copy_from_user(&mut b, buf_ptr).is_err() {
+                return err_to_u64(SyscallError::Fault);
+            }
+            let vt = crate::scheduler::current_vt_num() as usize;
+            crate::input::manager::set_raw_mode(vt, b[0] != 0);
+            0
+        }
         _ if info_class == ObSetInfoClass::KeyboardLayout as u32 => {
             if entry.object_id == 0 {
                 return err_to_u64(SyscallError::Inval);

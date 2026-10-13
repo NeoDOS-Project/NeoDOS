@@ -225,4 +225,113 @@ pub fn kbd_set_leds(leds: u8) -> Result<(), i64> {
     r
 }
 
+// ── Raw keyboard events (#466) ──
+
+/// Size of the `KeyEvent` ABI struct (16 bytes).
+pub const KBD_EVENT_SIZE: usize = core::mem::size_of::<KeyEvent>();
+const KBD_READ_MAX: usize = 64;
+
+/// Raw keyboard event (mirrors the kernel `input::kbd::ring::KeyEvent`).
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct KeyEvent {
+    /// Raw set-1 scancode (E0-prefixed keys keep the base code).
+    pub scancode: u16,
+    /// Virtual key ([`VK_*`]); 0 if none.
+    pub vk: u16,
+    /// Layout translation (0 for key-up / non-character keys).
+    pub codepoint: u32,
+    pub modifiers: u8,
+    /// 1 = make (down), 0 = break (up).
+    pub pressed: u8,
+    /// bit0 extended (E0), bit1 repeat.
+    pub flags: u8,
+    /// Padding to make the struct exactly 16 bytes (ABI).
+    pub _pad: u32,
+}
+
+impl KeyEvent {
+    pub const NONE: KeyEvent = KeyEvent {
+        scancode: 0,
+        vk: 0,
+        codepoint: 0,
+        modifiers: 0,
+        pressed: 0,
+        flags: 0,
+        _pad: 0,
+    };
+    pub fn is_pressed(&self) -> bool { self.pressed != 0 }
+    pub fn is_extended(&self) -> bool { self.flags & 0x01 != 0 }
+    pub fn is_repeat(&self) -> bool { self.flags & 0x02 != 0 }
+}
+
+pub const KBD_EV_EXTENDED: u8 = 0x01;
+pub const KBD_EV_REPEAT: u8 = 0x02;
+
+pub const VK_BACK: u16 = 0x08;
+pub const VK_TAB: u16 = 0x09;
+pub const VK_RETURN: u16 = 0x0D;
+pub const VK_SHIFT: u16 = 0x10;
+pub const VK_CONTROL: u16 = 0x11;
+pub const VK_MENU: u16 = 0x12;
+pub const VK_ESCAPE: u16 = 0x1B;
+pub const VK_SPACE: u16 = 0x20;
+pub const VK_PRIOR: u16 = 0x21;
+pub const VK_NEXT: u16 = 0x22;
+pub const VK_END: u16 = 0x23;
+pub const VK_HOME: u16 = 0x24;
+pub const VK_LEFT: u16 = 0x25;
+pub const VK_UP: u16 = 0x26;
+pub const VK_RIGHT: u16 = 0x27;
+pub const VK_DOWN: u16 = 0x28;
+pub const VK_INSERT: u16 = 0x2D;
+pub const VK_DELETE: u16 = 0x2E;
+pub const VK_F1: u16 = 0x70;
+
+/// Enable/disable raw keyboard mode for the caller's VT (#466).
+pub fn kbd_set_raw(enabled: bool) -> Result<(), i64> {
+    let fd = open_kbd(ob_access::READ | ob_access::WRITE)?;
+    let r = syscall::sys_ob_set_info(fd, ObSetInfoClass::KeyboardSetRawMode, &[enabled as u8]);
+    let _ = syscall::sys_close(fd);
+    r
+}
+
+/// Non-blocking: drain up to `buf.len()` events; returns the count.
+pub fn kbd_poll_event(buf: &mut [KeyEvent]) -> Result<usize, i64> {
+    if buf.is_empty() {
+        return Ok(0);
+    }
+    let fd = open_kbd(ob_access::READ)?;
+    let bytes = unsafe {
+        core::slice::from_raw_parts_mut(buf.as_mut_ptr() as *mut u8, buf.len() * KBD_EVENT_SIZE)
+    };
+    let r = syscall::sys_ob_query_info(fd, ObInfoClass::KeyboardPoll, bytes);
+    let _ = syscall::sys_close(fd);
+    r.map(|n| n / KBD_EVENT_SIZE)
+}
+
+/// Read up to `buf.len()` events. Requires raw mode. `timeout_ms == 0` blocks
+/// until an event arrives (the caller re-issues after the wake); `> 0` uses a
+/// deadline. Returns the number of events copied.
+pub fn kbd_read_event(buf: &mut [KeyEvent], timeout_ms: u32) -> Result<usize, i64> {
+    if buf.is_empty() {
+        return Ok(0);
+    }
+    let count = buf.len().min(KBD_READ_MAX);
+    let mut raw = [0u8; 8 + KBD_READ_MAX * KBD_EVENT_SIZE];
+    raw[0..4].copy_from_slice(&(count as u32).to_ne_bytes());
+    raw[4..8].copy_from_slice(&timeout_ms.to_ne_bytes());
+    let len = 8 + count * KBD_EVENT_SIZE;
+    let fd = open_kbd(ob_access::READ)?;
+    let r = syscall::sys_ob_query_info(fd, ObInfoClass::KeyboardRead, &mut raw[..len]);
+    let _ = syscall::sys_close(fd);
+    let n = r? as usize;
+    let nav = (n / KBD_EVENT_SIZE).min(buf.len());
+    for i in 0..nav {
+        buf[i] = unsafe { *(raw.as_ptr().add(i * KBD_EVENT_SIZE) as *const KeyEvent) };
+    }
+    Ok(nav)
+}
+
+
 

@@ -74,6 +74,9 @@ pub enum ObInfoClass {
     /// output buffer receives the new connection's fd (u32). Returns EAGAIN
     /// (`-8`) when none is pending.
     SocketAccept = 43,
+    /// Raw keyboard events for the caller's VT (#466).
+    KeyboardRead = 44,
+    KeyboardPoll = 45,
     /// Monotonic uptime: `{ uptime_ms: u64, tick_hz: u32, _pad: u32 }` (#467).
     Uptime = 46,
     /// High-resolution monotonic time: `{ tsc: u64, tsc_khz: u32, _pad: u32 }` (#467).
@@ -154,6 +157,9 @@ pub enum ObSetInfoClass {
     /// Mark the target process object as the foreground process of the caller's
     /// VT (the Ctrl+C target). Used by the interactive shell.
     SetForegroundProcess = 51,
+    /// Toggle raw keyboard mode for the caller's VT (#466). 1 byte: 0 = cooked,
+    /// 1 = raw.
+    KeyboardSetRawMode = 55,
 }
 
 /// Backward-compatible constants for `ObSetInfoClass`.

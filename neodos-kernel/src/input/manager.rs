@@ -1,5 +1,6 @@
 use crate::input::vt::{VtInputQueue, VtShadowBuffer, ConsoleState, VT_COUNT};
-use core::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
+use crate::input::kbd::ring::{KeyEvent, KeyEventRing};
+use core::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 
 pub struct InputManager {
     active_vt: AtomicUsize,
@@ -10,6 +11,11 @@ pub struct InputManager {
     /// read from the keyboard IRQ (Ctrl+C) and written from syscall context, so
     /// it must be atomic.
     vt_foreground_pid: [AtomicU32; VT_COUNT],
+    /// Raw keyboard event ring per VT (#466), drained by the foreground client.
+    key_rings: [KeyEventRing; VT_COUNT],
+    /// Per-VT raw mode: when on, scancodes go to `key_rings` instead of cooked
+    /// bytes on stdin (#466).
+    raw_mode: [AtomicBool; VT_COUNT],
 }
 
 static mut INPUT_MANAGER: InputManager = InputManager::new();
@@ -37,6 +43,13 @@ impl InputManager {
                 VtShadowBuffer::new(),
             ],
             vt_foreground_pid: [const { AtomicU32::new(0) }; VT_COUNT],
+            key_rings: [
+                KeyEventRing::new(),
+                KeyEventRing::new(),
+                KeyEventRing::new(),
+                KeyEventRing::new(),
+            ],
+            raw_mode: [const { AtomicBool::new(false) }; VT_COUNT],
         }
     }
 
@@ -64,9 +77,12 @@ impl InputManager {
         if pid == 0 {
             return;
         }
-        for q in self.vt_foreground_pid.iter() {
+        for (i, q) in self.vt_foreground_pid.iter().enumerate() {
             if q.load(Ordering::Acquire) == pid {
                 q.store(0, Ordering::Release);
+                // A crashed/exited foreground client must not leave the VT deaf
+                // to cooked input (#466).
+                self.raw_mode[i].store(false, Ordering::Release);
             }
         }
     }
@@ -89,6 +105,34 @@ impl InputManager {
     pub fn pop_byte_from_vt(&self, vt: usize) -> Option<u8> {
         if vt >= VT_COUNT { None } else { self.vt_queues[vt].pop() }
     }
+
+    /// Push a raw key event to VT `vt` and wake a blocked raw reader (#466).
+    pub fn push_key_event_to(&self, vt: usize, ev: KeyEvent) {
+        if vt >= VT_COUNT {
+            return;
+        }
+        self.key_rings[vt].push(ev);
+        crate::kwait::kwait_wake(&crate::kwait::WaitReason::Keyboard { vt: vt as u32 });
+    }
+
+    pub fn key_ring(&self, vt: usize) -> Option<&KeyEventRing> {
+        if vt < VT_COUNT { Some(&self.key_rings[vt]) } else { None }
+    }
+
+    pub fn set_raw_mode(&self, vt: usize, on: bool) {
+        if vt < VT_COUNT {
+            if on {
+                // Start from a clean ring so cooked-mode keystrokes are not
+                // replayed as raw events (#466).
+                self.key_rings[vt].clear();
+            }
+            self.raw_mode[vt].store(on, Ordering::Release);
+        }
+    }
+
+    pub fn raw_mode(&self, vt: usize) -> bool {
+        vt < VT_COUNT && self.raw_mode[vt].load(Ordering::Acquire)
+    }
 }
 
 pub fn init() {
@@ -98,6 +142,27 @@ pub fn active_vt() -> usize { unsafe { INPUT_MANAGER.active_vt() } }
 pub fn switch_vt(vt: usize) { unsafe { INPUT_MANAGER.switch_vt(vt); } }
 pub fn push_byte(b: u8) -> Result<(), ()> { unsafe { INPUT_MANAGER.push_byte(b) } }
 pub fn pop_byte_from_vt(vt: usize) -> Option<u8> { unsafe { INPUT_MANAGER.pop_byte_from_vt(vt) } }
+
+/// Push a raw key event to the active VT (#466). Called from the scancode path.
+pub fn push_key_event(ev: KeyEvent) {
+    let vt = active_vt();
+    unsafe { INPUT_MANAGER.push_key_event_to(vt, ev) };
+}
+
+/// Raw event ring for `vt` (None when out of range).
+pub fn key_ring_for(vt: usize) -> Option<&'static KeyEventRing> {
+    unsafe { INPUT_MANAGER.key_ring(vt) }
+}
+
+/// Enable/disable raw mode for `vt` (#466). Idempotent.
+pub fn set_raw_mode(vt: usize, on: bool) {
+    unsafe { INPUT_MANAGER.set_raw_mode(vt, on); }
+}
+
+/// Whether `vt` is in raw mode.
+pub fn raw_mode(vt: usize) -> bool {
+    unsafe { INPUT_MANAGER.raw_mode(vt) }
+}
 pub fn input_manager_mut() -> Option<&'static mut InputManager> {
     unsafe { Some(&mut INPUT_MANAGER) }
 }

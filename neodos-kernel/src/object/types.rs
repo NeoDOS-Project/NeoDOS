@@ -175,6 +175,11 @@ pub enum ObInfoClass {
     /// (u32) as a direct fd. Returns `Again` (EAGAIN) when no connection is
     /// pending. Read on the listener's Socket object.
     SocketAccept = 43,
+    /// Read raw keyboard events for the caller's VT (#466).
+    /// in: `{ count: u32, timeout_ms: u32 }`; out: `count` × `KeyEvent`.
+    KeyboardRead = 44,
+    /// Non-blocking raw keyboard event poll (#466). out: `KeyEvent` array.
+    KeyboardPoll = 45,
     /// Monotonic system uptime: `{ uptime_ms: u64, tick_hz: u32, _pad: u32 }`
     /// (16 bytes). Never decreases; SMP-safe (single BSP tick source) (#467).
     Uptime = 46,
@@ -237,6 +242,9 @@ pub enum ObSetInfoClass {
     /// VT, i.e. the Ctrl+C target. Declared explicitly by the interactive shell
     /// for the child it is about to wait on; ignored for other callers.
     SetForegroundProcess = 51,
+    /// Toggle raw keyboard mode for the caller's VT (#466). 1 byte: 0 = cooked,
+    /// 1 = raw. Idempotent; cleared when the VT's foreground process exits.
+    KeyboardSetRawMode = 55,
 }
 
 // ═══════════════════════════════════════════════════════════════════════

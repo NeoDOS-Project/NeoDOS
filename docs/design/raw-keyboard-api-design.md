@@ -1,7 +1,10 @@
 # Raw Keyboard Event API — Design Document
 
 > **Version:** v0.1-draft
-> **Status:** Design
+> **Status:** Implemented (ring + VK + E0 split, `KeyboardRead` 44 /
+> `KeyboardPoll` 45 / `KeyboardSetRawMode` 55, `keyread.nxe`). Deferred:
+> `sys_poll` keyboard readiness and a distinct timeout status for the blocking
+> read (caller re-issues, like `ob_wait`).
 > **Target Release:** v0.52+
 > **Issue:** [#466](https://github.com/NeoDOS-Project/NeoDOS/issues/466)
 > **Related:** [#391](https://github.com/NeoDOS-Project/NeoDOS/issues/391),
