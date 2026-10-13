@@ -11,8 +11,9 @@ use libneocfg::{
     VersionInfo,
 };
 use libneodos::i18n;
+use libneodos::keyboard;
 use libneodos::syscall::{
-    self, ob_access, MemInfo as SysMemInfo, ObEnumEntry, ObInfoClass, ObSetInfoClass,
+    self, ob_access, MemInfo as SysMemInfo, ObEnumEntry, ObInfoClass,
 };
 
 /// Syscall ABI revision (`docs/kernel/syscalls.md`).
@@ -209,25 +210,13 @@ impl CfgPlatform for NeodosPlatform {
     }
 
     fn keyboard_layout(&self) -> Result<String, CfgError> {
-        let fd = syscall::sys_ob_open("\\Global\\Info\\Keyboard", ob_access::READ)?;
-        let mut buf = [0u8; 64];
-        let n = match syscall::sys_ob_query_info(fd, ObInfoClass::KeyboardLayout, &mut buf) {
-            Ok(n) => n,
-            Err(e) => {
-                let _ = syscall::sys_close(fd);
-                return Err(CfgError::from(e));
-            }
-        };
-        let _ = syscall::sys_close(fd);
-        let n = n.min(buf.len());
-        Ok(String::from_utf8_lossy(trim(&buf[..n])).into_owned())
+        let name = keyboard::kbd_get_layout().map_err(CfgError::from)?;
+        let end = name.iter().position(|&b| b == 0).unwrap_or(name.len());
+        Ok(String::from_utf8_lossy(&name[..end]).into_owned())
     }
 
     fn set_keyboard_layout(&self, layout: &str) -> Result<(), CfgError> {
-        let fd = syscall::sys_ob_open("\\Global\\Info\\Keyboard", ob_access::READ)?;
-        let r = syscall::sys_ob_set_info(fd, ObSetInfoClass::KeyboardLayout, layout.as_bytes());
-        let _ = syscall::sys_close(fd);
-        r.map_err(CfgError::from)
+        keyboard::kbd_set_layout(layout).map_err(CfgError::from)
     }
 
     fn power(&self) -> Option<&dyn PowerOps> {
