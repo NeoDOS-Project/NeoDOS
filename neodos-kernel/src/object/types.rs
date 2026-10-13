@@ -175,6 +175,12 @@ pub enum ObInfoClass {
     /// (u32) as a direct fd. Returns `Again` (EAGAIN) when no connection is
     /// pending. Read on the listener's Socket object.
     SocketAccept = 43,
+    /// Monotonic system uptime: `{ uptime_ms: u64, tick_hz: u32, _pad: u32 }`
+    /// (16 bytes). Never decreases; SMP-safe (single BSP tick source) (#467).
+    Uptime = 46,
+    /// High-resolution monotonic time: `{ tsc: u64, tsc_khz: u32, _pad: u32 }`
+    /// (16 bytes), from the calibrated TSC (#467).
+    HighResTime = 47,
 }
 
 /// Info classes for sys_ob_set_info (RAX=43).

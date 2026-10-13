@@ -1,7 +1,8 @@
 # Monotonic Clock / Uptime — Design Document
 
 > **Version:** v0.1-draft
-> **Status:** Design
+> **Status:** Implemented (`Uptime` 46 + `HighResTime` 47 + `uptime.nxe`); the
+> blocking `sleep(ms)`/wait-with-timeout part is tracked in #283.
 > **Target Release:** v0.52+
 > **Issue:** [#467](https://github.com/NeoDOS-Project/NeoDOS/issues/467)
 > **Related:** [#283](https://github.com/NeoDOS-Project/NeoDOS/issues/283),

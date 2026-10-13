@@ -74,6 +74,10 @@ pub enum ObInfoClass {
     /// output buffer receives the new connection's fd (u32). Returns EAGAIN
     /// (`-8`) when none is pending.
     SocketAccept = 43,
+    /// Monotonic uptime: `{ uptime_ms: u64, tick_hz: u32, _pad: u32 }` (#467).
+    Uptime = 46,
+    /// High-resolution monotonic time: `{ tsc: u64, tsc_khz: u32, _pad: u32 }` (#467).
+    HighResTime = 47,
 }
 
 pub mod ob_type {
