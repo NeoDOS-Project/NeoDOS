@@ -293,8 +293,8 @@ Sin dependencias externas. Implementable inmediatamente con la API Ob existente.
 tr!("keyboard.current"):      tr!("keyboard.layout.sp")
 
 tr!("keyboard.available"):
-  1. tr!("keyboard.layout.us")      "us" — US
-  2. tr!("keyboard.layout.sp")      "es" — Spanish  [*]
+  1. tr!("keyboard.layout.us")      "en-US" — English (US)
+  2. tr!("keyboard.layout.sp")      "es-ES" — Spanish (Spain)  [*]
 
 tr!("keyboard.actions"):
   1. tr!("keyboard.change")
@@ -302,7 +302,7 @@ tr!("keyboard.actions"):
 [Esc] tr!("neocfg.back")
 ```
 
-**Implementación** (vía Ob API existente, mismo patrón que `userbin/keyb/`).
+**Implementación** (vía Ob API existente, mismo patrón que `userbin/neokey/`).
 El layout se identifica por **nombre** (string NUL-terminado, p. ej. `"us"`,
 `"es"`), no por índice numérico:
 
@@ -514,7 +514,7 @@ NeoCfg no extiende el kernel. Es una aplicación Ring 3 que **consume** APIs exi
 
 ### Alternative B: Herramientas independientes por subsistema (ej. `powercfg.nxe`, `langcfg.nxe`, `kbdcfg.nxe`)
 
-**Descripción**: Crear un binario .NXE separado para cada área de configuración, como ya se hace con `keyb.nxe`, `ipconfig.nxe`.
+**Descripción**: Crear un binario .NXE separado para cada área de configuración, como ya se hace con `neokey.nxe`, `ipconfig.nxe`.
 
 **Rechazada porque**:
 
@@ -522,7 +522,7 @@ NeoCfg no extiende el kernel. Es una aplicación Ring 3 que **consume** APIs exi
 2. **Duplicación de UI**: Cada herramienta implementa su propia interfaz de usuario. NeoCfg centraliza la UI en `ui/menu.rs` y `ui/dialog.rs`, reutilizables.
 3. **Dificultad de descubrimiento**: Un usuario nuevo no sabe qué herramientas existen ni qué hace cada una. NeoCfg ofrece un listado completo.
 4. **Alineación con la visión**: El roadmap (`ADM-5+6: neocfg + neofs`) ya prevé una herramienta de administración unificada.
-5. **No excluye herramientas independientes**: `keyb.nxe`, `ipconfig.nxe` pueden coexistir con NeoCfg, que las invoca o emula su funcionalidad.
+5. **No excluye herramientas independientes**: `neokey.nxe`, `ipconfig.nxe` pueden coexistir con NeoCfg, que las invoca o emula su funcionalidad.
 
 ### Alternative C: Aplicación GUI desde el inicio
 
@@ -667,8 +667,8 @@ pub fn i18n_reload_all();
 | # | Test | Expected |
 | --- | --- | --- |
 | 8 | Keyboard muestra layout actual | Coincide con `ob_query_info(KeyboardLayout)` |
-| 9 | Seleccionar "US" → layout cambia a US | `ob_query_info(KeyboardLayout)` retorna `"us"` |
-| 10 | Seleccionar "Spanish" → layout cambia a Spanish | `ob_query_info(KeyboardLayout)` retorna `"es"` |
+| 9 | Seleccionar "en-US" → layout cambia a en-US | `ob_query_info(KeyboardLayout)` retorna `"en-US"` |
+| 10 | Seleccionar "es-ES" → layout cambia a es-ES | `ob_query_info(KeyboardLayout)` retorna `"es-ES"` |
 | 11 | Keyboard no modifica nada excepto `ob_set_info(KeyboardLayout)` | Solo se invoca la clase 5 |
 
 ### 7.4 Tests del módulo About (invariante: los datos de versión son consistentes)
@@ -793,7 +793,7 @@ userbin/neocfg/
 **Archivos:** `src/modules/keyboard.rs`
 
 1. `ob_open("\Global\Info\Keyboard")` → `ob_query_info(KeyboardLayout)` → get current
-2. Mostrar menú con layouts disponibles (US=0, Spanish=1)
+2. Mostrar menú con layouts disponibles (en-US=0, es-ES=1)
 3. `ob_set_info(KeyboardLayout, &[layout])` si el usuario selecciona cambio
 4. Esperar tecla, retornar
 
@@ -913,8 +913,8 @@ keyboard.title          = "===== Keyboard Layout ====="
 keyboard.current        = "Current layout"
 keyboard.available      = "Available layouts"
 keyboard.change         = "Change layout"
-keyboard.layout.us      = "US"
-keyboard.layout.sp      = "Spanish"
+keyboard.layout.us      = "en-US"
+keyboard.layout.sp      = "es-ES"
 
 # About module
 about.title             = "===== About NeoDOS ====="
