@@ -263,6 +263,17 @@ fn tsc_per_us() -> u64 {
     (crate::boot_benchmark::get_tsc_khz() / 1000).max(1)
 }
 
+/// Current TSC, for modules that are not allowed to depend on
+/// `boot_benchmark` directly (dependency-graph isolation).
+pub fn tcp_now_tsc() -> u64 {
+    crate::boot_benchmark::rdtsc()
+}
+
+/// Convert a millisecond timeout into an absolute TSC deadline.
+pub fn tcp_deadline_from_ms(ms: u64) -> u64 {
+    crate::boot_benchmark::rdtsc().wrapping_add(ms.saturating_mul(tsc_per_us()))
+}
+
 /// Resolve the source IP for an outgoing segment.
 fn resolve_src_ip(remote: Ipv4Addr, local: Ipv4Addr) -> Ipv4Addr {
     if !local.is_unspecified() {

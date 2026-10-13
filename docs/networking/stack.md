@@ -116,6 +116,7 @@ through a NAT port-forward.
 | 19 | `TcpStatus` | TCP connection state |
 | 20 | `NicInfo` | NIC metadata: MAC, IP, link status, vendor/device PCI IDs, driver name, description |
 | 23 | `SocketRecv` | Received data (non-blocking read) |
+| 43 | `SocketAccept` | Accept a pending connection from a listener (4-byte fd out) |
 
 ### ObSetInfoClass (mutate)
 
@@ -142,6 +143,36 @@ Socket objects support KWait (kernel wait) for blocking I/O operations:
 | `SocketAccept` | New connection arrives on listening socket |
 
 Blocking syscalls suspend the calling thread via KWait and wake when the corresponding event fires.
+
+### Ring 3 listener / accept semantics
+
+A listening socket stays in `Listen`; each incoming pure SYN (SYN without
+ACK) creates a **distinct** socket + TCP connection, sends the SYN-ACK and
+queues the connection on the listener (`MAX_ACCEPT_BACKLOG = 8`; excess SYNs
+are dropped, the listener stays usable). `ob_query_info(SocketAccept)` pops an
+*established* connection, wraps it in a new `Socket` Ob object/handle and
+returns the new fd (EAGAIN when none is ready). This allows sequential — and,
+up to the backlog and `MAX_SOCKETS`, concurrent — connections without
+cross-talk. A SYN-ACK is never routed to a listener; it reaches the client
+connection.
+
+### Blocking and timeouts
+
+`ob_wait` on a socket blocks on `SocketAccept` (listener), `SocketConnect`
+(handshake in progress) or `SocketRead` (data/EOF). A non-zero `ob_wait`
+timeout arms a TSC deadline serviced by the RX pump (`net_tick` →
+`kwait::deadline_tick`), which wakes the waiter when it expires. **The timeout
+wake carries no distinct status** (`ob_wait` returns 0); the caller must
+re-check readiness. Indefinite waits (`timeout = 0`) are unchanged.
+
+### Send / receive return values
+
+`SocketSend` returns the number of bytes buffered; a full send buffer returns
+`EIO` (retry after draining). `SocketRecv` returns bytes copied, or `EAGAIN`
+when none are buffered. There is **no distinct EOF**: `SocketRecv` returns
+`EAGAIN` both when no data is available and when the peer has closed; the
+connection state (`TcpStatus`) distinguishes `CloseWait`/`Closed`. Zero-length
+sends/recvs are rejected as `EINVAL`.
 
 ## Packet Flow
 

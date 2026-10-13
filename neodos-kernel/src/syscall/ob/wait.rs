@@ -83,9 +83,7 @@ pub fn handler_ob_wait(regs: crate::syscall::Registers) -> u64 {
                     // wake is a normal signal; the caller must re-check
                     // readiness (timeouts carry no distinct status).
                     if timeout_ms > 0 {
-                        let per_us = (crate::boot_benchmark::get_tsc_khz() / 1000).max(1);
-                        let deadline = crate::boot_benchmark::rdtsc()
-                            .wrapping_add(timeout_ms.saturating_mul(per_us));
+                        let deadline = crate::net::tcp::tcp_deadline_from_ms(timeout_ms);
                         crate::kwait::register_deadline(reason.encode_magic(), deadline);
                     }
                     reason

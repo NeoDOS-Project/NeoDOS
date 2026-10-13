@@ -443,7 +443,7 @@ pub fn socket_accept_incoming(
             c.send_base = SRV_ISS;
             c.send_seq = SRV_ISS.wrapping_add(1);
             c.retries = 0;
-            c.last_tx_tsc = crate::boot_benchmark::rdtsc();
+            c.last_tx_tsc = crate::net::tcp::tcp_now_tsc();
         }
     }
     {
