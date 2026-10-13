@@ -472,6 +472,49 @@ pub fn socket_accept_incoming(
     true
 }
 
+/// Poll-readiness helpers for `sys_poll` (#307). A socket is readable when it
+/// has buffered data or is at EOF (half/fully closed); writable when connected;
+/// hung up when closed.
+pub fn socket_poll_readable(id: u32) -> bool {
+    use crate::net::types::{SocketType, TcpState};
+    let mgr = SOCKET_MANAGER.lock();
+    let s = match mgr.get_socket(id) {
+        Some(s) => s,
+        None => return true,
+    };
+    match s.socket_type {
+        SocketType::Tcp => match s.tcp_conn_id {
+            Some(t) => {
+                crate::net::tcp::tcp_recv_pending(t)
+                    || matches!(
+                        crate::net::tcp::tcp_get_state(t),
+                        Some(TcpState::CloseWait)
+                            | Some(TcpState::Closed)
+                            | Some(TcpState::LastAck)
+                            | Some(TcpState::FinWait1)
+                            | Some(TcpState::FinWait2)
+                    )
+            }
+            None => true,
+        },
+        _ => !s.recv_buf.is_empty(),
+    }
+}
+
+pub fn socket_poll_writable(id: u32) -> bool {
+    match SOCKET_MANAGER.lock().get_socket(id) {
+        Some(s) => s.direction == SocketDirection::Connected,
+        None => false,
+    }
+}
+
+pub fn socket_poll_hup(id: u32) -> bool {
+    match SOCKET_MANAGER.lock().get_socket(id) {
+        Some(s) => s.direction == SocketDirection::Closed,
+        None => true,
+    }
+}
+
 /// Decide how `ob_wait` should treat a socket.
 ///
 /// * `Ok(None)` — the socket is already ready (or closed); the caller should
