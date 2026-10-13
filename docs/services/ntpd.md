@@ -69,6 +69,25 @@ clock-setting call.
 | `Servers` | REG_SZ | `pool.ntp.org` | `;`-separated list of hostnames or dotted IPv4 addresses, tried in order. |
 | `Interval` | REG_DWORD | `3600` | Seconds between successful synchronizations (minimum 16). |
 | `Timeout` | REG_DWORD | `3000` | Per-server response timeout in milliseconds. |
+| `KeyId` | REG_DWORD | `0` | RFC 5905 symmetric-key identifier (used with `Key`). |
+| `Key` | REG_SZ | *(empty)* | Pre-shared key in hex (e.g. `0x0102…` or `01:02:…`). Non-empty enables authentication. |
+| `Mac` | REG_SZ | *(unset = md5)* | MAC algorithm. `off` disables authentication even if `Key` is set. |
+
+### Authentication (RFC 5905 symmetric-key MAC, #361)
+
+When `Key` is configured (and `Mac` is not `off`), `ntpd`:
+
+- appends a **key id + MD5 MAC** to each request
+  (`libntp::build_request_authed` and `sign_request_md5`), and
+- **rejects any reply without a matching authenticator** before parsing the
+  header (`libntp::parse_reply_authed`): a plain 48-byte reply is rejected as
+  unauthenticated, a wrong key id as a mismatch, and a bad MAC as a failure.
+
+The MAC is `MD5( key || packet-through-key-id )`, matching the ntpd convention.
+MD5 is the RFC 5905 default and is **not** collision-resistant; **NTS (RFC 8915)
+is not implemented** (there is no TLS stack in the userland network stack).
+Authentication is off by default (no `Key`), so an unconfigured system behaves
+exactly as before.
 
 The Registry is the **single source of truth**. `ntpd` never writes
 configuration; a future `neocfg` NTP module (see ADM-5 #30 / TOOL-NEOCFG #98)
@@ -158,7 +177,7 @@ admin-only, matching `SetHostname`.
 | Timezone/DST: NTP time is UTC and is written to the RTC directly; no local-time offset is applied. | New Issue: timezone support |
 | RTC resolution is 1 second, bounding offset accuracy; `libntp` still computes sub-second offsets. | This document |
 | No timed sleep in userland; periodic waits use an RDTSC budget. | #283, #307 |
-| No NTP authentication (NTS/MAC); only unauthenticated SNTP unicast. | Out of scope (see Follow-up) |
+| Symmetric-key MD5 MAC supported (RFC 5905, #361); **NTS (RFC 8915) is not** — no TLS in the userland stack. MD5 is not collision-resistant. | #361 (MAC done), NTS out of scope |
 | Service shutdown is now graceful (notification + bounded timeout). | #358 (resolved) |
 
 ## 7.1 Build/packaging dependency
@@ -171,6 +190,8 @@ permanent fix (auto-discovery) is tracked in NeoDOS-Project/NeoDev#5.
 ## 8. Testing
 
 - `libntp` unit tests (host): request encoding, reply validation, offset/delay
-  math, NTP↔Unix conversion, civil-time round trips, config parsing.
+  math, NTP↔Unix conversion, civil-time round trips, config parsing, **MD5
+  (RFC 1321) vectors and MAC authentication** (accept a valid MAC; reject
+  missing/key-id-mismatch/bad-MAC/tampered replies).
 - Kernel tests: `ObSetInfoClass::DateTime` field validation.
 - E2E (VirtualBox/QEMU): see `docs/development/testing.md`.
