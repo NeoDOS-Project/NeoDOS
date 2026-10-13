@@ -349,6 +349,14 @@ Moving DHCP to userspace resolves all these issues:
 `dhcpd` only **publishes** here; the resident `netapplier` service reads this key
 and applies IP/mask/gateway to the runtime NIC (single applier; see #365).
 
+**Change notification (#364).** The applier no longer spin-polls the key. A
+config writer that applies a NIC address (`ObSetInfoClass::SetNicIp`/`SetNicGateway`,
+i.e. `libnet::config::apply`) makes the kernel signal `EVENT_NET_CONFIG_CHANGED`
+(18) via `kwait`; the applier blocks on an Event object
+(`ob_create(Event, attrs = 18)` + `ob_wait`) and re-reads the Registry on wake.
+`ob_wait` carries a finite timeout (2 s) so polling remains a fallback if the
+notification object is unavailable (degradation).
+
 ## DNS Resolver (Userland)
 
 DNS resolution is **not** a kernel subsystem: like DHCP, it runs in user mode on

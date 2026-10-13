@@ -42,9 +42,9 @@ unsafe impl GlobalAlloc for SbrkAlloc {
 #[global_allocator]
 static ALLOC: SbrkAlloc = SbrkAlloc;
 
-/// Spin budget between polls (~tens of ms). Polling is replaced by a
-/// configuration-change notification in #364; until then the Registry is the
-/// single source of truth and is re-read each iteration.
+/// Spin budget for the polling fallback (used only when the #364 config-change
+/// notification object is unavailable). Otherwise the applier blocks on the
+/// event with a finite timeout and re-reads the Registry on wake.
 const POLL_SPIN: u32 = 5_000_000;
 
 fn write_str(s: &[u8]) {
@@ -69,6 +69,14 @@ fn write_dec_u32(mut v: u32) {
 #[no_mangle]
 pub extern "C" fn _start() -> ! {
     write_str(b"\r\n[netapplier] Network Configuration Applier started\r\n");
+
+    // #364: wait for a config-change notification instead of a spin loop.
+    let ev_fd = syscall::ob_event_create("\\NetCfgEvent", syscall::EVENT_NET_CONFIG_CHANGED).ok();
+    if ev_fd.is_some() {
+        write_str(b"[netapplier] config-change notifications enabled\r\n");
+    }
+    // Fallback poll interval when notifications are unavailable (degradation).
+    const POLL_FALLBACK_MS: u64 = 2000;
 
     // Per-interface last-applied state (multi-NIC). Slots follow the
     // NicInfo enumeration: physical NICs in order, loopback last.
@@ -121,8 +129,14 @@ pub extern "C" fn _start() -> ! {
             }
             i += 1;
         }
-        // Yield so the rest of the system runs between polls.
-        for _ in 0..POLL_SPIN { core::hint::spin_loop(); }
-        syscall::sys_yield();
+        // Wait for the next config-change notification; the finite timeout is
+        // the polling fallback when notifications are unavailable (#364).
+        match ev_fd {
+            Some(fd) => { let _ = syscall::sys_ob_wait_timeout(fd, POLL_FALLBACK_MS); }
+            None => {
+                for _ in 0..POLL_SPIN { core::hint::spin_loop(); }
+                syscall::sys_yield();
+            }
+        }
     }
 }

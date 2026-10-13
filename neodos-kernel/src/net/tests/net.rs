@@ -914,4 +914,54 @@ pub fn register() {
         nic_unregister(n0);
         nic_unregister(n1);
     });
+
+    test_case!("net_config_change_notification_wakes_waiter", {
+        // #364: a config-apply signal must wake a thread blocked on the
+        // EVENT_NET_CONFIG_CHANGED event.
+        use crate::scheduler::{BOOT_TID, ThreadState};
+        let reason = crate::kwait::WaitReason::Event {
+            event_type: crate::eventbus::EVENT_NET_CONFIG_CHANGED,
+        };
+        let magic = reason.encode_magic();
+        let orig = crate::hal::without_interrupts(|| {
+            let s = crate::scheduler::current_scheduler().lock();
+            let k = s.kthreads[0].as_ref().unwrap();
+            (k.state, k.waiting_for, s.current_tid)
+        });
+        crate::hal::without_interrupts(|| {
+            let mut s = crate::scheduler::current_scheduler().lock();
+            s.current_tid = BOOT_TID;
+            if let Some(k) = s.kthreads[0].as_mut() {
+                crate::scheduler::Scheduler::remove_from_run_queue(k);
+                k.state = ThreadState::Running;
+                k.waiting_for = None;
+            }
+        });
+        crate::kwait::kwait_block(reason);
+        let blocked = crate::hal::without_interrupts(|| {
+            let s = crate::scheduler::current_scheduler().lock();
+            s.kthreads[0].as_ref().unwrap().state
+        });
+        test_eq!(blocked, ThreadState::Blocked { waiting_for: magic });
+        crate::net::notify_config_changed();
+        let after = crate::hal::without_interrupts(|| {
+            let s = crate::scheduler::current_scheduler().lock();
+            let k = s.kthreads[0].as_ref().unwrap();
+            (k.state, k.waiting_for)
+        });
+        test_true!(after.0 == ThreadState::Ready || after.0 == ThreadState::Running);
+        test_eq!(after.1, None);
+        crate::hal::without_interrupts(|| {
+            let mut s = crate::scheduler::current_scheduler().lock();
+            if let Some(k) = s.kthreads[0].as_mut() {
+                k.state = orig.0;
+                k.waiting_for = orig.1;
+                crate::scheduler::Scheduler::remove_from_run_queue(k);
+                if orig.0 == ThreadState::Ready {
+                    k.state = ThreadState::Running;
+                }
+            }
+            s.current_tid = orig.2;
+        });
+    });
 }

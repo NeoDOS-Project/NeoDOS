@@ -64,6 +64,15 @@ pub fn net_is_initialized() -> bool {
     NET_INITIALIZED.load(core::sync::atomic::Ordering::Acquire)
 }
 
+/// Wake any waiter (e.g. the Ring 3 network applier) blocked on
+/// `EVENT_NET_CONFIG_CHANGED`. Called by the config-apply path after a writer
+/// sets a NIC IP/gateway, so consumers need not poll (#364).
+pub fn notify_config_changed() {
+    crate::kwait::kwait_wake(&crate::kwait::WaitReason::Event {
+        event_type: crate::eventbus::EVENT_NET_CONFIG_CHANGED,
+    });
+}
+
 /// extern "C" wrapper to get a stable function address.
 /// The raw pointer stored in this static keeps the function alive
 /// through LTO and provides the real runtime address.

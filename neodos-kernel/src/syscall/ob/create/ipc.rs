@@ -20,8 +20,10 @@ pub(super) fn dispatch(
 ) -> u64 {
     match obj_type {
         crate::object::ObType::Event => {
+            // `attrs` is the event type; `handler_ob_wait` blocks on
+            // `WaitReason::Event { event_type: native_id }` (#364).
             let ob_id = match crate::object::ob_create_object_path(
-                &path_str, obj_type, 0, None,
+                &path_str, obj_type, attrs as u32, None,
             ) {
                 Ok(id) => id,
                 Err(e) => return err_to_u64(ob_err_to_syscall(e)),

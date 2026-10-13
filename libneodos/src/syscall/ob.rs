@@ -87,6 +87,16 @@ pub mod ob_type {
     pub const SERVICE: u32 = 20;
 }
 
+/// Well-known kernel event types (mirror of `eventbus`).
+pub const EVENT_NET_CONFIG_CHANGED: u32 = 18;
+
+/// ob_event_create: create an Event object bound to `event_type`. `ob_wait` /
+/// `sys_ob_wait_timeout` on the returned fd blocks until the kernel signals
+/// that event (#364).
+pub fn ob_event_create(path: &str, event_type: u32) -> Result<u8, i64> {
+    sys_ob_create(path, ob_type::EVENT, None, event_type as u64)
+}
+
 /// ObSetInfoClass — info classes for sys_ob_set_info (RAX=63).
 /// Must match kernel's `ObSetInfoClass` in `src/object/types.rs`.
 #[repr(u32)]
