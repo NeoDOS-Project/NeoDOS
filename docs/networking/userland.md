@@ -426,6 +426,28 @@ sigue siendo el placeholder). Un hostname propio resuelve localmente (#485).
 
 ## 3. Herramientas NXE de Red
 
+### 3.0 netsrv.nxe / netcli.nxe — cliente y servidor TCP reales
+
+Utilidades Ring 3 que usan la ABI pública de sockets (`ObType::Socket`,
+`ob_create` + `ObSetInfoClass::Socket*` + `ObInfoClass::SocketRecv`/`SocketAccept`).
+
+```text
+NETCLI <ip> <puerto>     conecta, envía PING!, verifica el eco y sale
+NETCLI selftest          round-trip cliente/servidor por loopback (sin NIC)
+NETCLI                   (sin args) ejecuta selftest
+
+NETSRV <puerto> [max]    bind+listen, acepta y hace eco de cada conexión
+NETSRV selftest          round-trip accept/echo por loopback
+NETSRV                   (sin args) ejecuta selftest
+```
+
+- El listener permanece en `Listen`; cada conexión se acepta con
+  `ob_query_info(fd, SocketAccept)` y se cierra sin afectar al listener.
+- `ob_wait` con timeout finito (`sys_ob_wait_timeout`): 0 = indefinido; con
+  timeout, la espera termina al expirar (el llamador reevalúa la disponibilidad;
+  no hay código de retorno distinto para el timeout).
+- Empaquetado por el flujo normal de imagen en `C:\System\Tools\`.
+
 ### 3.1 ipconfig.nxe
 
 ```text

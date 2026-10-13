@@ -97,11 +97,11 @@ directions + orderly close over loopback), `net_tcp_nic_path_syn_synack_no_deadl
 (real dispatch path through a scripted NIC), `net_tcp_synack_retransmit_bounded`,
 `net_tcp_nic_bad_checksum_dropped`, `net_tcp_close_flushes_buffered_data`, and
 the checksum-validation tests. Off-subnet TCP uses `nic_next_hop` (gateway-
-aware); #315 is resolved. The Ring 3 `tcptest` utility (loopback self-test and
-`server`/`client` modes) validates the public socket ABI and blocking wait. In
-VirtualBox NAT (e1000, guest 10.0.2.15) a Ring 3 client reached a host echo
-server through `10.0.2.2`, and a host client reached a Ring 3 `tcptest server`
-through a NAT port-forward.
+aware); #315 is resolved. The Ring 3 utilities `netsrv`/`netcli` (real client
+and echo server: connect/accept, finite timeouts, clean close) and the
+`tcptest` self-test validate the public socket ABI. In VirtualBox NAT (e1000,
+guest 10.0.2.15) `netcli 10.0.2.2 5555` reached a host echo server and a host
+client reached `netsrv 6666` through a NAT port-forward.
 
 ## ObType Integration
 
