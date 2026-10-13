@@ -19,7 +19,7 @@ use super::super::ipv4::{compute_ip_checksum, build_ipv4_header, Ipv4Header};
 use super::super::icmp::IcmpHeader;
 use super::super::udp::UdpHeader;
 
-use super::{CaptureNic, LinkNic, capture_nic};
+use super::{CaptureNic, LinkNic, RespondingNic, capture_nic};
 pub fn register() {
     test_case!("net_mac_addr_basics", {
         let mac = MacAddr::new([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
@@ -696,6 +696,41 @@ pub fn register() {
         test_true!(super::super::udp::udp_checksum_valid([10, 0, 1, 10], [10, 0, 1, 21], &z));
     });
 
+    test_case!("net_udp_send_waits_for_arp", {
+        // Regression #311: the first datagram to a new peer must not be dropped
+        // while ARP resolves; the send path waits (bounded) for the reply.
+        use super::super::ethernet::{EthernetHeader, ETH_TYPE_ARP, ETH_TYPE_IPV4};
+        use super::super::nic::{nic_register, nic_unregister, NIC_REGISTRY};
+        let sent = alloc::sync::Arc::new(spin::Mutex::new(alloc::vec::Vec::new()));
+        let nic = nic_register(alloc::boxed::Box::new(RespondingNic {
+            mac: MacAddr::new([0x02, 0, 0, 0, 0xA0, 0x10]),
+            ip: Ipv4Addr::unspecified(),
+            reply_mac: MacAddr::new([0x02, 0, 0, 0, 0xAA, 0x10]),
+            sent: sent.clone(),
+        }))
+        .unwrap();
+        {
+            let mut reg = NIC_REGISTRY.lock();
+            reg.set_ip(nic, Ipv4Addr::new([10, 0, 10, 10]));
+            reg.set_mask(nic, Ipv4Addr::new([255, 255, 255, 0]));
+        }
+        super::super::arp::ARP_CACHE.lock().remove(Ipv4Addr::new([10, 0, 10, 20]));
+
+        let local = SocketAddrV4::new(Ipv4Addr::new([10, 0, 10, 10]), 40000);
+        let remote = SocketAddrV4::new(Ipv4Addr::new([10, 0, 10, 20]), 53);
+        test_true!(
+            super::super::socket::socket_send_udp_raw_on(local, remote, b"x", Some(nic)).is_ok()
+        );
+        let frames = sent.lock().clone();
+        let eth = |f: &alloc::vec::Vec<u8>| unsafe {
+            (*&*(f.as_ptr() as *const EthernetHeader)).ethertype()
+        };
+        test_true!(frames.iter().any(|f| eth(f) == ETH_TYPE_ARP));
+        test_true!(frames.iter().any(|f| eth(f) == ETH_TYPE_IPV4));
+
+        super::super::arp::ARP_CACHE.lock().remove(Ipv4Addr::new([10, 0, 10, 20]));
+        nic_unregister(nic);
+    });
     test_case!("net_multi_nic_next_hop_per_interface", {
         use super::super::nic::{nic_register, nic_unregister, NIC_REGISTRY};
         let n0 = nic_register(alloc::boxed::Box::new(capture_nic(0xA0))).unwrap();

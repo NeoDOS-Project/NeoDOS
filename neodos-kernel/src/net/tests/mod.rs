@@ -57,6 +57,40 @@ impl super::nic::NetworkInterface for LinkNic {
     }
 }
 
+/// Test NIC that answers ARP requests by populating the cache (simulates a
+/// peer/gateway reply) while recording every transmitted frame (#311).
+pub struct RespondingNic {
+    pub mac: MacAddr,
+    pub ip: Ipv4Addr,
+    pub reply_mac: MacAddr,
+    pub sent: alloc::sync::Arc<spin::Mutex<alloc::vec::Vec<alloc::vec::Vec<u8>>>>,
+}
+
+impl super::nic::NetworkInterface for RespondingNic {
+    fn mac_address(&self) -> MacAddr { self.mac }
+    fn name(&self) -> &str { "responding-nic" }
+    fn send_packet(&mut self, packet: &[u8]) -> Result<(), ()> {
+        self.sent.lock().push(packet.to_vec());
+        if packet.len() >= crate::net::ethernet::ETH_HDR_LEN + core::mem::size_of::<super::arp::ArpPacket>() {
+            let eth: &super::ethernet::EthernetHeader =
+                unsafe { &*(packet.as_ptr() as *const super::ethernet::EthernetHeader) };
+            if eth.ethertype() == super::ethernet::ETH_TYPE_ARP {
+                let arp: &super::arp::ArpPacket = unsafe {
+                    &*(packet.as_ptr().add(crate::net::ethernet::ETH_HDR_LEN)
+                        as *const super::arp::ArpPacket)
+                };
+                if arp.operation() == super::arp::ARP_OP_REQUEST {
+                    super::arp::arp_insert(arp.target_ip_addr(), self.reply_mac);
+                }
+            }
+        }
+        Ok(())
+    }
+    fn poll_packet(&mut self, _buf: &mut [u8]) -> Option<usize> { None }
+    fn set_ip_address(&mut self, ip: Ipv4Addr) { self.ip = ip; }
+    fn ip_address(&self) -> Ipv4Addr { self.ip }
+}
+
 fn capture_nic(mac_last: u8) -> CaptureNic {
     CaptureNic {
         mac: MacAddr::new([0x02, 0, 0, 0, 0, mac_last]),

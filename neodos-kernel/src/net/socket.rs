@@ -652,7 +652,9 @@ pub fn socket_send_udp_raw_on(
     let dst_mac = if dst_ip.is_broadcast() {
         MacAddr::broadcast()
     } else {
-        crate::net::arp::arp_resolve_on(nic_id, arp_target).ok_or(())?
+        // Wait (bounded) for the ARP reply so the first datagram to a new peer
+        // is not dropped (#311). ARP on a LAN is sub-millisecond; 100 ms cap.
+        crate::net::icmp::arp_resolve_wait(nic_id, arp_target, 100_000).ok_or(())?
     };
 
     let udp_data = crate::net::udp::build_udp_datagram(
