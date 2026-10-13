@@ -474,4 +474,43 @@ pub fn register_tests() {
         test_eq!(layout::lookup_codepoint(&en, 0x27, 0), Some(';' as u16));
         test_eq!(layout::lookup_codepoint(&en, 0x27, KBD_SHIFT), Some(':' as u16));
     });
+
+    // A missing / malformed `.kbd` is rejected rather than panicking.
+    test_case!("kbd_missing_layout_is_rejected", {
+        test_true!(layout::load_kbd("C:\\System\\Keyboard\\does-not-exist.kbd").is_err());
+    });
+
+    // Repeat delay/rate bounds are enforced by the manager.
+    test_case!("kbd_repeat_bounds", {
+        let mut kbd = NeoKbd::new();
+        test_true!(kbd.set_repeat_delay(99).is_err());
+        test_true!(kbd.set_repeat_delay(100).is_ok());
+        test_true!(kbd.set_repeat_delay(2000).is_ok());
+        test_true!(kbd.set_repeat_delay(2001).is_err());
+        test_true!(kbd.set_repeat_rate(1).is_err());
+        test_true!(kbd.set_repeat_rate(2).is_ok());
+        test_true!(kbd.set_repeat_rate(60).is_ok());
+        test_true!(kbd.set_repeat_rate(61).is_err());
+        test_eq!(kbd.config.repeat_delay, 2000);
+        test_eq!(kbd.config.repeat_rate, 60);
+    });
+
+    // LED state is masked to the three defined bits.
+    test_case!("kbd_leds_masked", {
+        let mut kbd = NeoKbd::new();
+        kbd.set_leds(0xFF);
+        test_eq!(kbd.state.leds, 0x07);
+        kbd.set_leds(0x02);
+        test_eq!(kbd.state.leds, 0x02);
+    });
+
+    // Shift make/break updates the modifier state.
+    test_case!("kbd_shift_toggles_modifier", {
+        let mut kbd = NeoKbd::new();
+        test_eq!(kbd.state.modifiers & KBD_SHIFT, 0);
+        kbd.process_scancode(0x2A, true);
+        test_true!(kbd.state.modifiers & KBD_SHIFT != 0);
+        kbd.process_scancode(0x2A, false);
+        test_eq!(kbd.state.modifiers & KBD_SHIFT, 0);
+    });
 }
