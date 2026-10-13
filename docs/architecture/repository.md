@@ -28,10 +28,11 @@ neodos/
 ├── libnet/                 # User-mode networking library
 ├── userbin/                # 52 user binaries (PID 1, shell, utilities)
 ├── drivers/                # 10 standalone NEM drivers
-├── tools/                  # 4 Rust host tools + 1 Python script
+├── tools/                  # 5 Rust host tools + 1 Python script
 │   ├── crashdump/          # Crash dump decoder
 │   ├── gen-hiv/            # Registry hive generator
-│   ├── kbdcompile/         # Keyboard layout compiler
+│   ├── kbdcompile/         # Keyboard layout compiler (.klc → .kbd)
+│   ├── xkbcompile/         # Keyboard layout compiler (XKB → .kbd)
 │   └── nltc/               # NLT compiler
 ├── scripts/                # bash utilities (MCP server migrated → neodos-dev-server)
 ├── data/                   # Locale TOML (141 files) + keyboard layouts
@@ -109,7 +110,8 @@ kbdcompile (host)   ───→ data/keyboard (layout sources)
 | `nxdump` | Host tool, reads ELF/NXE/NEM files. |
 | `nxeinfo` | Host tool, reads NXE headers. |
 | `nxpkg` | Host tool, creates/extracts NXP packages. |
-| `kbdcompile` | Host tool, compiles keyboard layouts. |
+| `kbdcompile` | Host tool, compiles keyboard layouts (`.klc` → `.kbd`). |
+| `xkbcompile` | Host tool, converts XKB layouts → `.kbd`. |
 | `scripts/mcp_server` | Python, completely independent. |
 | `scripts/check_deps.py` | Python, standalone validation. |
 | `scripts/gen_*` | Python, host-side data generation. |
@@ -142,7 +144,7 @@ kbdcompile (host)   ───→ data/keyboard (layout sources)
 |-----------|-----------|-----------|
 | `neodev` | `NeoDev` | Fully standalone host tool. Standard Rust deps (clap, anyhow, serde). Changes at own pace. Can version independently. Build/test/image creation for any repo. |
 | `neodos-lsp` + `scripts/mcp_server` | `NeoDOS Dev Server` (merged) | **Migrated.** LSP + MCP merged into single Rust workspace at [neodos-dev-server](https://github.com/NeoDOS-Project/neodos-dev-server). Shared toolkit (neodos-toolkit) + LSP binary + MCP binary. |
-| `nltc, kbdcompile` | `NeoToolchain` or separate | Both are host-side compilers for OS data formats. Can evolve independently of kernel version. |
+| `nltc, kbdcompile, xkbcompile` | `NeoToolchain` or separate | Host-side compilers for OS data formats. Can evolve independently of kernel version. |
 | `nxdump, nxeinfo, nxpkg` | `NeoTools` | UX-focused analysis tools. Independent release cycle. Useful for OS analysis even without building kernel. |
 | `scripts/mcp_server` | `NeoMCP` | Python MCP server for AI-assisted development. Completely independent of kernel. |
 | `data/locale/*` | `NeoTranslations` | Translation data. Community contributions don't need kernel access. Can be translated entirely by non-developers. |
