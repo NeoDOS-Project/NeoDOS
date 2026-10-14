@@ -17,11 +17,11 @@ El contenido de `C:` se genera íntegramente en `neodev/src/image.rs::collect_fi
 C:\
 ├── README.TXT
 ├── Temp/.empty
-├── Programs\                      # 28 .NXE del OS (mezcla shell + utilidades core)
+├── Programs\                      # 27 .NXE del OS (mezcla shell + utilidades core)
 │   ├── neoshell.nxe  neoinit.nxe  cmdtest.nxe
 │   ├── cd.nxe  corehelp.nxe  coredir.nxe  coretype.nxe
 │   ├── corecls.nxe corecopy.nxe coredel.nxe coreren.nxe
-│   ├── coremd.nxe corerd.nxe  drives.nxe  ps.nxe  keyb.nxe
+│   ├── coremd.nxe corerd.nxe  drives.nxe  ps.nxe
 │   └── datetime neomem echo label poweroff colors neokey
 │       nxres nxlocale nxverify ping hostname
 └── System\
@@ -31,7 +31,7 @@ C:\
     │   ├── nslookup
     │   └── reboot shtest stresscmd tree ver vol   # movidos aquí por capacidad
     ├── Libraries\                 # fs.nxl math.nxl console.nxl net.nxl
-    ├── Keyboard\                  # US.kbd Spanish.kbd
+    ├── Keyboard\                  # en-US.kbd es-ES.kbd
     ├── Locale\<lang>\*.nlt
     ├── Drivers\                   # *.nem BOOT y SYSTEM mezclados
     └── Registry\SYSTEM.hiv
@@ -92,7 +92,7 @@ C:\
 │   │   ├── config\                      # hives: SYSTEM.hiv (+ SOFTWARE/SAM/SECURITY/DEFAULT)
 │   │   ├── drivers\                     # .NEM SYSTEM
 │   │   │   └── BOOT\                    # .NEM boot-critical (ps2kbd, serial, rtc…)
-│   │   ├── Keyboard\                    # US.kbd, Spanish.kbd
+│   │   ├── Keyboard\                    # en-US.kbd, es-ES.kbd
 │   │   ├── Globalization\<lang>\        # *.nlt
 │   │   ├── Fonts\
 │   │   ├── INF\

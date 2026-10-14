@@ -4,6 +4,13 @@
 > **Estado:** Diseño completo
 > **Versión de NeoDOS:** v0.50+
 > **Dependencias:** Event Bus (existente), Registry/Cm (existente), Input Manager (existente), Ob (existente)
+>
+> **Nota (post-implementación):** El binario `keyb.nxe` fue retirado; su
+> funcionalidad vive ahora en `userbin/neokey/`
+> (`NEOKEY show`, `NEOKEY layouts`, `NEOKEY layout <nombre>`). Los layouts se
+> identifican por locale tag — `en-US` y `es-ES` (ficheros `en-US.kbd`/`es-ES.kbd`),
+> ya no `US`/`SP`. Las referencias a `userbin/keyb` y a los nombres `US`/`Spanish`
+> más abajo son históricas (plan de diseño original).
 
 ---
 
