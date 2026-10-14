@@ -108,12 +108,35 @@ pub fn register_tests() {
     test_case!("vfs_cache_coherency", {
         let mut pc = PageCache::new();
         test_eq!(pc.dirty_count(), 0);
-        pc.mark_dirty_sector(0);
+        pc.mark_dirty_sector(0, 0);
         test_eq!(pc.dirty_count(), 0);
         pc.mark_dirty(0, 1, 0);
         test_eq!(pc.dirty_count(), 0);
         pc.invalidate_inode(0, 0);
         test_eq!(pc.dirty_count(), 0);
         test_eq!(pc.peek_inode(0, 1, 0), None);
+    });
+
+    // #709: two devices must not alias on the same LBA, and a dirty page must
+    // not be dropped when another device touches that LBA.
+    test_case!("page_cache_devices_do_not_alias", {
+        use crate::fs::fsck::TestBlockDevice;
+        let mut pc = PageCache::new();
+        let mut a = TestBlockDevice { sectors: alloc::vec![[0u8; 512]; 8] };
+        let mut b = TestBlockDevice { sectors: alloc::vec![[0u8; 512]; 8] };
+
+        {
+            let data = pc.get_page_mut(0, 1, 0, 0, 1, &mut a).unwrap();
+            data[0] = 0xAA;
+        }
+        // Device B touches the same LBA 0.
+        {
+            let data = pc.get_page_mut(0, 1, 0, 0, 2, &mut b).unwrap();
+            data[0] = 0xBB;
+        }
+        // Flushing A must write A's dirty page: it must not have been dropped.
+        pc.flush(1, &mut a).unwrap();
+        let s = a.read_sector(0).unwrap();
+        test_eq!(s[0], 0xAA);
     });
 }

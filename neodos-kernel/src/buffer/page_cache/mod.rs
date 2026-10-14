@@ -12,6 +12,15 @@ use hash::{HashTable, ReadaheadState, EMPTY_READAHEAD, make_inode_key};
 use slot::{CacheSlot, EMPTY_SLOT};
 pub use tests::register_tests;
 
+/// Page/sector hash key, scoped by device so two block devices never alias on
+/// the same LBA. Without it, a page cached for device B is found (and
+/// evicted, dropping its dirty data) when device A touches an overlapping LBA.
+#[inline]
+const fn page_key(dev_tag: u64, lba: u64) -> u64 {
+    // NE2 LBAs fit in 48 bits and device tags in 16, so the fields are disjoint.
+    (dev_tag << 48) ^ (lba & 0x0000_FFFF_FFFF_FFFF)
+}
+
 // ── Public cache statistics ─────────────────────────────────────────
 
 #[derive(Copy, Clone)]
@@ -91,10 +100,10 @@ impl PageCache {
         Ok(&mut slot.data[offset..offset + 512])
     }
 
-    pub fn mark_dirty_sector(&mut self, lba: u32) {
+    pub fn mark_dirty_sector(&mut self, lba: u32, dev_tag: u64) {
         let page_lba = (lba as u64) & !7;
         let sector_bit = 1u8 << ((lba as u64) & 7);
-        if let Some(slot_id) = self.hash.get(page_lba) {
+        if let Some(slot_id) = self.hash.get(page_key(dev_tag, page_lba)) {
             let slot = &mut self.slots[slot_id as usize];
             if slot.valid {
                 slot.dirty_sectors |= sector_bit;
@@ -119,7 +128,7 @@ impl PageCache {
         dev: &mut dyn BlockDevice,
     ) -> Result<&[u8; 4096], ()> {
         self.counter = self.counter.wrapping_add(1);
-        let key = data_lba;
+        let key = page_key(dev_tag, data_lba);
         let slot_id = if let Some(id) = self.hash.get(key) {
             if self.slots[id as usize].valid && self.slots[id as usize].dev_tag == dev_tag {
                 self.hits += 1;
@@ -130,13 +139,13 @@ impl PageCache {
                 self.misses += 1;
                 self.evict_slot(id, dev_tag, dev);
                 let id = self.evict_lru(dev_tag, dev)?;
-                self.populate_slot(id, key, dev_tag, make_inode_key(drive_id, inode, block_num), dev)?;
+                self.populate_slot(id, data_lba, dev_tag, make_inode_key(drive_id, inode, block_num), dev)?;
                 id
             }
         } else {
             self.misses += 1;
             let id = self.evict_lru(dev_tag, dev)?;
-            self.populate_slot(id, key, dev_tag, make_inode_key(drive_id, inode, block_num), dev)?;
+            self.populate_slot(id, data_lba, dev_tag, make_inode_key(drive_id, inode, block_num), dev)?;
             id
         };
         self.update_readahead(inode, block_num);
@@ -153,7 +162,7 @@ impl PageCache {
         dev: &mut dyn BlockDevice,
     ) -> Result<&mut [u8; 4096], ()> {
         self.counter = self.counter.wrapping_add(1);
-        let key = data_lba;
+        let key = page_key(dev_tag, data_lba);
         let slot_id = if let Some(id) = self.hash.get(key) {
             if self.slots[id as usize].valid && self.slots[id as usize].dev_tag == dev_tag {
                 self.hits += 1;
@@ -163,13 +172,13 @@ impl PageCache {
                 self.misses += 1;
                 self.evict_slot(id, dev_tag, dev);
                 let id = self.evict_lru(dev_tag, dev)?;
-                self.populate_slot(id, key, dev_tag, make_inode_key(drive_id, inode, block_num), dev)?;
+                self.populate_slot(id, data_lba, dev_tag, make_inode_key(drive_id, inode, block_num), dev)?;
                 id
             }
         } else {
             self.misses += 1;
             let id = self.evict_lru(dev_tag, dev)?;
-            self.populate_slot(id, key, dev_tag, make_inode_key(drive_id, inode, block_num), dev)?;
+            self.populate_slot(id, data_lba, dev_tag, make_inode_key(drive_id, inode, block_num), dev)?;
             id
         };
         self.update_readahead(inode, block_num);
@@ -185,8 +194,8 @@ impl PageCache {
 
     // ── Cache-only operations (no disk I/O) ────────────────────────
 
-    pub fn peek(&self, lba: u64) -> Option<&[u8; 4096]> {
-        if let Some(slot_id) = self.hash.get(lba) {
+    pub fn peek(&self, dev_tag: u64, lba: u64) -> Option<&[u8; 4096]> {
+        if let Some(slot_id) = self.hash.get(page_key(dev_tag, lba)) {
             let slot = &self.slots[slot_id as usize];
             if slot.valid {
                 return Some(&slot.data);
@@ -295,9 +304,9 @@ impl PageCache {
                     if self.slots[i].dirty {
                         self.dirty_count = self.dirty_count.saturating_sub(1);
                     }
-                    let lba = self.slots[i].lba;
+                    let (lba, owner) = (self.slots[i].lba, self.slots[i].dev_tag);
                     self.unlink_lru(i as u16);
-                    self.hash.remove(lba);
+                    self.hash.remove(page_key(owner, lba));
                     self.slots[i] = EMPTY_SLOT;
                 }
             }
@@ -316,9 +325,9 @@ impl PageCache {
                 if self.slots[i].dirty {
                     self.dirty_count = self.dirty_count.saturating_sub(1);
                 }
-                let lba = self.slots[i].lba;
+                let (lba, owner) = (self.slots[i].lba, self.slots[i].dev_tag);
                 self.unlink_lru(i as u16);
-                self.hash.remove(lba);
+                self.hash.remove(page_key(owner, lba));
                 self.slots[i] = EMPTY_SLOT;
             } else {
                 i += 1;
@@ -336,9 +345,9 @@ impl PageCache {
                 if self.slots[i].dirty {
                     self.dirty_count = self.dirty_count.saturating_sub(1);
                 }
-                let lba = self.slots[i].lba;
+                let (lba, owner) = (self.slots[i].lba, self.slots[i].dev_tag);
                 self.unlink_lru(i as u16);
-                self.hash.remove(lba);
+                self.hash.remove(page_key(owner, lba));
                 self.slots[i] = EMPTY_SLOT;
             } else {
                 i += 1;
@@ -473,7 +482,7 @@ impl PageCache {
 
     fn load_page(&mut self, lba: u64, dev_tag: u64, dev: &mut dyn BlockDevice) -> Result<&[u8; 4096], ()> {
         self.counter = self.counter.wrapping_add(1);
-        if let Some(slot_id) = self.hash.get(lba) {
+        if let Some(slot_id) = self.hash.get(page_key(dev_tag, lba)) {
             if self.slots[slot_id as usize].valid && self.slots[slot_id as usize].dev_tag == dev_tag {
                 self.hits += 1;
                 self.move_to_head(slot_id);
@@ -489,7 +498,7 @@ impl PageCache {
 
     fn get_or_load_slot(&mut self, lba: u64, dev_tag: u64, inode_key: u64, dev: &mut dyn BlockDevice) -> Result<u16, ()> {
         self.counter = self.counter.wrapping_add(1);
-        if let Some(slot_id) = self.hash.get(lba) {
+        if let Some(slot_id) = self.hash.get(page_key(dev_tag, lba)) {
             if self.slots[slot_id as usize].valid && self.slots[slot_id as usize].dev_tag == dev_tag {
                 self.hits += 1;
                 self.move_to_head(slot_id);
@@ -526,7 +535,7 @@ impl PageCache {
             self.dirty_count = self.dirty_count.saturating_sub(1);
         }
         self.unlink_lru(slot_id);
-        self.hash.remove(lba);
+        self.hash.remove(page_key(owner, lba));
         self.slots[i] = EMPTY_SLOT;
     }
 
@@ -536,37 +545,42 @@ impl PageCache {
                 return Ok(i as u16);
             }
         }
-        if let Some(tail) = self.lru_tail {
-            let slot = &self.slots[tail as usize];
-            if slot.valid && slot.dirty && !slot.write_pending && slot.dev_tag == dev_tag {
-                let lba = slot.lba;
-                let dirty = slot.dirty_sectors;
-                let tmp = slot.data;
-                let _ = slot;
-                for s in 0..8u8 {
-                    if (dirty >> s) & 1 != 0 {
-                        let offset = (s as usize) * 512;
-                        let mut sector = [0u8; 512];
-                        sector.copy_from_slice(&tmp[offset..offset + 512]);
-                        let _ = dev.write_sector((lba + s as u64) as u64, &sector);
-                    }
-                }
-                self.dirty_count = self.dirty_count.saturating_sub(1);
-                self.evictions += 1;
+        // Cache full: prefer a clean victim so a dirty page (of any device) is
+        // never dropped silently. Only fall back to the LRU tail when every
+        // slot is dirty.
+        let mut victim: Option<u16> = None;
+        let mut cur = self.lru_tail;
+        while let Some(id) = cur {
+            if !self.slots[id as usize].dirty {
+                victim = Some(id);
+                break;
             }
-            let lba = self.slots[tail as usize].lba;
-            self.unlink_lru(tail);
-            self.hash.remove(lba);
-            self.slots[tail as usize] = EMPTY_SLOT;
-            Ok(tail)
-        } else {
-            for i in 0..CACHE_SIZE {
-                if !self.slots[i].valid {
-                    return Ok(i as u16);
-                }
-            }
-            Ok(0)
+            cur = self.slots[id as usize].lru_prev;
         }
+        let id = victim.or(self.lru_tail).unwrap_or(0);
+        let (owner, lba, dirty, write_pending) = {
+            let s = &self.slots[id as usize];
+            (s.dev_tag, s.lba, s.dirty_sectors, s.write_pending)
+        };
+        if self.slots[id as usize].dirty && !write_pending && owner == dev_tag {
+            let tmp = self.slots[id as usize].data;
+            for s in 0..8u8 {
+                if (dirty >> s) & 1 != 0 {
+                    let offset = (s as usize) * 512;
+                    let mut sector = [0u8; 512];
+                    sector.copy_from_slice(&tmp[offset..offset + 512]);
+                    let _ = dev.write_sector((lba + s as u64) as u64, &sector);
+                }
+            }
+        }
+        if self.slots[id as usize].dirty {
+            self.dirty_count = self.dirty_count.saturating_sub(1);
+        }
+        self.evictions += 1;
+        self.unlink_lru(id);
+        self.hash.remove(page_key(owner, lba));
+        self.slots[id as usize] = EMPTY_SLOT;
+        Ok(id)
     }
 
     fn populate_slot(
@@ -596,7 +610,7 @@ impl PageCache {
             lru_prev: None,
             lru_next: None,
         };
-        self.hash.insert(lba, slot_id);
+        self.hash.insert(page_key(dev_tag, lba), slot_id);
         self.move_to_head(slot_id);
         Ok(())
     }
