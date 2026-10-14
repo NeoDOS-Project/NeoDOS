@@ -95,3 +95,18 @@ jobs:
         run: ./scripts/check-skills.sh
       - name: scripts/check-irq-locks.sh (INV-3 / Rule 3.5.1)
         run: ./scripts/check-irq-locks.sh
+
+  keyboard-layouts:
+    name: Keyboard layouts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # xkbcompile is a host-side std tool; the layouts come from xkb-data.
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install xkb-data
+        run: sudo apt-get update && sudo apt-get install -y xkb-data
+
+      - name: scripts/check-keyboard-layouts.sh (#702)
+        run: ./scripts/check-keyboard-layouts.sh

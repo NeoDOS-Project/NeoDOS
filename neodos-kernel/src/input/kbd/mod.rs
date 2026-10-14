@@ -67,7 +67,7 @@ pub struct KbdConfig {
 impl Default for KbdConfig {
     fn default() -> Self {
         KbdConfig {
-            layout_name: "US".to_string(),
+            layout_name: "en-US".to_string(),
             repeat_delay: 500,
             repeat_rate: 30,
             numlock_on_boot: true,
@@ -118,10 +118,28 @@ impl NeoKbd {
         }).map(|i| i as u32)
     }
 
+    /// Resolve a configured layout name against the loaded layouts: by name,
+    /// then by language tag, then mapping pre-locale-tag names (`US`,
+    /// `Spanish`). Kept dynamic so it tracks whatever is actually loaded.
+    pub fn resolve_layout_index(&self, name: &str) -> Option<u32> {
+        if let Some(i) = self.find_layout_index(name) {
+            return Some(i);
+        }
+        if let Some(i) = self
+            .layouts
+            .iter()
+            .position(|l| l.lang_tag_str().eq_ignore_ascii_case(name))
+        {
+            return Some(i as u32);
+        }
+        legacy_layout_alias(name).and_then(|alias| self.find_layout_index(alias))
+    }
+
     pub fn set_layout_by_name(&mut self, name: &str) -> Result<(), ()> {
         let idx = self.find_layout_index(name).ok_or(())?;
         self.state.active_layout_index = idx;
-        self.config.layout_name = name.to_string();
+        // Canonicalise to the layout's own name (e.g. "es-ES", not "spanish").
+        self.config.layout_name = self.layouts[idx as usize].name_str().to_string();
         let _ = config::kbd_save_config(&self.config);
         let _ = crate::eventbus::EVENT_BUS.push_event(
             crate::eventbus::EVENT_KEYB_LAYOUT,
@@ -318,6 +336,17 @@ lazy_static! {
     pub static ref KBD: Mutex<NeoKbd> = Mutex::new(NeoKbd::new());
 }
 
+/// Map a pre-locale-tag layout name to its current tag (legacy Registry values).
+fn legacy_layout_alias(name: &str) -> Option<&'static str> {
+    if name.eq_ignore_ascii_case("us") {
+        Some("en-US")
+    } else if name.eq_ignore_ascii_case("spanish") || name.eq_ignore_ascii_case("sp") {
+        Some("es-ES")
+    } else {
+        None
+    }
+}
+
 pub fn kbd_init() {
     kinfo!(LogSubsys::Kbd, "Initializing Keyboard Manager (NeoKBD)...");
 
@@ -334,11 +363,21 @@ pub fn kbd_init() {
     let config = config::kbd_load_config();
     let mut kbd = KBD.lock();
     kbd.config = config;
-    if let Some(idx) = kbd.find_layout_index(&kbd.config.layout_name) {
+
+    // Resolve the persisted layout against the layouts actually loaded, then
+    // persist the canonical name when it changed. This migrates legacy values
+    // (`US`/`Spanish`) to `en-US`/`es-ES` and normalises unknown values to the
+    // default, so the Registry converges instead of keeping a stale name.
+    if !kbd.layouts.is_empty() {
+        let requested = kbd.config.layout_name.clone();
+        let idx = kbd.resolve_layout_index(&requested).unwrap_or(0);
         kbd.state.active_layout_index = idx;
-    } else if !kbd.layouts.is_empty() {
-        kbd.state.active_layout_index = 0;
-        kbd.config.layout_name = kbd.layouts[0].name_str().to_string();
+        let canonical = kbd.layouts[idx as usize].name_str().to_string();
+        let changed = canonical != requested;
+        kbd.config.layout_name = canonical;
+        if changed {
+            let _ = config::kbd_save_config(&kbd.config);
+        }
     }
     if kbd.config.numlock_on_boot {
         kbd.state.modifiers |= KBD_NUMLOCK;
@@ -356,4 +395,122 @@ pub fn kbd_init() {
     event::register_kbd_event_handler();
 
     kinfo!(LogSubsys::Kbd, "Ready (layout: {})", layout_name);
+}
+
+// ── Tests ──────────────────────────────────────────────────────────
+
+pub fn register_tests() {
+    use crate::{test_case, test_eq, test_true};
+
+    // Layout switching: lookup is case-insensitive, switching updates the
+    // active index and canonicalises the persisted config name.
+    test_case!("kbd_switch_layout_by_name", {
+        let mut kbd = NeoKbd::new();
+        let mk = |name: &str| {
+            let mut lay = KbdLayout {
+                name: [0u8; 32],
+                lang_tag: [0u8; 16],
+                entries: [layout::KeyEntry::empty(); 256],
+                compose: Vec::new(),
+            };
+            lay.name[..name.len()].copy_from_slice(name.as_bytes());
+            lay
+        };
+        kbd.layouts.push(mk("en-US"));
+        kbd.layouts.push(mk("es-ES"));
+
+        test_eq!(kbd.find_layout_index("en-US"), Some(0));
+        test_eq!(kbd.find_layout_index("EN-us"), Some(0));
+        test_eq!(kbd.find_layout_index("es-ES"), Some(1));
+        test_eq!(kbd.find_layout_index("de-DE"), None);
+        // Dynamic resolution: legacy aliases map onto the loaded layouts.
+        test_eq!(kbd.resolve_layout_index("Spanish"), Some(1));
+        test_eq!(kbd.resolve_layout_index("SP"), Some(1));
+        test_eq!(kbd.resolve_layout_index("US"), Some(0));
+        test_eq!(kbd.resolve_layout_index("de-DE"), None);
+        test_eq!(kbd.active_layout().map(|l| l.name_str()), Some("en-US"));
+
+        test_true!(kbd.set_layout_by_name("es-ES").is_ok());
+        test_eq!(kbd.state.active_layout_index, 1);
+        test_eq!(kbd.active_layout().map(|l| l.name_str()), Some("es-ES"));
+        test_eq!(kbd.config.layout_name.as_str(), "es-ES");
+    });
+
+    // Both locale-tagged layouts must be present (disk image provides them).
+    test_case!("kbd_locale_layouts_loaded", {
+        let kbd = KBD.lock();
+        test_true!(kbd.find_layout_index("en-US").is_some());
+        test_true!(kbd.find_layout_index("es-ES").is_some());
+    });
+
+    // #394: typing with the Spanish layout produces Spanish characters.
+    test_case!("kbd_spanish_layout_types", {
+        let idx = KBD.lock().find_layout_index("es-ES");
+        test_true!(idx.is_some());
+        let es = KBD.lock().layouts[idx.unwrap_or(0) as usize].clone();
+
+        // ñ / Ñ / ç and the shifted ; on the Spanish table.
+        test_eq!(layout::lookup_codepoint(&es, 0x27, 0), Some('ñ' as u16));
+        test_eq!(layout::lookup_codepoint(&es, 0x27, KBD_SHIFT), Some('Ñ' as u16));
+        test_eq!(layout::lookup_codepoint(&es, 0x2b, 0), Some('ç' as u16));
+        test_eq!(layout::lookup_codepoint(&es, 0x33, KBD_SHIFT), Some(';' as u16));
+
+        // Dead keys: ` (grave), ´ (acute) and ~ (AltGr+4, `es(deadtilde)`).
+        test_true!(layout::is_dead_key(&es, 0x1a, 0));
+        test_true!(layout::is_dead_key(&es, 0x28, 0));
+        test_true!(layout::is_dead_key(&es, 0x05, KBD_ALTGR));
+
+        // Composition: acute+a, tilde+n, diaeresis+u.
+        test_eq!(layout::compose_in(&es, '´' as u16, 'a' as u16), 'á' as u16);
+        test_eq!(layout::compose_in(&es, '~' as u16, 'n' as u16), 'ñ' as u16);
+        test_eq!(layout::compose_in(&es, '¨' as u16, 'u' as u16), 'ü' as u16);
+    });
+
+    // The English layout keeps its US punctuation.
+    test_case!("kbd_us_layout_types", {
+        let idx = KBD.lock().find_layout_index("en-US");
+        test_true!(idx.is_some());
+        let en = KBD.lock().layouts[idx.unwrap_or(0) as usize].clone();
+        test_eq!(layout::lookup_codepoint(&en, 0x27, 0), Some(';' as u16));
+        test_eq!(layout::lookup_codepoint(&en, 0x27, KBD_SHIFT), Some(':' as u16));
+    });
+
+    // A missing / malformed `.kbd` is rejected rather than panicking.
+    test_case!("kbd_missing_layout_is_rejected", {
+        test_true!(layout::load_kbd("C:\\System\\Keyboard\\does-not-exist.kbd").is_err());
+    });
+
+    // Repeat delay/rate bounds are enforced by the manager.
+    test_case!("kbd_repeat_bounds", {
+        let mut kbd = NeoKbd::new();
+        test_true!(kbd.set_repeat_delay(99).is_err());
+        test_true!(kbd.set_repeat_delay(100).is_ok());
+        test_true!(kbd.set_repeat_delay(2000).is_ok());
+        test_true!(kbd.set_repeat_delay(2001).is_err());
+        test_true!(kbd.set_repeat_rate(1).is_err());
+        test_true!(kbd.set_repeat_rate(2).is_ok());
+        test_true!(kbd.set_repeat_rate(60).is_ok());
+        test_true!(kbd.set_repeat_rate(61).is_err());
+        test_eq!(kbd.config.repeat_delay, 2000);
+        test_eq!(kbd.config.repeat_rate, 60);
+    });
+
+    // LED state is masked to the three defined bits.
+    test_case!("kbd_leds_masked", {
+        let mut kbd = NeoKbd::new();
+        kbd.set_leds(0xFF);
+        test_eq!(kbd.state.leds, 0x07);
+        kbd.set_leds(0x02);
+        test_eq!(kbd.state.leds, 0x02);
+    });
+
+    // Shift make/break updates the modifier state.
+    test_case!("kbd_shift_toggles_modifier", {
+        let mut kbd = NeoKbd::new();
+        test_eq!(kbd.state.modifiers & KBD_SHIFT, 0);
+        kbd.process_scancode(0x2A, true);
+        test_true!(kbd.state.modifiers & KBD_SHIFT != 0);
+        kbd.process_scancode(0x2A, false);
+        test_eq!(kbd.state.modifiers & KBD_SHIFT, 0);
+    });
 }
