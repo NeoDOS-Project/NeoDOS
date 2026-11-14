@@ -8,9 +8,10 @@
 //! neocurl  ->  libhttp  ->  Transport (impl. by libnet; TLS later by libtls)
 //! ```
 //!
-//! Milestone 1 covers the offline half (no transport implementation): building
-//! a well-formed request head and parsing a response head from arbitrary read
-//! boundaries. Body framing (Content-Length, chunked, close) lands in M4.
+//! Milestones 1 and 4 cover the offline half (no socket implementation):
+//! building a well-formed request head, parsing a response head from arbitrary
+//! read boundaries, and streaming the body (`Content-Length`, `chunked`,
+//! connection close) into a caller-supplied sink.
 //!
 //! When built for NeoDOS it is `no_std`; under `cargo test` it uses the host
 //! `std` test harness, like `libdns` and `libntp`.
@@ -19,6 +20,7 @@
 
 extern crate alloc;
 
+mod body;
 mod error;
 mod headers;
 mod limits;
@@ -29,6 +31,7 @@ mod url;
 #[cfg(test)]
 mod tests;
 
+pub use body::{body_framing, BodyFraming, BodyReader, BodySink, NullSink, VecSink};
 pub use error::HttpError;
 pub use headers::{is_valid_name, is_valid_value, HeaderMap};
 pub use limits::Limits;

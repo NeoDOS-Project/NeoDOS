@@ -509,3 +509,402 @@ fn error_messages_are_stable() {
     assert_eq!(HttpError::Timeout.to_string(), "timed out");
     assert_eq!(HttpError::MalformedStatus.as_str(), "malformed status line");
 }
+
+// ── Body framing and streaming ──
+
+use alloc::collections::VecDeque;
+use alloc::string::String;
+
+/// Scripted transport: returns the queued chunks in order, then EOF.
+struct Scripted {
+    chunks: VecDeque<Vec<u8>>,
+    fail: Option<HttpError>,
+}
+
+impl Scripted {
+    fn new(chunks: &[&[u8]]) -> Self {
+        Scripted {
+            chunks: chunks.iter().map(|chunk| chunk.to_vec()).collect(),
+            fail: None,
+        }
+    }
+
+    fn one_byte_reads(payload: &[u8]) -> Self {
+        Scripted {
+            chunks: payload.iter().map(|byte| alloc::vec![*byte]).collect(),
+            fail: None,
+        }
+    }
+
+    fn failing(err: HttpError) -> Self {
+        Scripted {
+            chunks: VecDeque::new(),
+            fail: Some(err),
+        }
+    }
+}
+
+impl Read for Scripted {
+    fn read(&mut self, buf: &mut [u8], _dl: Deadline) -> Result<usize, HttpError> {
+        if let Some(err) = self.fail {
+            return Err(err);
+        }
+        match self.chunks.pop_front() {
+            Some(chunk) => {
+                assert!(chunk.len() <= buf.len());
+                buf[..chunk.len()].copy_from_slice(&chunk);
+                Ok(chunk.len())
+            }
+            None => Ok(0),
+        }
+    }
+}
+
+struct FailingSink;
+
+impl BodySink for FailingSink {
+    fn write(&mut self, _chunk: &[u8]) -> Result<(), HttpError> {
+        Err(HttpError::Io)
+    }
+}
+
+fn response_head(status: u16, headers: &[(&str, &str)]) -> ResponseHead {
+    let mut map = HeaderMap::new();
+    for (name, value) in headers {
+        map.insert(name, value).unwrap();
+    }
+    ResponseHead {
+        version: HttpVersion::H11,
+        status,
+        reason: String::new(),
+        headers: map,
+    }
+}
+
+fn deadline() -> Deadline {
+    Deadline::after(0, 10_000)
+}
+
+#[test]
+fn framing_head_and_bodiless_statuses() {
+    let with_length = [("Content-Length", "5")];
+    let head = response_head(200, &with_length);
+    assert_eq!(body_framing(Method::Head, &head), Ok(BodyFraming::Empty));
+
+    for status in [100u16, 101, 204, 304] {
+        let head = response_head(status, &with_length);
+        assert_eq!(
+            body_framing(Method::Get, &head),
+            Ok(BodyFraming::Empty),
+            "{status}"
+        );
+    }
+}
+
+#[test]
+fn framing_content_length() {
+    let head = response_head(200, &[("Content-Length", "42")]);
+    assert_eq!(
+        body_framing(Method::Get, &head),
+        Ok(BodyFraming::Length(42))
+    );
+}
+
+#[test]
+fn framing_duplicate_identical_content_length() {
+    let head = response_head(200, &[("Content-Length", "5"), ("Content-Length", "5")]);
+    assert_eq!(body_framing(Method::Get, &head), Ok(BodyFraming::Length(5)));
+
+    let list = response_head(200, &[("Content-Length", "5, 5")]);
+    assert_eq!(body_framing(Method::Get, &list), Ok(BodyFraming::Length(5)));
+}
+
+#[test]
+fn framing_conflicting_content_length() {
+    let head = response_head(200, &[("Content-Length", "5"), ("Content-Length", "6")]);
+    assert_eq!(
+        body_framing(Method::Get, &head),
+        Err(HttpError::MalformedHeader)
+    );
+
+    let bad = response_head(200, &[("Content-Length", "5x")]);
+    assert_eq!(
+        body_framing(Method::Get, &bad),
+        Err(HttpError::MalformedHeader)
+    );
+}
+
+#[test]
+fn framing_chunked_beats_content_length() {
+    let head = response_head(
+        200,
+        &[("Transfer-Encoding", "chunked"), ("Content-Length", "5")],
+    );
+    assert_eq!(body_framing(Method::Get, &head), Ok(BodyFraming::Chunked));
+}
+
+#[test]
+fn framing_unknown_transfer_coding() {
+    for value in ["gzip", "gzip, chunked", "chunked, gzip"] {
+        let head = response_head(200, &[("Transfer-Encoding", value)]);
+        assert_eq!(
+            body_framing(Method::Get, &head),
+            Err(HttpError::UnsupportedTransfer),
+            "{value}"
+        );
+    }
+}
+
+#[test]
+fn framing_content_encoding_policy() {
+    let gzip = response_head(
+        200,
+        &[("Content-Encoding", "gzip"), ("Content-Length", "5")],
+    );
+    assert_eq!(
+        body_framing(Method::Get, &gzip),
+        Err(HttpError::UnsupportedEncoding)
+    );
+
+    let identity = response_head(
+        200,
+        &[("Content-Encoding", "identity"), ("Content-Length", "5")],
+    );
+    assert_eq!(
+        body_framing(Method::Get, &identity),
+        Ok(BodyFraming::Length(5))
+    );
+}
+
+#[test]
+fn framing_without_length_is_close_delimited() {
+    let head = response_head(200, &[("Server", "neo")]);
+    assert_eq!(
+        body_framing(Method::Get, &head),
+        Ok(BodyFraming::CloseDelimited)
+    );
+}
+
+#[test]
+fn body_content_length_reads_exactly() {
+    let mut reader = BodyReader::new(Scripted::new(&[b"hello", b"world"]), deadline());
+    let mut sink = VecSink::new();
+    let n = reader
+        .read_body(BodyFraming::Length(8), &Limits::default(), &mut sink)
+        .unwrap();
+    assert_eq!(n, 8);
+    assert_eq!(sink.buf, b"hellowor");
+}
+
+#[test]
+fn body_content_length_short_is_incomplete() {
+    let mut reader = BodyReader::new(Scripted::new(&[b"hello"]), deadline());
+    let mut sink = VecSink::new();
+    assert_eq!(
+        reader.read_body(BodyFraming::Length(8), &Limits::default(), &mut sink),
+        Err(HttpError::IncompleteBody)
+    );
+}
+
+#[test]
+fn body_content_length_limit_is_checked_before_reading() {
+    let mut reader = BodyReader::new(Scripted::new(&[b"0123456789"]), deadline());
+    let mut sink = VecSink::new();
+    let limits = Limits {
+        max_body_bytes: 4,
+        ..Limits::default()
+    };
+    assert_eq!(
+        reader.read_body(BodyFraming::Length(10), &limits, &mut sink),
+        Err(HttpError::BodyTooLarge)
+    );
+    assert!(sink.buf.is_empty());
+}
+
+#[test]
+fn body_chunked_basic() {
+    let payload = b"5\r\nhello\r\n0\r\n\r\n";
+    let mut reader = BodyReader::new(Scripted::new(&[payload]), deadline());
+    let mut sink = VecSink::new();
+    let n = reader
+        .read_body(BodyFraming::Chunked, &Limits::default(), &mut sink)
+        .unwrap();
+    assert_eq!(n, 5);
+    assert_eq!(sink.buf, b"hello");
+}
+
+#[test]
+fn body_chunked_across_one_byte_reads() {
+    let payload = b"3\r\nabc\r\n2\r\nde\r\n0\r\n\r\n";
+    let mut reader = BodyReader::new(Scripted::one_byte_reads(payload), deadline());
+    let mut sink = VecSink::new();
+    let n = reader
+        .read_body(BodyFraming::Chunked, &Limits::default(), &mut sink)
+        .unwrap();
+    assert_eq!(n, 5);
+    assert_eq!(sink.buf, b"abcde");
+}
+
+#[test]
+fn body_chunked_ignores_extensions_and_trailers() {
+    let payload = b"5;name=value\r\nhello\r\n0\r\nX-Sum: 1\r\nX-Other:\r\n\r\n";
+    let mut reader = BodyReader::new(Scripted::new(&[payload]), deadline());
+    let mut sink = VecSink::new();
+    let n = reader
+        .read_body(BodyFraming::Chunked, &Limits::default(), &mut sink)
+        .unwrap();
+    assert_eq!(n, 5);
+    assert_eq!(sink.buf, b"hello");
+}
+
+#[test]
+fn body_chunked_rejects_bad_size_line() {
+    for payload in [&b"zz\r\n"[..], b"\r\n", b"00000000000000001\r\n"] {
+        let mut reader = BodyReader::new(Scripted::new(&[payload]), deadline());
+        let mut sink = NullSink;
+        assert_eq!(
+            reader.read_body(BodyFraming::Chunked, &Limits::default(), &mut sink),
+            Err(HttpError::MalformedChunk),
+            "{payload:?}"
+        );
+    }
+}
+
+#[test]
+fn body_chunked_rejects_missing_data_crlf() {
+    let payload = b"3\r\nabcXX";
+    let mut reader = BodyReader::new(Scripted::new(&[payload]), deadline());
+    let mut sink = VecSink::new();
+    assert_eq!(
+        reader.read_body(BodyFraming::Chunked, &Limits::default(), &mut sink),
+        Err(HttpError::MalformedChunk)
+    );
+}
+
+#[test]
+fn body_chunked_incomplete_is_detected() {
+    let payload = b"5\r\nhel";
+    let mut reader = BodyReader::new(Scripted::new(&[payload]), deadline());
+    let mut sink = VecSink::new();
+    assert_eq!(
+        reader.read_body(BodyFraming::Chunked, &Limits::default(), &mut sink),
+        Err(HttpError::IncompleteBody)
+    );
+}
+
+#[test]
+fn body_chunked_enforces_total_limit() {
+    let payload = b"4\r\nabcd\r\n4\r\nefgh\r\n0\r\n\r\n";
+    let mut reader = BodyReader::new(Scripted::new(&[payload]), deadline());
+    let mut sink = VecSink::new();
+    let limits = Limits {
+        max_body_bytes: 5,
+        ..Limits::default()
+    };
+    assert_eq!(
+        reader.read_body(BodyFraming::Chunked, &limits, &mut sink),
+        Err(HttpError::BodyTooLarge)
+    );
+    assert_eq!(sink.buf, b"abcd");
+}
+
+#[test]
+fn body_chunked_trailer_limit() {
+    let payload = b"0\r\nA: 1\r\nB: 2\r\n\r\n";
+    let mut reader = BodyReader::new(Scripted::new(&[payload]), deadline());
+    let mut sink = NullSink;
+    let limits = Limits {
+        max_headers: 1,
+        ..Limits::default()
+    };
+    assert_eq!(
+        reader.read_body(BodyFraming::Chunked, &limits, &mut sink),
+        Err(HttpError::TooManyHeaders)
+    );
+}
+
+#[test]
+fn body_close_delimited_reads_to_eof() {
+    let mut reader = BodyReader::new(Scripted::new(&[b"abc", b"def"]), deadline());
+    let mut sink = VecSink::new();
+    let n = reader
+        .read_body(BodyFraming::CloseDelimited, &Limits::default(), &mut sink)
+        .unwrap();
+    assert_eq!(n, 6);
+    assert_eq!(sink.buf, b"abcdef");
+}
+
+#[test]
+fn body_close_delimited_enforces_limit() {
+    let mut reader = BodyReader::new(Scripted::new(&[b"abcdef"]), deadline());
+    let mut sink = VecSink::new();
+    let limits = Limits {
+        max_body_bytes: 4,
+        ..Limits::default()
+    };
+    assert_eq!(
+        reader.read_body(BodyFraming::CloseDelimited, &limits, &mut sink),
+        Err(HttpError::BodyTooLarge)
+    );
+}
+
+#[test]
+fn body_uses_leftover_bytes_from_the_head_read() {
+    let mut reader = BodyReader::with_buffered(Scripted::new(&[b"TAIL"]), b"BODY", deadline());
+    let mut sink = VecSink::new();
+    let n = reader
+        .read_body(BodyFraming::Length(8), &Limits::default(), &mut sink)
+        .unwrap();
+    assert_eq!(n, 8);
+    assert_eq!(sink.buf, b"BODYTAIL");
+}
+
+#[test]
+fn body_empty_writes_nothing() {
+    let mut reader = BodyReader::new(Scripted::new(&[b"ignored"]), deadline());
+    let mut sink = VecSink::new();
+    assert_eq!(
+        reader.read_body(BodyFraming::Empty, &Limits::default(), &mut sink),
+        Ok(0)
+    );
+    assert!(sink.buf.is_empty());
+}
+
+#[test]
+fn body_sink_error_propagates() {
+    let mut reader = BodyReader::new(Scripted::new(&[b"x"]), deadline());
+    assert_eq!(
+        reader.read_body(BodyFraming::Length(1), &Limits::default(), &mut FailingSink),
+        Err(HttpError::Io)
+    );
+}
+
+#[test]
+fn body_transport_error_propagates() {
+    let mut reader = BodyReader::new(Scripted::failing(HttpError::Timeout), deadline());
+    let mut sink = NullSink;
+    assert_eq!(
+        reader.read_body(BodyFraming::Length(1), &Limits::default(), &mut sink),
+        Err(HttpError::Timeout)
+    );
+}
+
+#[test]
+fn chunk_size_parser_accepts_hex_and_extensions() {
+    assert_eq!(crate::body::parse_chunk_size(b"a"), Ok(10));
+    assert_eq!(crate::body::parse_chunk_size(b"A"), Ok(10));
+    assert_eq!(crate::body::parse_chunk_size(b"1f"), Ok(31));
+    assert_eq!(crate::body::parse_chunk_size(b"5;name=value"), Ok(5));
+    assert_eq!(
+        crate::body::parse_chunk_size(b""),
+        Err(HttpError::MalformedChunk)
+    );
+    assert_eq!(
+        crate::body::parse_chunk_size(b"0x10"),
+        Err(HttpError::MalformedChunk)
+    );
+    assert_eq!(
+        crate::body::parse_chunk_size(b"00000000000000000"),
+        Err(HttpError::MalformedChunk)
+    );
+}

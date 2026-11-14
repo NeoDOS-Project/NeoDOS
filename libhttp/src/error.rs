@@ -22,6 +22,8 @@ pub enum HttpError {
     MalformedStatus,
     /// A header line is malformed, or a header is forbidden.
     MalformedHeader,
+    /// A chunked body is malformed (size line, data CRLF or trailer).
+    MalformedChunk,
     /// The response head exceeded the byte or header-count limit.
     TooManyHeaders,
     /// The response uses a transfer coding we do not implement.
@@ -50,6 +52,7 @@ impl HttpError {
             HttpError::Tls => "TLS failure",
             HttpError::MalformedStatus => "malformed status line",
             HttpError::MalformedHeader => "malformed header",
+            HttpError::MalformedChunk => "malformed chunked body",
             HttpError::TooManyHeaders => "response head too large",
             HttpError::UnsupportedTransfer => "unsupported transfer coding",
             HttpError::UnsupportedEncoding => "unsupported content encoding",
