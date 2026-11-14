@@ -100,6 +100,13 @@
 
 ### Fixed
 
+- **`check-deps` violation in the page-cache tests (#715).**
+  `buffer/page_cache/tests.rs` imported `fs::fsck::TestBlockDevice`, creating a
+  forbidden `buffer -> fs` edge that made `neodev check-deps` fail on `develop`.
+  The test now defines its own in-memory device, reusing the `BlockDevice`
+  trait already imported by the parent module (and `IrpId` is a `u32` alias, so
+  no new `drivers`/`irp` edge either).
+
 - **IRQ-reentrant graphical-console lock caused a system-wide freeze after
   network init.** The BSP timer IRQ renders the blinking cursor via
   `console::cursor_timer_tick` → `draw_cursor`, which took the
