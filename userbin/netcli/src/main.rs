@@ -16,8 +16,8 @@ use core::alloc::{GlobalAlloc, Layout};
 use libneodos::syscall;
 use libneodos::syscall::{
     ob_socket_accept, ob_socket_bind, ob_socket_close, ob_socket_connect, ob_socket_create,
-    ob_socket_listen, ob_socket_recv, ob_socket_send, sys_ob_query_info, sys_ob_wait_timeout,
-    ObInfoClass,
+    ob_socket_listen, ob_socket_recv, ob_socket_send, sys_ob_query_info,
+    sys_ob_wait_timeout, sys_ob_wait_write_timeout, ObInfoClass,
 };
 
 struct SbrkAlloc;
@@ -92,8 +92,9 @@ fn recv_exact(fd: u8, buf: &mut [u8], want: usize) -> bool {
     for _ in 0..200u32 {
         if got >= want { return true; }
         match ob_socket_recv(fd, &mut buf[got..]) {
-            Ok(n) if n > 0 => got += n,
-            _ => { let _ = sys_ob_wait_timeout(fd, TIMEOUT_MS); }
+            Ok(0) => return false, // peer closed before the full payload
+            Ok(n) => got += n,
+            Err(_) => { let _ = sys_ob_wait_timeout(fd, TIMEOUT_MS); }
         }
     }
     false
@@ -105,6 +106,8 @@ fn send_all(fd: u8, data: &[u8]) -> bool {
         if off >= data.len() { return true; }
         match ob_socket_send(fd, &data[off..]) {
             Ok(n) if n > 0 => off += n,
+            // Full 16 KiB send buffer: block until an ACK frees space.
+            Err(syscall::EAGAIN) => { let _ = sys_ob_wait_write_timeout(fd, 50); }
             _ => { let _ = sys_ob_wait_timeout(fd, 50); }
         }
     }

@@ -1,8 +1,9 @@
 # HTTP/TLS/Update Kernel Prerequisites — Design Document
 
 > **Version:** v0.2 — reconciled with `develop` @ `532d554` (2026-11-14)
-> **Status:** Design. Step 1 (TCP connect) is **implemented**; the CSPRNG, the
-> durability primitives and the userland byte-stream gaps below are not.
+> **Status:** Design. Step 1 (TCP connect) and the byte-stream fixes
+> (writability wait and EOF) are **implemented**; the CSPRNG, the durability
+> primitives and the DNS TTL cache are not.
 > **Target Release:** v0.55 (WAL + VFS Advanced) / v0.56 for CSPRNG
 > **Related:** #307, #315, #411, #467, #484, #486, #491, #593, #692, #696, #710;
 > `docs/design/system-configuration-time-network-security-update-design.md`,
@@ -54,9 +55,9 @@ Verified facts (re-audited 2026-11-14 on `develop` @ `532d554`):
 - **No userland UTC-seconds reference.** The RTC is readable and NTP can step
   it, but no API converts `DateTime` to Unix seconds and nothing states whether
   the clock was ever synchronised.
-- **The byte-stream API has two rough edges** that a robust HTTP client needs
-  fixed: writes cannot wait for TX buffer space (a full buffer is reported as
-  `-Io`), and `SocketRecv` does not distinguish EOF from `EAGAIN`.
+- **The byte-stream API had two rough edges, now fixed**: a full TX buffer is
+  reported as `-Again` and writers can wait for space (`ob_wait` type 2), and
+  `SocketRecv` returns `Ok(0)` for EOF. The DNS cache still ignores TTL.
 
 ---
 
@@ -204,35 +205,37 @@ fn replace(&mut self, src: &str, dst: &str) -> Result<(), VfsError>; // atomical
 ### 3.4 Byte-stream gaps for a robust HTTP client
 
 These are not blockers for a basic client, but they turn two polling
-workarounds into correct blocking semantics. Recommended before the `neocurl`
-milestone.
+workarounds into correct blocking semantics. **(a) and (b) are implemented**
+(see below); (c) remains a userland task for the transport milestone.
 
-**(a) Wait for TX buffer space.** `tcp_send` only appends to `TCP_SEND_BUF`
-(16 KiB) and returns `Err(())` when full; the syscall layer maps that to `-Io`,
-indistinguishable from a network error, and `tcp_handle_ack` wakes no writer.
+**(a) Wait for TX buffer space — IMPLEMENTED.** `tcp_send` only appends to
+`TCP_SEND_BUF` (16 KiB) and fails when full, and `tcp_handle_ack` used to wake
+no writer. Now:
 
-- Add a writable wait reason for sockets (`WaitReason::SocketWrite`).
-- `socket_wait_reason` returns ready when the connection is `Established` and
-  `TCP_SEND_BUF` has free space, or when the socket is closed/failed.
-- `tcp_handle_ack` wakes `SocketWrite` waiters after draining `send_buf`.
-- Map "buffer full" to `-Again` (retryable) rather than `-Io`.
+- `WaitReason::SocketWrite { socket_id }` exists (kwait tag `0x000D`).
+- `ob_wait` accepts `wait_type = 2` (write intent): `socket_write_wait_reason`
+  returns ready when the connection is `Established` and the buffer has space,
+  and blocks otherwise. Handshake-in-progress waits on `SocketConnect`.
+- `tcp_handle_ack` wakes writers after draining acknowledged bytes;
+  `socket_close`, `close_dead` and an incoming FIN wake them too.
+- `socket_send` returns `SendError::Full`, which `SocketSend` reports as
+  `-Again` (retryable) instead of `-Io`.
+- `sys_poll`'s `POLLOUT` now requires actual send-buffer space.
 
-**(b) Distinguish EOF from `EAGAIN`.** `socket_recv` returns `Err(())` both when
-nothing has arrived and when the peer closed. Today a reader must query
-`TcpStatus=19` to tell them apart.
+**(b) Distinguish EOF from `EAGAIN` — IMPLEMENTED.** `socket_recv` returned
+`Err(())` both when nothing had arrived and when the peer closed; a reader had
+to query `TcpStatus=19`.
 
-- Return `Ok(0)` when the TCP connection is `Closed`/`CloseWait` and
-  `recv_buf` is empty. `socket_wait_reason` already reports these states as
-  ready, so a `read()` loop terminates instead of spinning.
-- Keep `TcpStatus` as the authoritative state for diagnostics.
+- `tcp_recv`/`socket_recv` return `Ok(0)` once the read side is closed
+  (`CloseWait`/`Closed`/`LastAck`/`FinWait1`/`FinWait2`) and `recv_buf` is
+  empty. Buffered payload is returned first.
+- `netcli`, `netsrv` and `tcptest` treat `Ok(0)` as EOF instead of retrying.
+- `TcpStatus` remains the authoritative state for diagnostics.
 
-**(c) Honour DNS TTL.** `libnet/src/dns.rs` caches an address forever. HTTP
-clients are long-lived enough for this to matter: store `ttl` and the insertion
-time (monotonic ms), and evict on expiry. Userland-only change, no ABI impact.
-
-Without (a) and (b), `libhttp` can still work by polling `TcpStatus` and using
-`ob_wait_timeout` on a connected socket; it costs latency and code, and a full
-TX buffer looks like an I/O error to the caller.
+**(c) Honour DNS TTL — PENDING.** `libnet/src/dns.rs` caches an address forever.
+HTTP clients are long-lived enough for this to matter: store `ttl` and the
+insertion time (monotonic ms), and evict on expiry. Userland-only change, no ABI
+impact; it belongs to the `TcpTransport` milestone.
 
 ---
 
@@ -260,9 +263,9 @@ TX buffer looks like an I/O error to the caller.
 | Subsystem | Change | Impact |
 | --- | --- | --- |
 | `syscall/ob/set/net.rs` | TCP connect routing | **Done** (bug fix) |
-| `net/socket.rs` | Writable wait reason; EOF on empty closed socket; `Again` instead of `Io` for a full TX buffer | Low/Medium |
-| `net/tcp.rs` | Wake writers on ACK; expose free TX space | Low |
-| `libnet/src/dns.rs` | Cache with TTL expiry | Low |
+| `net/socket.rs` | Writable wait reason; EOF on empty closed socket; `Again` instead of `Io` for a full TX buffer | **Done** |
+| `net/tcp.rs` | Wake writers on ACK/FIN/close; expose free TX space | **Done** |
+| `libnet/src/dns.rs` | Cache with TTL expiry | Low (pending) |
 | `hal` | `rdseed` feature detection | Low |
 | `syscall/ob/query` | `Random`, `RandomCaps` handlers | Low |
 | `syscall/ob/set` | `FileSync`, `FileReplace` handlers | Low |
@@ -334,10 +337,13 @@ flush semantics).
 
 | Test | Expected |
 | --- | --- |
-| `socket_wait_writable_after_ack` | A writer blocked on a full TX buffer wakes after the peer ACKs |
-| `socket_recv_eof_returns_zero` | Closed connection + empty buffer → `Ok(0)`, not `Again` |
-| `socket_send_full_is_again` | Full TX buffer → retryable `Again`, not `Io` |
-| `dns_cache_expires` | Entry past its TTL is re-resolved |
+| `socket_write_wait_reason_tracks_space` | Full buffer → `SocketWrite`; after ACK → ready |
+| `socket_write_wait_reason_magic_roundtrip` | `SocketWrite` magic encodes/decodes |
+| `socket_recv_reports_eof` | Open+empty → `EAGAIN`; closed → `Ok(0)`; gone → `Ok(0)` |
+| `socket_send_full_buffer_is_again` | Full TX buffer → `SendError::Full` → `-Again` |
+| `socket_poll_writable_requires_space` | `POLLOUT` only with free TX space |
+| `tcp_send_space_tracks_buffer` | Free space follows `send_buf` |
+| `dns_cache_expires` | Entry past its TTL is re-resolved (pending) |
 
 **Integration:** `ntpd`/Registry flush survives a reboot; a TLS handshake can
 obtain entropy; an HTTP client connects over TCP.
@@ -347,8 +353,9 @@ obtain entropy; an HTTP client connects over TCP.
 ## 8. Implementation plan
 
 1. ~~**TCP connect fix.**~~ **Done** (`syscall/ob/set/net.rs`, INV-1).
-2. **Byte-stream gaps (3.4).** `net/socket.rs`, `net/tcp.rs`, `libnet/src/dns.rs`;
-   tests INV-5. Order: before the `neocurl` milestone.
+2. **Byte-stream gaps (3.4).** `net/socket.rs`, `net/tcp.rs`, `kwait`,
+   `syscall/ob/wait.rs`, `libneodos` and the three TCP tools — **implemented**
+   (writability + EOF). The DNS TTL cache (`libnet/src/dns.rs`) remains.
 3. **`hal::rdseed` + DRBG.** `hal/mod.rs`, `hal/raw/cpu.rs`, new
    `kernel/src/random.rs`; tests INV-2.
 4. **`\Device\Random` + classes 48/49.** `boot`, `object/types.rs`,

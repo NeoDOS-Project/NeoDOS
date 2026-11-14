@@ -475,7 +475,8 @@ pub struct ObEnumEntry {
 
 ### ob_wait (RAX=45)
 
-Wait on up to N handles, with wait type (0=ANY, 1=ALL) and timeout in ms.
+Wait on up to N handles, with wait type (`0`=ANY, `1`=ALL, `2`=writable) and
+timeout in ms.
 
 - **Process**: signaled when child exits (exit code in native_id)
 - **Pipe**: signaled when data is available (pipe read end)
@@ -483,6 +484,8 @@ Wait on up to N handles, with wait type (0=ANY, 1=ALL) and timeout in ms.
 - **Timer**: signaled on expiry
 - **Thread**: signaled on termination (join)
 - **Semaphore**: signaled when count > 0
+- **Socket**: Connect/Accept/Read by default; with type `2`, Write (TCP send
+  buffer has space). A timeout returns `0` without a distinct status.
 
 Non-blocking check: Pipe, Semaphore, and Timer perform an immediate check
 before entering the KWait block path. This prevents unnecessary context

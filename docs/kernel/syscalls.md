@@ -297,9 +297,15 @@ Enumerate contents of an Ob directory by fd.
 
 Wait on one or more Ob objects to become signaled.
 
-- **Args**: `RBX`=count, `RCX`=handles, `RDX`=type, `R8`=timeout.
-- **Supported**: Process (ChildExit), Pipe, Event, Timer, Thread, Semaphore.
-- **Returns**: `0` on success, or error code.
+- **Args**: `RBX`=count, `RCX`=handles, `RDX`=type, `R8`=timeout (ms; 0 =
+  indefinite).
+- **Type**: `0` = any, `1` = all (reserved; `count` must be 1 today), `2` =
+  **writable wait** for sockets (blocks until the TCP send buffer has space).
+  `type = 2` has no meaning for other objects and behaves like `0`.
+- **Supported**: Process (ChildExit), Pipe, Event, Timer, Thread, Semaphore,
+  Socket (Connect/Accept/Read, and Write with type 2).
+- **Returns**: `0` on success (including timeout expiry — the caller must
+  re-check readiness), or an error code.
 
 #### 46 — `sys_ob_destroy`
 

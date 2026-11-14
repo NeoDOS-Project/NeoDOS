@@ -159,20 +159,27 @@ connection.
 ### Blocking and timeouts
 
 `ob_wait` on a socket blocks on `SocketAccept` (listener), `SocketConnect`
-(handshake in progress) or `SocketRead` (data/EOF). A non-zero `ob_wait`
-timeout arms a TSC deadline serviced by the RX pump (`net_tick` →
-`kwait::deadline_tick`), which wakes the waiter when it expires. **The timeout
-wake carries no distinct status** (`ob_wait` returns 0); the caller must
-re-check readiness. Indefinite waits (`timeout = 0`) are unchanged.
+(handshake in progress), `SocketRead` (data/EOF) or, with `wait_type = 2`,
+`SocketWrite` (TCP send-buffer space). Writers are woken when an ACK drains
+acknowledged bytes, and both readers and writers when the peer sends FIN or the
+connection fails. A non-zero `ob_wait` timeout arms a TSC deadline serviced by
+the RX pump (`net_tick` → `kwait::deadline_tick`), which wakes the waiter when
+it expires. **The timeout wake carries no distinct status** (`ob_wait` returns
+0); the caller must re-check readiness. Indefinite waits (`timeout = 0`) are
+unchanged.
 
 ### Send / receive return values
 
-`SocketSend` returns the number of bytes buffered; a full send buffer returns
-`EIO` (retry after draining). `SocketRecv` returns bytes copied, or `EAGAIN`
-when none are buffered. There is **no distinct EOF**: `SocketRecv` returns
-`EAGAIN` both when no data is available and when the peer has closed; the
-connection state (`TcpStatus`) distinguishes `CloseWait`/`Closed`. Zero-length
-sends/recvs are rejected as `EINVAL`.
+`SocketSend` returns the number of bytes buffered. A **full** TCP send buffer
+returns `EAGAIN` (16 KiB per connection): wait for space with
+`ob_wait(wait_type = 2)` and retry. Any other send failure is `EIO`.
+`SocketRecv` returns the bytes copied; **`0` means EOF** (the peer's FIN was
+consumed or the socket was closed) and `EAGAIN` means no data is buffered yet.
+The connection state (`TcpStatus`) remains the authoritative diagnostic.
+Zero-length sends/recvs are rejected as `EINVAL`.
+
+`sys_poll`'s `POLLOUT` now means "TCP send buffer has space" (it previously
+meant merely "connected").
 
 ## Packet Flow
 
