@@ -443,6 +443,38 @@ pub fn register_tests() {
         test_true!(kbd.find_layout_index("es-ES").is_some());
     });
 
+    // Regression: XKB-derived layouts on disk leave control keys unmapped
+    // (0xFFFF), which broke line input (Enter/Space did nothing). Loading a
+    // layout merges the built-in table for every entry it does not define.
+    test_case!("kbd_merge_missing_control_keys", {
+        let mut lay = KbdLayout {
+            name: [0u8; 32],
+            lang_tag: [0u8; 16],
+            entries: [layout::KeyEntry::empty(); 256],
+            compose: Vec::new(),
+        };
+        // A key defined by the locale must survive the merge untouched.
+        lay.entries[0x1E].normal = b'a' as u16;
+
+        let mut builtin = [layout::KeyEntry::empty(); 256];
+        builtin[0x01].normal = 0x1B; // Escape
+        builtin[0x0E].normal = 0x08; // Backspace
+        builtin[0x0F].normal = b'\t' as u16; // Tab
+        builtin[0x1C].normal = b'\n' as u16; // Enter
+        builtin[0x1C].shift = b'\n' as u16;
+        builtin[0x39].normal = b' ' as u16; // Space
+
+        layout::merge_missing_entries(&mut lay, &builtin);
+
+        test_eq!(layout::lookup_codepoint(&lay, 0x1C, 0), Some(b'\n' as u16));
+        test_eq!(layout::lookup_codepoint(&lay, 0x1C, KBD_SHIFT), Some(b'\n' as u16));
+        test_eq!(layout::lookup_codepoint(&lay, 0x0E, 0), Some(0x08));
+        test_eq!(layout::lookup_codepoint(&lay, 0x0F, 0), Some(b'\t' as u16));
+        test_eq!(layout::lookup_codepoint(&lay, 0x01, 0), Some(0x1B));
+        test_eq!(layout::lookup_codepoint(&lay, 0x39, 0), Some(b' ' as u16));
+        test_eq!(layout::lookup_codepoint(&lay, 0x1E, 0), Some(b'a' as u16));
+    });
+
     // #394: typing with the Spanish layout produces Spanish characters.
     test_case!("kbd_spanish_layout_types", {
         let idx = KBD.lock().find_layout_index("es-ES");
