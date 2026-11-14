@@ -140,6 +140,16 @@ impl SocketManager {
         });
     }
 
+    pub fn wake_socket_writers(&mut self, socket_id: u32) {
+        let magic = crate::kwait::WaitReason::SocketWrite { socket_id }.encode_magic();
+        crate::kwait::cancel_deadline(magic);
+        crate::hal::without_interrupts(|| {
+            let s = crate::scheduler::current_scheduler();
+            let mut scheduler = s.lock();
+            scheduler.wake_blocked_on_magic(magic);
+        });
+    }
+
     pub fn wake_socket_connect_waiters(&mut self, socket_id: u32) {
         let magic = crate::kwait::WaitReason::SocketConnect { socket_id }.encode_magic();
         crate::kwait::cancel_deadline(magic);
@@ -263,27 +273,48 @@ pub fn socket_connect_user(id: u32, remote: SocketAddrV4) -> bool {
     }
 }
 
-pub fn socket_send(id: u32, data: &[u8]) -> Result<usize, ()> {
+/// Why a socket send failed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SendError {
+    /// The TCP send buffer is full; wait for space and retry.
+    Full,
+    /// The socket cannot send (not connected, gone, or the network failed).
+    Io,
+}
+
+pub fn socket_send(id: u32, data: &[u8]) -> Result<usize, SendError> {
     let (local, remote, bound_nic) = {
         let mut mgr = SOCKET_MANAGER.lock();
         let socket = match mgr.get_socket_mut(id) {
             Some(s) => s,
-            None => return Err(()),
+            None => return Err(SendError::Io),
         };
         if socket.direction != SocketDirection::Connected {
-            return Err(());
+            return Err(SendError::Io);
         }
         if socket.socket_type == SocketType::Tcp {
             if let Some(tcp_id) = socket.tcp_conn_id {
-                return crate::net::tcp::tcp_send(tcp_id, data);
+                return match crate::net::tcp::tcp_send(tcp_id, data) {
+                    Ok(n) => Ok(n),
+                    // Only a full buffer on an established connection is
+                    // retryable; a closed/failed connection is an I/O error.
+                    Err(())
+                        if crate::net::tcp::tcp_get_state(tcp_id)
+                            == Some(crate::net::types::TcpState::Established)
+                            && crate::net::tcp::tcp_send_space(tcp_id) == 0 =>
+                    {
+                        Err(SendError::Full)
+                    }
+                    Err(()) => Err(SendError::Io),
+                };
             }
-            return Err(());
+            return Err(SendError::Io);
         }
         (socket.local, socket.remote, socket.nic_id)
     };
     // Drop SOCKET_MANAGER lock before transmitting to avoid lock inversion
     // with NIC_REGISTRY (incoming path locks NIC_REGISTRY then SOCKET_MANAGER).
-    socket_send_udp_raw_on(local, remote, data, bound_nic)
+    socket_send_udp_raw_on(local, remote, data, bound_nic).map_err(|_| SendError::Io)
 }
 
 pub fn socket_recv(id: u32, buf: &mut [u8]) -> Result<usize, ()> {
@@ -297,13 +328,24 @@ pub fn socket_recv(id: u32, buf: &mut [u8]) -> Result<usize, ()> {
         Some(s) => s,
         None => return Err(()),
     };
-    if socket.direction != SocketDirection::Connected {
+    let closed = socket.direction == SocketDirection::Closed;
+    if socket.direction != SocketDirection::Connected && !closed {
         return Err(());
     }
     if socket.socket_type == SocketType::Tcp {
         if let Some(tcp_id) = socket.tcp_conn_id {
-            return crate::net::tcp::tcp_recv(tcp_id, buf);
+            return match crate::net::tcp::tcp_recv(tcp_id, buf) {
+                // The connection object may already be reaped by the time the
+                // application drains a closed socket: that is still EOF.
+                Err(()) if closed => Ok(0),
+                other => other,
+            };
         }
+        if closed {
+            return Ok(0);
+        }
+        // No TCP connection attached (diagnostics/tests use the generic
+        // receive buffer): fall through instead of failing.
     }
     let available = socket.recv_buf.len().min(buf.len());
     if available == 0 {
@@ -333,8 +375,10 @@ pub fn socket_close(id: u32) {
     if let Some(socket) = mgr.get_socket_mut(id) {
         socket.direction = SocketDirection::Closed;
     }
-    // Wake anyone parked on this socket so they observe EOF instead of hanging.
+    // Wake anyone parked on this socket so they observe EOF/failure instead of
+    // hanging.
     mgr.wake_socket_readers(id);
+    mgr.wake_socket_writers(id);
     mgr.wake_socket_connect_waiters(id);
     mgr.wake_socket_accept_waiters(id);
 }
@@ -502,9 +546,17 @@ pub fn socket_poll_readable(id: u32) -> bool {
 }
 
 pub fn socket_poll_writable(id: u32) -> bool {
-    match SOCKET_MANAGER.lock().get_socket(id) {
-        Some(s) => s.direction == SocketDirection::Connected,
-        None => false,
+    let mgr = SOCKET_MANAGER.lock();
+    match mgr.get_socket(id) {
+        Some(s) if s.direction == SocketDirection::Connected => match s.socket_type {
+            SocketType::Tcp => s
+                .tcp_conn_id
+                .map(|t| crate::net::tcp::tcp_send_space(t) > 0)
+                .unwrap_or(false),
+            // Datagram sends do not queue in a kernel buffer.
+            _ => true,
+        },
+        _ => false,
     }
 }
 
@@ -592,6 +644,41 @@ pub fn socket_wait_reason(socket_id: u32) -> Result<Option<crate::kwait::WaitRea
                 Ok(None)
             }
         }
+    }
+}
+
+/// Wait decision for a caller that wants to **write** (`ob_wait` wait_type 2).
+///
+/// * `Ok(None)` — the socket can accept more bytes now (or cannot send at all,
+///   so the caller should attempt the write and get the error).
+/// * `Ok(Some(SocketWrite))` — the TCP send buffer is full; block until an ACK
+///   frees space, the connection closes, or the timeout expires.
+/// * `Ok(Some(SocketConnect))` — the handshake is still in progress.
+/// * `Err(())` — no such socket.
+pub fn socket_write_wait_reason(socket_id: u32) -> Result<Option<crate::kwait::WaitReason>, ()> {
+    use crate::net::types::{SocketDirection, SocketType, TcpState};
+    let mgr = SOCKET_MANAGER.lock();
+    let s = mgr.get_socket(socket_id).ok_or(())?;
+    if s.socket_type != SocketType::Tcp {
+        return Ok(None);
+    }
+    let tcp_id = s.tcp_conn_id.ok_or(())?;
+    match s.direction {
+        SocketDirection::Connecting => Ok(Some(crate::kwait::WaitReason::SocketConnect {
+            socket_id,
+        })),
+        SocketDirection::Connected => match crate::net::tcp::tcp_get_state(tcp_id) {
+            Some(TcpState::Established) => {
+                if crate::net::tcp::tcp_send_space(tcp_id) > 0 {
+                    Ok(None)
+                } else {
+                    Ok(Some(crate::kwait::WaitReason::SocketWrite { socket_id }))
+                }
+            }
+            // Closing, failed or gone: let the write fail immediately.
+            _ => Ok(None),
+        },
+        _ => Ok(None),
     }
 }
 

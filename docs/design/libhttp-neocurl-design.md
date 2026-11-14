@@ -31,10 +31,10 @@
 | `userbin/netcli`, `userbin/tcptest` | working Ring-3 TCP client/server over the public ABI |
 | repo-wide grep | **no HTTP client, no HTTP parser, no `neocurl`** |
 
-Verified: userland TCP works end to end; receive is non-blocking; a full TX
-buffer surfaces as `-Io` and there is no writability wait; EOF is not
-distinguishable from `EAGAIN` without querying `TcpStatus`; DNS answers never
-expire from the cache.
+Verified: userland TCP works end to end; receive is non-blocking. The TX-buffer
+and EOF gaps were fixed by the byte-stream milestone: a full buffer is `EAGAIN`
+with a writable wait (`ob_wait` type 2) and `SocketRecv` returns `0` on EOF.
+DNS answers still never expire from the cache.
 
 ---
 
@@ -130,12 +130,11 @@ is 2 MiB).
 
 **None.** HTTP uses the existing socket Ob classes through `libnet`.
 
-Two optional kernel-side fixes improve robustness (see the prerequisites doc
-§3.4) and are recommended before the CLI milestone, not as a hard blocker:
+The two byte-stream fixes from the prerequisites doc §3.4 are **implemented**:
 
-- a writable wait reason so a full 16 KiB TX buffer blocks instead of returning
-  `-Io`;
-- `SocketRecv` returning `Ok(0)` on EOF.
+- a writable wait reason (`ob_wait` `wait_type = 2`) so a full 16 KiB TX buffer
+  blocks instead of returning `-Io`; the send reports `EAGAIN`;
+- `SocketRecv` returns `Ok(0)` on EOF.
 
 ### 3.3 New files / modules
 
@@ -160,7 +159,7 @@ userbin/neocurl/src/main.rs — CLI (flags, sinks, exit codes)
 | `libnet/src/lib.rs` | register `http_transport` |
 | `libnet/src/dns.rs` | TTL-aware cache (also fixes DNS for other tools) |
 | `libnet/src/http_transport.rs` | new: connect/read/write with deadlines, IPv4 literal fast path, EOF via `TcpStatus`, TX backpressure |
-| `neodos-kernel/src/net/{socket,tcp}.rs` | optional writable wait + EOF (prerequisite doc §3.4) |
+| `neodos-kernel/src/net/{socket,tcp}.rs` | writable wait + EOF — **already landed** (prerequisite doc §3.4) |
 | NeoDev (external) | add `neocurl` to the image program list |
 | `docs/networking/userland.md`, `docs/userland/shell.md` | document `neocurl` |
 
@@ -186,11 +185,11 @@ userbin/neocurl/src/main.rs — CLI (flags, sinks, exit codes)
 - **Timeouts:** connect/read/write/total, all on `ob_uptime_ms`. Network calls
   use `sys_ob_wait_timeout` and re-check readiness (the kernel returns `Ok` on
   expiry).
-- **EOF:** reads stop on `Ok(0)`; with the unpatched kernel the transport
-  queries `TcpStatus` (`Closed`/`CloseWait` + empty buffer) to synthesise EOF.
-- **Backpressure:** `write_all` loops over partial sends; when the buffer is
-  full it waits with a short bounded `ob_wait_timeout` and retries until the
-  write deadline.
+- **EOF:** reads stop on `Ok(0)` (`SocketRecv` reports EOF directly; `TcpStatus`
+  stays available as a diagnostic).
+- **Backpressure:** `write_all` loops over partial sends; on `EAGAIN` it waits
+  for send-buffer space with `sys_ob_wait_write_timeout` (`wait_type = 2`) and
+  retries until the write deadline.
 - **Cleanup:** close on every path (success, parse error, timeout, TLS error).
 - **Host:** `Host` mandatory, with `:port` when not 80/443. IPv4 literals bypass
   DNS (and are recorded for TLS validation).

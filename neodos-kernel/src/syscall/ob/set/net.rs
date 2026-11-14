@@ -149,7 +149,10 @@ pub(super) fn dispatch(
             }
             match crate::net::socket::socket_send(socket_id, &temp) {
                 Ok(n) => n as u64,
-                Err(_) => err_to_u64(SyscallError::Io),
+                // Full TCP send buffer is retryable; wait for space (wait_type
+                // 2) instead of treating it as a broken socket.
+                Err(crate::net::socket::SendError::Full) => err_to_u64(SyscallError::Again),
+                Err(crate::net::socket::SendError::Io) => err_to_u64(SyscallError::Io),
             }
         }
         _ if info_class == ObSetInfoClass::SocketClose as u32 => {

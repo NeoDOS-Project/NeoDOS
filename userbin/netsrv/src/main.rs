@@ -16,8 +16,8 @@ use core::alloc::{GlobalAlloc, Layout};
 use libneodos::syscall;
 use libneodos::syscall::{
     ob_socket_accept, ob_socket_bind, ob_socket_close, ob_socket_connect, ob_socket_create,
-    ob_socket_listen, ob_socket_recv, ob_socket_send, sys_ob_query_info, sys_ob_wait_timeout,
-    ObInfoClass,
+    ob_socket_listen, ob_socket_recv, ob_socket_send, sys_ob_query_info,
+    sys_ob_wait_timeout, sys_ob_wait_write_timeout, ObInfoClass,
 };
 
 struct SbrkAlloc;
@@ -84,6 +84,8 @@ fn send_all(fd: u8, data: &[u8]) -> bool {
         if off >= data.len() { return true; }
         match ob_socket_send(fd, &data[off..]) {
             Ok(n) if n > 0 => off += n,
+            // Full send buffer: wait for space instead of spinning.
+            Err(syscall::EAGAIN) => { let _ = sys_ob_wait_write_timeout(fd, 50); }
             _ => { let _ = sys_ob_wait_timeout(fd, 50); }
         }
     }
@@ -96,8 +98,10 @@ fn echo_connection(fd: u8) {
     loop {
         let mut got: Option<usize> = None;
         for _ in 0..20u32 {
-            if let Ok(n) = ob_socket_recv(fd, &mut buf) {
-                if n > 0 { got = Some(n); break; }
+            match ob_socket_recv(fd, &mut buf) {
+                Ok(0) => break,
+                Ok(n) => { got = Some(n); break; }
+                Err(_) => {}
             }
             let _ = sys_ob_wait_timeout(fd, TIMEOUT_MS);
         }
@@ -156,7 +160,11 @@ fn run_selftest() -> bool {
         let mut got = 0usize;
         for _ in 0..200u32 {
             if got >= 5 { break; }
-            if let Ok(n) = ob_socket_recv(conn, &mut b[got..]) { if n > 0 { got += n; continue; } }
+            match ob_socket_recv(conn, &mut b[got..]) {
+                Ok(0) => break,
+                Ok(n) => { got += n; continue; }
+                Err(_) => {}
+            }
             let _ = sys_ob_wait_timeout(conn, TIMEOUT_MS);
         }
         got == 5 && &b[..5] == &b"PING!"[..]

@@ -834,8 +834,12 @@ pub fn register() {
             tcp_tick();
             loopback_pump();
             let mut buf = [0u8; 1024];
-            while let Ok(n) = tcp_recv(srv_tcp, &mut buf) {
-                received.extend_from_slice(&buf[..n]);
+            loop {
+                match tcp_recv(srv_tcp, &mut buf) {
+                    // `Ok(0)` is EOF now; `EAGAIN` also ends the drain.
+                    Ok(n) if n > 0 => received.extend_from_slice(&buf[..n]),
+                    _ => break,
+                }
             }
             if off >= payload.len() && received.len() >= payload.len() {
                 break;

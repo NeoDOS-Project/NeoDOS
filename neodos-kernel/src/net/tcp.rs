@@ -520,7 +520,9 @@ pub fn tcp_recv(id: u32, buf: &mut [u8]) -> Result<usize, ()> {
     let conn = tcp.get_connection_mut(id).ok_or(())?;
     let available = conn.recv_buf.len().min(buf.len());
     if available == 0 {
-        return Err(());
+        // No buffered data: either the peer closed the read side (EOF, `Ok(0)`)
+        // or nothing has arrived yet (`EAGAIN`).
+        return if read_side_closed(conn.state) { Ok(0) } else { Err(()) };
     }
     for item in buf.iter_mut().take(available) {
         *item = conn.recv_buf.pop_front().unwrap_or(0);
@@ -530,6 +532,23 @@ pub fn tcp_recv(id: u32, buf: &mut [u8]) -> Result<usize, ()> {
 
 pub fn tcp_get_state(id: u32) -> Option<TcpState> {
     TCP.lock().get_connection(id).map(|c| c.state)
+}
+
+/// True once no more payload can arrive for the application: the peer's FIN
+/// was consumed, or the connection is gone. Buffered data is read first.
+fn read_side_closed(state: TcpState) -> bool {
+    // Only the peer's FIN (CloseWait) or a dead connection ends the read side.
+    // FinWait1/FinWait2 mean *we* sent FIN; the peer may still send data, and a
+    // closed socket reports EOF at the socket layer anyway.
+    matches!(state, TcpState::CloseWait | TcpState::Closed | TcpState::LastAck)
+}
+
+/// Free space in the send buffer for `id` (0 when the connection is unknown).
+pub fn tcp_send_space(id: u32) -> usize {
+    TCP.lock()
+        .get_connection(id)
+        .map(|c| TCP_SEND_BUF.saturating_sub(c.send_buf.len()))
+        .unwrap_or(0)
 }
 
 /// True when `id` has application data buffered for reading. Used by the
@@ -826,6 +845,7 @@ fn close_dead(id: u32) {
         mgr.wake_socket_connect_waiters(sid);
         mgr.wake_socket_accept_waiters(sid);
         mgr.wake_socket_readers(sid);
+        mgr.wake_socket_writers(sid);
     }
 }
 
@@ -1135,6 +1155,8 @@ pub fn tcp_handle_ack(socket_id: usize, their_seq: u32, their_ack: u32, window: 
     };
     let now = crate::boot_benchmark::rdtsc();
     let mut became_established = false;
+    // ACK drained unacknowledged bytes: send-buffer space opened up.
+    let mut space_freed = false;
     let mut hs_ack: Option<(SocketAddrV4, SocketAddrV4, u32, u32)> = None;
     {
         let mut tcp = TCP.lock();
@@ -1181,6 +1203,7 @@ pub fn tcp_handle_ack(socket_id: usize, their_seq: u32, their_ack: u32, window: 
                     conn.send_base = their_ack;
                     conn.last_tx_tsc = now;
                     conn.retries = 0;
+                    space_freed = true;
                 }
                 conn.window = window;
                 if conn.state == TcpState::FinWait1 && their_ack == conn.send_seq {
@@ -1216,6 +1239,12 @@ pub fn tcp_handle_ack(socket_id: usize, their_seq: u32, their_ack: u32, window: 
         if let Some(listener_id) = mgr.get_socket(sid).and_then(|s| s.listener_id) {
             mgr.wake_socket_accept_waiters(listener_id);
         }
+    }
+    // A blocked writer can proceed now that the peer acknowledged data.
+    if space_freed {
+        crate::net::socket::SOCKET_MANAGER
+            .lock()
+            .wake_socket_writers(sid);
     }
     // Completing handshake ACK (no locks held).
     if let Some((local, remote, seq, ack)) = hs_ack {
@@ -1351,6 +1380,24 @@ pub fn tcp_handle_fin(tcp_id: u32, seq: u32, src_ip: Ipv4Addr, dst_ip: Ipv4Addr,
             );
         }
     }
+    // The peer's FIN is EOF for readers and a failure for pending writers; wake
+    // both so nobody stays parked on a connection that can no longer progress.
+    if let Some(socket_id) = socket_id_for_tcp(tcp_id) {
+        let mut mgr = crate::net::socket::SOCKET_MANAGER.lock();
+        mgr.wake_socket_readers(socket_id);
+        mgr.wake_socket_writers(socket_id);
+    }
+}
+
+/// Socket that owns `tcp_id`, if any.
+fn socket_id_for_tcp(tcp_id: u32) -> Option<u32> {
+    crate::net::socket::SOCKET_MANAGER
+        .lock()
+        .sockets
+        .iter()
+        .flatten()
+        .find(|s| s.tcp_conn_id == Some(tcp_id))
+        .map(|s| s.id)
 }
 
 /// Get the TCP connection state for a socket (by TCP connection id).

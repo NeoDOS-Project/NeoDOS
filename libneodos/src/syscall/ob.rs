@@ -384,6 +384,20 @@ pub fn sys_ob_wait_timeout(fd: u8, timeout_ms: u64) -> Result<(), i64> {
     if r < 0 { Err(r) } else { Ok(()) }
 }
 
+/// sys_ob_wait with **write intent** (`wait_type = 2`, milliseconds; 0 =
+/// indefinite): blocks until the TCP socket has space in its send buffer, the
+/// connection changes state, or the timeout expires.
+///
+/// Use it instead of `sys_ob_wait_timeout` when a send returned `EAGAIN`
+/// because the 16 KiB send buffer is full. `SocketSend` reports that case as
+/// `EAGAIN`, not as an I/O error.
+pub fn sys_ob_wait_write_timeout(fd: u8, timeout_ms: u64) -> Result<(), i64> {
+    let handles = [fd as u64];
+    let fd_ptr = handles.as_ptr() as u64;
+    let r = unsafe { ob_syscall_4!(45, 1u64, fd_ptr, 2u64, timeout_ms) };
+    if r < 0 { Err(r) } else { Ok(()) }
+}
+
 /// ob_thread_create: create a thread in the current process via ob_create(Thread).
 /// `path` = Ob namespace path (e.g. "\\WorkerThread")
 /// `entry` = entry point address for the new thread

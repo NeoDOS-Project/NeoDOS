@@ -18,7 +18,9 @@ pub fn handler_ob_wait(regs: crate::syscall::Registers) -> u64 {
     if handle_count > 1 {
         return err_to_u64(SyscallError::NoSys);
     }
-    if wait_type > 1 {
+    // wait_type: 0 = default (read/connect/accept), 1 = reserved, 2 = writable.
+    // Only sockets interpret it today; for every other object it is ignored.
+    if wait_type > 2 {
         return err_to_u64(SyscallError::Inval);
     }
 
@@ -71,12 +73,16 @@ pub fn handler_ob_wait(regs: crate::syscall::Registers) -> u64 {
             crate::kwait::WaitReason::ThreadJoin { tid }
         }
         crate::object::ObType::Socket => {
-            // First generic blocking wait for sockets: SocketConnect (client /
-            // in-progress handshake), SocketAccept (listener) and SocketRead
-            // (data). Previously sockets returned NoSys, forcing Ring 3 callers
-            // to busy-poll `socket_recv`.
+            // Generic blocking waits for sockets: SocketConnect (in-progress
+            // handshake), SocketAccept (listener), SocketRead (data) and, with
+            // wait_type 2, SocketWrite (TCP send-buffer space).
             let socket_id = obj.native_id as u32;
-            match crate::net::socket::socket_wait_reason(socket_id) {
+            let decision = if wait_type == 2 {
+                crate::net::socket::socket_write_wait_reason(socket_id)
+            } else {
+                crate::net::socket::socket_wait_reason(socket_id)
+            };
+            match decision {
                 Ok(None) => return 0,
                 Ok(Some(reason)) => reason,
                 Err(()) => return err_to_u64(SyscallError::BadF),

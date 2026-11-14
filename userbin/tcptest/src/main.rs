@@ -115,8 +115,9 @@ fn recv_exact(fd: u8, buf: &mut [u8], want: usize) -> bool {
             return true;
         }
         match ob_socket_recv(fd, &mut buf[got..]) {
-            Ok(n) if n > 0 => got += n,
-            _ => {
+            Ok(0) => return false, // peer closed
+            Ok(n) => got += n,
+            Err(_) => {
                 let _ = sys_ob_wait(fd);
             }
         }

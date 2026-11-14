@@ -446,6 +446,9 @@ NETSRV                   (sin args) ejecuta selftest
 - `ob_wait` con timeout finito (`sys_ob_wait_timeout`): 0 = indefinido; con
   timeout, la espera termina al expirar (el llamador reevalúa la disponibilidad;
   no hay código de retorno distinto para el timeout).
+- Para escritura, `sys_ob_wait_write_timeout` (`wait_type = 2`) espera a que el
+  buffer de envío TCP (16 KiB) tenga espacio cuando `SocketSend` devuelve
+  `EAGAIN`. `SocketRecv` devuelve `0` en EOF.
 - Empaquetado por el flujo normal de imagen en `C:\System\Tools\`.
 
 ### 3.1 ipconfig.nxe
