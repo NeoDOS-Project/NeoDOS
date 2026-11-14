@@ -167,7 +167,7 @@
 | [Monotonic Clock](design/monotonic-clock-design.md) | Monotonic uptime + sleep (#467) |
 | [System Config, Time Zones, HTTP/TLS, Updates](design/system-configuration-time-network-security-update-design.md) | Master design: neocfg, time zones, libhttp/neocurl, libtls, libupdate/neoupdate |
 | [Time Zone / Local Time](design/timezone-local-time-design.md) | Timezone/local-time design: Ob classes 43/52, libtimezone (TZif) |
-| [HTTP/TLS/Update Kernel Prerequisites](design/http-tls-update-prerequisites-design.md) | TCP connect fix, Ring-3 CSPRNG, fsync + atomic replace |
+| [HTTP/TLS/Update Kernel Prerequisites](design/http-tls-update-prerequisites-design.md) | Ring-3 CSPRNG, fsync + atomic replace, socket writability/EOF |
 | [HTTP Client (libhttp) + neocurl](design/libhttp-neocurl-design.md) | HTTP/1.1 client + diagnostic CLI |
 | [TLS / HTTPS (libcrypto + libtls)](design/libtls-https-design.md) | TLS 1.2/1.3, trust anchors, hostname validation, CSPRNG |
 | [Signed Updates (libupdate + neoupdate)](design/libupdate-neoupdate-design.md) | Manifest, Ed25519 trust model, safe transaction |

@@ -2,6 +2,12 @@
 
 > **Status:** Design / audit — not implemented.
 > **Branch audited:** `develop` @ `8c6865c806f2ac4009a99195d938c36ab9df044d` (clean tree).
+> **Re-audit (HTTP/TLS only):** `develop` @ `532d554` (2026-11-14). Rows marked
+> **[re-audited]** and Phases 2–3 below were corrected against the current code;
+> see `docs/design/http-tls-update-prerequisites-design.md` (v0.2),
+> `docs/design/libhttp-neocurl-design.md` (v0.2) and
+> `docs/design/libtls-https-design.md` (v0.2). The rest of this document keeps
+> its original audit date and may be stale outside the HTTP/TLS/update paths.
 > **Design branch:** `docs/master-design-system-config-time-net-security-update`.
 > **Scope:** `neocfg` + `libneocfg`; time-zone / local-time support; `libhttp` / `neocurl`;
 > `libtls` / HTTPS; `libupdate` / `neoupdate`.
@@ -34,14 +40,16 @@ is distributed and, in two places, **the last mile is missing**:
    configure it, (c) a fixed month/day DST window with no transition hour and no
    IANA identity, and (d) locale date formatting that exists but is unused and
    has no shipped `[region]` data.
-3. **Networking is UDP-complete but TCP-userland-broken.** UDP (DNS, NTP, DHCP)
-   works end to end. However, the userland `SocketConnect` syscall
-   (`neodos-kernel/src/syscall/ob/set/net.rs`) **sets flags but never calls
-   `socket_connect`/`tcp_connect`**, so no userland TCP connection ever sends a
-   SYN. There is also no userland `accept`, no blocking socket wait (#307), and
-   no out-of-order reassembly. **A userland HTTP client cannot work today**
-   without fixing at least the connect path. This is the single most important
-   genuine blocker in this design.
+3. **Networking is UDP-complete and userland TCP works** **[re-audited]**. UDP
+   (DNS, NTP, DHCP) and TCP work end to end: `SocketConnect` routes to
+   `socket_connect_user`/`tcp_connect` and sends the SYN, `ob_wait` blocks on
+   connect/accept/read with a finite timeout (#307/#696), and userland `accept`
+   exists (`ObInfoClass::SocketAccept=43`). `netcli`, `netsrv` and `tcptest`
+   exercise the public ABI. Remaining gaps for a *robust* client: no
+   out-of-order reassembly, no writability wait (a full TX buffer reports
+   `-Io`), EOF indistinguishable from `EAGAIN`, and a DNS cache without TTL.
+   **A userland HTTP/1.1 client is feasible today**; those gaps affect
+   robustness and latency, not feasibility.
 4. **No HTTP, TLS, or crypto-for-transport code exists.** The *only* real
    cryptographic primitive in the repository is Ed25519 sign/verify
    (`libnlt/src/signature.rs`, `ed25519-compact`, RFC 8032 vectors), used solely
@@ -50,7 +58,9 @@ is distributed and, in two places, **the last mile is missing**:
    no compression beyond LZSS.
 5. **Updates have no foundation.** There is no runtime installer, no `fsync`, no
    proven atomic replacement (`Vfs::rename` is same-directory, implemented as
-   delete-then-insert, and untested; `NeoDosFsV2::write` never calls `save_sb`).
+   delete-then-insert; `NeoDosFsV2::write` does commit the superblock
+   **[re-audited]**, so the gap is `fsync` + replace, not plain-write
+   durability).
    A package manager is *designed* (`docs/architecture/package-manager-arch.md`)
    but 0% implemented and has an ObType ABI collision (#411). Registry
    persistence itself is not durable across a `cm_flush_key` for an existing hive
@@ -58,9 +68,10 @@ is distributed and, in two places, **the last mile is missing**:
 
 **Recommended posture.** Sequence prerequisites before features. Time/configuration
 work (Phase 1) can proceed **now** and is independent of HTTP/TLS. HTTP (Phase 2)
-must wait for the TCP connect fix and should not be attempted on the assumption
-that TCP is done. TLS (Phase 3) requires a deliberate dependency decision
-(RustCrypto-style pure-Rust stack + a Ring-3 CSPRNG) that does not exist yet.
+is **unblocked** (TCP connect works); do the two byte-stream fixes first so the
+client does not need polling workarounds. TLS (Phase 3) requires a deliberate
+dependency decision (RustCrypto-style pure-Rust stack + a Ring-3 CSPRNG) and a
+trusted clock, neither of which exist yet.
 Updates (Phases 4–5) additionally require `fsync` and a proven activation
 primitive. Do **not** ship an updater that assumes atomic rename.
 
@@ -119,17 +130,17 @@ Status vocabulary used throughout (per the task's requirement to distinguish):
 | `libntp` | SNTPv4 parse + RFC 5905 offset/delay + UTC↔Unix↔civil; host tests | `libntp/src/lib.rs`; 19/19 tests pass | No authentication; second resolution; no discipline | High |
 | `ntpd.nxe` | Persistent SNTP service, Registry config, backoff, status publishing | `userbin/ntpd/src/main.rs`; `docs/services/ntpd.md` | Error masking (`clock set denied`); step-only (no slew); no auth | High |
 | Locale date/time formatting | `i18n_format_date`/`i18n_format_time` + `libnlt` `[region]` engine exist | `libneodos/src/i18n.rs`; `libnlt/src/region.rs` (+tests) | No `[region]` shipped in `data/locale/*`; not called by `datetime` | High |
-| DNS resolution (userland) | UDP transport + cache in `libnet`; protocol in `libdns`; busy/yield/RDTSC wait | `libnet/src/dns.rs`; `libdns/src/*`; 27 pass / 1 ignored | No blocking wait; no TCP fallback; kernel parser retired (#312) | High |
-| Kernel TCP state machine | Handshake/ACK/FIN/RTO/buffers; loopback e2e test | `neodos-kernel/src/net/tcp.rs`; `net/tests/net.rs:513` | Userland connect broken; no accept; no OOO reassembly; no window scale/congestion; no TIME_WAIT | High |
-| **Userland TCP connect** | **Broken**: `SocketConnect` never calls `socket_connect` | `neodos-kernel/src/syscall/ob/set/net.rs:28-49` vs `net/socket.rs:191` (`socket_connect` callers: DNS/tests only) | Route TCP connect to `tcp_connect` | High |
-| Blocking socket wait / timeout | Absent: `ob_wait` → `NoSys` for sockets; `sys_poll` → `POLLERR` | `neodos-kernel/src/syscall/ob/wait.rs:71`; `handlers.rs:584-662`; `#307` | Full capability | High |
+| DNS resolution (userland) | UDP transport + cache in `libnet`; protocol in `libdns`; **blocking wait via `ob_wait_timeout`** | `libnet/src/dns.rs`; `libdns/src/*`; 27 pass / 1 ignored | Cache entries **never expire** (TTL ignored); no TCP fallback; kernel parser retired (#312) | High |
+| Kernel TCP state machine | Handshake/ACK/FIN/RTO/buffers; loopback e2e test | `neodos-kernel/src/net/tcp.rs`; `net/tests/net.rs:513` | No OOO reassembly; no window scale/congestion; no TIME_WAIT; no writability wake | High |
+| **Userland TCP connect** | **Works** **[re-audited]**: `SocketConnect` → `socket_connect_user` → `tcp_connect` (SYN); `netcli`/`netsrv`/`tcptest` validated | `syscall/ob/set/net.rs`; `net/socket.rs`; `userbin/tcptest`; #692 | — (fixed) | High |
+| Blocking socket wait / timeout | **Present** **[re-audited]**: `ob_wait` on sockets blocks on Connect/Accept/Read; `sys_ob_wait_timeout` bounds it (#696) | `syscall/ob/wait.rs`; `libneodos/src/syscall/ob.rs`; #307, #696 | No writability wait; EOF not distinguished from `EAGAIN`; `sys_poll` timeout ignored | High |
 | TCP next-hop/gateway | **Present** (`tcp_mac_for` → `nic_next_hop`) | `neodos-kernel/src/net/tcp.rs:278-284` (all send sites) | Per-socket NIC binding (#317); #315 appears stale | High |
 | HTTP / HTTPS / curl | Absent | repo-wide grep negative (see §16) | Whole capability | High |
 | TLS / PKI | Absent | no TLS/SSL code | Whole capability | High |
 | Crypto primitives | Ed25519 verify/sign only (`libnlt`, feature-gated) | `libnlt/src/signature.rs`; RFC 8032 vectors | SHA-256, HMAC, AEAD, X25519, CSPRNG | High |
 | Secure RNG to Ring 3 | Absent (RDRAND kernel-only for ASLR) | `neodos-kernel/src/hal/mod.rs:11-29`; `arch/x64/paging.rs:307` | Whole capability | High |
 | Compression | LZSS only (NLT payload) | `libnlt/src/lzss.rs` | deflate/gzip for HTTP | High |
-| Atomic file replacement / `fsync` | Absent | `fs/vfs/mod.rs` (no `sync`); `neodos_v2.rs:560` (no `save_sb` on write); rename = delete+insert | Whole capability | High |
+| Atomic file replacement / `fsync` | **Partial** **[re-audited]**: `write()`/`create()`/`mkdir()`/`remove_*`/`rename()`/snapshots commit the superblock; no `sync`; rename = same-dir delete+insert | `fs/vfs/mod.rs` (no `sync`); `fs/neofs/neodos_v2.rs` (`save_sb` on mutation) | `FileSync` (force flush) + atomic cross-directory replace | High |
 | Version info | `\Global\Info\Version` = `vX.Y.Z (git <rev>)` | `neodos-kernel/src/main.rs:77-83`; `build.rs` | Build date | High |
 | Package/update manager | Design only; `nxpkg` host tool implements an NXP subset | `docs/architecture/package-manager-arch.md`; `neotools/nxpkg`; `#411` | Whole capability | High |
 | NXL loader/ABI | NXL v2 loader, PIE + legacy, export table, `version != 0` check | `neodos-kernel/src/infra/nxl.rs`; `libneodos/src/export.rs` | No consumer-side version negotiation; no unload | High |
@@ -159,11 +170,12 @@ returns a `SysDateTime`. `datetime.nxe` uses this by default.
 `ObSetInfoClass::DateTime=50`) → `rtc_bridge::set_datetime` → RTC NEM write-back
 ACK. UTC is stored; no timezone applied.
 
-**Trace D — Registry flush (not durable).** `cm_flush_key` → `flush_hive_to_vfs`
-serializes the hive and calls `vfs.write` in place. `NeoDosFsV2::write` writes
-data through the page cache and COW B-tree nodes to disk but **does not call
-`save_sb`**, so the new superblock root is only committed by a later metadata
-operation or at shutdown. There is no userland `fsync`.
+**Trace D — Registry flush (durable, no `fsync`).** `cm_flush_key` →
+`flush_hive_to_vfs` serializes the hive and calls `vfs.write` in place.
+`NeoDosFsV2::write` writes data through the page cache and COW B-tree nodes and
+**commits the superblock via `save_sb`** (re-audited), so the new root survives
+a remount. There is still no userland `fsync`, so a caller cannot force or batch
+a flush, and there is no atomic replace for activation.
 
 ---
 
@@ -206,11 +218,12 @@ New kernel/ABI items (kept minimal, per `AGENTS.md` rule 6):
 
 | Item | Status | Purpose |
 | --- | --- | --- |
-| `ObInfoClass::Random` on `\Device\Random` (PROPOSED) | Proposed | Ring-3 CSPRNG for TLS |
+| `ObInfoClass::Random=48` / `RandomCaps=49` on `\Device\Random` (PROPOSED) | Proposed | Ring-3 CSPRNG for TLS |
 | `fsync`/`sync` file operation (PROPOSED) | Proposed | durable writes for updates |
 | Atomic replace primitive (PROPOSED) | Proposed | safe activation |
-| `SocketAccept`/`listen` wait (PROPOSED) | Proposed | server side (not needed for HTTP client M1) |
-| Blocking socket wait with timeout (#307, existing issue) | Tracked | HTTP connect/read timeouts |
+| `SocketAccept` (`ObInfoClass::SocketAccept=43`) **[re-audited]** | Implemented | server side (not needed for the HTTP client) |
+| Blocking socket wait with timeout (#307/#696) **[re-audited]** | Implemented | HTTP connect/read timeouts |
+| Socket writability wait + EOF (`SocketRecv` → `Ok(0)`) (PROPOSED) | Proposed | robust POST/streaming |
 | TCP OOO reassembly (PROPOSED) | Proposed | WAN HTTP reliability |
 
 ---
@@ -235,7 +248,7 @@ New kernel/ABI items (kept minimal, per `AGENTS.md` rule 6):
                         │
    Ob (Version/Memory/DateTime(9)/TimeZone(40)/LocalDateTime(41))
    Cm (RAX 50–59) ── TimeZoneInformation key
-   Net: sockets (SocketConnect=18 broken for TCP), UDP, DNS cache
+   Net: sockets (TCP connect OK; no writability wait/EOF), UDP, DNS cache
    FS: VFS ── NeoFS v2 (COW, no fsync/atomic-replace) ── page cache ── block dev
    RTC bridge ── rtc.nem (UTC)
 ```
@@ -293,7 +306,7 @@ provide: entropy, durability, and (if needed) the TCP connect/accept/wait fixes.
 | `libnet` | `libdns`, `libnet-config` | link | Yes |
 | `libdns` | (transport seam) | `DnsTransport` trait | Yes |
 | `libnlt` | `ed25519-compact` (feature) | `signature::verify` | Yes |
-| kernel net | socket Ob classes | `SocketConnect=18` | **Broken for TCP** |
+| kernel net | socket Ob classes | `SocketConnect=18` | Yes (TCP SYN, #692) |
 
 ### 5.3 Target dependency graph (proposed edges marked ★)
 
@@ -305,7 +318,7 @@ provide: entropy, durability, and (if needed) the TCP connect/accept/wait fixes.
 | ★ `libhttp` | transport trait | `HttpTransport::connect/send/recv` | No |
 | ★ `libnet` | `libhttp` transport impl | implements trait over `net.nxl` | No |
 | ★ `libtls` | `libhttp` stream trait | `TlsStream` | No |
-| ★ `libcrypto` | Ob Random | `ObInfoClass::Random` (kernel) | No |
+| ★ `libcrypto` | Ob Random | `ObInfoClass::Random=48` (kernel) | No |
 | ★ `libupdate` | `libhttp`, `libtls`, `libcrypto`, Registry, VFS | link + syscalls | No |
 | ★ `neoupdate` | `libupdate` | link | No |
 
@@ -749,35 +762,40 @@ Ordering is evidence-driven; Phase 1 is independent of Phases 2–5.
 - **Tests:** unit (libtimezone, libneocfg) + QEMU walkthrough of `neocfg`.
 - **Risks:** Registry flush not durable → surface "pending" rather than "applied".
 
-### Phase 2 — HTTP transport (blocked on TCP connect fix)
+### Phase 2 — HTTP transport (**unblocked** after the TCP-connect fix)
 
-- **Prerequisites (blockers):** fix userland `SocketConnect` to route TCP to
-  `tcp_connect`; robust receive; #307 blocking wait with timeout (or a documented
-  poll contract); ideally TCP OOO reassembly for WAN.
-- **Scope:** `libhttp` + `neocurl`; HTTP/1.1, GET/HEAD, chunked,
-  connection-close, redirects, limits, timeouts; a shared UDP/TCP exchange helper
-  (#593) to avoid duplicating DNS/NTP logic.
-- **Non-goals:** POST/streaming/persistent/HTTP2; TLS (Phase 3).
-- **Files:** `libhttp/` (new), `userbin/neocurl/` (new), `libnet` transport impl,
-  kernel TCP connect fix.
-- **Issues:** reuse #307, #593, #312; propose TCP-connect fix + libhttp/neocurl.
+- **Prerequisites (all present):** userland `SocketConnect` sends the SYN
+  (done, #692); blocking wait with timeout (#307/#696); monotonic clock (#467).
+  Recommended before the CLI: writable wait + EOF semantics and a TTL-aware DNS
+  cache (prerequisites doc §3.4).
+- **Scope:** `libhttp` + `neocurl`; HTTP/1.1, GET/HEAD/POST, chunked,
+  connection-close, limits, timeouts.
+- **Non-goals:** persistent connections, compression, HTTP/2; TLS (Phase 3);
+  redirects (deferred).
+- **Files:** `libhttp/` (new), `userbin/neocurl/` (new), `libnet` transport impl.
+- **Issues:** reuse #307, #312, #467, #486, #593, #696; libhttp/neocurl issue
+  proposed in the HTTP/HTTPS initiative.
 - **Acceptance:** `neocurl http://fixture/` fetches a known body; malformed
-  responses handled; limits enforced.
+  responses handled; limits and timeouts enforced; POST echo verified.
 - **Tests:** HTTP fixtures; local server; no Internet dependency.
-- **Risks:** OOO reassembly absent → real-WAN failures; timeouts approximated
-  until #467/#307.
+- **Risks:** no OOO reassembly → slow recovery over lossy WAN links; 2 MiB heap
+  requires streaming bodies.
 
 ### Phase 3 — TLS and HTTPS (blocked on crypto decision)
 
-- **Prerequisites:** a pure-Rust, `no_std`, MIT-compatible TLS stack decision
-  (RustCrypto + custom provider) and a Ring-3 CSPRNG (`ObInfoClass::Random`).
-- **Scope:** `libcrypto`, `libtls`, trust anchors, hostname validation, ALPN,
-  integration as an HTTP transport.
-- **Non-goals:** custom crypto; a browser-grade feature set.
+- **Prerequisites:** the TLS-stack decision (D1: `rustls` `no_std` + custom
+  provider, else a minimal TLS 1.3 client over RustCrypto), a Ring-3 CSPRNG
+  (`ObInfoClass::Random=48` / `RandomCaps=49`) and a trusted UTC reference
+  (ntpd `Status` + `ob_unix_seconds`).
+- **Scope:** `libcrypto`, `libtls`, trust anchors, hostname/chain/time
+  validation, SNI, ALPN, integration as an HTTP transport.
+- **Non-goals:** custom crypto; client certificates; resumption; OCSP/CRL; a
+  browser-grade feature set.
 - **Issues:** reuse #89/#57/#582 context; propose libcrypto/TLS/CSPRNG issues.
-- **Acceptance:** valid fixture cert accepted; invalid/expired/mismatch rejected;
-  wrong-clock rejection tested.
-- **Risks:** external-crate policy; crypto audit surface.
+- **Acceptance:** valid fixture cert accepted; invalid/expired/mismatch/wrong
+  hostname rejected; unsynced-clock rejected; no insecure mode exists.
+- **Risks:** external-crate policy; no_std build of the TLS stack; crypto audit
+  surface.
 
 ### Phase 4 — Signed update foundations (blocked on durability)
 
@@ -843,7 +861,7 @@ Ordering is evidence-driven; Phase 1 is independent of Phases 2–5.
 
 | Proposed | Title | Rationale |
 | --- | --- | --- |
-| P1 | `[NET] Fix userland TCP connect (SocketConnect must send SYN)` | **Genuine blocker** for HTTP; `set/net.rs` never calls `socket_connect` |
+| P1 | ~~`[NET] Fix userland TCP connect (SocketConnect must send SYN)`~~ | **Done** (#692); `set/net.rs` routes to `socket_connect_user` |
 | P2 | `[NET] TCP out-of-order reassembly + duplicate handling` | WAN reliability for HTTP |
 | P3 | `[NEOCFG] Date/time & time-zone module` | Fill the module; configure offset/IANA |
 | P4 | `[LIB] libneodos time/timezone read wrappers` | Extends #327 |
@@ -866,8 +884,9 @@ Ordering is evidence-driven; Phase 1 is independent of Phases 2–5.
 
 | Risk | Impact | Mitigation |
 | --- | --- | --- |
-| Userland TCP connect broken | HTTP/HTTPS impossible | Fix first (P1); add a test that a socket reaches `Established` |
-| No blocking socket wait (#307) / monotonic clock (#467) | Timeouts approximated; poor UX | Implement #307/#467 or document the poll/deadline contract |
+| ~~Userland TCP connect broken~~ **Resolved** **[re-audited]** | — | Covered by `tcptest`/`netcli` and the kernel loopback e2e test |
+| No writability wait / ambiguous EOF | Large POSTs look like I/O errors; reads need `TcpStatus` polling | Prerequisites doc §3.4 (M2) |
+| ~~No blocking socket wait (#307) / monotonic clock (#467)~~ **Resolved** **[re-audited]** | — | `sys_ob_wait_timeout` + `ob_uptime_ms` |
 | No `fsync` / atomic replace | Corrupted or half-applied updates; Registry loss | Multi-hive/flush durability work (P11/P12) before updater |
 | External-crate policy vs TLS | Cannot ship HTTPS without a vetted dependency | Decide RustCrypto-style pure-Rust stack; record license/audit |
 | Wrong system clock | Bad cert decisions, wrong local time | Fail closed for updates when clock unsynced |
@@ -907,10 +926,10 @@ Ordering is evidence-driven; Phase 1 is independent of Phases 2–5.
 | D6 | Reuse Ed25519 (`libnlt`/`ed25519-compact`), extract into `libcrypto` | Only real crypto in repo; RFC 8032-tested |
 | D7 | No custom TLS; require a vetted pure-Rust stack + Ring-3 CSPRNG | Crypto from scratch is forbidden by the task |
 | D8 | Update M1 = signed user-mode artifacts, manual, user-mode only | No proven activation/recovery; #411 out of scope |
-| D9 | Treat atomic replace/`fsync`/Registry durability as prerequisites, not assumptions | `neodos_v2.rs:560` no `save_sb`; no `fsync`; rename untested |
+| D9 | Treat atomic replace/`fsync` as prerequisites, not assumptions | no `fsync`; rename is same-directory delete+insert; `write()` does commit the superblock (re-audited) |
 | D10 | Fail closed on clock/TLS uncertainty; no insecure flag to trusted callers | Security boundary §8 |
 | D11 | Sequence Phase 1 independently of HTTP/TLS | Time/config work is not blocked by networking |
-| D12 | The first HTTP prerequisite is the TCP connect fix, not DNS | Trace A: `SocketConnect` never calls `socket_connect` |
+| D12 | After the TCP connect fix (#692), the first HTTP *robustness* prerequisite is the byte-stream fix, not DNS | TCP connect works; a full TX buffer still reports `-Io` and EOF is ambiguous |
 
 ---
 
@@ -943,7 +962,7 @@ Ordering is evidence-driven; Phase 1 is independent of Phases 2–5.
 | Socket syscalls | `neodos-kernel/src/syscall/ob/set/net.rs` (SocketConnect=18), `query/net.rs`, `libneodos/src/syscall/net.rs` |
 | Socket wait gap | `neodos-kernel/src/syscall/ob/wait.rs:71`, `neodos-kernel/src/syscall/handlers.rs:584-662` |
 | VFS trait | `neodos-kernel/src/fs/vfs/mod.rs` (no `sync`) |
-| NeoFS write | `neodos-kernel/src/fs/neofs/neodos_v2.rs:560` (no `save_sb`), `:690` (`rename`) |
+| NeoFS write | `neodos-kernel/src/fs/neofs/neodos_v2.rs` (`save_sb` on mutation), `rename` same-directory |
 | Version | `neodos-kernel/src/main.rs:77`, `build.rs:117` |
 | NXL loader | `neodos-kernel/src/infra/nxl.rs` |
 | NXL ABI | `libneodos/src/export.rs`, `libneodos-nxl/src/main.rs` |
