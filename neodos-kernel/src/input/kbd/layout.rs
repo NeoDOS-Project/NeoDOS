@@ -158,6 +158,7 @@ pub fn load_layouts() -> usize {
     let mut layouts = Vec::new();
 
     // First try built-in fallback layout
+    let builtin = builtin_us_layout();
     let fallback = KbdLayout {
         name: {
             let mut n = [0u8; 32];
@@ -169,7 +170,7 @@ pub fn load_layouts() -> usize {
             t[..5].copy_from_slice(b"en-US");
             t
         },
-        entries: builtin_us_layout(),
+        entries: builtin,
         compose: Vec::new(),
     };
     layouts.push(fallback);
@@ -181,7 +182,12 @@ pub fn load_layouts() -> usize {
     const LAYOUT_TAGS: &[&str] = &["en-US", "es-ES"];
     for tag in LAYOUT_TAGS {
         let path = alloc::format!("C:\\System\\Keyboard\\{tag}.kbd");
-        if let Ok(layout) = load_kbd(&path) {
+        if let Ok(mut layout) = load_kbd(&path) {
+            // XKB-derived layouts only carry printable keysyms; Enter,
+            // Backspace, Tab, Escape and sometimes Space are left at the
+            // 0xFFFF sentinel. A layout file may override printable keys, but
+            // it must never leave the console without its control keys.
+            merge_missing_entries(&mut layout, &builtin);
             match layouts.iter().position(|l| l.name_str() == layout.name_str()) {
                 Some(i) => layouts[i] = layout,
                 None => layouts.push(layout),
@@ -193,6 +199,24 @@ pub fn load_layouts() -> usize {
     let mut kbd = crate::kbd::KBD.lock();
     kbd.layouts = layouts;
     count
+}
+
+/// Fill every entry a disk layout leaves unmapped with the built-in US entry.
+///
+/// `data/keyboard/*.kbd` is generated from XKB, which only exposes printable
+/// keysyms: standard control keys (Enter, Backspace, Tab, Escape) and on some
+/// layouts Space end up as the `0xFFFF` sentinel. Merging keeps a loaded
+/// layout usable for line input without dropping any locale-specific key.
+pub(crate) fn merge_missing_entries(layout: &mut KbdLayout, builtin: &[KeyEntry; 256]) {
+    for (entry, fallback) in layout.entries.iter_mut().zip(builtin.iter()) {
+        if entry.normal == 0xFFFF
+            && entry.shift == 0xFFFF
+            && entry.altgr == 0xFFFF
+            && entry.ctrl == 0xFFFF
+        {
+            *entry = *fallback;
+        }
+    }
 }
 
 pub fn lookup_codepoint(layout: &KbdLayout, scancode: u8, modifiers: u8) -> Option<u16> {
