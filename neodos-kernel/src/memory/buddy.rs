@@ -17,6 +17,8 @@ pub struct BuddyAllocator {
     bitmap_words: usize,
     free_pages: u64,
     total_pages: u64,
+    /// Highest frame index the bitmap manages (index bound, not a count).
+    frame_limit: usize,
 }
 
 unsafe impl Send for BuddyAllocator {}
@@ -32,6 +34,7 @@ impl BuddyAllocator {
             bitmap_words: 0,
             free_pages: 0,
             total_pages: 0,
+            frame_limit: 0,
         }
     }
 
@@ -130,7 +133,23 @@ impl BuddyAllocator {
             }
         }
         self.total_pages = covered;
+        self.frame_limit = limit;
+        self.rebuild_free_lists();
+    }
 
+    /// Recompute the order free lists and `free_pages` from the bitmap.
+    ///
+    /// Reservations performed *after* `init_from_regions` (e.g. the kernel
+    /// heap, the crash-dump area or firmware page tables) only flip bitmap
+    /// bits; without this rebuild the allocator would keep handing out those
+    /// frames from the stale free lists.
+    pub fn rebuild_free_lists(&mut self) {
+        for order in 0..=MAX_ORDER {
+            self.free_counts[order] = 0;
+        }
+        self.free_pages = 0;
+
+        let limit = self.frame_limit.min(self.bitmap_words * 64);
         let mut run_start: Option<usize> = None;
         for frame in 0..=limit {
             let is_free = if frame < limit { !self.bitmap_test(frame) } else { false };
@@ -204,7 +223,7 @@ impl BuddyAllocator {
         let mut frame = Self::page_to_frame(addr);
         let mut cur_order = order;
 
-        self.bitmap_set(frame);
+        self.bitmap_clear(frame);
 
         while cur_order < MAX_ORDER {
             let buddy = Self::buddy_of(frame, cur_order);
@@ -212,7 +231,7 @@ impl BuddyAllocator {
 
             if let Some(idx) = self.scan_for_buddy(cur_order, buddy_addr) {
                 self.remove_slot_at(cur_order, idx);
-                self.bitmap_set(buddy);
+                self.bitmap_clear(buddy);
                 frame = cmp::min(frame, buddy);
                 cur_order += 1;
             } else {
@@ -236,7 +255,7 @@ impl BuddyAllocator {
     pub fn mark_used_region(&mut self, start: u64, size: u64) {
         let first = (start / PAGE_SIZE) as usize;
         let last = (start + size).div_ceil(PAGE_SIZE) as usize;
-        let limit = (self.total_pages as usize).min(self.bitmap_words * 64);
+        let limit = self.frame_limit.min(self.bitmap_words * 64);
         for frame in first..last.min(limit) {
             if !self.bitmap_test(frame) {
                 self.bitmap_set(frame);
@@ -247,6 +266,12 @@ impl BuddyAllocator {
 
     pub fn free_pages(&self) -> u64 {
         self.free_pages
+    }
+
+    /// Whether `addr` is currently marked free in the bitmap (diagnostics/tests).
+    pub fn is_free_frame(&self, addr: u64) -> bool {
+        let frame = Self::page_to_frame(addr);
+        !self.bitmap_test(frame)
     }
 
     pub fn total_pages(&self) -> u64 {
@@ -286,8 +311,19 @@ pub fn mark_used_region(start: u64, size: u64) {
     ALLOCATOR.lock().mark_used_region(start, size);
 }
 
+/// Rebuild the free lists after out-of-band reservations. See
+/// `BuddyAllocator::rebuild_free_lists`.
+pub fn rebuild_free_lists() {
+    ALLOCATOR.lock().rebuild_free_lists();
+}
+
 pub fn free_pages() -> u64 {
     ALLOCATOR.lock().free_pages()
+}
+
+/// Whether `addr` is currently marked free in the bitmap (diagnostics/tests).
+pub fn is_free_frame(addr: u64) -> bool {
+    ALLOCATOR.lock().is_free_frame(addr)
 }
 
 pub fn total_frames() -> u64 {
