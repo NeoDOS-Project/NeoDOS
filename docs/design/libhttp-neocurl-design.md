@@ -1,13 +1,16 @@
 # HTTP Client (`libhttp`) + `neocurl` — Design Document
 
-> **Version:** v0.1-draft
-> **Status:** Design (no implementation)
+> **Version:** v0.2 — reconciled with `develop` @ `532d554` (2026-11-14)
+> **Status:** Design (no implementation). Supersedes v0.1, whose baseline
+> (broken userland TCP connect, no blocking wait, RDTSC deadlines) is obsolete.
 > **Target Release:** v0.58 — Official Tools
-> **Related:** #307 (blocking socket waits), #593 (shared UDP helper), #315,
-> #467 (monotonic clock), #98; `docs/design/http-tls-update-prerequisites-design.md`,
-> `docs/networking/stack.md`, `docs/networking/userland.md`
-> **ABI Impact:** none (userland); depends on the TCP-connect fix and, for good
-> timeouts, on #307/#467
+> **Related:** #307 (socket waits), #467 (monotonic clock), #484 (loopback),
+> #486 (TCP data path), #593 (shared UDP helper), #692 (TCP E2E), #696 (wait
+> timeouts), #710 (page cache); `docs/networking/stack.md`,
+> `docs/networking/userland.md`, `docs/design/http-tls-update-prerequisites-design.md`,
+> `docs/design/libtls-https-design.md`
+> **ABI Impact:** none for HTTP. The optional byte-stream fixes (§3.4 of the
+> prerequisites doc) touch only `ObInfoClass` semantics, no new syscall.
 
 ---
 
@@ -15,41 +18,45 @@
 
 | Source | What it establishes |
 | --- | --- |
-| `libdns/src/types.rs`, `libdns/src/resolve.rs` | the proven "protocol crate + injectable transport" pattern (`DnsTransport::exchange`) |
-| `libnet/src/lib.rs`, `libnet-nxl/src/main.rs` | `net.nxl` `NetAbiTable` (v1): `socket_create/bind/connect/listen/send/recv/close`; `libnet` convenience layer |
-| `libnet/src/dns.rs` | `NetTransport::exchange`: UDP + DNS; RDTSC/yield wait workaround (no blocking primitive) |
-| `neodos-kernel/src/syscall/ob/set/net.rs` | `SocketConnect=18` **broken for TCP** (no SYN) |
-| `neodos-kernel/src/syscall/ob/query/net.rs` | `SocketRecv=23` non-blocking; `TcpStatus=19` |
-| `docs/networking/stack.md`, `docs/networking/userland.md` | socket model, `net.nxl`, userland tools |
-| `libntp/src/lib.rs`, `userbin/ntpd/src/main.rs` | the duplicated UDP exchange pattern that #593 wants to unify |
+| `libdns/src/*`, `libntp/src/lib.rs` | the proven pattern: protocol crate with an injectable transport, `no_std` + `alloc`, host-testable (`#![cfg_attr(not(test), no_std)]`) |
+| `libnet/src/lib.rs` | `net.nxl` `NetAbiTable` v1 (`socket_create/bind/connect/listen/send/recv/close`) and the thin `libnet` wrappers |
+| `libnet/src/dns.rs` | resolver + Registry servers + **cache without TTL expiry**; IPv4 literals are not special-cased |
+| `neodos-kernel/src/syscall/ob/set/net.rs` | `SocketConnect=18` routes to `socket_connect_user`; TCP sends a SYN. **Fixed.** |
+| `neodos-kernel/src/syscall/ob/query/net.rs` | `SocketRecv=23` (non-blocking), `TcpStatus=19`, `SocketAccept=43` |
+| `neodos-kernel/src/syscall/ob/wait.rs`, `libneodos/src/syscall/ob.rs` | `ob_wait` blocks on Connect/Read; `sys_ob_wait_timeout` bounds it (#696) |
+| `libneodos/src/syscall/time.rs` | `ob_uptime_ms()`/`ob_high_res_time()` (#467) for deadlines |
+| `neodos-kernel/src/net/tcp.rs` | 16 KiB TX/RX, MSS 1460, RTO 200 ms, in-order-only RX, 32 connections |
+| `neodos-kernel/src/arch/x64/paging.rs` | 2 MiB heap per process, bump allocator in most tools |
+| `libnlt/src/lzss.rs` | the only compression in the tree: **no deflate/gzip** |
+| `userbin/netcli`, `userbin/tcptest` | working Ring-3 TCP client/server over the public ABI |
 | repo-wide grep | **no HTTP client, no HTTP parser, no `neocurl`** |
 
-Verified: UDP works end-to-end; **userland TCP connect does not**; receive is
-non-blocking and poll-driven; no shared UDP/TCP exchange helper exists.
+Verified: userland TCP works end to end; receive is non-blocking; a full TX
+buffer surfaces as `-Io` and there is no writability wait; EOF is not
+distinguishable from `EAGAIN` without querying `TcpStatus`; DNS answers never
+expire from the cache.
 
 ---
 
 ## 2. Problem analysis
 
-NeoDOS has no way to fetch an HTTP resource. Building one by hand inside a tool
-would duplicate:
+NeoDOS has no way to fetch an HTTP resource. Building one inside a tool would
+duplicate:
 
-- TCP socket setup (`ob_socket_create/connect/send/recv/close`),
-- DNS resolution (`libnet::dns`),
-- the send-retry/ARP workaround and the RDTSC receive loop (already duplicated
-  between `libnet::dns` and `ntpd`, #593),
-- HTTP parsing (status line, headers, chunked bodies, limits).
+- TCP socket setup, connect waiting and deadlines,
+- DNS resolution and the "is this an IP literal?" check,
+- HTTP parsing (status line, headers, chunked bodies, limits),
+- error mapping and cleanup on every path.
 
 Why existing abstractions cannot solve it:
 
-- **`libdns`** is DNS-only; its transport returns a single datagram, not a byte
-  stream.
-- **`libnet`** exposes sockets, not a stream protocol or a deadline-aware read.
-- **`libntp`** is a protocol codec for NTP, not HTTP.
-- There is no HTTP parser and no request/response model anywhere.
+- **`libdns`** is DNS-only; its transport returns a datagram, not a stream.
+- **`libnet`** exposes sockets, not a byte stream with deadlines and EOF.
+- **`libntp`** is an NTP codec, not HTTP.
+- There is no HTTP parser or response model anywhere.
 
-The feature therefore needs a **reusable HTTP/1.1 client** with an injectable
-transport, so TLS can layer on top without duplicating TCP/DNS.
+The feature therefore needs a **reusable HTTP/1.1 client with an injectable
+transport**, so TLS can layer on top without duplicating TCP/DNS/HTTP.
 
 ---
 
@@ -58,112 +65,170 @@ transport, so TLS can layer on top without duplicating TCP/DNS.
 ### 3.1 Types / structs / enums
 
 No new `ObType`, no new syscall: HTTP is pure userland over the existing socket
-classes. New crate `libhttp` (plain `no_std` crate, `std` under tests — the
-`libdns`/`libntp` convention).
+classes. New crate `libhttp`, dependency-free.
 
 ```rust
 // libhttp/src/transport.rs
-pub struct Deadline { /* monotonic instant; backed by RDTSC until #467 */ }
-pub trait HttpTransport {
+/// Absolute deadline on the monotonic clock (`ob_uptime_ms`, #467).
+pub struct Deadline { pub at_ms: u64 }
+impl Deadline {
+    pub fn after(ms: u32) -> Result<Self, HttpError>; // reads ob_uptime_ms
+    pub fn expired(&self) -> bool;
+    pub fn remaining_ms(&self) -> u32;
+}
+
+pub trait Transport {
     type Conn: Read + Write + Close;
-    fn connect(&mut self, host: &str, port: u16, dl: Deadline)
-        -> Result<Self::Conn, HttpError>;
+    fn connect(&mut self, host: &str, port: u16, dl: Deadline) -> Result<Self::Conn, HttpError>;
 }
 pub trait Read  { fn read(&mut self, buf: &mut [u8], dl: Deadline) -> Result<usize, HttpError>; }
 pub trait Write { fn write_all(&mut self, buf: &[u8], dl: Deadline) -> Result<(), HttpError>; }
 pub trait Close { fn close(self); }
 
 // libhttp/src/lib.rs
-pub enum Method { Get, Head, Post }          // Post deferred in M1
-pub struct Url { pub scheme: Scheme, pub host: String, pub port: u16, pub path: String }
+pub enum Method { Get, Head, Post }
 pub enum Scheme { Http, Https }
-pub struct Request { pub method: Method, pub url: Url, pub headers: Vec<(String, String)> }
-pub struct Response { pub status: u16, pub headers: Vec<(String, String)>, pub body: Body }
-pub enum Body { Empty, Bytes(Vec<u8>) }
+pub struct Url { pub scheme: Scheme, pub host: String, pub port: u16, pub path: String }
+pub struct HeaderMap { /* ordered, case-insensitive lookup, duplicates preserved */ }
+pub struct Request<'a> {
+    pub method: Method,
+    pub url: Url,
+    pub headers: Vec<(String, String)>,   // user headers, validated
+    pub body: Option<BodySource<'a>>,      // POST
+}
+pub enum BodySource<'a> { Bytes(&'a [u8]), Stdin, File(&'a str) }
+pub struct ResponseHead { pub version: u8, pub status: u16, pub reason: String, pub headers: HeaderMap }
+pub trait BodySink { fn write(&mut self, chunk: &[u8]) -> Result<(), HttpError>; }
+
 pub struct Limits {
-    pub max_header_bytes: usize,     // e.g. 16 KiB
-    pub max_body_bytes: Option<u64>, // None = stream until close
-    pub max_redirects: u8,           // e.g. 5
-    pub connect_timeout_ms: u32,
-    pub read_timeout_ms: u32,
-    pub write_timeout_ms: u32,
+    pub max_header_bytes: usize,      // 16 KiB
+    pub max_headers: usize,           // 100
+    pub max_body_bytes: u64,          // 1 MiB default; 0 = unlimited (streaming sink)
+    pub connect_timeout_ms: u32,      // 10 s
+    pub read_timeout_ms: u32,         // 10 s of inactivity
+    pub write_timeout_ms: u32,        // 10 s
+    pub total_timeout_ms: u32,        // 30 s
 }
+
 pub enum HttpError {
-    Dns, Connect, Tls, Timeout, Cancelled,
-    MalformedStatus, MalformedHeader, TooManyHeaders, BodyTooLarge,
-    TooManyRedirects, InsecureRedirect, UnsupportedTransfer, Status(u16), Io,
+    InvalidUrl, Dns, Connect, Timeout, Tls,
+    MalformedStatus, MalformedHeader, TooManyHeaders,
+    UnsupportedTransfer, UnsupportedEncoding,
+    BodyTooLarge, IncompleteBody, Io, Cancelled,
 }
-pub fn get<T: HttpTransport>(t: &mut T, url: &Url, limits: Limits) -> Result<Response, HttpError>;
-pub fn head<T: HttpTransport>(t: &mut T, url: &Url, limits: Limits) -> Result<Response, HttpError>;
+
+pub fn execute<T: Transport>(
+    t: &mut T, req: &Request<'_>, limits: &Limits, sink: &mut dyn BodySink,
+) -> Result<ResponseHead, HttpError>;
 ```
+
+`Response` is deliberately *not* a struct holding the body: the body is streamed
+to a `BodySink`, so a 1 MiB download never needs 1 MiB of heap (the process heap
+is 2 MiB).
 
 ### 3.2 New syscalls / ObType / classes
 
-**None.** HTTP uses the existing socket Ob classes through `net.nxl`/`libnet`.
-The only ABI dependency is the **TCP-connect fix** (sibling doc) and, for real
-timeouts, #307 (blocking wait) / #467 (monotonic clock).
+**None.** HTTP uses the existing socket Ob classes through `libnet`.
+
+Two optional kernel-side fixes improve robustness (see the prerequisites doc
+§3.4) and are recommended before the CLI milestone, not as a hard blocker:
+
+- a writable wait reason so a full 16 KiB TX buffer blocks instead of returning
+  `-Io`;
+- `SocketRecv` returning `Ok(0)` on EOF.
 
 ### 3.3 New files / modules
 
-Userland (repo root), following existing conventions:
-
 ```text
 libhttp/Cargo.toml
-libhttp/src/lib.rs          — request/response API, redirects, limits
-libhttp/src/transport.rs    — HttpTransport / Read / Write / Close / Deadline
-libhttp/src/parse.rs        — status line, headers, Content-Length, chunked
-libhttp/src/url.rs          — minimal URL parse (scheme/host/port/path)
+libhttp/src/lib.rs          — request/response API, redirect-free flow
+libhttp/src/transport.rs    — Transport / Read / Write / Close / Deadline
+libhttp/src/url.rs          — minimal URL parse (scheme/host/port/path+query)
+libhttp/src/parse.rs        — status line, headers, framing, chunked
+libhttp/src/headers.rs      — HeaderMap
 libhttp/src/error.rs        — HttpError
-libhttp/src/tests.rs        — fixtures
+libhttp/src/tests.rs        — fixtures + fragmentation tests
+libnet/src/http_transport.rs — TcpTransport over `net.nxl` sockets
 userbin/neocurl/Cargo.toml
-userbin/neocurl/src/main.rs — CLI
+userbin/neocurl/src/main.rs — CLI (flags, sinks, exit codes)
 ```
-
-No new kernel module. `libnet` gains a `TcpTransport` implementation of
-`HttpTransport` (new file `libnet/src/http_transport.rs`).
 
 ### 3.4 Changes to existing files
 
 | Path | Change |
 | --- | --- |
-| `libnet/src/lib.rs` | `TcpTransport` (implements `HttpTransport` over `net.nxl` sockets) |
-| `libnet/src/dns.rs` | Reuse the shared exchange helper (#593) instead of a private loop |
-| `userbin/ntpd/src/main.rs` | Reuse the shared exchange helper (#593) |
-| `neodev/src/image.rs` | Add `neocurl` to the binary list |
-| `docs/networking/userland.md`, `docs/userland/shell.md` | Document `neocurl` |
+| `libnet/src/lib.rs` | register `http_transport` |
+| `libnet/src/dns.rs` | TTL-aware cache (also fixes DNS for other tools) |
+| `libnet/src/http_transport.rs` | new: connect/read/write with deadlines, IPv4 literal fast path, EOF via `TcpStatus`, TX backpressure |
+| `neodos-kernel/src/net/{socket,tcp}.rs` | optional writable wait + EOF (prerequisite doc §3.4) |
+| NeoDev (external) | add `neocurl` to the image program list |
+| `docs/networking/userland.md`, `docs/userland/shell.md` | document `neocurl` |
 
-### 3.5 Semantics / M1 scope
+### 3.5 Semantics
 
-- **HTTP/1.1 only.** `GET` and `HEAD`.
-- **Bodies:** `Content-Length`, `Transfer-Encoding: chunked`, and
-  connection-close-delimited. Unknown transfer encodings → `UnsupportedTransfer`.
-- **Redirects:** 301/302/303/307/308 up to `max_redirects`; HTTPS→HTTP for a
-  sensitive request → `InsecureRedirect`.
-- **Limits:** header bytes, body bytes, redirect count; malformed responses fail
-  with a specific `HttpError`.
-- **Timeouts:** connect/read/write from `Deadline`; `Timeout` on expiry.
-- **Cancellation:** via the deadline; explicit cancellation waits on the runtime
-  (#307).
-- **Cleanup:** `Conn` is closed on every error path (RAII `Close`).
-- **Persistent connections, `POST`, streaming-to-disk, HTTP/2, compression:**
-  deferred. M1 opens one connection per request and honors `Connection: close`.
+- **HTTP/1.1 only**; requests `GET`, `HEAD`, `POST`. One request per
+  connection, `Connection: close`, no keep-alive, no pipelining.
+- **Request body:** `Content-Length` exactly; from memory, stdin or file. No
+  chunked request bodies. Default `Content-Type:
+  application/x-www-form-urlencoded` with `-d`.
+- **Response framing:** 1xx informational responses are skipped (bounded);
+  `HEAD`, 204 and 304 have no body; `Transfer-Encoding` takes precedence over
+  `Content-Length`; `chunked` honours extensions and ignores trailers (bounded);
+  no length + `Connection: close` reads until EOF. A short `Content-Length`
+  body is `IncompleteBody`.
+- **Compression:** none. The client sends `Accept-Encoding: identity`; a
+  response with `Content-Encoding: gzip|deflate|br` is rejected as
+  `UnsupportedEncoding` rather than returned corrupt (the tree has no inflate).
+- **Redirects:** out of scope (not required for this initiative). `Location` is
+  parsed and exposed for a later policy.
+- **Limits:** header bytes, header count, body bytes, chunk size and total
+  deadline; every violation maps to a specific error.
+- **Timeouts:** connect/read/write/total, all on `ob_uptime_ms`. Network calls
+  use `sys_ob_wait_timeout` and re-check readiness (the kernel returns `Ok` on
+  expiry).
+- **EOF:** reads stop on `Ok(0)`; with the unpatched kernel the transport
+  queries `TcpStatus` (`Closed`/`CloseWait` + empty buffer) to synthesise EOF.
+- **Backpressure:** `write_all` loops over partial sends; when the buffer is
+  full it waits with a short bounded `ob_wait_timeout` and retries until the
+  write deadline.
+- **Cleanup:** close on every path (success, parse error, timeout, TLS error).
+- **Host:** `Host` mandatory, with `:port` when not 80/443. IPv4 literals bypass
+  DNS (and are recorded for TLS validation).
+- **User-Agent:** `NeoDOS-neocurl/0.1`.
+
+### 3.6 `neocurl` CLI contract
+
+```text
+neocurl URL                    GET; body to stdout
+neocurl -I URL | --head        HEAD; response headers to stdout
+neocurl -i URL                 include response headers before the body
+neocurl -d DATO URL            POST (x-www-form-urlencoded)
+neocurl -d @- URL              POST reading the body from stdin
+neocurl -o FICHERO URL         stream the body to a file
+neocurl --max-time MS URL      total deadline
+neocurl --max-bytes N URL      body limit
+neocurl -s URL                 silent (no progress/status on stderr)
+```
+
+Body bytes go to stdout unmodified; headers/status/errors go to stderr or
+stdout only with `-i`/`-I`. Exit codes: `0` success, `1` transfer/parse/TLS
+error, `2` usage error. No other flags.
 
 ---
 
 ## 4. Alternatives
 
-- **Implement HTTP inside each tool** (`neocurl`, updater). Rejected:
-  duplicates TCP/DNS/HTTP logic; the task explicitly forbids duplicating TCP/DNS.
-- **Reuse an external Rust HTTP crate (e.g. `ureq`/`reqwest`).** Rejected for
-  M1: they assume `std`, sockets, and a TLS backend that do not exist on
-  `x86_64-unknown-none`; the repo is external-crate-averse in Ring 3.
+- **HTTP inside each tool** (`neocurl`, updater). Rejected: duplicates
+  TCP/DNS/parser/cleanup logic; the task forbids duplicating TCP/DNS.
+- **External Rust HTTP crate** (`ureq`/`reqwest`). Rejected: assume `std`,
+  blocking sockets, a TLS backend and a different error model.
 - **Package `libhttp` as an NXL.** Rejected: NXLs are global/load-once with no
-  version negotiation; the reuse libraries are plain crates. See the master
-  design §10.
-- **HTTP/2 first.** Rejected: needs a byte-stream transport, ALPN, and framing;
-  HTTP/1.1 is the minimal, testable milestone.
-- **Skip HTTP, go straight to TLS.** Rejected: TLS layers on a byte stream and
-  still needs the same transport; HTTP/1.1 is the smallest end-to-end proof.
+  version negotiation; the shared protocol crates are plain static crates.
+- **HTTP/2 first.** Rejected: needs framing, ALPN and multiplexing; HTTP/1.1 is
+  the minimal, testable milestone.
+- **Skip HTTP, go straight to TLS.** Rejected: TLS layers on the same byte
+  stream and would be debugged with no working transport.
+- **Buffer the whole body in RAM.** Rejected: 2 MiB heap, bump allocator.
 
 ---
 
@@ -171,13 +236,13 @@ No new kernel module. `libnet` gains a `TcpTransport` implementation of
 
 | Subsystem | Change | Impact |
 | --- | --- | --- |
-| Kernel net | TCP-connect fix (prerequisite, sibling doc) | Low |
-| `libnet` | `TcpTransport`; shared exchange helper (#593) | Medium |
-| `libdns` | (unchanged protocol; transport may move behind the shared helper) | Low |
+| Kernel net | Optional writable wait + EOF (no new ABI) | Low/Medium |
+| `libnet` | `TcpTransport`; TTL-aware DNS cache | Medium |
 | `libhttp` (new) | HTTP/1.1 client | New crate |
 | `neocurl` (new) | CLI | New `.nxe` |
-| Image list | Add `neocurl` | Low |
-| Scheduler/VFS/memory/drivers | None | None |
+| Image (NeoDev) | Add `neocurl` | Low |
+| TLS/`libcrypto` | Later transport wrapper, not part of this crate | None |
+| Scheduler / VFS / memory / drivers | None | None |
 
 ---
 
@@ -185,19 +250,22 @@ No new kernel module. `libnet` gains a `TcpTransport` implementation of
 
 | Function | Args | Returns | Errors |
 | --- | --- | --- | --- |
-| `HttpTransport::connect` | `host`, `port`, `Deadline` | `Conn` | `Dns`, `Connect`, `Timeout` |
-| `Read::read` | `buf`, `Deadline` | bytes read (0 = EOF) | `Timeout`, `Io` |
+| `Transport::connect` | `host`, `port`, `Deadline` | `Conn` | `Dns`, `Connect`, `Timeout` |
+| `Read::read` | `buf`, `Deadline` | bytes (`0` = EOF) | `Timeout`, `Io` |
 | `Write::write_all` | `buf`, `Deadline` | `()` | `Timeout`, `Io` |
-| `get` / `head` | `&mut T`, `Url`, `Limits` | `Response` | any `HttpError` |
-| `neocurl` | `neocurl <url> [--head] [--max-bytes N]` | body to stdout; status to stderr | exit code 1 on error |
+| `execute` | `&mut Transport`, `&Request`, `&Limits`, `&mut dyn BodySink` | `ResponseHead` | any `HttpError` |
+| `Url::parse` | `&str` | `Url` | `InvalidUrl` |
+| `neocurl` | see §3.6 | stdout/stderr + exit code | `1`/`2` |
 
-Preconditions: `Url` scheme is `Http` for M1 (`Https` returns `Tls` until
-`libtls` lands). `Limits` are finite. Postconditions: the connection is closed;
-the returned `Response` body is bounded by `max_body_bytes`.
+Preconditions: `Url` scheme is `Http` (until `libtls` lands, `Https` returns
+`Tls`); `Limits` finite and non-zero. Postconditions: the connection is closed;
+the body was delivered exactly once; body bytes never exceed `max_body_bytes`
+when set.
 
-Error-code mapping: `-NoEnt`-style DNS failure → `Dns`; connect refusal →
-`Connect`; deadline → `Timeout`; oversized body → `BodyTooLarge`; malformed
-input → `MalformedStatus`/`MalformedHeader`.
+Error mapping: DNS failure → `Dns`; refused/unreachable → `Connect`; deadline →
+`Timeout`; oversized body → `BodyTooLarge`; bad syntax →
+`MalformedStatus`/`MalformedHeader`; unknown transfer coding →
+`UnsupportedTransfer`.
 
 ---
 
@@ -207,19 +275,25 @@ input → `MalformedStatus`/`MalformedHeader`.
 
 | Test | Expected |
 | --- | --- |
-| `http_get_request_line` | `GET /path HTTP/1.1`, `Host:` present |
+| `http_get_request_line` | `GET /path HTTP/1.1` + `Host:` present |
+| `http_post_content_length` | exact `Content-Length`, body bytes counted |
 | `http_parse_status_and_headers` | status + headers parsed, case-insensitive |
-| `http_parse_malformed_status` | garbage status → `MalformedStatus` |
 | `http_parse_duplicate_headers` | duplicates preserved in order |
+| `http_parse_malformed_status` | garbage status → `MalformedStatus` |
+| `http_header_injection_rejected` | CR/LF in path or header value → `InvalidUrl` |
 
-**INV-2 — Body framing is correct.**
+**INV-2 — Body framing is correct under fragmentation.**
 
 | Test | Expected |
 | --- | --- |
 | `http_body_content_length` | exactly N bytes |
 | `http_body_chunked` | de-chunked body equals payload |
-| `http_body_connection_close` | reads until EOF when no length |
+| `http_body_chunked_one_byte_reads` | same body with 1-byte reads |
+| `http_body_chunked_noise` | extensions + trailer tolerated within limits |
+| `http_body_close_delimited` | reads until EOF when no length |
+| `http_body_short_content_length` | `IncompleteBody` |
 | `http_body_unknown_transfer` | `UnsupportedTransfer` |
+| `http_body_gzip_rejected` | `UnsupportedEncoding` |
 
 **INV-3 — Limits and timeouts are enforced.**
 
@@ -229,52 +303,59 @@ input → `MalformedStatus`/`MalformedHeader`.
 | `http_body_limit` | body > `max_body_bytes` → `BodyTooLarge` |
 | `http_read_timeout` | stalled server → `Timeout` |
 | `http_connect_timeout` | unreachable host → `Timeout`/`Connect` |
+| `http_total_deadline` | slow drip → `Timeout` |
 
-**INV-4 — Redirect policy.**
-
-| Test | Expected |
-| --- | --- |
-| `http_redirect_follows` | 302 to a relative URL followed |
-| `http_redirect_limit` | > `max_redirects` → `TooManyRedirects` |
-| `http_redirect_https_to_http_refused` | `InsecureRedirect` |
-
-**INV-5 — Resource cleanup.**
+**INV-4 — Resource cleanup and edge statuses.**
 
 | Test | Expected |
 | --- | --- |
 | `http_closes_on_error` | socket closed after a parse error |
-| `http_head_has_no_body` | `HEAD` returns headers with empty body |
+| `http_head_has_no_body` | `HEAD` returns headers, empty body |
+| `http_204_304_no_body` | no body read for 204/304 |
+| `http_1xx_skipped` | `100 Continue` ignored before the final response |
 | `http_dns_failure_maps` | unknown host → `Dns` |
 
-**Integration (QEMU/VBox):** `neocurl` against a local fixture server; no
-public-Internet dependency in routine tests.
+**INV-5 — Streaming respects the heap budget.**
+
+| Test | Expected |
+| --- | --- |
+| `http_sink_streams_1mib` | 1 MiB body delivered in chunks, peak allocation bounded |
+| `http_sink_error_propagates` | sink error aborts and closes |
+| `http_ipv4_literal_skips_dns` | `http://10.0.2.2/` never queries DNS |
+
+**Integration (QEMU):** `neocurl` against a host fixture server on `10.0.2.2`
+(SLiRP); no public-Internet dependency in routine tests.
 
 ---
 
 ## 8. Implementation plan
 
-1. **TCP-connect fix** (sibling doc) + a test that a socket reaches `Established`.
-2. **Shared exchange helper** (#593) and migrate `libnet::dns`/`ntpd`.
-3. **`libhttp` core**: `Url`, `Request`, `parse.rs`, `Limits`, `HttpError`.
-4. **`libnet::TcpTransport`** implementing `HttpTransport`.
-5. **Redirects, chunked, connection-close, limits, timeouts.**
-6. **`neocurl` CLI** + image list.
-7. **Fixtures** and tests (no Internet).
-8. **Docs** + markdownlint.
+1. **M1 — `libhttp` core (offline):** `Url`, `Request`, `HeaderMap`,
+   `parse.rs`, `Limits`, `HttpError`; unit tests (INV-1, INV-2).
+2. **M2 — byte-stream fixes (optional but recommended):** prerequisites doc
+   §3.4; kernel tests + `neodev test`.
+3. **M3 — `libnet::TcpTransport`:** connect/read/write deadlines, IPv4 literal,
+   EOF, backpressure; loopback tests against `netsrv`.
+4. **M4 — framing complete:** chunked/close/HEAD/204/304/1xx, fragmentation
+   tests, limits (INV-2, INV-3, INV-5).
+5. **M5 — `neocurl`:** flags, sinks, exit codes; image entry; manual QEMU run.
+6. **M6 — automation:** `httptest.nxe` + `scripts/http-e2e.sh` + fixture
+   server; matrix registered as reproducible evidence.
 
-Dependencies: step 1 is a hard blocker; step 2 should precede step 4 to avoid a
-third copy of the exchange loop. TLS is a later transport wrapper, not a change
-to `libhttp`.
+Dependencies: M3 needs M1; M4 needs M3; M5 needs M4. TLS is a later transport
+wrapper (`libtls`), not a change to `libhttp`.
 
 ---
 
 ## 9. Open questions
 
-1. `Deadline` source: RDTSC approximation (today) vs #467 monotonic clock.
-2. Should `neocurl` write bodies to a file, or stdout only, in M1?
-3. Whether `libhttp` should expose streaming callbacks before M2.
-4. Whether the shared exchange helper (#593) lives in `libnet` or a new
-   `libnetio` crate.
+1. `neocurl` output: is `-o` needed, or is shell redirection (`> file`) enough?
+   (Recommendation: keep `-o`, it also gives a clear "bytes written" summary.)
+2. POST body upper bound (heap is 2 MiB): cap at 256 KiB, or stream from file?
+3. Should `libhttp` expose a pull-based body reader (iterator) instead of only a
+   `BodySink`? (Recommendation: sink first, pull later if a caller needs it.)
+4. Redirects: confirm they stay out of the initial scope.
+5. Keep-alive: confirm one request per connection for now.
 
 ---
 
