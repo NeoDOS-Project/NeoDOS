@@ -100,6 +100,22 @@
 
 ### Fixed
 
+- **Boot-time `PAGE_TABLE_CORRUPTION` from the buddy bitmap (#714).** The bitmap
+  was sized from `phys_max`, which includes the multi-TiB PCIe ECAM window, so a
+  512 MB guest allocated a 32 MB bitmap and placed it at the end of the highest
+  clean segment. When firmware left a large unfragmented region (e.g. the disk
+  image carried no `neodos.fs`), the zero-fill swept over UEFI page-table pages
+  and read-only W^X RAM, faulting on write at `0x1f403000` (the PDPT page) and
+  panicking as `PAGE_TABLE_CORRUPTION` before the Object Manager came up. The
+  bitmap is now sized from the highest usable address (~16 KB for 512 MB),
+  placed only in pages the active page tables map writable, and every frame
+  backing the live firmware page tables or mapped read-only is reserved until
+  the kernel installs its own tables. Post-init reservations now rebuild the
+  buddy free lists (they previously only flipped bitmap bits, so reserved
+  frames were still handed out), and `free_frames` now clears the used bit
+  instead of setting it. Adds `memory_bitmap_sized_by_usable`,
+  `buddy_reserve_after_init_takes_effect` and `buddy_free_clears_bitmap`.
+
 - **`check-deps` violation in the page-cache tests (#715).**
   `buffer/page_cache/tests.rs` imported `fs::fsck::TestBlockDevice`, creating a
   forbidden `buffer -> fs` edge that made `neodev check-deps` fail on `develop`.

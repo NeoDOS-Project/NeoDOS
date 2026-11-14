@@ -14,6 +14,184 @@ const MEM_BOOT_SERVICES_CODE: u32 = 3;
 const MEM_BOOT_SERVICES_DATA: u32 = 4;
 const MEM_CONVENTIONAL: u32 = 7;
 
+// Page-table entry bits used by the boot-time "is this frame safe to reuse"
+// walk (see `reserve_firmware_paging_frames`).
+const PTE_PRESENT: u64 = 1 << 0;
+const PTE_WRITABLE: u64 = 1 << 1;
+const PTE_HUGE: u64 = 1 << 7;
+const PTE_ADDR_MASK: u64 = 0x000f_ffff_ffff_f000;
+const HUGE_PAGE_2M: u64 = 0x20_0000;
+const HUGE_PAGE_1G: u64 = 0x4000_0000;
+
+/// Lowest physical address accepted for the buddy bitmap. Leaving the first
+/// MiB alone keeps the real-mode/SMP trampoline area untouched.
+const BITMAP_MIN_PHYS: u64 = 0x10_0000;
+
+/// Bitmap words needed to track `highest` bytes of *usable* memory.
+///
+/// The bitmap must only cover memory the allocator actually manages. Sizing it
+/// from `phys_max` (which includes the multi-TiB PCIe ECAM window) produced a
+/// 32 MB bitmap for a 512 MB machine (#714).
+#[inline]
+fn bitmap_words_for(highest: u64) -> usize {
+    (highest >> 12).div_ceil(64) as usize
+}
+
+/// Read the leaf entry that maps `phys` in the active page tables.
+///
+/// The kernel runs identity-mapped on the firmware page tables until
+/// `init_custom_page_tables()`, so virtual == physical here. Returns the leaf
+/// entry and its granularity (`HUGE_PAGE_1G`, `HUGE_PAGE_2M` or `PAGE_SIZE`).
+unsafe fn walk_leaf(phys: u64) -> Option<(u64, u64)> {
+    let cr3 = crate::hal::read_cr3() & !0xFFF;
+    let pml4e = *((cr3 + 8 * ((phys >> 39) & 0x1FF)) as *const u64);
+    if pml4e & PTE_PRESENT == 0 { return None; }
+
+    let pdpt = (pml4e & PTE_ADDR_MASK) as *const u64;
+    let pdpte = *pdpt.add(((phys >> 30) & 0x1FF) as usize);
+    if pdpte & PTE_PRESENT == 0 { return None; }
+    if pdpte & PTE_HUGE != 0 { return Some((pdpte, HUGE_PAGE_1G)); }
+
+    let pd = (pdpte & PTE_ADDR_MASK) as *const u64;
+    let pde = *pd.add(((phys >> 21) & 0x1FF) as usize);
+    if pde & PTE_PRESENT == 0 { return None; }
+    if pde & PTE_HUGE != 0 { return Some((pde, HUGE_PAGE_2M)); }
+
+    let pt = (pde & PTE_ADDR_MASK) as *const u64;
+    let pte = *pt.add(((phys >> 12) & 0x1FF) as usize);
+    if pte & PTE_PRESENT == 0 { return None; }
+    Some((pte, PAGE_SIZE))
+}
+
+/// Whether every 4 KiB page in `[start, start + size)` is mapped writable by
+/// the active page tables.
+unsafe fn range_writable(start: u64, size: u64) -> bool {
+    let mut p = start;
+    while p < start + size {
+        match walk_leaf(p) {
+            Some((entry, _)) if entry & PTE_WRITABLE != 0 => {}
+            _ => return false,
+        }
+        p += PAGE_SIZE;
+    }
+    true
+}
+
+/// Reserve the frames that back the live firmware page tables and every RAM
+/// range the firmware mapped read-only (W^X code, page-table pages).
+///
+/// The kernel keeps running on the firmware tables until
+/// `init_custom_page_tables()`, so handing these frames to the buddy would
+/// either fault on write or corrupt paging. Must run *after*
+/// `buddy::init_from_regions()` (which frees the usable regions).
+unsafe fn reserve_firmware_paging_frames() {
+    let cr3 = crate::hal::read_cr3() & !0xFFF;
+    buddy::mark_used_region(cr3, PAGE_SIZE);
+
+    let pml4 = cr3 as *const u64;
+    for i in 0..512usize {
+        let e1 = *pml4.add(i);
+        if e1 & PTE_PRESENT == 0 { continue; }
+        let pdpt_frame = e1 & PTE_ADDR_MASK;
+        buddy::mark_used_region(pdpt_frame, PAGE_SIZE);
+
+        let pdpt = pdpt_frame as *const u64;
+        for j in 0..512usize {
+            let e2 = *pdpt.add(j);
+            if e2 & PTE_PRESENT == 0 { continue; }
+            if e2 & PTE_HUGE != 0 {
+                if e2 & PTE_WRITABLE == 0 {
+                    buddy::mark_used_region(e2 & PTE_ADDR_MASK, HUGE_PAGE_1G);
+                }
+                continue;
+            }
+            let pd_frame = e2 & PTE_ADDR_MASK;
+            buddy::mark_used_region(pd_frame, PAGE_SIZE);
+
+            let pd = pd_frame as *const u64;
+            for k in 0..512usize {
+                let e3 = *pd.add(k);
+                if e3 & PTE_PRESENT == 0 { continue; }
+                if e3 & PTE_HUGE != 0 {
+                    if e3 & PTE_WRITABLE == 0 {
+                        buddy::mark_used_region(e3 & PTE_ADDR_MASK, HUGE_PAGE_2M);
+                    }
+                    continue;
+                }
+                let pt_frame = e3 & PTE_ADDR_MASK;
+                buddy::mark_used_region(pt_frame, PAGE_SIZE);
+
+                // 4 KiB leaves: coalesce adjacent read-only pages.
+                let pt = pt_frame as *const u64;
+                let mut run_start = 0u64;
+                let mut run_end = 0u64;
+                for l in 0..512usize {
+                    let e4 = *pt.add(l);
+                    let ro = e4 & PTE_PRESENT != 0 && e4 & PTE_WRITABLE == 0;
+                    if ro {
+                        let p = e4 & PTE_ADDR_MASK;
+                        if run_end == p {
+                            run_end = p + PAGE_SIZE;
+                        } else {
+                            if run_end > run_start {
+                                buddy::mark_used_region(run_start, run_end - run_start);
+                            }
+                            run_start = p;
+                            run_end = p + PAGE_SIZE;
+                        }
+                    } else if run_end > run_start {
+                        buddy::mark_used_region(run_start, run_end - run_start);
+                        run_start = 0;
+                        run_end = 0;
+                    }
+                }
+                if run_end > run_start {
+                    buddy::mark_used_region(run_start, run_end - run_start);
+                }
+            }
+        }
+    }
+}
+
+/// `[USER_BASE, USER_LIMIT)` is identity-mapped and used directly for Ring 3
+/// code and stacks; allocator metadata must never live there.
+const USER_WINDOW: (u64, u64) = (0x0040_0000, 0x0240_0000);
+
+#[inline]
+fn overlaps_window(start: u64, size: u64) -> bool {
+    start < USER_WINDOW.1 && start + size > USER_WINDOW.0
+}
+
+/// Place the bitmap in writable memory, preferring the highest clean segment
+/// (away from low memory and the user window). Returns 0 if no candidate is
+/// usable, in which case the caller retries with the legacy bitmap size.
+fn place_bitmap(segments: &mut [(u64, u64)], count: usize, pages: usize) -> u64 {
+    let bytes = pages as u64 * PAGE_SIZE;
+    if bytes == 0 { return 0; }
+
+    // Highest first: keeps low memory contiguous and avoids the user window.
+    for seg in segments[..count].iter_mut().rev() {
+        let (s, e) = *seg;
+        if e - s < bytes { continue; }
+        let candidate = e - bytes;
+        if candidate < BITMAP_MIN_PHYS || overlaps_window(candidate, bytes) { continue; }
+        if !unsafe { range_writable(candidate, bytes) } { continue; }
+        *seg = (s, candidate);
+        return candidate;
+    }
+    // Fallback: first writable segment that fits, taken from its start.
+    for seg in segments[..count].iter_mut() {
+        let (s, e) = *seg;
+        if e - s < bytes { continue; }
+        let candidate = s;
+        if candidate < BITMAP_MIN_PHYS || overlaps_window(candidate, bytes) { continue; }
+        if !unsafe { range_writable(candidate, bytes) } { continue; }
+        *seg = (candidate + bytes, e);
+        return candidate;
+    }
+    0
+}
+
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct MemoryDescriptorV1 {
@@ -75,6 +253,9 @@ extern "C" {
 
 pub fn init(boot_info: &crate::BootInfo) {
     let mut phys_max = 0u64;
+    // Highest address that the allocator can actually hand out. Drives the
+    // bitmap size; deliberately excludes reserved/MMIO space (#714).
+    let mut usable_max = 0u64;
     let mut total_frames = 0u64;
     let mut usable_frames = 0u64;
     let mut free_regions: [Option<(u64, u64)>; 64] = [None; 64];
@@ -106,8 +287,13 @@ pub fn init(boot_info: &crate::BootInfo) {
         if matches!(desc.ty, MEM_CONVENTIONAL | MEM_BOOT_SERVICES_CODE | MEM_BOOT_SERVICES_DATA) {
             usable_frames += total_for_this;
             if free_count < 64 {
+                usable_max = usable_max.max(end);
                 free_regions[free_count] = Some((start, end));
                 free_count += 1;
+            } else {
+                // Region array full: still account for the address space so
+                // the bitmap covers every frame the allocator may see.
+                usable_max = usable_max.max(end);
             }
         }
     }
@@ -149,75 +335,34 @@ pub fn init(boot_info: &crate::BootInfo) {
         clean_count = n;
     }
 
-    // ── Allocate dynamic bitmap for buddy allocator (>4GB support) ──
+    // ── Allocate dynamic bitmap for buddy allocator ──
     // The bitmap must be allocated BEFORE buddy init since the buddy
     // allocator manages all remaining physical memory.
-    let mut bitmap_words = (phys_max >> 12).div_ceil(64) as usize; // ceil(frames / 64)
-    let bitmap_bytes = bitmap_words.saturating_mul(8);
-    let mut bitmap_pages = bitmap_bytes.div_ceil(4096);
+    //
+    // Size it from the highest *usable* address, never from `phys_max`: the
+    // UEFI map contains a multi-TiB PCIe ECAM window, which used to inflate
+    // the bitmap to 32 MB and push it over firmware page tables (#714).
+    let mut bitmap_words = bitmap_words_for(usable_max);
+    let mut bitmap_pages = bitmap_words.saturating_mul(8).div_ceil(4096);
     let mut bitmap_phys = 0u64;
 
     if bitmap_pages > 0 {
-        // Find a clean segment large enough to host the bitmap.
-        // Take from the LAST segment (highest address) to avoid
-        // fragmenting low-memory free space.
-        for seg in clean_segments[..clean_count].iter_mut().rev() {
-            let (s, e) = *seg;
-            let region_pages = ((e - s) / 4096) as usize;
-            if region_pages >= bitmap_pages {
-                // Take from the END of the segment
-                bitmap_phys = e - (bitmap_pages as u64 * 4096);
-                *seg = (s, bitmap_phys);
-                break;
-            }
-        }
-        if bitmap_phys == 0 && clean_count > 0 {
-            // Fallback: take from the first segment that fits
-            for seg in clean_segments[..clean_count].iter_mut() {
-                let (s, e) = *seg;
-                let region_pages = ((e - s) / 4096) as usize;
-                if region_pages >= bitmap_pages {
-                    bitmap_phys = s;
-                    *seg = (s + bitmap_pages as u64 * 4096, e);
-                    break;
-                }
-            }
-        }
+        bitmap_phys = place_bitmap(&mut clean_segments, clean_count, bitmap_pages);
         if bitmap_phys == 0 {
-            // The bitmap is essential — fallback would mean no memory tracking.
-            // This virtually never happens with realistic memory maps having
-            // at least a few MB of free conventional memory.
+            // Retry with the legacy 4 GB tracking bitmap (128 KB). This is a
+            // last resort for maps where no writable segment fits the full
+            // bitmap; it must never place the bitmap over read-only frames.
             kwarn!(LogSubsys::Memory,
-                "Could not allocate {} pages for dynamic bitmap, limiting to 4 GB tracking",
+                "Could not place {} bitmap pages in writable memory, \
+                 limiting to 4 GB tracking",
                 bitmap_pages
             );
             bitmap_words = crate::memory::buddy::LEGACY_BITMAP_WORDS;
-            bitmap_pages = (bitmap_words * 8).div_ceil(4096);
-            // Re-try allocation with smaller size
-            for seg in clean_segments[..clean_count].iter_mut().rev() {
-                let (s, e) = *seg;
-                let region_pages = ((e - s) / 4096) as usize;
-                if region_pages >= bitmap_pages {
-                    bitmap_phys = e - (bitmap_pages as u64 * 4096);
-                    *seg = (s, bitmap_phys);
-                    break;
-                }
-            }
-            if bitmap_phys == 0 {
-                // Last resort: take from the beginning of first non-empty segment
-                for seg in clean_segments[..clean_count].iter_mut() {
-                    let (s, e) = *seg;
-                    let region_pages = ((e - s) / 4096) as usize;
-                    if region_pages >= bitmap_pages {
-                        bitmap_phys = s;
-                        *seg = (s + bitmap_pages as u64 * 4096, e);
-                        break;
-                    }
-                }
-            }
-            if bitmap_phys == 0 {
-                panic!("Cannot allocate bitmap pages for buddy allocator");
-            }
+            bitmap_pages = bitmap_words.saturating_mul(8).div_ceil(4096);
+            bitmap_phys = place_bitmap(&mut clean_segments, clean_count, bitmap_pages);
+        }
+        if bitmap_phys == 0 {
+            panic!("Cannot allocate bitmap pages for buddy allocator");
         }
         // Zero-fill the bitmap pages
         for i in 0..bitmap_pages {
@@ -243,6 +388,19 @@ pub fn init(boot_info: &crate::BootInfo) {
     if bitmap_phys > 0 && bitmap_pages > 0 {
         buddy::mark_used_region(bitmap_phys, bitmap_pages as u64 * 4096);
     }
+
+    // Firmware page tables and read-only (W^X) RAM are still live: keep them
+    // out of the buddy allocator until the kernel installs its own tables.
+    unsafe { reserve_firmware_paging_frames(); }
+    // The reservations above only set bitmap bits; rebuild the order lists so
+    // those frames are not handed out from stale free runs.
+    buddy::rebuild_free_lists();
+
+    kinfo!(LogSubsys::Memory,
+        "Buddy bitmap: {} KB at 0x{:x} for {} MiB usable",
+        bitmap_words.saturating_mul(8) / 1024,
+        bitmap_phys,
+        usable_max / 0x10_0000);
 
     let free_pages = buddy::free_pages();
     let _total_frames = total_frames;
@@ -358,6 +516,9 @@ pub fn free_frames(phys: u64, order: usize) {
 
 pub fn reserve_range(start: u64, size: u64) {
     buddy::mark_used_region(start, size);
+    // `mark_used_region` only updates the bitmap, so the frame could still sit
+    // inside an already-published free run. Rebuild the free lists.
+    buddy::rebuild_free_lists();
 }
 
 pub fn page_size() -> u64 {
@@ -388,9 +549,43 @@ pub fn register_stress_tests() {
         test_true!(s.total_pages.saturating_mul(4) <= s.total_kib);
     });
 
+    // Regression for #714: the buddy bitmap must be sized from usable memory,
+    // not from `phys_max` (which includes the multi-TiB PCIe ECAM window), and
+    // must never be placed over firmware read-only frames.
+    test_case!("memory_bitmap_sized_by_usable", {
+        // 512 MB of usable RAM -> 131072 frames -> 2048 words -> 16 KiB.
+        test_eq!(bitmap_words_for(0x2000_0000), 2048);
+        // Sizing from the 1 TiB ECAM window used to request 32 MB.
+        test_true!(bitmap_words_for(0x1000_0000_0000) > 4_000_000);
+        test_true!(bitmap_words_for(0x2000_0000) < bitmap_words_for(0x1000_0000_0000));
+    });
+
     test_case!("buddy_alloc_free_sanity", {
         let p = allocate_frame().expect("alloc failed");
         free_frame(p);
+    });
+
+    test_case!("buddy_free_clears_bitmap", {
+        // Frees must clear the used bit; `rebuild_free_lists` relies on the
+        // bitmap being authoritative.
+        let p = allocate_frame().expect("alloc failed");
+        test_true!(!buddy::is_free_frame(p));
+        free_frame(p);
+        test_true!(buddy::is_free_frame(p));
+    });
+
+    test_case!("buddy_reserve_after_init_takes_effect", {
+        // Regression for #714: reserving a range after `init_from_regions`
+        // must remove it from the published free lists, not just flip bitmap
+        // bits. Otherwise the allocator keeps handing the frame out.
+        let p = allocate_frame().expect("alloc failed");
+        free_frame(p);
+        reserve_range(p, PAGE_SIZE);
+        for _ in 0..64 {
+            let q = allocate_frame().expect("alloc failed");
+            test_true!(q != p);
+            free_frame(q);
+        }
     });
 
     test_case!("buddy_multiple_orders", {
