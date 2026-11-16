@@ -1,0 +1,19 @@
+[package]
+name = "libcrypto"
+version = "0.1.0"
+edition = "2021"
+description = "Cryptographic primitives for NeoDOS userland (TLS/updates)"
+
+[lib]
+name = "libcrypto"
+path = "src/lib.rs"
+crate-type = ["lib"]
+test = true
+
+[dependencies]
+
+[profile.release]
+panic = "abort"
+opt-level = 3
+lto = true
+debug = false
