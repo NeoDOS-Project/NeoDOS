@@ -6,9 +6,18 @@ version = 4
 name = "httptest"
 version = "0.1.0"
 dependencies = [
+ "libclock",
  "libhttp",
  "libneodos",
  "libnet",
+]
+
+[[package]]
+name = "libclock"
+version = "0.1.0"
+dependencies = [
+ "libneodos",
+ "libntp",
 ]
 
 [[package]]
@@ -30,6 +39,7 @@ dependencies = [
 name = "libnet"
 version = "0.1.0"
 dependencies = [
+ "libclock",
  "libdns",
  "libhttp",
  "libneodos",

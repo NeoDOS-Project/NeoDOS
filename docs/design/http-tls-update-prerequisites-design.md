@@ -52,9 +52,12 @@ Verified facts (re-audited 2026-11-14 on `develop` @ `532d554`):
 - **No `fsync` and no atomic replacement.** `write()` is durable (it commits the
   superblock), but there is no way to force a flush after the fact and no
   replace-onto-target operation.
-- **No userland UTC-seconds reference.** The RTC is readable and NTP can step
-  it, but no API converts `DateTime` to Unix seconds and nothing states whether
-  the clock was ever synchronised.
+- **Userland UTC seconds + trust signal (M7, done).** `libneodos::syscall::ob_datetime`
+  reads the RTC and `libclock` converts it to Unix seconds and applies the
+  policy: valid RTC, `Services\Ntpd\Status\State == "Synced"`, non-zero
+  `LastSync`, and the RTC not before that sync. `libclock::system::SystemClock`
+  implements `Clock` for TLS/updates; `libnet::config::now_unix` keeps the raw
+  RTC reading for DHCP lease stamps.
 - **The byte-stream API had two rough edges, now fixed**: a full TX buffer is
   reported as `-Again` and writers can wait for space (`ob_wait` type 2), and
   `SocketRecv` returns `Ok(0)` for EOF. The DNS cache honours the answer TTL

@@ -23,7 +23,6 @@
 //! re-exported here.
 
 use libneodos::registry::RegistryKey;
-use libneodos::syscall;
 
 pub use libnet_config::*;
 
@@ -52,34 +51,14 @@ pub fn open_interface(iface: u32) -> Result<RegistryKey, i64> {
 
 /// Current time as Unix seconds (0 = unknown).
 ///
-/// Shared by `dhcpd` (lease stamps) and `ipconfig` (expiry checks).
+/// Shared by `dhcpd` (lease stamps) and `ipconfig` (expiry checks). This is
+/// the raw RTC reading: it is **not** a trust signal. Security-relevant
+/// callers (TLS, updates) use `libclock::system::trusted_now_unix`.
 pub fn now_unix() -> u32 {
-    use libneodos::syscall::{DateTime, ObInfoClass};
-    let fd = match syscall::sys_ob_open("\\Global\\Info\\DateTime", 1) {
-        Ok(fd) => fd,
-        Err(_) => return 0,
-    };
-    let mut dt = DateTime {
-        second: 0, minute: 0, hour: 0,
-        day: 0, month: 0, year: 0, valid: 0,
-    };
-    let sz = core::mem::size_of::<DateTime>();
-    let buf = unsafe {
-        core::slice::from_raw_parts_mut(&mut dt as *mut DateTime as *mut u8, sz)
-    };
-    let n = syscall::sys_ob_query_info(fd, ObInfoClass::DateTime, buf);
-    let _ = syscall::sys_close(fd);
-    if n.ok().unwrap_or(0) < sz || dt.valid == 0 {
-        return 0;
+    match libclock::system::unix_seconds() {
+        Ok(secs) => secs.clamp(0, u32::MAX as i64) as u32,
+        Err(_) => 0,
     }
-    let utc = libntp::UtcDateTime {
-        second: dt.second, minute: dt.minute, hour: dt.hour,
-        day: dt.day, month: dt.month, year: dt.year,
-    };
-    if !libntp::is_valid_datetime(&utc) {
-        return 0;
-    }
-    libntp::utc_to_unix_secs(&utc).clamp(0, u32::MAX as i64) as u32
 }
 
 /// Load the full interface configuration from the Registry.

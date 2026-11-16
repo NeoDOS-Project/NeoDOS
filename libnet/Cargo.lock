@@ -3,7 +3,19 @@
 version = 4
 
 [[package]]
+name = "libclock"
+version = "0.1.0"
+dependencies = [
+ "libneodos",
+ "libntp",
+]
+
+[[package]]
 name = "libdns"
+version = "0.1.0"
+
+[[package]]
+name = "libhttp"
 version = "0.1.0"
 
 [[package]]
@@ -17,9 +29,12 @@ dependencies = [
 name = "libnet"
 version = "0.1.0"
 dependencies = [
+ "libclock",
  "libdns",
+ "libhttp",
  "libneodos",
  "libnet-config",
+ "libntp",
 ]
 
 [[package]]
@@ -28,4 +43,8 @@ version = "0.1.0"
 
 [[package]]
 name = "libnlt"
+version = "0.1.0"
+
+[[package]]
+name = "libntp"
 version = "0.1.0"

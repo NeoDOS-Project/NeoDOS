@@ -1,0 +1,25 @@
+[package]
+name = "libclock"
+version = "0.1.0"
+edition = "2021"
+description = "Trusted wall-clock policy for NeoDOS userland"
+
+[lib]
+name = "libclock"
+path = "src/lib.rs"
+crate-type = ["lib"]
+
+[features]
+default = []
+# Ring 3 bindings: RTC read and Registry-backed ntpd status.
+sys = ["dep:libneodos"]
+
+[dependencies]
+libntp = { path = "../libntp" }
+libneodos = { path = "../libneodos", optional = true }
+
+[profile.release]
+panic = "abort"
+opt-level = 3
+lto = true
+debug = false

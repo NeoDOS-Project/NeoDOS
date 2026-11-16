@@ -178,9 +178,13 @@ pinned.
 - **Chain rules:** every signature verified, validity checked per certificate,
   issuer/subject chaining, `basicConstraints` CA on intermediates, path length,
   and a bounded chain depth (e.g. 8) and total size (e.g. 64 KiB).
-- **Clock policy (D3):** `now` comes from `Clock`; the production implementation
-  reads the RTC and requires a trust signal — `Services\Ntpd\Status\State ==
-  "Synced"` with a non-zero `LastSync` — otherwise it returns `ClockUnsynced`.
+- **Clock policy (D3): IMPLEMENTED (M7).** `libclock::Clock` +
+  `libclock::system::SystemClock`: the RTC must be a valid calendar value,
+  `Services\Ntpd\Status\State` must be `"Synced"` with a non-zero `LastSync`,
+  and the RTC must not predate that sync (300 s skew tolerance). Otherwise
+  `ClockError::{RtcInvalid, Unsynced, Implausible}` and TLS returns
+  `ClockUnsynced`. Pure policy + host tests live in `libclock`; `libtls` will
+  re-export the trait.
   A RTC date before the issuance range of every trusted root is rejected. TLS
   fails closed; there is no bypass.
 - **Versions/suites:** TLS 1.3 required; TLS 1.2 only if the chosen stack

@@ -15,6 +15,7 @@ libneodos = { path = "../libneodos" }
 libdns = { path = "../libdns" }
 libhttp = { path = "../libhttp" }
 libnet-config = { path = "../libnet-config" }
+libclock = { path = "../libclock", features = ["sys"] }
 libntp = { path = "../libntp" }
 
 [profile.release]

@@ -784,6 +784,28 @@ papel de `ntpdate`: no hay un binario aparte, se reutiliza el mismo daemon.
 configuración, no en el código, para que el primer sync sea fiable detrás de
 NAT. `Interval` (segundos) y `Timeout` (ms) también son valores del Registry.
 
+**Confianza del reloj (`libclock`).** El RTC es legible y `ntpd` puede
+ajustarlo, pero ninguno de los dos basta para decidir la validez de un
+certificado: una máquina sin sincronizar (o con la pila del CMOS muerta) puede
+anunciar cualquier fecha.
+
+```text
+libclock            (política pura, host-testeable)
+  ├─ RtcFields / NtpdStatus / ClockError
+  ├─ unix_from_rtc   → segundos Unix (año de 2 dígitos: 2000..2099)
+  ├─ evaluate        → RTC válido + State=="Synced" + LastSync≠0 + RTC ≥ sync
+  ├─ Clock           (trait; None = no fiable)
+  └─ system (feature `sys`) → ob_datetime + Registry Ntpd\Status
+```
+
+- `libclock::system::unix_seconds()` da el RTC en segundos Unix **sin** juicio
+  de confianza (lo usa `libnet::config::now_unix` para los leases DHCP).
+- `libclock::system::trusted_now_unix()` aplica la política y devuelve
+  `ClockError::{RtcInvalid,Unsynced,Implausible}` si no se puede confiar.
+- `SystemClock` implementa `Clock`; TLS y el actualizador **fallan cerrados**
+  (`ClockUnsynced`) cuando devuelve `None`. No hay bypass.
+- Tolerancia de 300 s para un RTC ligeramente por detrás del último sync.
+
 ### 3.7 neocurl.nxe — cliente HTTP/1.1 (implementado)
 
 `neocurl` es la primera aplicación HTTP de userland. Es una CLI fina: el
