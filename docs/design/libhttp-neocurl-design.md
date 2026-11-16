@@ -1,8 +1,11 @@
 # HTTP Client (`libhttp`) + `neocurl` — Design Document
 
-> **Version:** v0.2 — reconciled with `develop` @ `532d554` (2026-11-14)
-> **Status:** Design (no implementation). Supersedes v0.1, whose baseline
-> (broken userland TCP connect, no blocking wait, RDTSC deadlines) is obsolete.
+> **Version:** v0.3 — implemented through M5 (2026-11-16)
+> **Status:** Implemented: `libhttp` core + framing (M1/M4), byte-stream
+> prerequisites (M2), `libnet::TcpTransport` (M3) and `neocurl` (M5). Pending:
+> automated QEMU E2E (M6), DNS TTL cache and TLS (later milestone).
+> Supersedes v0.1, whose baseline (broken userland TCP connect, no blocking
+> wait, RDTSC deadlines) is obsolete.
 > **Target Release:** v0.58 — Official Tools
 > **Related:** #307 (socket waits), #467 (monotonic clock), #484 (loopback),
 > #486 (TCP data path), #593 (shared UDP helper), #692 (TCP E2E), #696 (wait
@@ -329,17 +332,20 @@ Error mapping: DNS failure → `Dns`; refused/unreachable → `Connect`; deadlin
 
 ## 8. Implementation plan
 
-1. **M1 — `libhttp` core (offline):** `Url`, `Request`, `HeaderMap`,
-   `parse.rs`, `Limits`, `HttpError`; unit tests (INV-1, INV-2).
-2. **M2 — byte-stream fixes (optional but recommended):** prerequisites doc
-   §3.4; kernel tests + `neodev test`.
-3. **M3 — `libnet::TcpTransport`:** connect/read/write deadlines, IPv4 literal,
-   EOF, backpressure; loopback tests against `netsrv`.
-4. **M4 — framing complete:** chunked/close/HEAD/204/304/1xx, fragmentation
-   tests, limits (INV-2, INV-3, INV-5).
-5. **M5 — `neocurl`:** flags, sinks, exit codes; image entry; manual QEMU run.
-6. **M6 — automation:** `httptest.nxe` + `scripts/http-e2e.sh` + fixture
-   server; matrix registered as reproducible evidence.
+1. **M1 — `libhttp` core (offline): DONE.** `Url`, `Request`, `HeaderMap`,
+   `parse.rs`, `Limits`, `HttpError`; unit tests.
+2. **M2 — byte-stream fixes: DONE.** Prerequisites doc §3.4; kernel tests.
+3. **M3 — `libnet::TcpTransport`: DONE.** Connect/read/write deadlines, IPv4
+   literal, EOF, backpressure. `libhttp::execute` drives the exchange and
+   closes the connection on every path.
+4. **M4 — framing complete: DONE.** Chunked/close/HEAD/204/304/1xx,
+   fragmentation tests, limits.
+5. **M5 — `neocurl`: DONE.** Flags, sinks (`-i`, `-I`, `-o`, `-d`), exit codes;
+   discovered by NeoDev and installed in the image.
+6. **M6 — automation: PENDING.** `httptest.nxe` + `scripts/http-e2e.sh` +
+   fixture server; matrix registered as reproducible evidence. Until then the
+   transport and CLI are covered by host unit tests and a successful image
+   build, not by an in-guest HTTP round-trip.
 
 Dependencies: M3 needs M1; M4 needs M3; M5 needs M4. TLS is a later transport
 wrapper (`libtls`), not a change to `libhttp`.

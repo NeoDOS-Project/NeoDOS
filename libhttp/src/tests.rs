@@ -908,3 +908,378 @@ fn chunk_size_parser_accepts_hex_and_extensions() {
         Err(HttpError::MalformedChunk)
     );
 }
+
+// ── Request/response flow (`execute`) ──
+
+use alloc::rc::Rc;
+use core::cell::RefCell;
+
+#[derive(Default)]
+struct Recorded {
+    written: Vec<u8>,
+    closed: bool,
+}
+
+struct FakeConn {
+    reads: VecDeque<Vec<u8>>,
+    recorded: Rc<RefCell<Recorded>>,
+    read_error: Option<HttpError>,
+}
+
+impl Read for FakeConn {
+    fn read(&mut self, buf: &mut [u8], _dl: Deadline) -> Result<usize, HttpError> {
+        if let Some(err) = self.read_error {
+            return Err(err);
+        }
+        match self.reads.pop_front() {
+            None => Ok(0),
+            Some(chunk) => {
+                let n = chunk.len().min(buf.len());
+                buf[..n].copy_from_slice(&chunk[..n]);
+                if n < chunk.len() {
+                    self.reads.push_front(chunk[n..].to_vec());
+                }
+                Ok(n)
+            }
+        }
+    }
+}
+
+impl Write for FakeConn {
+    fn write_all(&mut self, buf: &[u8], _dl: Deadline) -> Result<(), HttpError> {
+        self.recorded.borrow_mut().written.extend_from_slice(buf);
+        Ok(())
+    }
+}
+
+impl Close for FakeConn {
+    fn close(self) {
+        self.recorded.borrow_mut().closed = true;
+    }
+}
+
+struct FakeTransport {
+    reads: VecDeque<Vec<u8>>,
+    recorded: Rc<RefCell<Recorded>>,
+    read_error: Option<HttpError>,
+    connect_error: Option<HttpError>,
+}
+
+impl Transport for FakeTransport {
+    type Conn = FakeConn;
+
+    fn connect(&mut self, _host: &str, _port: u16, _dl: Deadline) -> Result<FakeConn, HttpError> {
+        if let Some(err) = self.connect_error {
+            return Err(err);
+        }
+        Ok(FakeConn {
+            reads: core::mem::take(&mut self.reads),
+            recorded: self.recorded.clone(),
+            read_error: self.read_error,
+        })
+    }
+}
+
+fn fake(chunks: &[&[u8]]) -> (FakeTransport, Rc<RefCell<Recorded>>) {
+    let recorded = Rc::new(RefCell::new(Recorded::default()));
+    let transport = FakeTransport {
+        reads: chunks.iter().map(|chunk| chunk.to_vec()).collect(),
+        recorded: recorded.clone(),
+        read_error: None,
+        connect_error: None,
+    };
+    (transport, recorded)
+}
+
+fn request(path: &str) -> Request<'static> {
+    Request::get(Url::parse(path).unwrap())
+}
+
+#[test]
+fn execute_get_content_length_streams_body_and_closes() {
+    let (mut transport, recorded) = fake(&[b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello"]);
+    let mut sink = VecSink::new();
+
+    let head = execute(
+        &mut transport,
+        &request("http://example.com/x"),
+        &Limits::default(),
+        deadline(),
+        &mut sink,
+    )
+    .unwrap();
+
+    assert_eq!(head.status, 200);
+    assert_eq!(sink.buf, b"hello");
+    let rec = recorded.borrow();
+    assert!(rec.written.starts_with(b"GET /x HTTP/1.1\r\n"));
+    assert!(rec.written.ends_with(b"\r\n\r\n"));
+    assert!(rec.closed);
+}
+
+#[test]
+fn execute_chunked_body_split_across_reads() {
+    let (mut transport, recorded) = fake(&[
+        b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nab",
+        b"c\r\n0\r\n\r\n",
+    ]);
+    let mut sink = VecSink::new();
+
+    execute(
+        &mut transport,
+        &request("http://example.com/"),
+        &Limits::default(),
+        deadline(),
+        &mut sink,
+    )
+    .unwrap();
+
+    assert_eq!(sink.buf, b"abc");
+    assert!(recorded.borrow().closed);
+}
+
+#[test]
+fn execute_head_has_no_body() {
+    let (mut transport, recorded) = fake(&[b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello"]);
+    let mut sink = VecSink::new();
+
+    let head = execute(
+        &mut transport,
+        &Request::head(Url::parse("http://example.com/").unwrap()),
+        &Limits::default(),
+        deadline(),
+        &mut sink,
+    )
+    .unwrap();
+
+    assert_eq!(head.status, 200);
+    assert!(sink.buf.is_empty());
+    assert!(recorded.borrow().closed);
+}
+
+#[test]
+fn execute_skips_informational_responses() {
+    let (mut transport, _) =
+        fake(&[b"HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok"]);
+    let mut sink = VecSink::new();
+
+    let head = execute(
+        &mut transport,
+        &request("http://example.com/"),
+        &Limits::default(),
+        deadline(),
+        &mut sink,
+    )
+    .unwrap();
+
+    assert_eq!(head.status, 200);
+    assert_eq!(sink.buf, b"ok");
+}
+
+#[test]
+fn execute_bounds_informational_responses() {
+    let mut payload = Vec::new();
+    for _ in 0..(MAX_INFORMATIONAL_RESPONSES + 1) {
+        payload.extend_from_slice(b"HTTP/1.1 100 Continue\r\n\r\n");
+    }
+    let (mut transport, recorded) = fake(&[&payload]);
+    let mut sink = NullSink;
+
+    assert_eq!(
+        execute(
+            &mut transport,
+            &request("http://example.com/"),
+            &Limits::default(),
+            deadline(),
+            &mut sink,
+        ),
+        Err(HttpError::TooManyHeaders)
+    );
+    assert!(recorded.borrow().closed);
+}
+
+#[test]
+fn execute_post_sends_body_after_head() {
+    let (mut transport, recorded) = fake(&[b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n"]);
+    let mut sink = NullSink;
+    let url = Url::parse("http://example.com/form").unwrap();
+    let req = Request::post(url, b"a=1");
+
+    execute(
+        &mut transport,
+        &req,
+        &Limits::default(),
+        deadline(),
+        &mut sink,
+    )
+    .unwrap();
+
+    let written = recorded.borrow();
+    let text = core::str::from_utf8(&written.written).unwrap();
+    assert!(text.starts_with("POST /form HTTP/1.1\r\n"));
+    assert!(text.contains("\r\nContent-Length: 3\r\n"));
+    assert!(text.ends_with("\r\n\r\na=1"));
+}
+
+#[test]
+fn execute_close_delimited_body_reads_to_eof() {
+    let (mut transport, _) = fake(&[b"HTTP/1.1 200 OK\r\nServer: neo\r\n\r\nabc", b"def"]);
+    let mut sink = VecSink::new();
+
+    execute(
+        &mut transport,
+        &request("http://example.com/"),
+        &Limits::default(),
+        deadline(),
+        &mut sink,
+    )
+    .unwrap();
+
+    assert_eq!(sink.buf, b"abcdef");
+}
+
+#[test]
+fn execute_malformed_status_closes_connection() {
+    let (mut transport, recorded) = fake(&[b"GARBAGE\r\n\r\n"]);
+    let mut sink = NullSink;
+
+    assert_eq!(
+        execute(
+            &mut transport,
+            &request("http://example.com/"),
+            &Limits::default(),
+            deadline(),
+            &mut sink,
+        ),
+        Err(HttpError::MalformedStatus)
+    );
+    assert!(recorded.borrow().closed);
+}
+
+#[test]
+fn execute_eof_before_head_is_incomplete() {
+    let (mut transport, recorded) = fake(&[]);
+    let mut sink = NullSink;
+
+    assert_eq!(
+        execute(
+            &mut transport,
+            &request("http://example.com/"),
+            &Limits::default(),
+            deadline(),
+            &mut sink,
+        ),
+        Err(HttpError::IncompleteBody)
+    );
+    assert!(recorded.borrow().closed);
+}
+
+#[test]
+fn execute_body_limit_closes_connection() {
+    let (mut transport, recorded) =
+        fake(&[b"HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\n0123456789"]);
+    let mut sink = VecSink::new();
+    let limits = Limits {
+        max_body_bytes: 4,
+        ..Limits::default()
+    };
+
+    assert_eq!(
+        execute(
+            &mut transport,
+            &request("http://example.com/"),
+            &limits,
+            deadline(),
+            &mut sink,
+        ),
+        Err(HttpError::BodyTooLarge)
+    );
+    assert!(recorded.borrow().closed);
+}
+
+#[test]
+fn execute_read_timeout_closes_connection() {
+    let recorded = Rc::new(RefCell::new(Recorded::default()));
+    let mut transport = FakeTransport {
+        reads: VecDeque::new(),
+        recorded: recorded.clone(),
+        read_error: Some(HttpError::Timeout),
+        connect_error: None,
+    };
+    let mut sink = NullSink;
+
+    assert_eq!(
+        execute(
+            &mut transport,
+            &request("http://example.com/"),
+            &Limits::default(),
+            deadline(),
+            &mut sink,
+        ),
+        Err(HttpError::Timeout)
+    );
+    assert!(recorded.borrow().closed);
+}
+
+#[test]
+fn execute_connect_error_is_returned() {
+    let recorded = Rc::new(RefCell::new(Recorded::default()));
+    let mut transport = FakeTransport {
+        reads: VecDeque::new(),
+        recorded: recorded.clone(),
+        read_error: None,
+        connect_error: Some(HttpError::Connect),
+    };
+    let mut sink = NullSink;
+
+    assert_eq!(
+        execute(
+            &mut transport,
+            &request("http://example.com/"),
+            &Limits::default(),
+            deadline(),
+            &mut sink,
+        ),
+        Err(HttpError::Connect)
+    );
+    assert!(!recorded.borrow().closed);
+}
+
+struct HeadSink {
+    status: Option<u16>,
+    body: Vec<u8>,
+}
+
+impl BodySink for HeadSink {
+    fn start(&mut self, head: &ResponseHead) {
+        self.status = Some(head.status);
+    }
+
+    fn write(&mut self, chunk: &[u8]) -> Result<(), HttpError> {
+        assert!(self.status.is_some(), "start() must run before body bytes");
+        self.body.extend_from_slice(chunk);
+        Ok(())
+    }
+}
+
+#[test]
+fn execute_notifies_sink_before_body() {
+    let (mut transport, _) = fake(&[b"HTTP/1.1 201 Created\r\nContent-Length: 2\r\n\r\nhi"]);
+    let mut sink = HeadSink {
+        status: None,
+        body: Vec::new(),
+    };
+
+    let head = execute(
+        &mut transport,
+        &request("http://example.com/"),
+        &Limits::default(),
+        deadline(),
+        &mut sink,
+    )
+    .unwrap();
+
+    assert_eq!(head.status, 201);
+    assert_eq!(sink.status, Some(201));
+    assert_eq!(sink.body, b"hi");
+}

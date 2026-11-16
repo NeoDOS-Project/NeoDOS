@@ -5,6 +5,7 @@ extern crate alloc;
 
 pub mod config;
 pub mod dns;
+pub mod http_transport;
 pub mod udp;
 
 use core::sync::atomic::{AtomicU64, Ordering};
@@ -237,5 +238,7 @@ pub const DEFAULT_HOSTNAME: &str = "NeoDOS-PC";
 /// resolver API directly to access the server used, all addresses and the
 /// distinct [`dns::DnsError`] variants.
 pub fn dns_resolve(hostname: &str) -> Option<[u8; 4]> {
-    dns::resolve(hostname).ok().and_then(|result| result.first())
+    dns::resolve(hostname)
+        .ok()
+        .and_then(|result| result.first())
 }

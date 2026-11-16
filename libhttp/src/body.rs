@@ -36,6 +36,12 @@ pub enum BodyFraming {
 pub trait BodySink {
     /// Consume one chunk of body bytes.
     fn write(&mut self, chunk: &[u8]) -> Result<(), HttpError>;
+
+    /// Called once with the final response head, before any body bytes.
+    ///
+    /// Lets a sink emit `-i`-style headers before the body without buffering
+    /// the body itself. Default: ignore.
+    fn start(&mut self, _head: &ResponseHead) {}
 }
 
 /// Sink that discards the body.

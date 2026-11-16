@@ -21,6 +21,7 @@
 extern crate alloc;
 
 mod body;
+mod client;
 mod error;
 mod headers;
 mod limits;
@@ -32,6 +33,7 @@ mod url;
 mod tests;
 
 pub use body::{body_framing, BodyFraming, BodyReader, BodySink, NullSink, VecSink};
+pub use client::{execute, MAX_INFORMATIONAL_RESPONSES};
 pub use error::HttpError;
 pub use headers::{is_valid_name, is_valid_value, HeaderMap};
 pub use limits::Limits;
