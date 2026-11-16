@@ -22,7 +22,8 @@ use super::super::socket::{
 };
 use super::super::tcp::{
     tcp_alloc_connection, tcp_free_connection, tcp_get_state, tcp_recv, tcp_send, tcp_tick,
-    TcpHeader, TCP_FLAG_ACK, TCP_FLAG_FIN, TCP_FLAG_PSH, TCP_FLAG_SYN,
+    TcpHeader, TCP_FLAG_ACK, TCP_FLAG_FIN, TCP_FLAG_PSH, TCP_FLAG_RST, TCP_FLAG_SYN,
+    TCP_RECV_BUF,
 };
 use super::super::types::{Ipv4Addr, MacAddr, SocketAddrV4, SocketDirection, SocketType, TcpState};
 
@@ -116,6 +117,57 @@ unsafe fn tcp_of(frame: &[u8]) -> &TcpHeader {
 unsafe fn ip_of(frame: &[u8]) -> &super::super::ipv4::Ipv4Header {
     &*(frame.as_ptr().add(super::super::ethernet::ETH_HDR_LEN)
         as *const super::super::ipv4::Ipv4Header)
+}
+
+
+/// Establish an accepted server-side connection over the scripted NIC.
+/// Returns `(listener_socket, listener_tcp, accepted_socket, tcp_id, server_isn)`.
+#[allow(clippy::too_many_arguments)]
+fn accept_over_nic(
+    sent: &Arc<Mutex<Vec<Vec<u8>>>>,
+    rx: &Arc<Mutex<Vec<Vec<u8>>>>,
+    our_mac: MacAddr,
+    our_ip: Ipv4Addr,
+    peer_mac: MacAddr,
+    peer_ip: Ipv4Addr,
+    listen_port: u16,
+    peer_port: u16,
+    peer_isn: u32,
+) -> (u32, u32, u32, u32, u32) {
+    let listener = SOCKET_MANAGER.lock().alloc_socket(SocketType::Tcp).unwrap();
+    let listen_tcp = tcp_alloc_connection().unwrap();
+    socket_set_tcp_conn(listener, listen_tcp);
+    assert!(socket_bind(
+        listener,
+        SocketAddrV4::new(Ipv4Addr::unspecified(), listen_port)
+    ));
+    assert!(socket_listen(listener));
+
+    rx.lock().push(tcp_frame(
+        peer_mac, our_mac, peer_ip.0, our_ip.0,
+        peer_port, listen_port, peer_isn, 0, TCP_FLAG_SYN, 65535, &[],
+    ));
+    super::super::network_poll_all();
+    let synack = {
+        let frames = sent.lock();
+        frames.last().cloned().expect("SYN-ACK")
+    };
+    let srv_isn = unsafe { tcp_of(&synack) }.seq();
+
+    rx.lock().push(tcp_frame(
+        peer_mac, our_mac, peer_ip.0, our_ip.0,
+        peer_port, listen_port, peer_isn.wrapping_add(1),
+        srv_isn.wrapping_add(1), TCP_FLAG_ACK, 65535, &[],
+    ));
+    super::super::network_poll_all();
+    let conn = super::super::socket::socket_accept_take(listener).expect("accept");
+    let tcp_id = SOCKET_MANAGER
+        .lock()
+        .get_socket(conn)
+        .unwrap()
+        .tcp_conn_id
+        .unwrap();
+    (listener, listen_tcp, conn, tcp_id, srv_isn)
 }
 
 pub fn register() {
@@ -854,5 +906,235 @@ pub fn register() {
         tcp_free_connection(cli);
         tcp_free_connection(srv_tcp);
         tcp_free_connection(srv_listen);
+    });
+
+    test_case!("net_tcp_window_update_after_drain", {
+        // #721: once the app drains a full receive buffer the peer must be
+        // told the window reopened. Otherwise it only retries on its
+        // zero-window probe timer and a bulk download stalls.
+        let tcp_id = tcp_alloc_connection().unwrap();
+        {
+            let mut tbl = super::super::tcp::TCP.lock();
+            let c = tbl.get_connection_mut(tcp_id).unwrap();
+            c.state = TcpState::Established;
+            c.local = SocketAddrV4::new(Ipv4Addr::localhost(), 40221);
+            c.remote = SocketAddrV4::new(Ipv4Addr::localhost(), 50221);
+            c.recv_seq = 1000;
+            c.send_base = 10;
+            c.send_seq = 10;
+        }
+        let loop_ip = Ipv4Addr::localhost();
+        let seg = vec![0x5Au8; 1024];
+        let mut seq = 1000u32;
+        let mut filled = 0usize;
+        while filled < TCP_RECV_BUF {
+            test_true!(super::super::tcp::tcp_handle_data(
+                tcp_id, seq, &seg, loop_ip, loop_ip, 50221, 40221
+            ));
+            seq += 1024;
+            filled += 1024;
+        }
+        test_eq!(
+            super::super::tcp::tcp_get_connection(tcp_id)
+                .unwrap()
+                .last_adv_window,
+            0
+        );
+
+        let mut buf = [0u8; 1024];
+        test_eq!(tcp_recv(tcp_id, &mut buf), Ok(1024));
+        // One KiB is below an MSS: still no reason to advertise.
+        test_eq!(
+            super::super::tcp::tcp_get_connection(tcp_id)
+                .unwrap()
+                .last_adv_window,
+            0
+        );
+        test_eq!(tcp_recv(tcp_id, &mut buf), Ok(1024));
+        // The window reopened by an MSS: the update is queued ...
+        test_true!(
+            super::super::tcp::tcp_get_connection(tcp_id)
+                .unwrap()
+                .ack_pending
+        );
+        // ... and `tcp_tick` puts it on the wire and clears the flag.
+        tcp_tick();
+        let conn = super::super::tcp::tcp_get_connection(tcp_id).unwrap();
+        test_eq!(conn.last_adv_window as usize, 2048);
+        test_true!(!conn.ack_pending);
+        drop(conn);
+        tcp_free_connection(tcp_id);
+    });
+
+    test_case!("net_tcp_out_of_order_fin_keeps_read_side", {
+        // #721: a FIN beyond the next expected byte is a gap, not EOF. Closing
+        // on it discarded the retransmitted tail of the body.
+        let tcp_id = tcp_alloc_connection().unwrap();
+        {
+            let mut tbl = super::super::tcp::TCP.lock();
+            let c = tbl.get_connection_mut(tcp_id).unwrap();
+            c.state = TcpState::Established;
+            c.local = SocketAddrV4::new(Ipv4Addr::localhost(), 40222);
+            c.remote = SocketAddrV4::new(Ipv4Addr::localhost(), 50222);
+            c.recv_seq = 500;
+            c.send_base = 10;
+            c.send_seq = 10;
+        }
+        let loop_ip = Ipv4Addr::localhost();
+        super::super::tcp::tcp_handle_fin(tcp_id, 900, loop_ip, loop_ip, 50222, 40222);
+        test_eq!(tcp_get_state(tcp_id), Some(TcpState::Established));
+        test_true!(super::super::tcp::tcp_handle_data(
+            tcp_id, 500, b"abc", loop_ip, loop_ip, 50222, 40222
+        ));
+        // In-order FIN right after the payload: read side done.
+        super::super::tcp::tcp_handle_fin(tcp_id, 503, loop_ip, loop_ip, 50222, 40222);
+        test_eq!(tcp_get_state(tcp_id), Some(TcpState::CloseWait));
+        let mut buf = [0u8; 8];
+        test_eq!(tcp_recv(tcp_id, &mut buf), Ok(3));
+        test_eq!(tcp_recv(tcp_id, &mut buf), Ok(0));
+        tcp_free_connection(tcp_id);
+    });
+
+    test_case!("net_tcp_fin_with_payload_consumes_seq", {
+        // The FIN sequence follows the payload of the same segment.
+        let peer_mac = MacAddr::new([0x02, 0, 0, 0, 0x50, 0x01]);
+        let our_mac = MacAddr::new([0x02, 0, 0, 0, 0x50, 0x02]);
+        let our_ip = Ipv4Addr::new([10, 0, 12, 1]);
+        let peer_ip = Ipv4Addr::new([10, 0, 12, 2]);
+        let sent = Arc::new(Mutex::new(Vec::new()));
+        let rx = Arc::new(Mutex::new(Vec::new()));
+        let nic_id = nic_register(alloc::boxed::Box::new(ScriptedNic {
+            mac: our_mac,
+            ip: our_ip,
+            sent: sent.clone(),
+            rx: rx.clone(),
+        }))
+        .expect("register scripted NIC");
+        {
+            let mut reg = NIC_REGISTRY.lock();
+            reg.set_ip(nic_id, our_ip);
+            reg.set_mask(nic_id, Ipv4Addr::new([255, 255, 255, 0]));
+            reg.set_gateway(nic_id, Ipv4Addr::unspecified());
+        }
+        super::super::arp::arp_insert(peer_ip, peer_mac);
+
+        let (srv_sock, srv_listen, srv_conn, srv_tcp, srv_isn) = accept_over_nic(
+            &sent, &rx, our_mac, our_ip, peer_mac, peer_ip, 8123, 53001, 9000,
+        );
+
+        let payload = b"bye";
+        rx.lock().push(tcp_frame(
+            peer_mac, our_mac, peer_ip.0, our_ip.0,
+            53001, 8123,
+            9001,
+            srv_isn.wrapping_add(1),
+            TCP_FLAG_PSH | TCP_FLAG_ACK | TCP_FLAG_FIN,
+            65535,
+            payload,
+        ));
+        super::super::network_poll_all();
+        test_eq!(tcp_get_state(srv_tcp), Some(TcpState::CloseWait));
+        test_eq!(
+            super::super::tcp::tcp_get_connection(srv_tcp).unwrap().recv_seq,
+            9001 + payload.len() as u32 + 1
+        );
+        let mut buf = [0u8; 8];
+        let n = tcp_recv(srv_tcp, &mut buf).unwrap();
+        test_eq!(&buf[..n], &payload[..]);
+        test_eq!(tcp_recv(srv_tcp, &mut buf), Ok(0));
+
+        SOCKET_MANAGER.lock().free_socket(srv_conn);
+        SOCKET_MANAGER.lock().free_socket(srv_sock);
+        tcp_free_connection(srv_tcp);
+        tcp_free_connection(srv_listen);
+        super::super::arp::ARP_CACHE.lock().remove(peer_ip);
+        nic_unregister(nic_id);
+    });
+
+    test_case!("net_arp_learns_sender_from_ipv4_rx", {
+        // Replies to an established flow must not depend on a fresh ARP round
+        // trip: the L2 source of the data frame is the next hop (#721).
+        let peer_mac = MacAddr::new([0x02, 0, 0, 0, 0x51, 0x01]);
+        let our_mac = MacAddr::new([0x02, 0, 0, 0, 0x51, 0x02]);
+        let our_ip = Ipv4Addr::new([10, 0, 13, 1]);
+        let peer_ip = Ipv4Addr::new([10, 0, 13, 2]);
+        let sent = Arc::new(Mutex::new(Vec::new()));
+        let rx = Arc::new(Mutex::new(Vec::new()));
+        let nic_id = nic_register(alloc::boxed::Box::new(ScriptedNic {
+            mac: our_mac,
+            ip: our_ip,
+            sent: sent.clone(),
+            rx: rx.clone(),
+        }))
+        .expect("register scripted NIC");
+        {
+            let mut reg = NIC_REGISTRY.lock();
+            reg.set_ip(nic_id, our_ip);
+            reg.set_mask(nic_id, Ipv4Addr::new([255, 255, 255, 0]));
+            reg.set_gateway(nic_id, Ipv4Addr::unspecified());
+        }
+        test_eq!(super::super::arp::arp_lookup(peer_ip), None);
+
+        rx.lock().push(tcp_frame(
+            peer_mac, our_mac, peer_ip.0, our_ip.0,
+            53002, 8124, 1, 0, TCP_FLAG_ACK, 65535, &[],
+        ));
+        super::super::network_poll_all();
+        test_eq!(super::super::arp::arp_lookup(peer_ip), Some(peer_mac));
+
+        super::super::arp::ARP_CACHE.lock().remove(peer_ip);
+        nic_unregister(nic_id);
+    });
+
+    test_case!("net_tcp_reset_closes_connection", {
+        // A peer RST must fail the connection at once, not leave it hanging
+        // until the caller's timeout.
+        let peer_mac = MacAddr::new([0x02, 0, 0, 0, 0x52, 0x01]);
+        let our_mac = MacAddr::new([0x02, 0, 0, 0, 0x52, 0x02]);
+        let our_ip = Ipv4Addr::new([10, 0, 14, 1]);
+        let peer_ip = Ipv4Addr::new([10, 0, 14, 2]);
+        let sent = Arc::new(Mutex::new(Vec::new()));
+        let rx = Arc::new(Mutex::new(Vec::new()));
+        let nic_id = nic_register(alloc::boxed::Box::new(ScriptedNic {
+            mac: our_mac,
+            ip: our_ip,
+            sent: sent.clone(),
+            rx: rx.clone(),
+        }))
+        .expect("register scripted NIC");
+        {
+            let mut reg = NIC_REGISTRY.lock();
+            reg.set_ip(nic_id, our_ip);
+            reg.set_mask(nic_id, Ipv4Addr::new([255, 255, 255, 0]));
+            reg.set_gateway(nic_id, Ipv4Addr::unspecified());
+        }
+        super::super::arp::arp_insert(peer_ip, peer_mac);
+
+        let (srv_sock, srv_listen, srv_conn, srv_tcp, srv_isn) = accept_over_nic(
+            &sent, &rx, our_mac, our_ip, peer_mac, peer_ip, 8125, 53003, 9100,
+        );
+
+        rx.lock().push(tcp_frame(
+            peer_mac, our_mac, peer_ip.0, our_ip.0,
+            53003, 8125,
+            9101,
+            srv_isn.wrapping_add(1),
+            TCP_FLAG_RST | TCP_FLAG_ACK,
+            0,
+            &[],
+        ));
+        super::super::network_poll_all();
+        test_eq!(tcp_get_state(srv_tcp), Some(TcpState::Closed));
+        test_eq!(
+            SOCKET_MANAGER.lock().get_socket(srv_conn).unwrap().direction,
+            SocketDirection::Closed
+        );
+
+        SOCKET_MANAGER.lock().free_socket(srv_conn);
+        SOCKET_MANAGER.lock().free_socket(srv_sock);
+        tcp_free_connection(srv_tcp);
+        tcp_free_connection(srv_listen);
+        super::super::arp::ARP_CACHE.lock().remove(peer_ip);
+        nic_unregister(nic_id);
     });
 }
