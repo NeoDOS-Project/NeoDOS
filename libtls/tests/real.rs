@@ -56,6 +56,7 @@ fn real_server_handshake() {
     let roots = vec![std::fs::read(root_path).expect("read root")];
     let host = std::env::var("TLS_TEST_HOST")
         .unwrap_or_else(|_| "valid-isrgrootx1.letsencrypt.org".into());
+    let path = std::env::var("TLS_TEST_PATH").unwrap_or_else(|_| "/".into());
 
     let stream = TcpStream::connect((host.as_str(), 443)).expect("connect");
     stream.set_read_timeout(Some(Duration::from_secs(15))).unwrap();
@@ -75,7 +76,7 @@ fn real_server_handshake() {
     )
     .expect("TLS handshake");
 
-    let request = format!("GET / HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n");
+    let request = format!("GET {path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n");
     tls.write_all(request.as_bytes()).expect("write");
     let mut response = Vec::new();
     let mut buf = [0u8; 2048];
@@ -85,12 +86,13 @@ fn real_server_handshake() {
             Ok(n) => response.extend_from_slice(&buf[..n]),
             Err(e) => panic!("read: {e:?}"),
         }
-        if response.len() > 128 * 1024 {
+        if response.len() > 8 * 1024 * 1024 {
             break;
         }
     }
     let text = String::from_utf8_lossy(&response);
-    println!("--- response head ---\n{}", &text[..text.len().min(400)]);
+    println!("--- response head ---\n{}", &text[..text.len().min(200)]);
+    println!("--- total bytes: {} ---", response.len());
     assert!(text.starts_with("HTTP/"), "unexpected response");
     assert!(text.contains(" 200 ") || text.contains(" 301 "), "status");
 }

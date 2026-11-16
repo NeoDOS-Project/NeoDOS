@@ -83,7 +83,9 @@ pub struct Certificate<'a> {
     pub digital_signature: bool,
     /// `extKeyUsage` contains `serverAuth` (true when the extension is absent).
     pub server_auth: bool,
-    pub sig_alg: SigAlg,
+    /// Signature algorithm; `None` when unsupported (usable as a trust anchor,
+    /// not verifiable as an issuer).
+    pub sig_alg: Option<SigAlg>,
     pub signature: &'a [u8],
 }
 
@@ -101,10 +103,10 @@ pub fn parse_certificate(der: &[u8]) -> core::result::Result<Certificate<'_>, X5
     let mut sig_alg_seq = cert.expect_sequence()?;
     let sig_oid = oid_bytes(&sig_alg_seq.next_tlv()?)?;
     let sig_alg = match sig_oid {
-        OID_SHA256_RSA => SigAlg::RsaPkcs1Sha256,
-        OID_RSA_PSS => SigAlg::RsaPssSha256,
-        OID_ECDSA_SHA256 => SigAlg::EcdsaP256Sha256,
-        _ => return Err(X509Error::UnsupportedAlgorithm),
+        OID_SHA256_RSA => Some(SigAlg::RsaPkcs1Sha256),
+        OID_RSA_PSS => Some(SigAlg::RsaPssSha256),
+        OID_ECDSA_SHA256 => Some(SigAlg::EcdsaP256Sha256),
+        _ => None,
     };
     let signature = bit_string_bytes(&cert.expect(TAG_BIT_STRING)?)?;
 
@@ -271,10 +273,11 @@ pub fn verify_issuer(child: &Certificate<'_>, issuer: &Certificate<'_>) -> core:
     if child.issuer != issuer.subject {
         return Err(X509Error::NotTrusted);
     }
-    match child.sig_alg {
+    let alg = child.sig_alg.ok_or(X509Error::UnsupportedAlgorithm)?;
+    match alg {
         SigAlg::RsaPkcs1Sha256 | SigAlg::RsaPssSha256 => {
             let key = rsa_public_key(issuer.spki)?;
-            let result = match child.sig_alg {
+            let result = match alg {
                 SigAlg::RsaPkcs1Sha256 => key.verify_pkcs1_sha256(child.tbs, child.signature),
                 _ => key.verify_pss_sha256(child.tbs, child.signature, 32),
             };
@@ -362,43 +365,44 @@ pub fn verify_chain(
         Ok(())
     };
 
+    let anchors: Vec<Certificate<'_>> = roots
+        .iter()
+        .filter_map(|der| parse_certificate(der).ok())
+        .collect();
+
+    // Walk from the leaf towards a trust anchor. The server may send the
+    // anchor itself and extra cross-signing certs, so stop as soon as the
+    // current certificate is anchored and never assume a fixed chain order.
     let mut current = leaf;
-    check_time(current)?;
-    for depth in 0..chain.len().saturating_sub(1) {
-        let issuer = &chain[depth + 1];
-        if !issuer.is_ca {
+    for depth in 0..8u8 {
+        check_time(current)?;
+        for root in &anchors {
+            if root.subject == current.subject && root.spki == current.spki {
+                return Ok(());
+            }
+            if root.subject == current.issuer && verify_issuer(current, root).is_ok() {
+                return Ok(());
+            }
+        }
+        let mut next: Option<&Certificate<'_>> = None;
+        for candidate in chain.iter().skip(1) {
+            if candidate.subject == current.issuer && verify_issuer(current, candidate).is_ok() {
+                next = Some(candidate);
+                break;
+            }
+        }
+        let Some(candidate) = next else {
+            return Err(X509Error::NotTrusted);
+        };
+        if !candidate.is_ca {
             return Err(X509Error::NotACa);
         }
-        if let Some(limit) = issuer.path_len {
-            if depth as u8 > limit {
+        if let Some(limit) = candidate.path_len {
+            if depth > limit {
                 return Err(X509Error::PathLenExceeded);
             }
         }
-        verify_issuer(current, issuer)?;
-        check_time(issuer)?;
-        current = issuer;
+        current = candidate;
     }
-
-    // The last certificate must be signed by a trust anchor (or be one).
-    let mut trusted = false;
-    for root_der in roots {
-        let root = parse_certificate(root_der)?;
-        if !root.is_ca {
-            continue;
-        }
-        if root.subject == current.subject && root.spki == current.spki {
-            // The server sent the root itself.
-            trusted = true;
-            break;
-        }
-        if verify_issuer(current, &root).is_ok() {
-            trusted = true;
-            break;
-        }
-    }
-    if trusted {
-        Ok(())
-    } else {
-        Err(X509Error::NotTrusted)
-    }
+    Err(X509Error::ChainTooLong)
 }
