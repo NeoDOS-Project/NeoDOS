@@ -21,7 +21,11 @@ macro_rules! probe {
 }
 #[cfg(not(feature = "debug-log"))]
 macro_rules! probe {
-    ($($arg:tt)*) => {};
+    // Keep the arguments referenced so inputs that only feed the log do not
+    // warn as unused in normal builds.
+    ($($arg:tt)*) => {{
+        let _ = core::format_args!($($arg)*);
+    }};
 }
 
 pub mod der;
@@ -252,8 +256,8 @@ pub fn connect<T: Transport>(
     let certs: Vec<Certificate<'_>> = {
         let mut v = Vec::with_capacity(chain.len());
         for der in &chain {
-            v.push(parse_certificate(der).map_err(|e| {
-                probe!("probe: parse cert len={} err={:?}", der.len(), e);
+            v.push(parse_certificate(der).map_err(|err| {
+                probe!("probe: parse cert len={} err={:?}", der.len(), err);
                 TlsError::NotTrusted
             })?);
         }
