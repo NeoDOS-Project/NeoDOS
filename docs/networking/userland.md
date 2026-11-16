@@ -701,6 +701,7 @@ libdns   (crate no_std, sin dependencias)
   ├─ encode_name / decode_name
   ├─ build_query / parse_response   (A, CNAME, RCODE, truncation)
   ├─ validate_hostname / parse_dotted_ip
+  ├─ AnswerCache     → caché acotada con caducidad por TTL (reloj inyectado)
   └─ DnsError, DnsAnswer, DnsTransport, resolve_with_servers()
 
 libnet   (librería de red userland)
@@ -708,7 +709,7 @@ libnet   (librería de red userland)
   ├─ configured_servers() → Registry: DnsServer, DnsServer2, DnsServer3
   ├─ resolve(hostname)            → DnsResult { server, addresses, ttl }
   ├─ resolve_with_server(host, s)
-  └─ caché acotada (16 entradas, por host + servidor)
+  └─ AnswerCache (16 entradas, clave host + servidor, TTL del registro A)
 
 nslookup.nxe   ─┐
 ping.nxe        ├─ usan libnet::dns

@@ -16,6 +16,8 @@ use alloc::vec::Vec;
 
 use libdns::{is_local_name, is_localhost, is_unspecified, validate_hostname};
 use libneodos::registry::RegistryKey;
+use libneodos::syscall;
+use libdns::AnswerCache;
 use libnet_config::{build_interface_path, VALUE_DNS1, VALUE_DNS2, VALUE_DNS3};
 
 pub use libdns::{
@@ -28,6 +30,8 @@ pub use libdns::{
 pub const DNS_MAX_SERVERS: usize = 3;
 /// Bounded resolver cache entries.
 pub const DNS_CACHE_SIZE: usize = 16;
+/// Longest TTL kept in the cache, in seconds.
+pub const DNS_CACHE_MAX_TTL_S: u32 = libdns::DEFAULT_MAX_TTL_S;
 /// Extra retries per server (total attempts = DNS_MAX_RETRIES + 1).
 pub const DNS_MAX_RETRIES: usize = 1;
 /// How many `socket_recv` + `sys_yield` polls before a server times out.
@@ -190,11 +194,11 @@ pub fn resolve(hostname: &str) -> Result<DnsResult, DnsError> {
 
     // Cache hit for any configured server?
     for &server in &servers {
-        if let Some(addr) = cache_lookup(hostname, server) {
+        if let Some((addr, ttl)) = cache_lookup(hostname, server) {
             return Ok(DnsResult {
                 server,
                 addresses: alloc::vec![addr],
-                ttl: 0,
+                ttl,
             });
         }
     }
@@ -233,11 +237,11 @@ pub fn resolve_with_server(hostname: &str, server: [u8; 4]) -> Result<DnsResult,
         }
     }
 
-    if let Some(addr) = cache_lookup(hostname, server) {
+    if let Some((addr, ttl)) = cache_lookup(hostname, server) {
         return Ok(DnsResult {
             server,
             addresses: alloc::vec![addr],
-            ttl: 0,
+            ttl,
         });
     }
 
@@ -254,64 +258,29 @@ pub fn resolve_with_server(hostname: &str, server: [u8; 4]) -> Result<DnsResult,
 
 // ── Cache ──
 
-struct CacheEntry {
-    host: String,
-    server: [u8; 4],
-    addr: [u8; 4],
-}
+/// Bounded cache of resolver answers, keyed by `(hostname, server)` and
+/// expired by the answer's TTL.
+static mut CACHE: AnswerCache = AnswerCache::new(DNS_CACHE_SIZE, DNS_CACHE_MAX_TTL_S);
 
-static mut CACHE: [Option<CacheEntry>; DNS_CACHE_SIZE] = [const { None }; DNS_CACHE_SIZE];
-
-fn cache_lookup(host: &str, server: [u8; 4]) -> Option<[u8; 4]> {
+fn cache_lookup(host: &str, server: [u8; 4]) -> Option<([u8; 4], u32)> {
+    let now = syscall::ob_uptime_ms().ok()?;
     // SAFETY: userland tools are single-threaded and the resolver is not reentrant.
-    unsafe {
-        for entry in CACHE.iter() {
-            if let Some(e) = entry {
-                if e.host == host && e.server == server {
-                    return Some(e.addr);
-                }
-            }
-        }
-    }
-    None
+    unsafe { CACHE.lookup(host, server, now) }
 }
 
 fn cache_answer(host: &str, server: [u8; 4], answer: &DnsAnswer) {
-    if let Some(addr) = answer.first() {
-        cache_insert(host, server, addr);
-    }
-}
-
-fn cache_insert(host: &str, server: [u8; 4], addr: [u8; 4]) {
-    // SAFETY: see `cache_lookup`.
-    unsafe {
-        for entry in CACHE.iter_mut() {
-            if let Some(e) = entry {
-                if e.host == host && e.server == server {
-                    e.addr = addr;
-                    return;
-                }
-            }
-        }
-        for entry in CACHE.iter_mut() {
-            if entry.is_none() {
-                *entry = Some(CacheEntry {
-                    host: host.to_string(),
-                    server,
-                    addr,
-                });
-                return;
-            }
-        }
-    }
+    let Ok(now) = syscall::ob_uptime_ms() else { return };
+    let Some(addr) = answer.first() else {
+        // A successful answer without an A record invalidates any stale entry.
+        unsafe { CACHE.remove(host, server) };
+        return;
+    };
+    // SAFETY: see `cache_lookup`. `insert` ignores a zero TTL.
+    unsafe { CACHE.insert(host, server, addr, answer.ttl, now) };
 }
 
 /// Drop all cached resolver entries.
 pub fn clear_cache() {
     // SAFETY: see `cache_lookup`.
-    unsafe {
-        for entry in CACHE.iter_mut() {
-            *entry = None;
-        }
-    }
+    unsafe { CACHE.clear() }
 }

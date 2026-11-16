@@ -2,8 +2,8 @@
 
 > **Version:** v0.3 — implemented through M5 (2026-11-16)
 > **Status:** Implemented: `libhttp` core + framing (M1/M4), byte-stream
-> prerequisites (M2), `libnet::TcpTransport` (M3) and `neocurl` (M5). Pending:
-> automated QEMU E2E (M6), DNS TTL cache and TLS (later milestone).
+> prerequisites (M2), DNS TTL cache (M2b), `libnet::TcpTransport` (M3) and
+> `neocurl` (M5). Pending: automated E2E (M6) and TLS (later milestone).
 > Supersedes v0.1, whose baseline (broken userland TCP connect, no blocking
 > wait, RDTSC deadlines) is obsolete.
 > **Target Release:** v0.58 — Official Tools
@@ -23,7 +23,7 @@
 | --- | --- |
 | `libdns/src/*`, `libntp/src/lib.rs` | the proven pattern: protocol crate with an injectable transport, `no_std` + `alloc`, host-testable (`#![cfg_attr(not(test), no_std)]`) |
 | `libnet/src/lib.rs` | `net.nxl` `NetAbiTable` v1 (`socket_create/bind/connect/listen/send/recv/close`) and the thin `libnet` wrappers |
-| `libnet/src/dns.rs` | resolver + Registry servers + **cache without TTL expiry**; IPv4 literals are not special-cased |
+| `libnet/src/dns.rs` | resolver + Registry servers + TTL cache (`libdns::AnswerCache`) |
 | `neodos-kernel/src/syscall/ob/set/net.rs` | `SocketConnect=18` routes to `socket_connect_user`; TCP sends a SYN. **Fixed.** |
 | `neodos-kernel/src/syscall/ob/query/net.rs` | `SocketRecv=23` (non-blocking), `TcpStatus=19`, `SocketAccept=43` |
 | `neodos-kernel/src/syscall/ob/wait.rs`, `libneodos/src/syscall/ob.rs` | `ob_wait` blocks on Connect/Read; `sys_ob_wait_timeout` bounds it (#696) |
@@ -160,7 +160,7 @@ userbin/neocurl/src/main.rs — CLI (flags, sinks, exit codes)
 | Path | Change |
 | --- | --- |
 | `libnet/src/lib.rs` | register `http_transport` |
-| `libnet/src/dns.rs` | TTL-aware cache (also fixes DNS for other tools) |
+| `libnet/src/dns.rs` | TTL-aware cache via `libdns::AnswerCache` — **done** (M2b) |
 | `libnet/src/http_transport.rs` | new: connect/read/write with deadlines, IPv4 literal fast path, EOF via `TcpStatus`, TX backpressure |
 | `neodos-kernel/src/net/{socket,tcp}.rs` | writable wait + EOF — **already landed** (prerequisite doc §3.4) |
 | NeoDev (external) | add `neocurl` to the image program list |
@@ -239,7 +239,7 @@ error, `2` usage error. No other flags.
 | Subsystem | Change | Impact |
 | --- | --- | --- |
 | Kernel net | Optional writable wait + EOF (no new ABI) | Low/Medium |
-| `libnet` | `TcpTransport`; TTL-aware DNS cache | Medium |
+| `libnet` | `TcpTransport`; TTL-aware DNS cache (`libdns::AnswerCache`) | **Done** |
 | `libhttp` (new) | HTTP/1.1 client | New crate |
 | `neocurl` (new) | CLI | New `.nxe` |
 | Image (NeoDev) | Add `neocurl` | Low |
