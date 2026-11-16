@@ -135,6 +135,26 @@ pub unsafe fn raw_rdrand() -> Option<u64> {
 }
 
 #[inline]
+pub unsafe fn raw_rdseed() -> Option<u64> {
+    let mut val: u64;
+    let success: u8;
+    asm!(
+        "rdseed {0:r}",
+        "setc {1}",
+        out(reg) val,
+        out(reg_byte) success,
+        options(nomem, nostack),
+    );
+    if success != 0 { Some(val) } else { None }
+}
+
+#[inline]
+pub unsafe fn raw_has_rdseed() -> bool {
+    let (_, ebx, _, _) = raw_cpuid(7, 0);
+    (ebx & (1 << 18)) != 0
+}
+
+#[inline]
 pub unsafe fn raw_has_rdrand() -> bool {
     let (_, _, ecx, _) = raw_cpuid(1, 0);
     (ecx & (1 << 30)) != 0

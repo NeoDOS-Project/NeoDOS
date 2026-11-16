@@ -496,6 +496,13 @@ pub unsafe fn init(boot_info: &BootInfo) -> ! {
     net::init_networking();
 
     // ============================================
+    // PHASE 3.885: CSPRNG (\Device\Random, #712/M8)
+    // Seeds the ChaCha20 DRBG from RDSEED/RDRAND and exposes it to Ring 3.
+    // ============================================
+    println!("[+] Initializing CSPRNG...");
+    random::init();
+
+    // ============================================
     // PHASE 3.881: Cm (Configuration Manager) — Registry
     // Initializes the \Registry namespace tree and mounts
     // the SYSTEM hive for persistent configuration storage.

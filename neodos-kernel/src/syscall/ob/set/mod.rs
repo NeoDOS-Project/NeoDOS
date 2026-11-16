@@ -185,7 +185,7 @@ pub fn register_ob_set_tests() {
         // (=32) is the known CH-06 gap and is excluded *explicitly*; any NEW gap
         // fails the test.
         let known_unhandled: [u32; 1] = [crate::object::types::ObInfoClass::PowerState as u32];
-        for c in 0..=42u32 {
+        for c in 0..=49u32 {
             if !known_unhandled.contains(&c) {
                 test_true!(crate::syscall::ob::query::info_class_handled(c));
             }

@@ -157,6 +157,7 @@ mod fs;
 mod cm;
 mod net;
 mod time;
+mod random;
 mod drivers;
 
 pub use process::*;
@@ -166,4 +167,5 @@ pub use fs::*;
 pub use cm::*;
 pub use net::*;
 pub use time::*;
+pub use random::*;
 pub use drivers::*;

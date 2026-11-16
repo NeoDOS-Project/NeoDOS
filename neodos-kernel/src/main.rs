@@ -60,6 +60,7 @@ mod object;
 mod kwait;
 mod net;
 mod cm;
+mod random;
 mod services;
 // Keyboard now lives under `input/kbd`; keep the historical `crate::kbd`.
 pub use input::kbd;

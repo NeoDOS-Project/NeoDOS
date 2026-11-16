@@ -99,6 +99,33 @@ fn run(raw: &[u8]) -> u32 {
         }
     }
 
+    // Diagnostic + smoke: the kernel CSPRNG must be reachable and produce
+    // varying bytes (M8). The HTTP matrix itself does not consume randomness.
+    out_str(1, b"RNG: ");
+    let caps = libneodos::syscall::ob_random_caps();
+    let mut probe = [0u8; 32];
+    let filled = libneodos::syscall::ob_random(&mut probe);
+    match (caps, filled) {
+        (Ok(caps), Ok(32)) => {
+            out_str(
+                1,
+                if caps.hardware_backed() {
+                    b"hardware"
+                } else {
+                    b"pool-only"
+                },
+            );
+            out_str(1, b" rdrand=");
+            out_dec(1, caps.hw_rdrand as u32);
+            out_str(1, b" rdseed=");
+            out_dec(1, caps.hw_rdseed as u32);
+            let varied = probe.iter().any(|b| *b != probe[0]);
+            out_str(1, if varied { b" varied" } else { b" STATIC" });
+            out_str(1, b"\r\n");
+        }
+        _ => out_str(1, b"unavailable\r\n"),
+    }
+
     let mut t = Tests {
         base: alloc::string::String::from(base),
         host: parsed.host.clone(),
