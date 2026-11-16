@@ -13,6 +13,7 @@ test = false
 [dependencies]
 libneodos = { path = "../libneodos" }
 libdns = { path = "../libdns" }
+libhttp = { path = "../libhttp" }
 libnet-config = { path = "../libnet-config" }
 libntp = { path = "../libntp" }
 

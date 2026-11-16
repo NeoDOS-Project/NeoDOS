@@ -134,6 +134,7 @@ All 42 user-mode binaries, each a standalone `.NXE` ELF file in `userbin/<name>/
 | neoedit | editor | Text editor |
 | neopkg | package | Package manager |
 | netcfg | network | Network configuration |
+| neocurl | network | HTTP/1.1 client (`neocurl URL`, `-I`, `-i`, `-d`, `-o`, `--max-time`, `--max-bytes`) |
 | neocfg | admin | Control panel (TUI): system info, keyboard, power/locale — modular, UI-agnostic core (`libneocfg`) |
 | dhcp | network | DHCP client |
 | cpuinfo | system | CPU information display |

@@ -783,6 +783,39 @@ papel de `ntpdate`: no hay un binario aparte, se reutiliza el mismo daemon.
 configuración, no en el código, para que el primer sync sea fiable detrás de
 NAT. `Interval` (segundos) y `Timeout` (ms) también son valores del Registry.
 
+### 3.7 neocurl.nxe — cliente HTTP/1.1 (implementado)
+
+`neocurl` es la primera aplicación HTTP de userland. Es una CLI fina: el
+protocolo (URL, petición, cabeceras, framing del cuerpo, límites y errores) vive
+en `libhttp`; el transporte TCP con deadlines en `libnet::http_transport`; el
+DNS en `libnet::dns`.
+
+```text
+neocurl URL                    GET; cuerpo a stdout
+neocurl -I URL                 HEAD; cabeceras a stdout
+neocurl -i URL                 incluye cabeceras antes del cuerpo
+neocurl -d DATO URL            POST (x-www-form-urlencoded)
+neocurl -d @- URL              POST leyendo el cuerpo de stdin (máx. 256 KiB)
+neocurl -o FICHERO URL         descarga en streaming a fichero
+neocurl --max-time MS URL      deadline total
+neocurl --max-bytes N URL      límite de cuerpo (0 = sin límite)
+neocurl -s URL                 sin resumen de estado en stderr
+```
+
+```text
+neocurl.nxe
+  ├─ libhttp                 (offline: parser, framing, límites, execute)
+  ├─ libnet::TcpTransport    (sockets net.nxl, deadlines, EAGAIN/EOF)
+  └─ libneodos               (syscalls, ficheros, uptime)
+```
+
+- Una petición por conexión (`Connection: close`); sin redirecciones, keep-alive
+  ni compresión (el cliente envía `Accept-Encoding: identity`).
+- Errores tipados (`libhttp::HttpError`) → mensaje en stderr y exit code 1;
+  errores de uso → exit code 2.
+- `https://` todavía responde con error: TLS llega con `libtls`.
+- El cuerpo se entrega por streaming (`BodySink`), nunca se acumula en RAM.
+
 ---
 
 ## 4. NeoInit System Configuration
