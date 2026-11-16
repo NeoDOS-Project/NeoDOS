@@ -140,8 +140,9 @@ pub fn bit_string_bytes<'a>(tlv: &Tlv<'a>) -> Result<&'a [u8]> {
             found: tlv.tag,
         });
     }
-    if tlv.value.is_empty() || tlv.value[0] != 0 {
-        // X.509 keys and signatures never use a nonzero unused-bit count.
+    // `value[0]` is the number of unused bits in the last byte (0..=7); it is
+    // nonzero for bit strings such as keyUsage.
+    if tlv.value.is_empty() || tlv.value[0] > 7 {
         return Err(DerError::Malformed);
     }
     Ok(&tlv.value[1..])
