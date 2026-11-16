@@ -817,6 +817,48 @@ neocurl.nxe
 - `https://` todavía responde con error: TLS llega con `libtls`.
 - El cuerpo se entrega por streaming (`BodySink`), nunca se acumula en RAM.
 
+### 3.8 httptest.nxe + tools/http-e2e — aceptación HTTP reproducible
+
+`httptest` es el runner de aceptación que corre **en el huésped**: ejecuta una
+matriz fija contra un servidor fixture y resume el resultado en una línea que
+el orquestador del host puede leer del serial.
+
+```text
+httptest http://10.0.2.2:18080
+
+PASS get_hello 200 16
+...
+HTTP-E2E: PASS 11/11
+```
+
+| Caso | Comprueba |
+| --- | --- |
+| `get_hello` | GET 200 y cuerpo exacto |
+| `head_hello` | HEAD 200 sin cuerpo |
+| `get_chunked` | cuerpo chunked completo |
+| `post_echo` | POST con eco (`POST 3 a=1`) |
+| `status_404` | código no-2xx |
+| `get_close` | cuerpo delimitado por cierre |
+| `get_big` / `get_huge` | 64 KiB / 1 MiB contados en memoria (sin FS) |
+| `timeout_slow` | deadline de lectura |
+| `connect_refused` | puerto cerrado |
+| `dns_failure` | nombre inexistente |
+
+El cuerpo se cuenta en un `BodySink` en memoria: el caso de 1 MiB mide la pila
+de red, no la escritura en NE2 (que es el cuello de botella real de `-o`).
+
+`tools/http-e2e` es el orquestador de host (Rust, sin dependencias): levanta el
+fixture (mismos endpoints), arranca la VM headless con `neodev run`, teclea el
+comando con scancodes de VirtualBox y busca `HTTP-E2E:` en el serial. Sale con
+código 0 si la matriz pasa.
+
+```text
+cargo run --release --manifest-path tools/http-e2e/Cargo.toml -- \
+    --neodev "$(command -v neodev)"
+```
+
+Requiere `httptest.nxe` instalado en `C:\System\Tools` (lista de NeoDev).
+
 ---
 
 ## 4. NeoInit System Configuration
