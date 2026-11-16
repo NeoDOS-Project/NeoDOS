@@ -927,6 +927,12 @@ pub fn tcp_dispatch(src_ip: Ipv4Addr, dst_ip: Ipv4Addr, segment: &[u8]) {
         socket_accept_incoming(hit.socket_id, dst_ip, dst_port, src_ip, src_port, seq);
         return;
     }
+    // A reset tears the connection down immediately; its sequence/ack fields
+    // must not be mistaken for a handshake completion or data.
+    if flags & crate::net::tcp::TCP_FLAG_RST != 0 {
+        crate::net::tcp::tcp_handle_reset(hit.tcp_id);
+        return;
+    }
     let state = crate::net::tcp::tcp_get_state(hit.tcp_id);
     if flags & crate::net::tcp::TCP_FLAG_ACK != 0 {
         crate::net::tcp::tcp_handle_ack(hit.idx, seq, ack, window);
@@ -940,8 +946,10 @@ pub fn tcp_dispatch(src_ip: Ipv4Addr, dst_ip: Ipv4Addr, segment: &[u8]) {
         );
     }
     if flags & crate::net::tcp::TCP_FLAG_FIN != 0 {
+        // The FIN occupies the sequence number *after* this segment's payload.
         crate::net::tcp::tcp_handle_fin(
-            hit.tcp_id, seq,
+            hit.tcp_id,
+            seq.wrapping_add(payload.len() as u32),
             src_ip, dst_ip, src_port, dst_port,
         );
     }
