@@ -6,6 +6,26 @@
 
 ### Added
 
+- **HTTP/1.1 client + HTTPS (NeoHTTP, #712).** `libhttp` (offline core, framing
+  and `execute`) plus `libnet::TcpTransport`/`HttpsTransport`, the `neocurl` CLI
+  and an in-guest acceptance runner (`httptest`) with a host orchestrator
+  (`tools/http-e2e`). Bulk downloads are reliable: ARP entries expire on
+  wall-clock time and are refreshed from received frames, TCP never drops an ACK
+  silently, receive-window updates are pushed when the app drains, FINs are
+  consumed only in order and RSTs close the connection (#721).
+
+- **TLS 1.3 stack.** `libcrypto` (SHA-256, HMAC/HKDF, ChaCha20-Poly1305,
+  X25519, RSA PKCS#1/PSS and ECDSA P-256 verification, with RFC/NIST and
+  OpenSSL vectors), `libtls` (TLS 1.3 client with X.509
+  chain/hostname/validity checks, SNI and ALPN) and `neocurl --ca FILE
+  https://…`. Server authentication is mandatory; there is no insecure mode.
+
+- **Trusted clock and Ring 3 CSPRNG.** `libclock` turns the RTC plus
+  `Services\Ntpd\Status` into a fail-closed `Clock`; `\Device\Random` exposes a
+  ChaCha20 DRBG seeded from RDSEED/RDRAND through `ObInfoClass::Random=48`/
+  `RandomCaps=49`. A TTL-aware DNS cache (`libdns::AnswerCache`) completes the
+  prerequisites.
+
 - **GitHub Actions CI (`.github/workflows/ci.yml`).** Compile-oriented: builds the
   kernel with a pinned nightly, runs `neodev check-deps` (rule 12) and
   `scripts/check-skills.sh`. It never publishes artifacts, builds images or boots
