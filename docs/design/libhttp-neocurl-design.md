@@ -2,8 +2,9 @@
 
 > **Version:** v0.3 — implemented through M5 (2026-11-16)
 > **Status:** Implemented: `libhttp` core + framing (M1/M4), byte-stream
-> prerequisites (M2), DNS TTL cache (M2b), `libnet::TcpTransport` (M3) and
-> `neocurl` (M5). Pending: automated E2E (M6) and TLS (later milestone).
+> prerequisites (M2), DNS TTL cache (M2b), `libnet::TcpTransport` (M3),
+> `neocurl` (M5) and the reproducible E2E harness (M6: `httptest` +
+> `tools/http-e2e`). Pending: TLS (later milestone).
 > Supersedes v0.1, whose baseline (broken userland TCP connect, no blocking
 > wait, RDTSC deadlines) is obsolete.
 > **Target Release:** v0.58 — Official Tools
@@ -342,10 +343,11 @@ Error mapping: DNS failure → `Dns`; refused/unreachable → `Connect`; deadlin
    fragmentation tests, limits.
 5. **M5 — `neocurl`: DONE.** Flags, sinks (`-i`, `-I`, `-o`, `-d`), exit codes;
    discovered by NeoDev and installed in the image.
-6. **M6 — automation: PENDING.** `httptest.nxe` + `scripts/http-e2e.sh` +
-   fixture server; matrix registered as reproducible evidence. Until then the
-   transport and CLI are covered by host unit tests and a successful image
-   build, not by an in-guest HTTP round-trip.
+6. **M6 — automation: DONE.** `httptest.nxe` runs the acceptance matrix in
+   the guest (11 cases, counting sink for the 64 KiB/1 MiB bodies) and prints
+   `HTTP-E2E: PASS n/n`. `tools/http-e2e` is the host orchestrator: it serves
+   the fixture, boots the VM headless, types the command over the VirtualBox
+   scancode interface and greps the serial summary. No Python or bash driver.
 
 Dependencies: M3 needs M1; M4 needs M3; M5 needs M4. TLS is a later transport
 wrapper (`libtls`), not a change to `libhttp`.
