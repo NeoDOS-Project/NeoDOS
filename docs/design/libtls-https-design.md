@@ -1,9 +1,11 @@
 # TLS / HTTPS (`libcrypto` + `libtls`) — Design Document
 
-> **Version:** v0.3 — M7/M8/M9 landed (2026-11-16)
-> **Status:** M7 (trusted clock), M8 (Ring 3 CSPRNG), M9 (`libcrypto`) and the
-> D1 stack decision are **done**. `libtls` (M10) and the HTTPS integration (M11)
-> are next.
+> **Version:** v0.4 — M7–M11 landed (2026-11-16)
+> **Status:** All milestones implemented: M7 (trusted clock), M8 (Ring 3
+> CSPRNG), M9 (`libcrypto`), D1 (own TLS 1.3 over `libcrypto`), M10 (`libtls`:
+> TLS 1.3 client + X.509 chain/hostname/validity checks) and M11 (`neocurl
+> https://`). Notably missing: a production trust-anchor bundle (D8) — HTTPS
+> currently requires an explicit `--ca FILE`.
 > **Target Release:** v0.61–v0.62 — Security Hardening
 > **Related:** #89 (NXE signatures), #57 (module signing), #361 (NTP auth),
 > #467 (monotonic clock), #582 (NLT signatures), #696 (wait timeouts), #411;
@@ -332,9 +334,11 @@ invalid/expired/mismatch cases return the documented error and exit code.
    ECDSA P-256 verification; 18 host tests against RFC/NIST/OpenSSL vectors.
 4. **D1 spike: DONE.** `rustls` rejected (see §3.5); own TLS 1.3 client over
    `libcrypto`.
-5. **M10 — `libtls`:** X.509 + chain/hostname/clock validation, trust store,
-   record + handshake, SNI, ALPN; tests (INV-2/3/4).
-6. **M11 — HTTPS integration:** `Scheme::Https` in `libhttp`, `neocurl https://`,
+5. **M10 — `libtls`: DONE.** TLS 1.3 client (ChaCha20-Poly1305, X25519),
+   X.509 parsing + chain/hostname/validity checks, SNI, ALPN, `Clock`/`Rng`
+   policy; 8 unit tests and 5 integration tests against `openssl s_server`.
+6. **M11 — HTTPS integration: DONE.** `HttpsTransport` in `libnet`,
+   `neocurl --ca FILE https://…`; validated in the guest against the fixture.
    fixture matrix, no insecure flag.
 7. **Hardening + docs:** policy tests, `docs/security/security.md`, markdownlint.
 

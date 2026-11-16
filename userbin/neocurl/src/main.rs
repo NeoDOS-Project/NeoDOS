@@ -15,6 +15,7 @@
 //! neocurl -o FILE URL            stream the body to a file
 //! neocurl --max-time MS URL      total deadline in milliseconds
 //! neocurl --max-bytes N URL      body limit (0 = unlimited)
+//! neocurl --ca FILE URL          HTTPS trust anchor (DER; test fixture only)
 //! neocurl -s URL                 silent: no status summary on stderr
 //! ```
 //!
@@ -26,7 +27,7 @@ use core::alloc::{GlobalAlloc, Layout};
 
 use libhttp::{execute, BodySink, Deadline, HttpError, Limits, ResponseHead, Scheme, Url};
 use libneodos::{args, mem, syscall};
-use libnet::http_transport::TcpTransport;
+use libnet::http_transport::{HttpsTransport, TcpTransport};
 
 struct SbrkAlloc;
 
@@ -61,6 +62,7 @@ struct Options<'a> {
     out: Option<&'a [u8]>,
     max_time_ms: Option<u32>,
     max_bytes: Option<u64>,
+    ca: Option<&'a [u8]>,
 }
 
 enum ParseError {
@@ -112,10 +114,27 @@ fn run(raw: &[u8]) -> Result<(), u32> {
             return Err(1);
         }
     };
-    if url.scheme != Scheme::Http {
-        fail("HTTPS is not supported yet (libtls pending)");
+    let is_https = url.scheme == Scheme::Https;
+    if is_https && opts.ca.is_none() {
+        fail("HTTPS needs --ca FILE (no system trust store yet)");
         return Err(1);
     }
+    let ca_der = match opts.ca {
+        Some(path) => {
+            let Ok(path) = core::str::from_utf8(path) else {
+                fail("invalid --ca path");
+                return Err(1);
+            };
+            match read_ob_file(path) {
+                Ok(data) => Some(data),
+                Err(()) => {
+                    fail("cannot read --ca file");
+                    return Err(1);
+                }
+            }
+        }
+        None => None,
+    };
 
     let mut limits = Limits::default();
     if let Some(ms) = opts.max_time_ms {
@@ -167,14 +186,21 @@ fn run(raw: &[u8]) -> Result<(), u32> {
     let now = syscall::ob_uptime_ms().unwrap_or(0);
     let deadline = Deadline::after(now, limits.total_timeout_ms);
 
-    let mut transport = TcpTransport::new(limits);
     let mut sink = WriteSink {
         fd: out_fd,
         print_headers: opts.include || opts.head,
         count: 0,
     };
+    let result = if is_https {
+        let roots = alloc::vec![ca_der.unwrap_or_default()];
+        let mut transport = HttpsTransport::new(limits, roots);
+        execute(&mut transport, &request, &limits, deadline, &mut sink)
+    } else {
+        let mut transport = TcpTransport::new(limits);
+        execute(&mut transport, &request, &limits, deadline, &mut sink)
+    };
 
-    match execute(&mut transport, &request, &limits, deadline, &mut sink) {
+    match result {
         Ok(head) => {
             if !opts.silent {
                 err(b"neocurl: ");
@@ -196,6 +222,34 @@ fn run(raw: &[u8]) -> Result<(), u32> {
             Err(1)
         }
     }
+}
+
+/// Read a whole file through the Ob `ReadContent` query (fixture trust
+/// anchors are a few KiB; 64 KiB is plenty).
+fn read_ob_file(path: &str) -> Result<alloc::vec::Vec<u8>, ()> {
+    let mut ob_path = [0u8; 256];
+    let mut len = 0usize;
+    if !path.starts_with('\\') {
+        let prefix = b"\\Global\\FileSystem\\";
+        ob_path[..prefix.len()].copy_from_slice(prefix);
+        len = prefix.len();
+    }
+    let bytes = path.as_bytes();
+    if len + bytes.len() > ob_path.len() {
+        return Err(());
+    }
+    ob_path[len..len + bytes.len()].copy_from_slice(bytes);
+    len += bytes.len();
+    let Ok(path) = core::str::from_utf8(&ob_path[..len]) else {
+        return Err(());
+    };
+    let fd = syscall::sys_ob_open(path, syscall::ob_access::READ).map_err(|_| ())?;
+    let mut buf = alloc::vec![0u8; 64 * 1024];
+    let n = syscall::sys_ob_query_info(fd, syscall::ObInfoClass::ReadContent, &mut buf);
+    let _ = syscall::sys_close(fd);
+    let n = n.map_err(|_| ())? as usize;
+    buf.truncate(n);
+    Ok(buf)
 }
 
 /// Output sink that streams the body and optionally prints the head first.
@@ -275,6 +329,12 @@ fn parse_args(raw: &[u8]) -> Result<Options<'_>, ParseError> {
                 .ok_or(ParseError::Message("--max-time needs milliseconds"))?;
             opts.max_time_ms =
                 Some(parse_u32(value).ok_or(ParseError::Message("invalid --max-time"))?);
+        } else if token == b"--ca" {
+            i += 1;
+            let value = *tokens
+                .get(i)
+                .ok_or(ParseError::Message("--ca needs a certificate file"))?;
+            opts.ca = Some(value);
         } else if token == b"--max-bytes" {
             i += 1;
             let value = tokens
