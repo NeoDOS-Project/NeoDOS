@@ -1,8 +1,9 @@
 # TLS / HTTPS (`libcrypto` + `libtls`) — Design Document
 
-> **Version:** v0.2 — reconciled with `develop` @ `532d554` (2026-11-14)
-> **Status:** Design (no implementation). Blocked on the Ring-3 CSPRNG (M8) and
-> the time-trust policy (M7); the TLS-stack choice is the open decision D1.
+> **Version:** v0.3 — M7/M8/M9 landed (2026-11-16)
+> **Status:** M7 (trusted clock), M8 (Ring 3 CSPRNG), M9 (`libcrypto`) and the
+> D1 stack decision are **done**. `libtls` (M10) and the HTTPS integration (M11)
+> are next.
 > **Target Release:** v0.61–v0.62 — Security Hardening
 > **Related:** #89 (NXE signatures), #57 (module signing), #361 (NTP auth),
 > #467 (monotonic clock), #582 (NLT signatures), #696 (wait timeouts), #411;
@@ -162,6 +163,24 @@ If the spike fails, choose B with TLS 1.3 only. Either way the crates must be
 `no_std` + `alloc`, pure Rust, permissively licensed (MIT/Apache-2.0/ISC), and
 pinned.
 
+**D1 — DECIDED: a minimal TLS 1.3 client over the in-tree `libcrypto`.**
+
+The spike ruled option A out:
+
+- `rustls` 0.23 `no_std` needs a crypto provider. `aws-lc-rs` and `ring` are
+  C/assembly and cannot be built for `x86_64-unknown-none` without a C
+  toolchain (the project has none by design); a pure-Rust provider still pulls
+  `rustls-pki-types`, `rustls-webpki`, `hashbrown`, `subtle`, `zeroize`, `log`
+  and the RustCrypto crates — a dependency graph the Ring 3 policy forbids
+  (every NeoDOS crate is in-tree and dependency-free).
+- The protocol surface we need is small (client only, TLS 1.3 only, three
+  suites, no resumption/HRR/0-RTT).
+
+M9 already provides the primitives in-tree (`libcrypto`, RFC/NIST vectors), so
+option B is "our TLS 1.3 record + handshake + X.509 over `libcrypto`". The cost
+is protocol correctness, mitigated by the INV-1..4 tests and a real-server E2E
+(`openssl s_server` fixture). TLS 1.2 is out of scope (D2 resolved: 1.3 only).
+
 ### 3.6 Verification policy
 
 - **Server authentication is mandatory.** `connect` always verifies the chain,
@@ -308,8 +327,11 @@ invalid/expired/mismatch cases return the documented error and exit code.
    policy; tests. Blocks M10.
 2. **M8 — Ring-3 CSPRNG:** `\Device\Random`, classes 48/49, DRBG, wrapper;
    tests. Blocks M10 (and gates everything).
-3. **M9 — `libcrypto`:** primitives + vectors (INV-1).
-4. **D1 spike:** `rustls` no_std + provider build gate (timeboxed).
+3. **M9 — `libcrypto`: DONE.** SHA-256, HMAC-SHA256, HKDF (RFC 5869),
+   ChaCha20-Poly1305 (RFC 8439), X25519 (RFC 7748), RSA PKCS#1 v1.5/PSS and
+   ECDSA P-256 verification; 18 host tests against RFC/NIST/OpenSSL vectors.
+4. **D1 spike: DONE.** `rustls` rejected (see §3.5); own TLS 1.3 client over
+   `libcrypto`.
 5. **M10 — `libtls`:** X.509 + chain/hostname/clock validation, trust store,
    record + handshake, SNI, ALPN; tests (INV-2/3/4).
 6. **M11 — HTTPS integration:** `Scheme::Https` in `libhttp`, `neocurl https://`,

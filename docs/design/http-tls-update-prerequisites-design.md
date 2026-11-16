@@ -2,8 +2,9 @@
 
 > **Version:** v0.2 — reconciled with `develop` @ `532d554` (2026-11-14)
 > **Status:** Design. Step 1 (TCP connect), the byte-stream fixes (writability
-> wait and EOF), the DNS TTL cache, the trusted clock (M7) and the Ring 3
-> CSPRNG (M8) are **implemented**; the durability primitives are not.
+> wait and EOF), the DNS TTL cache, the trusted clock (M7), the Ring 3 CSPRNG
+> (M8) and the crypto primitives (M9) are **implemented**; the durability
+> primitives are not.
 > **Target Release:** v0.55 (WAL + VFS Advanced) / v0.56 for CSPRNG
 > **Related:** #307, #315, #411, #467, #484, #486, #491, #593, #692, #696, #710;
 > `docs/design/system-configuration-time-network-security-update-design.md`,
