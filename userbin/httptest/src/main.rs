@@ -84,6 +84,21 @@ fn run(raw: &[u8]) -> u32 {
         return 2;
     }
 
+    // Diagnostic only: the matrix does not depend on the wall clock, but the
+    // E2E log records whether `ntpd` has made it trustworthy (M7).
+    match libclock::system::trusted_now_unix() {
+        Ok(secs) => {
+            out_str(1, b"CLOCK: trusted ");
+            out_u64(1, secs as u64);
+            out_str(1, b"\r\n");
+        }
+        Err(err) => {
+            out_str(1, b"CLOCK: untrusted (");
+            out_str(1, err.as_str().as_bytes());
+            out_str(1, b")\r\n");
+        }
+    }
+
     let mut t = Tests {
         base: alloc::string::String::from(base),
         host: parsed.host.clone(),

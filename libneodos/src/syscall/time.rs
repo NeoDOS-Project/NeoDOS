@@ -46,6 +46,33 @@ pub fn ob_high_res_time() -> Result<(u64, u32), i64> {
     Ok((tsc, khz))
 }
 
+/// Read the system (RTC) wall clock via ob_query_info(DateTime).
+///
+/// The returned `valid` flag is the kernel/RTC's own consistency marker; it is
+/// not a trust signal (see `libclock` for the `ntpd`-backed policy).
+pub fn ob_datetime() -> Result<DateTime, i64> {
+    let fd = sys_ob_open("\\Global\\Info\\DateTime", ob_access::READ)?;
+    let mut dt = DateTime {
+        second: 0,
+        minute: 0,
+        hour: 0,
+        day: 0,
+        month: 0,
+        year: 0,
+        valid: 0,
+    };
+    let sz = core::mem::size_of::<DateTime>();
+    // SAFETY: DateTime is #[repr(C)] and `sz` is its exact size.
+    let buf = unsafe { core::slice::from_raw_parts_mut(&mut dt as *mut DateTime as *mut u8, sz) };
+    let r = sys_ob_query_info(fd, ObInfoClass::DateTime, buf);
+    let _ = sys_close(fd);
+    let n = r?;
+    if n < sz {
+        return Err(super::EINVAL);
+    }
+    Ok(dt)
+}
+
 /// Set the system (RTC) clock via ob_set_info(DateTime).
 ///
 /// Requires admin privileges. Opens `\Global\Info\DateTime`, writes the

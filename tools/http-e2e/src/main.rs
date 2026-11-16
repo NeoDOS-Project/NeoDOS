@@ -53,6 +53,7 @@ struct Options {
     serial: PathBuf,
     boot_timeout: Duration,
     test_timeout: Duration,
+    wait_sync: bool,
     keep: bool,
 }
 
@@ -67,6 +68,7 @@ impl Options {
             serial: std::env::temp_dir().join("http-e2e-serial.log"),
             boot_timeout: Duration::from_secs(240),
             test_timeout: Duration::from_secs(300),
+            wait_sync: false,
             keep: false,
         };
         let mut args = std::env::args().skip(1);
@@ -85,12 +87,13 @@ impl Options {
                 "--test-timeout" => {
                     opts.test_timeout = Duration::from_secs(value()?.parse().map_err(|_| "invalid")?)
                 }
+                "--wait-sync" => opts.wait_sync = true,
                 "--keep" => opts.keep = true,
                 "--help" | "-h" => {
                     println!(
                         "usage: http-e2e [--port N] [--guest-host IP] [--backend vbox] \
                          [--neodev PATH] [--repo DIR] [--serial FILE] [--boot-timeout S] \
-                         [--test-timeout S] [--keep]"
+                         [--test-timeout S] [--wait-sync] [--keep]"
                     );
                     std::process::exit(0);
                 }
@@ -144,6 +147,9 @@ fn run(opts: &Options) -> Result<bool, String> {
     let result = (|| -> Result<bool, String> {
         wait_for_boot(&opts.serial, opts.boot_timeout)?;
         thread::sleep(Duration::from_secs(2));
+        if opts.wait_sync {
+            wait_for_sync(&opts.serial, Duration::from_secs(120))?;
+        }
         let command = format!("httptest http://{}:{}", opts.guest_host, opts.port);
         println!("typing: {command}");
         type_text(&command)?;
@@ -184,6 +190,23 @@ fn wait_for_boot(path: &Path, timeout: Duration) -> Result<(), String> {
     }
     Err(format!(
         "guest did not reach the shell prompt in {}s (serial: {})",
+        timeout.as_secs(),
+        path.display()
+    ))
+}
+
+/// Wait until `ntpd` reports a successful step. The test does not depend on it,
+/// but clock-policy checks (`CLOCK: trusted`) do.
+fn wait_for_sync(path: &Path, timeout: Duration) -> Result<(), String> {
+    let start = Instant::now();
+    while start.elapsed() < timeout {
+        if read(path).contains("[ntpd] synced") {
+            return Ok(());
+        }
+        thread::sleep(Duration::from_millis(500));
+    }
+    Err(format!(
+        "ntpd did not report a sync in {}s (serial: {})",
         timeout.as_secs(),
         path.display()
     ))
