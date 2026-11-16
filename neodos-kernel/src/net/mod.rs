@@ -133,6 +133,18 @@ pub fn spawn_net_kthread(entry: u64) -> Option<u32> {
     crate::scheduler::spawn_net_kthread(entry)
 }
 
+// Network timers (ARP lifetime) read the clock through `tcp`, which owns the
+// baselined `boot_benchmark` accessor; `net/mod.rs` must not import it itself
+// (check-deps).
+pub(crate) fn now_tsc() -> u64 {
+    crate::net::tcp::tcp_now_tsc()
+}
+
+/// Convert milliseconds to TSC ticks.
+pub(crate) fn ms_to_tsc(ms: u64) -> u64 {
+    crate::net::tcp::tcp_ticks_from_ms(ms)
+}
+
 pub fn net_tick() {
     if !net_is_initialized() { return; }
     ktrace!(LogSubsys::Net, "tick");
@@ -318,6 +330,15 @@ pub fn net_handle_incoming_packet(nic_id: u32, packet: &[u8]) {
             return;
         }
         let payload = &packet[ip_offset + header_len..ip_offset + total_len];
+
+        // Learn the sender's L2 address from unicast IPv4 traffic. Its source
+        // MAC *is* the next hop for our replies, so an established TCP flow
+        // (its ACKs) no longer depends on a fresh ARP round trip — and the
+        // entry cannot expire while data keeps arriving (#721).
+        let eth_src = eth_hdr.src_mac();
+        if !eth_src.is_broadcast() && !eth_src.is_zero() {
+            arp::arp_insert(ip_hdr.src_ip(), eth_src);
+        }
 
         if ip_hdr.protocol() == crate::net::ipv4::IPV4_PROTO_UDP {
             if payload.len() < core::mem::size_of::<crate::net::udp::UdpHeader>() { return; }

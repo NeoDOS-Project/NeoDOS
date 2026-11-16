@@ -286,6 +286,11 @@ pub fn tcp_high_res_time() -> (u64, u32) {
     (crate::boot_benchmark::rdtsc(), khz.min(u32::MAX as u64) as u32)
 }
 
+/// TSC ticks in `ms`, for net modules that must not import `boot_benchmark`.
+pub fn tcp_ticks_from_ms(ms: u64) -> u64 {
+    tsc_ticks_from_ms(ms, tsc_per_us())
+}
+
 /// Absolute TSC deadline for a millisecond timeout.
 pub fn tcp_deadline_from_ms(ms: u64) -> u64 {
     crate::boot_benchmark::rdtsc().wrapping_add(tsc_ticks_from_ms(ms, tsc_per_us()))
