@@ -53,6 +53,29 @@ is stored in the connection buffer, ACKed, and wakes `SocketRead` waiters;
 incoming FINs park in CloseWait. `tcp_dispatch()` never holds `SOCKET_MANAGER`
 across protocol actions (nested locks deadlocked SYN handling).
 
+### Bulk receive (#721)
+
+Three rules keep a download from stalling above one receive window:
+
+* **Window updates.** `tcp_recv()` records when the application has freed at
+  least an MSS while the last advertised window was smaller than one. The ACK
+  is queued (`ack_pending`) and `tcp_tick()` transmits it; the peer no longer
+  depends on its zero-window probe timer.
+* **No silently dropped ACKs.** If the ACK cannot be sent yet (no next-hop MAC
+  or no NIC) it stays pending and `tcp_tick()` retries every 100 ms. The peer's
+  own retransmit timer is not the recovery mechanism.
+* **Stable next hop.** Every accepted unicast IPv4 frame refreshes the ARP
+  entry for its source address, so replies to an established flow do not need
+  a fresh ARP round trip. ARP entries also expire on wall-clock time (TSC),
+  not on `arp_tick` calls: the RX pump ticks far faster than the nominal
+  100 Hz and entries used to vanish in about a second.
+
+Ordering: a FIN is consumed only when its sequence number is exactly the next
+expected byte (a FIN following the segment's payload is passed as
+`seq + payload.len()`); an out-of-order FIN is ACKed without closing the read
+side, so the retransmitted tail is still accepted. A peer RST closes the
+connection immediately and wakes every waiter.
+
 ### RX dispatch and locking
 
 `network_poll_all()` drains a bounded batch of frames **while holding

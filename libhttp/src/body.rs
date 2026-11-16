@@ -235,7 +235,11 @@ impl<R: Read> BodyReader<R> {
         if self.eof {
             return Ok(false);
         }
-        let mut tmp = [0u8; 1024];
+        // Drain the socket in filesystem-block-sized chunks. Each `BodySink`
+        // write is a syscall (and, for `neocurl -o`, an NE2 write that commits
+        // metadata); reading a kilobyte at a time made large downloads
+        // app-bound rather than network-bound.
+        let mut tmp = [0u8; 4096];
         let n = self.inner.read(&mut tmp, self.dl)?;
         if n == 0 {
             self.eof = true;
