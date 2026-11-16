@@ -321,9 +321,11 @@ impl Mont {
             x.wrapping_neg()
         };
         // R = 2^(32*len); compute R^2 mod n by doubling 1 (64*len times).
-        let mut rr = Big { limbs: alloc::vec![1] };
+        // In place: a 2048-bit key needs 4096 doublings and the userland heap
+        // never reuses freed memory, so per-step allocations exhausted it.
+        let mut rr = Big::from_u32(1);
         for _ in 0..(64 * len) {
-            rr = add_mod(&rr.add(&rr), n);
+            rr.double_mod_in_place(n);
         }
         Mont {
             n: n.clone(),
@@ -407,12 +409,21 @@ impl Mont {
     }
 }
 
-/// Reduce `a` in `[0, 2n)` modulo `n` with one conditional subtraction.
-fn add_mod(a: &Big, n: &Big) -> Big {
-    if a.cmp(n) != core::cmp::Ordering::Less {
-        a.sub(n)
-    } else {
-        a.clone()
+impl Big {
+    /// `self = 2 * self mod n` without allocating a new value per step.
+    fn double_mod_in_place(&mut self, n: &Big) {
+        let mut carry = 0u32;
+        for limb in self.limbs.iter_mut() {
+            let v = ((*limb as u64) << 1) | carry as u64;
+            *limb = v as u32;
+            carry = (v >> 32) as u32;
+        }
+        if carry != 0 {
+            self.limbs.push(carry);
+        }
+        if self.cmp(n) != core::cmp::Ordering::Less {
+            *self = self.sub(n);
+        }
     }
 }
 
