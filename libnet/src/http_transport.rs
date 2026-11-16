@@ -180,3 +180,108 @@ fn resolve(host: &str) -> Result<[u8; 4], HttpError> {
         Err(_) => Err(HttpError::Dns),
     }
 }
+
+// ── HTTPS (M10/M11) ──
+
+use libtls::{ClientConfig, Host, Rng, TlsError, Transport as TlsTransportTrait};
+
+/// Kernel CSPRNG backed by `\Device\Random`; fails closed unless the pool is
+/// backed by a hardware source (M8).
+struct KernelRng;
+
+impl Rng for KernelRng {
+    fn fill(&mut self, buf: &mut [u8]) -> Result<(), TlsError> {
+        let caps = syscall::ob_random_caps().map_err(|_| TlsError::RngUnavailable)?;
+        if !caps.hardware_backed() {
+            return Err(TlsError::RngUnavailable);
+        }
+        syscall::ob_random(buf).map_err(|_| TlsError::RngUnavailable)?;
+        Ok(())
+    }
+}
+
+/// `libtls::Transport` over the TCP socket wrapper, borrowing the deadline.
+struct TlsTcp {
+    conn: Option<TcpConn>,
+    dl: Deadline,
+}
+
+impl TlsTransportTrait for TlsTcp {
+    fn read(&mut self, buf: &mut [u8]) -> Result<usize, TlsError> {
+        let Some(conn) = self.conn.as_mut() else {
+            return Ok(0);
+        };
+        Read::read(conn, buf, self.dl).map_err(|_| TlsError::Io)
+    }
+
+    fn write_all(&mut self, data: &[u8]) -> Result<(), TlsError> {
+        let Some(conn) = self.conn.as_mut() else {
+            return Err(TlsError::Io);
+        };
+        Write::write_all(conn, data, self.dl).map_err(|_| TlsError::Io)
+    }
+
+    fn close(&mut self) {
+        if let Some(conn) = self.conn.take() {
+            conn.close();
+        }
+    }
+}
+
+/// HTTPS transport: TCP + TLS 1.3 with a caller-provided trust anchor list.
+pub struct HttpsTransport {
+    limits: Limits,
+    roots: alloc::vec::Vec<alloc::vec::Vec<u8>>,
+}
+
+impl HttpsTransport {
+    pub fn new(limits: Limits, roots: alloc::vec::Vec<alloc::vec::Vec<u8>>) -> Self {
+        HttpsTransport { limits, roots }
+    }
+}
+
+/// One TLS connection.
+pub struct HttpsConn {
+    stream: libtls::TlsStream<TlsTcp>,
+}
+
+impl Transport for HttpsTransport {
+    type Conn = HttpsConn;
+
+    fn connect(&mut self, host: &str, port: u16, dl: Deadline) -> Result<HttpsConn, HttpError> {
+        let tcp = TcpTransport::new(self.limits).connect(host, port, dl)?;
+        let clock = libclock::system::SystemClock;
+        let mut rng = KernelRng;
+        let (host_kind, sni) = match libdns::parse_dotted_ip(host) {
+            Some(ip) => (Host::Ip(ip), None),
+            None => (Host::Dns(host), Some(host)),
+        };
+        let cfg = ClientConfig {
+            roots: &self.roots,
+            clock: &clock,
+            rng: &mut rng,
+            server_name: sni,
+            host: host_kind,
+        };
+        let stream = libtls::connect(TlsTcp { conn: Some(tcp), dl }, cfg).map_err(|_| HttpError::Tls)?;
+        Ok(HttpsConn { stream })
+    }
+}
+
+impl Read for HttpsConn {
+    fn read(&mut self, buf: &mut [u8], _dl: Deadline) -> Result<usize, HttpError> {
+        self.stream.read(buf).map_err(|_| HttpError::Io)
+    }
+}
+
+impl Write for HttpsConn {
+    fn write_all(&mut self, buf: &[u8], _dl: Deadline) -> Result<(), HttpError> {
+        self.stream.write_all(buf).map_err(|_| HttpError::Io)
+    }
+}
+
+impl Close for HttpsConn {
+    fn close(self) {
+        self.stream.close();
+    }
+}
