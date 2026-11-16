@@ -226,6 +226,7 @@ pub fn register_tests() {
     crate::syscall::register_path_tests();
     crate::syscall::register_sync_tests();
     crate::syscall::register_ob_stats_tests();
+    crate::random::register_tests();
     crate::syscall::register_ob_set_tests();
     crate::nem::register_nem_tests();
     crate::elf::register_elf_tests();

@@ -81,6 +81,10 @@ pub enum ObInfoClass {
     Uptime = 46,
     /// High-resolution monotonic time: `{ tsc: u64, tsc_khz: u32, _pad: u32 }` (#467).
     HighResTime = 47,
+    /// Fill the buffer from `\Device\Random` (#712/M8).
+    Random = 48,
+    /// Random source capabilities (`SysRandomCaps`, 4 bytes) (#712/M8).
+    RandomCaps = 49,
 }
 
 pub mod ob_type {

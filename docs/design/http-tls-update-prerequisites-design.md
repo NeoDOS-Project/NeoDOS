@@ -2,8 +2,8 @@
 
 > **Version:** v0.2 — reconciled with `develop` @ `532d554` (2026-11-14)
 > **Status:** Design. Step 1 (TCP connect), the byte-stream fixes (writability
-> wait and EOF) and the DNS TTL cache are **implemented**; the CSPRNG and the
-> durability primitives are not.
+> wait and EOF), the DNS TTL cache, the trusted clock (M7) and the Ring 3
+> CSPRNG (M8) are **implemented**; the durability primitives are not.
 > **Target Release:** v0.55 (WAL + VFS Advanced) / v0.56 for CSPRNG
 > **Related:** #307, #315, #411, #467, #484, #486, #491, #593, #692, #696, #710;
 > `docs/design/system-configuration-time-network-security-update-design.md`,
@@ -119,10 +119,16 @@ Evidence: `tcptest` (auto-run self-test), `netcli`/`netsrv` (loopback and
 VirtualBox NAT), and the kernel tests `net_tcp_loopback_e2e` and
 `net_tcp_nic_path_syn_synack_no_deadlock`.
 
-### 3.2 Ring-3 CSPRNG
+### 3.2 Ring-3 CSPRNG — IMPLEMENTED (M8)
 
 Add a kernel random device object and two read classes. **No new `ObType`**:
 reuse `ObType::Device` with a new `\Device\Random` object created at boot.
+
+Implemented in `neodos-kernel/src/random.rs`: a ChaCha20 DRBG seeded from
+RDSEED (else RDRAND, else TSC+counter), reseeded every 1 MiB or 1 s, with
+reads capped at 4 KiB. `libneodos::syscall::{ob_random, ob_random_caps}`
+expose it; `RandomCaps.hardware_backed()` is the fail-closed check for TLS.
+The RFC 8439 block vector and pool behaviour are kernel tests.
 
 Class slots: `ObInfoClass` 44 (`KeyboardRead`) and 45 (`KeyboardPoll`) are
 taken since #466; the design uses **48 (`Random`) and 49 (`RandomCaps`)**.
@@ -274,7 +280,7 @@ live in `libdns`; no ABI impact.
 | `net/tcp.rs` | Wake writers on ACK/FIN/close; expose free TX space | **Done** |
 | `libnet/src/dns.rs` | Cache with TTL expiry (`libdns::AnswerCache`) | **Done** |
 | `hal` | `rdseed` feature detection | Low |
-| `syscall/ob/query` | `Random`, `RandomCaps` handlers | Low |
+| `syscall/ob/query` | `Random`, `RandomCaps` handlers | **Done** |
 | `syscall/ob/set` | `FileSync`, `FileReplace` handlers | Low |
 | `object/types.rs` | 4 new class constants (48, 49, 52, 54) | Low |
 | `syscall/ob/types.rs` | `SysRandomCaps` | Low |

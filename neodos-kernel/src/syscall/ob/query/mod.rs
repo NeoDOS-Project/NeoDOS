@@ -16,6 +16,7 @@ mod devices;
 mod fs;
 mod session;
 mod keyboard;
+mod random;
 
 pub use stats::register_ob_stats_tests;
 
@@ -31,6 +32,7 @@ pub fn info_class_handled(info_class: u32) -> bool {
         || fs::handles(info_class)
         || session::handles(info_class)
         || keyboard::handles(info_class)
+        || random::handles(info_class)
 }
 
 pub fn handler_ob_query_info(regs: crate::syscall::Registers) -> u64 {
@@ -61,6 +63,7 @@ pub fn handler_ob_query_info(regs: crate::syscall::Registers) -> u64 {
         _ if fs::handles(info_class) => fs::dispatch(info_class, fd, entry, buf_ptr, buf_size),
         _ if session::handles(info_class) => session::dispatch(info_class, fd, entry, buf_ptr, buf_size),
         _ if keyboard::handles(info_class) => keyboard::dispatch(info_class, fd, entry, buf_ptr, buf_size),
+        _ if random::handles(info_class) => random::dispatch(info_class, fd, entry, buf_ptr, buf_size),
         _ => err_to_u64(SyscallError::Inval),
     }
 }

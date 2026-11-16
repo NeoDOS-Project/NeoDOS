@@ -186,6 +186,11 @@ pub enum ObInfoClass {
     /// High-resolution monotonic time: `{ tsc: u64, tsc_khz: u32, _pad: u32 }`
     /// (16 bytes), from the calibrated TSC (#467).
     HighResTime = 47,
+    /// Fill the buffer with CSPRNG bytes (`\Device\Random`). The whole buffer
+    /// is written; the return value is the byte count (#712/M8).
+    Random = 48,
+    /// Random source capabilities: `SysRandomCaps` (4 bytes) (#712/M8).
+    RandomCaps = 49,
 }
 
 /// Info classes for sys_ob_set_info (RAX=43).

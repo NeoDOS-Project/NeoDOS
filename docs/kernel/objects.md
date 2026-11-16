@@ -126,6 +126,7 @@ offset for SeAccessCheck re-verification.
 │   ├── NeoDosVolume0              — NeoDOS FS volume
 │   ├── EspVolume0                 — ESP FAT32 volume
 │   ├── Keyboard                   — keyboard device (NeoKBD, ObType::KeyboardDevice)
+│   ├── Random                     — kernel CSPRNG (query classes 48/49, #712/M8)
 │   └── ...
 ├── \Driver\                       — NEM driver objects
 │   ├── Ahci                       — AHCI NEM driver
@@ -220,6 +221,8 @@ Supports the following info classes:
 | 41 | LocalDateTime | `SysDateTime` (7 bytes) with the RTC UTC time converted to local using the configured timezone — `\Global\Info\DateTime` (#357) |
 | 42 | ProcessShutdownState | 1 byte: `0` = normal execution, `1` = graceful shutdown requested. Any valid handle; answers for the *calling* process. Set by the Service Manager `stop_service()` and cleared on process exit — #358 |
 | 32 | PowerState | PowerSystemState u32 (Active/ShuttingDown/Rebooting/Suspending/Hibernating/Off) — `\System\PowerManager`. Class declared; handler not yet implemented. |
+| 48 | Random | Fill the buffer from `\Device\Random` (kernel ChaCha20 DRBG). Returns the byte count; at most 4096 bytes per call (#712/M8). |
+| 49 | RandomCaps | `SysRandomCaps` (4 bytes: `hw_rdrand`, `hw_rdseed`, `pool_ready`, pad) — `\Device\Random`. Consumers that need a CSPRNG (TLS) fail closed unless a hardware source is reported (#712/M8). |
 
 ### SMP observability (CpuStats = 24, ThreadStats = 25)
 
