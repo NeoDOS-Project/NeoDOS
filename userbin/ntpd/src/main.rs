@@ -85,12 +85,16 @@ fn write_u32(mut v: u32) {
         write_str(b"0");
         return;
     }
-    while v > 0 && i > 0 {
+    // The buffer must fit every digit the type can hold.
+    while v > 0 {
         buf[i] = b'0' + (v % 10) as u8;
         v /= 10;
+        if i == 0 {
+            break;
+        }
         i -= 1;
     }
-    write_str(&buf[i + 1..=9]);
+    write_str(&buf[i..=9]);
 }
 
 fn write_i64(mut v: i64) {
@@ -104,12 +108,16 @@ fn write_i64(mut v: i64) {
         write_str(b"0");
         return;
     }
-    while v > 0 && i > 0 {
+    // The buffer must fit every digit the type can hold.
+    while v > 0 {
         buf[i] = b'0' + (v % 10) as u8;
         v /= 10;
+        if i == 0 {
+            break;
+        }
         i -= 1;
     }
-    write_str(&buf[i + 1..=19]);
+    write_str(&buf[i..=19]);
 }
 
 // Shared IPv4 formatting (#592); only the console shim.

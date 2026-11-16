@@ -169,6 +169,29 @@ ntpd → libneodos::ob_set_datetime()
 This is a **direct step** (equivalent to `ntpdate`). The clock API is
 admin-only, matching `SetHostname`.
 
+### 6.1 What gets stepped
+
+`libntp::clock_step` decides, from the two RTC readings around the exchange
+(`t1` before the request, `t4` after the reply) and the server timestamps
+(`t2`/`t3`):
+
+- **Normal sync** — both RTC readings are plausible (2020 ≤ time < 2100). The
+  RFC 5905 offset is applied. A negative or absurd round trip (> 10 s) means
+  the local clock cannot be measuring it, so the reply is rejected instead of
+  being stepped in.
+- **Cold start** — the RTC is unset or unreadable (a transient
+  `\Global\Info\DateTime` failure reads as "no clock"). The offset against
+  such a clock measures the distance from 1970, not the drift: applying it
+  lands the clock decades in the future (observed: a 2026 machine stepped to
+  2055). Instead the clock is set from the server's transmit timestamp. The
+  RTC has one-second resolution, so the missing half-RTT correction is below
+  its accuracy.
+- **Always** — the resulting time must fall in [2020, 2100); otherwise the
+  reply is rejected and `ntpd` backs off.
+
+A cold start publishes `OffsetMs=0`/`DelayMs=0` (nothing was measured) and
+logs `[ntpd] cold start: stepped clock to <secs> stratum=N`.
+
 ## 7. Known limitations
 
 | Limitation | Tracking |
@@ -190,7 +213,8 @@ permanent fix (auto-discovery) is tracked in NeoDOS-Project/NeoDev#5.
 ## 8. Testing
 
 - `libntp` unit tests (host): request encoding, reply validation, offset/delay
-  math, NTP↔Unix conversion, civil-time round trips, config parsing, **MD5
+  math, clock stepping (normal, cold start, implausible delay/time), NTP↔Unix
+  conversion, civil-time round trips, config parsing, **MD5
   (RFC 1321) vectors and MAC authentication** (accept a valid MAC; reject
   missing/key-id-mismatch/bad-MAC/tampered replies).
 - Kernel tests: `ObSetInfoClass::DateTime` field validation.

@@ -207,6 +207,90 @@ pub fn offset_and_delay(t1: i128, t2: i128, t3: i128, t4: i128) -> (i128, i128) 
     (offset, delay)
 }
 
+/// Earliest Unix second accepted as a plausible clock reading
+/// (2020-01-01T00:00:00Z). Earlier than this the local RTC is unset.
+pub const MIN_PLAUSIBLE_UNIX: i64 = 1_577_836_800;
+/// Latest accepted second (2100-01-01T00:00:00Z).
+pub const MAX_PLAUSIBLE_UNIX: i64 = 4_102_444_800;
+/// A round trip longer than this is not a usable measurement.
+pub const MAX_PLAUSIBLE_DELAY_NS: i128 = 10 * 1_000_000_000;
+
+/// A clock step derived from one exchange.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ClockStep {
+    /// How much the local clock must advance (0 for a cold step).
+    pub offset_ns: i128,
+    /// Measured round-trip delay (0 for a cold step).
+    pub delay_ns: i128,
+    /// Absolute UTC time to apply.
+    pub unix_secs: i64,
+    /// The local RTC was unset, so the time comes straight from the server.
+    pub cold: bool,
+}
+
+/// Why a reply cannot be turned into a clock step.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StepError {
+    /// The round trip is negative or absurdly long: the local clock cannot be
+    /// measuring it, so the exchange is unusable.
+    ImplausibleDelay,
+    /// The resulting time is outside [`MIN_PLAUSIBLE_UNIX`, `MAX_PLAUSIBLE_UNIX`).
+    ImplausibleTime,
+}
+
+fn plausible(ns: Option<i128>) -> Option<i128> {
+    ns.filter(|v| {
+        let secs = v.div_euclid(1_000_000_000) as i64;
+        (MIN_PLAUSIBLE_UNIX..MAX_PLAUSIBLE_UNIX).contains(&secs)
+    })
+}
+
+fn check_time(unix_secs: i64) -> Result<i64, StepError> {
+    if (MIN_PLAUSIBLE_UNIX..MAX_PLAUSIBLE_UNIX).contains(&unix_secs) {
+        Ok(unix_secs)
+    } else {
+        Err(StepError::ImplausibleTime)
+    }
+}
+
+/// Turn one exchange into a clock step.
+///
+/// `local_before`/`local_after` are the RTC readings taken before and after
+/// the request, or `None` when the RTC was unset or unreadable. An offset is
+/// only meaningful when both readings are plausible: against an unset RTC the
+/// difference measures the distance from 1970, not the drift, and stepping by
+/// it lands the clock decades in the future. In that case the clock is set
+/// from the server's own transmit timestamp instead (the RTC has one-second
+/// resolution, so the missing half-RTT correction is below its accuracy).
+pub fn clock_step(
+    local_before: Option<i128>,
+    t2: i128,
+    t3: i128,
+    local_after: Option<i128>,
+) -> Result<ClockStep, StepError> {
+    match (plausible(local_before), plausible(local_after)) {
+        (Some(t1), Some(t4)) => {
+            let (offset_ns, delay_ns) = offset_and_delay(t1, t2, t3, t4);
+            if !(0..=MAX_PLAUSIBLE_DELAY_NS).contains(&delay_ns) {
+                return Err(StepError::ImplausibleDelay);
+            }
+            let unix_secs = check_time((t4 + offset_ns).div_euclid(1_000_000_000) as i64)?;
+            Ok(ClockStep {
+                offset_ns,
+                delay_ns,
+                unix_secs,
+                cold: false,
+            })
+        }
+        _ => Ok(ClockStep {
+            offset_ns: 0,
+            delay_ns: 0,
+            unix_secs: check_time(t3.div_euclid(1_000_000_000) as i64)?,
+            cold: true,
+        }),
+    }
+}
+
 // ── Civil time ──
 
 /// A UTC calendar date/time with two-digit years, matching NeoDOS `SysDateTime`.
@@ -554,6 +638,60 @@ mod tests {
         b[32..40].copy_from_slice(&receive.to_be_bytes());
         b[40..48].copy_from_slice(&transmit.to_be_bytes());
         b
+    }
+
+    const NOW: i128 = 1_794_831_330 * 1_000_000_000; // 2026-11-16T12:15:30Z
+
+    #[test]
+    fn clock_step_corrects_a_plausible_clock() {
+        // 5 s behind, 100 ms each way.
+        let t1 = NOW - 5_000_000_000;
+        let t2 = NOW + 100_000_000;
+        let t3 = NOW + 100_000_000;
+        let t4 = NOW - 4_800_000_000;
+        let step = clock_step(Some(t1), t2, t3, Some(t4)).unwrap();
+        assert!(!step.cold);
+        assert_eq!(step.offset_ns, 5_000_000_000);
+        assert_eq!(step.delay_ns, 200_000_000);
+        // The corrected time is the server's, not the (5 s slow) local clock.
+        assert_eq!(step.unix_secs, 1_794_831_330);
+    }
+
+    #[test]
+    fn clock_step_cold_start_ignores_the_unset_clock() {
+        // The RTC reads 1970 for the request and is readable on return: the
+        // old code turned this into a ~28-year offset and stepped the clock to
+        // 2055. A cold step must take the server's own time instead.
+        let step = clock_step(Some(0), NOW + 100_000_000, NOW, Some(NOW)).unwrap();
+        assert!(step.cold);
+        assert_eq!(step.offset_ns, 0);
+        assert_eq!(step.delay_ns, 0);
+        assert_eq!(step.unix_secs, 1_794_831_330);
+
+        // Both readings unset, or the RTC unreadable, behave the same way.
+        for (before, after) in [(Some(0), Some(0)), (None, None), (None, Some(NOW))] {
+            let step = clock_step(before, NOW, NOW, after).unwrap();
+            assert!(step.cold);
+            assert_eq!(step.unix_secs, 1_794_831_330);
+        }
+    }
+
+    #[test]
+    fn clock_step_rejects_unusable_measurements() {
+        // Absurd round trip (the local clock is not measuring anything).
+        assert_eq!(
+            clock_step(Some(NOW), NOW, NOW, Some(NOW + 60_000_000_000)),
+            Err(StepError::ImplausibleDelay)
+        );
+        // Time before 2020 (an NTP era or unset-server reply).
+        assert_eq!(
+            clock_step(None, 0, 0, None),
+            Err(StepError::ImplausibleTime)
+        );
+        assert_eq!(
+            clock_step(None, 0, 4_102_444_800 * 1_000_000_000, None),
+            Err(StepError::ImplausibleTime)
+        );
     }
 
     #[test]
