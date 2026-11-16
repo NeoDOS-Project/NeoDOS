@@ -1,9 +1,9 @@
 # HTTP/TLS/Update Kernel Prerequisites — Design Document
 
 > **Version:** v0.2 — reconciled with `develop` @ `532d554` (2026-11-14)
-> **Status:** Design. Step 1 (TCP connect) and the byte-stream fixes
-> (writability wait and EOF) are **implemented**; the CSPRNG, the durability
-> primitives and the DNS TTL cache are not.
+> **Status:** Design. Step 1 (TCP connect), the byte-stream fixes (writability
+> wait and EOF) and the DNS TTL cache are **implemented**; the CSPRNG and the
+> durability primitives are not.
 > **Target Release:** v0.55 (WAL + VFS Advanced) / v0.56 for CSPRNG
 > **Related:** #307, #315, #411, #467, #484, #486, #491, #593, #692, #696, #710;
 > `docs/design/system-configuration-time-network-security-update-design.md`,
@@ -38,7 +38,7 @@ durability and byte-stream semantics.
 | `neodos-kernel/src/arch/x64/paging.rs` | 2 MiB of heap per process, 16 slots (relevant to buffering) |
 | `libneodos/src/syscall/time.rs`, `syscall/ob/query/time.rs` | `DateTime=9` (RTC, 1 s), `Uptime=46` and `HighResTime=47` (#467); no UTC-seconds helper in userland |
 | `libntp/src/lib.rs`, `userbin/ntpd/src/main.rs` | SNTP client, civil-time math, RTC step via `ob_set_datetime`; publishes `Services\Ntpd\Status` (`State`, `LastSync`, `Stratum`, `OffsetMs`) |
-| `libnet/src/dns.rs` | resolver + Registry servers + cache **without TTL expiry** |
+| `libnet/src/dns.rs` | resolver + Registry servers + TTL cache (`libdns::AnswerCache`) |
 | `docs/kernel/objects.md`, `docs/kernel/syscalls.md` | ObType list, `ob_query_info`/`ob_set_info` semantics, `sys_ob_*` rule |
 | `docs/design/system-configuration-time-network-security-update-design.md` | the master plan that motivates these prerequisites |
 
@@ -57,7 +57,8 @@ Verified facts (re-audited 2026-11-14 on `develop` @ `532d554`):
   the clock was ever synchronised.
 - **The byte-stream API had two rough edges, now fixed**: a full TX buffer is
   reported as `-Again` and writers can wait for space (`ob_wait` type 2), and
-  `SocketRecv` returns `Ok(0)` for EOF. The DNS cache still ignores TTL.
+  `SocketRecv` returns `Ok(0)` for EOF. The DNS cache honours the answer TTL
+  (capped at one hour) and refuses to cache a zero TTL.
 
 ---
 
@@ -232,10 +233,13 @@ to query `TcpStatus=19`.
 - `netcli`, `netsrv` and `tcptest` treat `Ok(0)` as EOF instead of retrying.
 - `TcpStatus` remains the authoritative state for diagnostics.
 
-**(c) Honour DNS TTL — PENDING.** `libnet/src/dns.rs` caches an address forever.
-HTTP clients are long-lived enough for this to matter: store `ttl` and the
-insertion time (monotonic ms), and evict on expiry. Userland-only change, no ABI
-impact; it belongs to the `TcpTransport` milestone.
+**(c) Honour DNS TTL — IMPLEMENTED.** `libdns::AnswerCache` stores the address,
+its `(host, server)` key and an absolute expiry derived from the answer TTL and
+a caller-supplied monotonic clock; `libnet/src/dns.rs` feeds it
+`ob_uptime_ms()`. Lookups report the remaining TTL, expired entries are
+dropped, a zero TTL is never cached and long TTLs are capped at one hour. The
+16-entry cache is bounded and evicts the earliest expiry when full. Host tests
+live in `libdns`; no ABI impact.
 
 ---
 
@@ -265,7 +269,7 @@ impact; it belongs to the `TcpTransport` milestone.
 | `syscall/ob/set/net.rs` | TCP connect routing | **Done** (bug fix) |
 | `net/socket.rs` | Writable wait reason; EOF on empty closed socket; `Again` instead of `Io` for a full TX buffer | **Done** |
 | `net/tcp.rs` | Wake writers on ACK/FIN/close; expose free TX space | **Done** |
-| `libnet/src/dns.rs` | Cache with TTL expiry | Low (pending) |
+| `libnet/src/dns.rs` | Cache with TTL expiry (`libdns::AnswerCache`) | **Done** |
 | `hal` | `rdseed` feature detection | Low |
 | `syscall/ob/query` | `Random`, `RandomCaps` handlers | Low |
 | `syscall/ob/set` | `FileSync`, `FileReplace` handlers | Low |
@@ -343,7 +347,11 @@ flush semantics).
 | `socket_send_full_buffer_is_again` | Full TX buffer → `SendError::Full` → `-Again` |
 | `socket_poll_writable_requires_space` | `POLLOUT` only with free TX space |
 | `tcp_send_space_tracks_buffer` | Free space follows `send_buf` |
-| `dns_cache_expires` | Entry past its TTL is re-resolved (pending) |
+| `cache_ttl_expiry_and_slots` | Remaining TTL is reported; the entry is dropped at expiry |
+| `cache_zero_ttl_is_not_cached` | A zero TTL stores nothing and evicts the old answer |
+| `cache_caps_long_ttls_and_refreshes` | TTL capped at the limit; refresh updates address and deadline |
+| `cache_is_bounded_and_evicts_earliest_expiry` | Full cache drops the earliest expiry |
+| `cache_capacity_zero_disables_it` | A zero-capacity cache never stores |
 
 **Integration:** `ntpd`/Registry flush survives a reboot; a TLS handshake can
 obtain entropy; an HTTP client connects over TCP.
