@@ -48,6 +48,21 @@ const OID_EC_PUBLIC_KEY: &[u8] = &[0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01];
 const OID_PRIME256V1: &[u8] = &[0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07];
 const OID_BASIC_CONSTRAINTS: &[u8] = &[0x55, 0x1d, 0x13];
 const OID_SAN: &[u8] = &[0x55, 0x1d, 0x11];
+const OID_KEY_USAGE: &[u8] = &[0x55, 0x1d, 0x0f];
+const OID_EXT_KEY_USAGE: &[u8] = &[0x55, 0x1d, 0x25];
+const OID_SERVER_AUTH: &[u8] = &[0x2b, 0x06, 0x01, 0x05, 0x05, 0x07, 0x03, 0x01];
+// Common critical extensions we understand well enough to accept without
+// acting on them (policies, AIA/CRL pointers, SKI/AKI). Anything else that is
+// critical is rejected per RFC 5280.
+const KNOWN_CRITICAL: &[&[u8]] = &[
+    &[0x55, 0x1d, 0x0e], // subjectKeyIdentifier
+    &[0x55, 0x1d, 0x23], // authorityKeyIdentifier
+    &[0x55, 0x1d, 0x20], // certificatePolicies
+    &[0x55, 0x1d, 0x1f], // cRLDistributionPoints
+    &[0x2b, 0x06, 0x01, 0x05, 0x05, 0x07, 0x01, 0x01], // authorityInfoAccess
+    &[0x2b, 0x06, 0x01, 0x05, 0x05, 0x07, 0x01, 0x18], // TLS Feature
+    &[0x2b, 0x06, 0x01, 0x04, 0x01, 0xd6, 0x79, 0x02, 0x04, 0x02], // SCT list
+];
 
 /// A parsed certificate. All slices point into the input DER.
 #[derive(Debug, Clone)]
@@ -64,7 +79,13 @@ pub struct Certificate<'a> {
     pub ip_addresses: Vec<[u8; 4]>,
     pub is_ca: bool,
     pub path_len: Option<u8>,
-    pub sig_alg: SigAlg,
+    /// `keyUsage.digitalSignature` (true when the extension is absent).
+    pub digital_signature: bool,
+    /// `extKeyUsage` contains `serverAuth` (true when the extension is absent).
+    pub server_auth: bool,
+    /// Signature algorithm; `None` when unsupported (usable as a trust anchor,
+    /// not verifiable as an issuer).
+    pub sig_alg: Option<SigAlg>,
     pub signature: &'a [u8],
 }
 
@@ -82,10 +103,10 @@ pub fn parse_certificate(der: &[u8]) -> core::result::Result<Certificate<'_>, X5
     let mut sig_alg_seq = cert.expect_sequence()?;
     let sig_oid = oid_bytes(&sig_alg_seq.next_tlv()?)?;
     let sig_alg = match sig_oid {
-        OID_SHA256_RSA => SigAlg::RsaPkcs1Sha256,
-        OID_RSA_PSS => SigAlg::RsaPssSha256,
-        OID_ECDSA_SHA256 => SigAlg::EcdsaP256Sha256,
-        _ => return Err(X509Error::UnsupportedAlgorithm),
+        OID_SHA256_RSA => Some(SigAlg::RsaPkcs1Sha256),
+        OID_RSA_PSS => Some(SigAlg::RsaPssSha256),
+        OID_ECDSA_SHA256 => Some(SigAlg::EcdsaP256Sha256),
+        _ => None,
     };
     let signature = bit_string_bytes(&cert.expect(TAG_BIT_STRING)?)?;
 
@@ -111,6 +132,8 @@ pub fn parse_certificate(der: &[u8]) -> core::result::Result<Certificate<'_>, X5
     let mut ip_addresses = Vec::new();
     let mut is_ca = false;
     let mut path_len = None;
+    let mut digital_signature = true;
+    let mut server_auth = true;
 
     // Optional issuerUniqueID [1], subjectUniqueID [2], extensions [3].
     while !t.is_empty() {
@@ -142,6 +165,24 @@ pub fn parse_certificate(der: &[u8]) -> core::result::Result<Certificate<'_>, X5
                             path_len = Some(p.iter().fold(0u8, |acc, b| acc.saturating_mul(10).saturating_add(*b)));
                         }
                     }
+                    OID_KEY_USAGE => {
+                        // BIT STRING: bit 0 is digitalSignature.
+                        let mut ku = Der::new(value.value);
+                        let bits = bit_string_bytes(&ku.next_tlv()?)?;
+                        digital_signature =
+                            bits.first().map(|b| b & 0x80 != 0).unwrap_or(true);
+                    }
+                    OID_EXT_KEY_USAGE => {
+                        let mut eku = Der::new(value.value);
+                        let mut list = eku.expect_sequence()?;
+                        let mut found = false;
+                        while !list.is_empty() {
+                            if oid_bytes(&list.next_tlv()?)? == OID_SERVER_AUTH {
+                                found = true;
+                            }
+                        }
+                        server_auth = found;
+                    }
                     OID_SAN => {
                         let mut san = Der::new(value.value);
                         let mut names = san.expect_sequence()?;
@@ -162,9 +203,8 @@ pub fn parse_certificate(der: &[u8]) -> core::result::Result<Certificate<'_>, X5
                         }
                     }
                     _ => {
-                        // Unknown critical extensions are rejected by RFC 5280;
-                        // we only understand the two above.
-                        if critical {
+                        // RFC 5280: reject unknown *critical* extensions.
+                        if critical && !KNOWN_CRITICAL.contains(&oid) {
                             return Err(X509Error::UnsupportedAlgorithm);
                         }
                     }
@@ -184,6 +224,8 @@ pub fn parse_certificate(der: &[u8]) -> core::result::Result<Certificate<'_>, X5
         ip_addresses,
         is_ca,
         path_len,
+        digital_signature,
+        server_auth,
         sig_alg,
         signature,
     })
@@ -231,10 +273,11 @@ pub fn verify_issuer(child: &Certificate<'_>, issuer: &Certificate<'_>) -> core:
     if child.issuer != issuer.subject {
         return Err(X509Error::NotTrusted);
     }
-    match child.sig_alg {
+    let alg = child.sig_alg.ok_or(X509Error::UnsupportedAlgorithm)?;
+    match alg {
         SigAlg::RsaPkcs1Sha256 | SigAlg::RsaPssSha256 => {
             let key = rsa_public_key(issuer.spki)?;
-            let result = match child.sig_alg {
+            let result = match alg {
                 SigAlg::RsaPkcs1Sha256 => key.verify_pkcs1_sha256(child.tbs, child.signature),
                 _ => key.verify_pss_sha256(child.tbs, child.signature, 32),
             };
@@ -301,6 +344,9 @@ pub fn verify_chain(
         return Err(X509Error::BadCertificate);
     }
     let leaf = &chain[0];
+    if !leaf.digital_signature || !leaf.server_auth {
+        return Err(X509Error::BadCertificate);
+    }
     if !hostname_matches(leaf, host) {
         return Err(X509Error::HostnameMismatch);
     }
@@ -319,43 +365,44 @@ pub fn verify_chain(
         Ok(())
     };
 
+    let anchors: Vec<Certificate<'_>> = roots
+        .iter()
+        .filter_map(|der| parse_certificate(der).ok())
+        .collect();
+
+    // Walk from the leaf towards a trust anchor. The server may send the
+    // anchor itself and extra cross-signing certs, so stop as soon as the
+    // current certificate is anchored and never assume a fixed chain order.
     let mut current = leaf;
-    check_time(current)?;
-    for depth in 0..chain.len().saturating_sub(1) {
-        let issuer = &chain[depth + 1];
-        if !issuer.is_ca {
+    for depth in 0..8u8 {
+        check_time(current)?;
+        for root in &anchors {
+            if root.subject == current.subject && root.spki == current.spki {
+                return Ok(());
+            }
+            if root.subject == current.issuer && verify_issuer(current, root).is_ok() {
+                return Ok(());
+            }
+        }
+        let mut next: Option<&Certificate<'_>> = None;
+        for candidate in chain.iter().skip(1) {
+            if candidate.subject == current.issuer && verify_issuer(current, candidate).is_ok() {
+                next = Some(candidate);
+                break;
+            }
+        }
+        let Some(candidate) = next else {
+            return Err(X509Error::NotTrusted);
+        };
+        if !candidate.is_ca {
             return Err(X509Error::NotACa);
         }
-        if let Some(limit) = issuer.path_len {
-            if depth as u8 > limit {
+        if let Some(limit) = candidate.path_len {
+            if depth > limit {
                 return Err(X509Error::PathLenExceeded);
             }
         }
-        verify_issuer(current, issuer)?;
-        check_time(issuer)?;
-        current = issuer;
+        current = candidate;
     }
-
-    // The last certificate must be signed by a trust anchor (or be one).
-    let mut trusted = false;
-    for root_der in roots {
-        let root = parse_certificate(root_der)?;
-        if !root.is_ca {
-            continue;
-        }
-        if root.subject == current.subject && root.spki == current.spki {
-            // The server sent the root itself.
-            trusted = true;
-            break;
-        }
-        if verify_issuer(current, &root).is_ok() {
-            trusted = true;
-            break;
-        }
-    }
-    if trusted {
-        Ok(())
-    } else {
-        Err(X509Error::NotTrusted)
-    }
+    Err(X509Error::ChainTooLong)
 }

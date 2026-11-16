@@ -252,7 +252,10 @@ pub fn connect<T: Transport>(
     let certs: Vec<Certificate<'_>> = {
         let mut v = Vec::with_capacity(chain.len());
         for der in &chain {
-            v.push(parse_certificate(der).map_err(|_| TlsError::NotTrusted)?);
+            v.push(parse_certificate(der).map_err(|e| {
+                probe!("probe: parse cert len={} err={:?}", der.len(), e);
+                TlsError::NotTrusted
+            })?);
         }
         v
     };
@@ -260,6 +263,7 @@ pub fn connect<T: Transport>(
         return Err(close_with(&mut transport, TlsError::NotTrusted));
     }
     if let Err(e) = verify_chain(&certs, cfg.roots, cfg.host, now) {
+        probe!("probe: verify_chain err={:?}", e);
         let mapped = match e {
             x509::X509Error::HostnameMismatch => TlsError::HostnameMismatch,
             x509::X509Error::Expired => TlsError::Expired,
