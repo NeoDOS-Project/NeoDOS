@@ -50,6 +50,14 @@ Detection and enablement live in `arch/x64/features.rs`; the raw asm stays in
   `RFLAGS.AC` set. `hal::safe::with_user_access` brackets the validated access in
   the `copy_from_user`/`copy_to_user` helpers (`syscall/util.rs`), so syscall
   copies keep working while stray kernel accesses to user memory fault.
+- **Presence, not just range**: heap and mmap slots are carved out of the USER
+  window, so the validators (`is_user_ptr_valid`,
+  `is_valid_user_byte_locked`) test the per-process heap and mmap ranges
+  **before** the window shortcut; otherwise a demand-paged page that is not
+  resident yet is reported as accessible and the Ring 0 copy faults. A
+  non-resident user page therefore yields `EFAULT`. Userland must fault its
+  buffers in (touching one byte per page) before handing them to a syscall that
+  fills them.
 - **NX / W^X**: `EFER.NXE` is enabled when supported; user **heap and mmap** data
   pages are mapped `NO_EXECUTE` (`paging.rs heap_alloc_page`/`mmap_alloc_page` via
   `hal::map_page` bit 63). User code lives in the executable user window, so this
