@@ -16,15 +16,21 @@ Produce a consistent, tested, and documented release with proper versioning.
 ## Steps
 
 1. **Check the current version**
-   Read `AGENTS.md` (version at the top, e.g. `v0.51.5`). Classify the change:
-   - **Major**: breaking ABI or public API change.
-   - **Minor**: new feature, backward compatible.
-   - **Patch**: bug fix, no API change.
+   Read the `Version:` line in `AGENTS.md` and classify the release change
+   (Major: breaking ABI or public API; Minor: new feature, backward compatible;
+   Patch: bug fix). Do this before touching any version source.
 
 2. **Bump the version in the right places**
    - `AGENTS.md` (version string; update the test count and ABI if changed).
-   - `KERNEL_VERSION_CODE` / `BOOT_VERSION` in `src/main.rs` — currently stale
-     (`0x0A05`, tracked as `CH-11`); sync it on release.
+   - Kernel: `neodos-kernel/Cargo.toml` and `KERNEL_VERSION_CODE`
+     (`neodos-kernel/src/main.rs`) must carry the same version.
+   - Bootloader: `neodos-bootloader/Cargo.toml` and `BOOT_VERSION`
+     (`neodos-bootloader/src/main.rs`) must carry the same version, and
+     `BOOT_VERSION` must match `KERNEL_VERSION_CODE` (otherwise the kernel logs
+     a version-mismatch warning at boot).
+   - `.NXE` / `.NXL`: follow rule 15 in `AGENTS.md`; bump the crate version of
+     every userland binary whose code changed, plus its NXE metadata
+     (`NEM_PRODUCT_VER` / `NEM_FILE_VERSION`) when emitted.
    - NEM ABI: bump `ABI_TARGET`/`ABI_MAX_VALID` in
      `src/drivers/nem/format.rs` (re-exported as `crate::nem`) only for a breaking
      NEM change; then update the ABI in `AGENTS.md`.
@@ -107,7 +113,9 @@ Produce a consistent, tested, and documented release with proper versioning.
 ## Final checklist
 
 - [ ] Version bumped in `AGENTS.md`
-- [ ] `KERNEL_VERSION_CODE` / `BOOT_VERSION` synced (`src/main.rs`)
+- [ ] `neodos-kernel/Cargo.toml` + `KERNEL_VERSION_CODE` synced
+- [ ] `neodos-bootloader/Cargo.toml` + `BOOT_VERSION` synced (and match `KERNEL_VERSION_CODE`)
+- [ ] `.NXE` / `.NXL` versions bumped for every binary whose code changed
 - [ ] NEM ABI bumped (if applicable) and reflected in `AGENTS.md`
 - [ ] `CHANGELOG.md` updated
 - [ ] Roadmap synced (`scripts/sync-roadmap.sh sync`)

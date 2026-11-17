@@ -18,6 +18,16 @@
 12. **Module layout.** One directory = one subsystem, with dependencies flowing only downward (enforced by `neodev check-deps`). Never reuse a module name across layers. Use `mod.rs` for directory modules. During incremental moves, keep historical `crate::<name>` paths working via re-exports in the parent, and refresh `check-deps-baseline.txt` for the moved paths.
 13. **Issue acceptance criteria are the definition of done.** If an Issue has checkboxes (acceptance criteria), the work MUST satisfy **all** of them before it is considered complete — never close or claim an Issue done with unchecked criteria. When finished, **mark every satisfied checkbox in the Issue body** (e.g. `gh issue edit`, or edit the PR body if the checkboxes live there). If any criterion cannot be met, leave the Issue open (do not use `Closes #N`) and report the unmet item explicitly.
 14. **IRQ lock safety (INV-3 / Rule 3.5.1).** No interrupt handler may block waiting for a lock that interruptible (IF=1) code on the same CPU could hold. Every lock reachable from an IRQ handler MUST be IRQ-safe at **all** sites (`without_interrupts` / `IrqMutex` / IRQL ≥ `DISPATCH_LEVEL`) or acquired with `try_lock` in the handler. `preempt_disable()` is **not** sufficient. Details in `docs/architecture/source-of-truth.md`; checklist in `skills/review/SKILL.md`.
+15. **Userland binary versioning.** Every functional change or fix that ships in a userland binary MUST bump **that binary's** version, once per task or coherent set of changes — never per intermediate commit. The kernel, bootloader and project version follow the release process in [`skills/release/SKILL.md`](skills/release/SKILL.md); this rule covers the artifacts built from `userbin/` and `lib*-nxl/`:
+    - **`.NXE`**: `userbin/<name>/Cargo.toml` plus the NXE metadata (`NEM_PRODUCT_VER` / `NEM_FILE_VERSION`) when emitted.
+    - **`.NXL`**: `lib*-nxl/Cargo.toml`.
+
+    Criteria, per binary:
+    - **PATCH** (`0.1.0` → `0.1.1`): point fixes, small adjustments, limited improvements.
+    - **MINOR** (`0.1.1` → `0.2.0`): new capabilities, relevant features or structural changes; reset PATCH to `0`.
+    - **MAJOR**: reserved for future incompatible changes.
+
+    Classification follows technical and functional impact, not the number of changed lines. Docs-, test- or CI-only changes never bump a version. An NXL `AbiTable.version` is the ABI contract, not the binary version: bump it only when the contract itself changes.
 
 ## Quick Reference
 
