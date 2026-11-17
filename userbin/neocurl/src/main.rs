@@ -218,6 +218,25 @@ fn run(raw: &[u8]) -> Result<(), u32> {
             }
         }
         None => {
+            // D8: the image's bundle. A stale or future-dated one is worth
+            // saying out loud, but it does not change what we trust: the
+            // anchors themselves are what get verified.
+            match libnet::http_transport::trust_status() {
+                libnet::http_transport::TrustStatus::Missing => {}
+                libnet::http_transport::TrustStatus::Ok => {}
+                libnet::http_transport::TrustStatus::Future => {
+                    if !opts.silent {
+                        fail("warning: trust bundle is dated in the future");
+                    }
+                }
+                libnet::http_transport::TrustStatus::Stale { days } => {
+                    if !opts.silent {
+                        err(b"neocurl: warning: trust bundle is ");
+                        write_u64(2, days.max(0) as u64);
+                        err(b" days old; rebuild the image to refresh it\r\n");
+                    }
+                }
+            }
             let roots = libnet::http_transport::system_roots();
             (None, roots)
         }

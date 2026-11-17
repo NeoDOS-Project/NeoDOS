@@ -6,6 +6,11 @@
 
 ### Added
 
+- **Trust store versionado y frescura (D8).** El bundle lleva cabecera
+  (`NDTB` + versión + fecha de build + número de certificados); un bundle
+  truncado o editado se rechaza en vez de confiar en un subconjunto. `neocurl`
+  avisa si el bundle está fechado en el futuro o tiene más de dos años (aviso,
+  no fallo).
 - **System trust store (D8).** La imagen incluye un bundle DER concatenado en
   `\NeoDOS\System\config\roots.der`, empaquetado por NeoDev desde el store de
   la máquina anfitriona (`NEODOS_TRUST_BUNDLE` lo sustituye). `libnet` lo lee

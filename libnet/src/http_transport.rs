@@ -219,13 +219,38 @@ use libtls::{ClientConfig, Host, Rng, TlsError, Transport as TlsTransportTrait};
 /// Largest trust bundle we will load (a full public root store is ~150 KiB).
 const MAX_TRUST_BUNDLE: usize = 256 * 1024;
 
-/// Read the system trust bundle (concatenated DER certificates).
+/// The system trust store as loaded from disk.
+#[derive(Debug, Clone, Default)]
+pub struct SystemTrust {
+    /// Bundle format version (`0` for an unversioned, raw DER bundle).
+    pub version: u16,
+    /// Build time in Unix seconds (`0` when unknown).
+    pub built_unix: i64,
+    /// DER-encoded anchors.
+    pub roots: alloc::vec::Vec<alloc::vec::Vec<u8>>,
+}
+
+/// Freshness of the on-disk bundle, judged with the trusted clock (M7).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TrustStatus {
+    /// No bundle, or nothing usable in it.
+    Missing,
+    /// Fresh enough.
+    Ok,
+    /// Built "in the future": clock or bundle is wrong.
+    Future,
+    /// Older than `libtls::der::BUNDLE_MAX_AGE_SECS`.
+    Stale { days: i64 },
+}
+
+/// Read and parse the system trust bundle.
 ///
-/// The image ships it at `libneodos::paths::TRUST_BUNDLE`; NeoDev builds it
-/// from the host's CA store. An absent or unreadable bundle yields an empty
-/// list, which makes TLS fail closed (untrusted chain) instead of silently
-/// trusting anything.
-pub fn system_roots() -> alloc::vec::Vec<alloc::vec::Vec<u8>> {
+/// Accepts both the versioned format written by NeoDev (magic `NDTB`, header
+/// with build time and certificate count) and a raw concatenation of DER
+/// certificates. An absent or unreadable bundle yields an empty list, which
+/// makes TLS fail closed (untrusted chain) instead of silently trusting
+/// anything.
+pub fn system_trust() -> SystemTrust {
     let mut buf = alloc::vec![0u8; MAX_TRUST_BUNDLE];
     // Filesystem objects are opened through the volume mount point, like every
     // other userland path (`Ob` resolves the prefix, not the drive letter).
@@ -233,22 +258,54 @@ pub fn system_roots() -> alloc::vec::Vec<alloc::vec::Vec<u8>> {
         "\\Global\\FileSystem\\{}",
         libneodos::paths::TRUST_BUNDLE
     );
+    let empty = SystemTrust::default();
     let Ok(fd) = syscall::sys_ob_open(&path, syscall::ob_access::READ) else {
-        return alloc::vec::Vec::new();
+        return empty;
     };
     let n = syscall::sys_ob_query_info(fd, syscall::ObInfoClass::ReadContent, &mut buf);
     let _ = syscall::sys_close(fd);
     let Ok(n) = n else {
-        return alloc::vec::Vec::new();
+        return empty;
     };
     let n = n as usize;
     if n == 0 {
-        return alloc::vec::Vec::new();
+        return empty;
     }
-    libtls::der::split_certificates(&buf[..n])
-        .into_iter()
-        .map(|c| c.to_vec())
-        .collect()
+    let bytes = &buf[..n];
+    // Versioned bundle first; fall back to a raw DER concatenation.
+    let (version, built_unix, certs) = match libtls::der::parse_bundle(bytes) {
+        Some(bundle) => (bundle.version, bundle.built_unix, bundle.certs),
+        None => (0, 0, libtls::der::split_certificates(bytes)),
+    };
+    SystemTrust {
+        version,
+        built_unix,
+        roots: certs.into_iter().map(|c| c.to_vec()).collect(),
+    }
+}
+
+/// Anchors only (the common case).
+pub fn system_roots() -> alloc::vec::Vec<alloc::vec::Vec<u8>> {
+    system_trust().roots
+}
+
+/// Judge the on-disk bundle against the trusted clock.
+pub fn trust_status() -> TrustStatus {
+    let trust = system_trust();
+    if trust.roots.is_empty() {
+        return TrustStatus::Missing;
+    }
+    let now = match libclock::system::unix_seconds() {
+        Ok(now) => now,
+        // Without a trusted clock the bundle's age cannot be judged; the TLS
+        // handshake will still refuse to run on an untrusted clock.
+        Err(_) => return TrustStatus::Ok,
+    };
+    match libtls::der::bundle_freshness(trust.built_unix, now) {
+        libtls::der::BundleFreshness::Ok => TrustStatus::Ok,
+        libtls::der::BundleFreshness::Future => TrustStatus::Future,
+        libtls::der::BundleFreshness::Stale { age_days } => TrustStatus::Stale { days: age_days },
+    }
 }
 
 /// Kernel CSPRNG backed by `\Device\Random`; fails closed unless the pool is
