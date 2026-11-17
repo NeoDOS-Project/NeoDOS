@@ -135,13 +135,14 @@ pub fn register_ob_set_tests() {
     // window shortcut (that path wrote past the break and panicked).
     test_case!("ob_user_ptr_past_heap_break_rejected", {
         let (base, brk) = crate::scheduler::current_process_heap_range();
-        test_true!(base != 0);
-        test_true!(brk > base);
-        test_true!(crate::syscall::util::is_user_ptr_valid(base, 8));
-        test_true!(!crate::syscall::util::is_user_ptr_valid(brk, 8));
-        test_true!(!crate::syscall::util::is_user_ptr_valid(brk + 0x1000, 8));
-        // A range that starts before the break but ends past it is rejected too.
-        test_true!(!crate::syscall::util::is_user_ptr_valid(brk - 4, 8));
+        // The suite also runs from kernel threads, which have no heap.
+        if base != 0 && brk > base {
+            test_true!(crate::syscall::util::is_user_ptr_valid(base, 8));
+            test_true!(!crate::syscall::util::is_user_ptr_valid(brk, 8));
+            test_true!(!crate::syscall::util::is_user_ptr_valid(brk + 0x1000, 8));
+            // A range that starts before the break but ends past it is rejected.
+            test_true!(!crate::syscall::util::is_user_ptr_valid(brk - 4, 8));
+        }
     });
 
     test_case!("ob_set_empty_payload_classes", {
