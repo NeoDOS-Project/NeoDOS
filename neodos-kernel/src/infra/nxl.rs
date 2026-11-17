@@ -93,7 +93,7 @@ pub fn init_nxl_region() -> bool {
 }
 
 pub fn load_nxl() -> bool {
-    let ok = match nxl_load("C:\\System\\Libraries\\fs.nxl") {
+    let ok = match nxl_load("C:\\NeoDOS\\Libraries\\fs.nxl") {
         Some(base) => {
             CORE_EXPORT_BASE.store(base, Ordering::Relaxed);
             kinfo!(LogSubsys::Nxl, "libneodos NXL loaded at 0x{:x}", base);

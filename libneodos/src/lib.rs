@@ -8,6 +8,7 @@ fn noop_test_runner(_tests: &[&dyn Fn()]) {
     loop {}
 }
 
+pub mod paths;
 pub mod export;
 pub mod syscall;
 pub mod io;

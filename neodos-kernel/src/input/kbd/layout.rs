@@ -181,7 +181,7 @@ pub fn load_layouts() -> usize {
     // cache and triggers #709, so more are enabled once that is fixed.
     const LAYOUT_TAGS: &[&str] = &["en-US", "es-ES"];
     for tag in LAYOUT_TAGS {
-        let path = alloc::format!("C:\\System\\Keyboard\\{tag}.kbd");
+        let path = alloc::format!("{}\\{tag}.kbd", crate::paths::KEYBOARD_DIR);
         if let Ok(mut layout) = load_kbd(&path) {
             // XKB-derived layouts only carry printable keysyms; Enter,
             // Backspace, Tab, Escape and sometimes Space are left at the

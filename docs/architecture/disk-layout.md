@@ -192,11 +192,21 @@ ejecutable**, no en una ruta global.
 - Asegurar quoting para `Program Files` (espacio) antes de escribir en esa ruta.
 - Independiente de la Fase 1; ambas desbloquean la Fase 3.
 
-### Fase 3 — Migración del builder y consumidores
+### Fase 3 — Migración del builder y consumidores — **HECHA** (#398)
 
-- Reescribir `collect_files()` al árbol de §4.
-- Ajustar `cm/init.rs`, `i18n.rs`, `res.rs`, `console.rs`, servicios y `main.rs`.
-- `SYSTEM.hiv` → `config\SYSTEM.hiv` (valorar sin extensión).
+- `collect_files()` (NeoDev) emite el árbol de §4: hives en
+  `\NeoDOS\System\config`, `.NXE` core en `\NeoDOS\System` y herramientas en
+  `\NeoDOS\System\Tools`, `.NXL` en `\NeoDOS\Libraries`, `.kbd`/`.nlt`/`.NEM`
+  bajo `\NeoDOS\System\…`, más `\Program Files`, `\ProgramData` y `\Users`.
+- `SYSTEM.hiv` vive en `\NeoDOS\System\config\SYSTEM.hiv`.
+- Rutas centralizadas en `neodos-kernel/src/paths.rs` y `libneodos::paths`
+  (`cm/init`, teclados, NXL, INIT/NeoInit/NeoShell, servicios, harness de estrés,
+  recursos/localización del userland).
+- `Vfs::resolve_path` prueba primero la grafía canónica de una ruta legacy, así
+  los literales antiguos siguen funcionando mientras se migran uno a uno.
+- **Pendiente de Fase 1:** `.NXE` de sistema sigue partido entre `System` y
+  `System\Tools` porque una hoja NE2 admite ~28 entradas y no hay directorios
+  multi-bloque; al aterrizar Fase 1 se puede aplanar.
 
 ### Fase 4 — Documentación e invariantes
 

@@ -757,11 +757,11 @@ pub unsafe fn init(boot_info: &BootInfo) -> ! {
         // Phase 14-A: track the human-readable name of the init binary actually
         // loaded (primary NeoInit, fallback NeoShell).
         let mut boot_name: &str = "neoinit";
-        let entry = try_load("C:\\Programs\\neoinit.nxe", &mut addr)
+        let entry = try_load("C:\\NeoDOS\\System\\neoinit.nxe", &mut addr)
             .or_else(|| {
                 kinfo!(LogSubsys::Init, "NeoInit not found, trying NEOSHELL.NXE as fallback...");
                 boot_name = "neoshell";
-                try_load("C:\\Programs\\neoshell.nxe", &mut addr)
+                try_load("C:\\NeoDOS\\System\\neoshell.nxe", &mut addr)
             })
             .unwrap_or(0);
             let loaded = entry != 0;
