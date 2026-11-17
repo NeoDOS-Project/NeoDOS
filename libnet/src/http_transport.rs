@@ -214,6 +214,43 @@ fn resolve(host: &str) -> Result<[u8; 4], HttpError> {
 
 use libtls::{ClientConfig, Host, Rng, TlsError, Transport as TlsTransportTrait};
 
+// ── System trust store (D8) ──
+
+/// Largest trust bundle we will load (a full public root store is ~150 KiB).
+const MAX_TRUST_BUNDLE: usize = 256 * 1024;
+
+/// Read the system trust bundle (concatenated DER certificates).
+///
+/// The image ships it at `libneodos::paths::TRUST_BUNDLE`; NeoDev builds it
+/// from the host's CA store. An absent or unreadable bundle yields an empty
+/// list, which makes TLS fail closed (untrusted chain) instead of silently
+/// trusting anything.
+pub fn system_roots() -> alloc::vec::Vec<alloc::vec::Vec<u8>> {
+    let mut buf = alloc::vec![0u8; MAX_TRUST_BUNDLE];
+    // Filesystem objects are opened through the volume mount point, like every
+    // other userland path (`Ob` resolves the prefix, not the drive letter).
+    let path = alloc::format!(
+        "\\Global\\FileSystem\\{}",
+        libneodos::paths::TRUST_BUNDLE
+    );
+    let Ok(fd) = syscall::sys_ob_open(&path, syscall::ob_access::READ) else {
+        return alloc::vec::Vec::new();
+    };
+    let n = syscall::sys_ob_query_info(fd, syscall::ObInfoClass::ReadContent, &mut buf);
+    let _ = syscall::sys_close(fd);
+    let Ok(n) = n else {
+        return alloc::vec::Vec::new();
+    };
+    let n = n as usize;
+    if n == 0 {
+        return alloc::vec::Vec::new();
+    }
+    libtls::der::split_certificates(&buf[..n])
+        .into_iter()
+        .map(|c| c.to_vec())
+        .collect()
+}
+
 /// Kernel CSPRNG backed by `\Device\Random`; fails closed unless the pool is
 /// backed by a hardware source (M8).
 struct KernelRng;

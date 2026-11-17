@@ -14,5 +14,7 @@ pub const GLOBALIZATION_DIR: &str = "C:\\NeoDOS\\System\\Globalization";
 pub const KEYBOARD_DIR: &str = "C:\\NeoDOS\\System\\Keyboard";
 /// Registry hives.
 pub const CONFIG_DIR: &str = "C:\\NeoDOS\\System\\config";
+/// Trust anchors (concatenated DER certificates) used by libtls (D8).
+pub const TRUST_BUNDLE: &str = "C:\\NeoDOS\\System\\config\\roots.der";
 /// User profiles.
 pub const USERS_ROOT: &str = "C:\\Users";

@@ -822,7 +822,7 @@ neocurl -d @- URL              POST leyendo el cuerpo de stdin (máx. 256 KiB)
 neocurl -o FICHERO URL         descarga en streaming a fichero
 neocurl --max-time MS URL      deadline total
 neocurl --max-bytes N URL      límite de cuerpo (0 = sin límite)
-neocurl --ca FICHERO URL       ancla de confianza DER para HTTPS (fixture)
+neocurl --ca FICHERO URL       sustituye las anclas del sistema (fixtures)
 neocurl -s URL                 sin resumen de estado en stderr
 ```
 
@@ -840,8 +840,9 @@ neocurl.nxe
 - `https://` usa `libtls` (TLS 1.3, ChaCha20-Poly1305, X25519). La cadena,
   validez, hostname y `CertificateVerify` se verifican siempre; el reloj debe
   ser fiable (M7) y el CSPRNG tener respaldo hardware (M8). Todavía no hay
-  almacén de raíces del sistema: `--ca FICHERO` aporta el ancla (pensado para
-  fixtures; falla cerrado sin ella).
+  raíces del **almacén del sistema** (`\NeoDOS\System\config\roots.der`, que
+  NeoDev empaqueta desde el store de la máquina anfitriona); `--ca FICHERO` lo
+  sustituye para fixtures y, sin anclas, falla cerrado.
 - El cuerpo se entrega por streaming (`BodySink`), nunca se acumula en RAM.
 
 ### 3.8 httptest.nxe + tools/http-e2e — aceptación HTTP reproducible

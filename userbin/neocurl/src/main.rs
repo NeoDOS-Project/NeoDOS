@@ -201,26 +201,31 @@ fn run(raw: &[u8]) -> Result<(), u32> {
         }
     };
     let is_https = url.scheme == Scheme::Https;
-    if is_https && opts.ca.is_none() {
-        fail("HTTPS needs --ca FILE (no system trust store yet)");
-        return Err(1);
-    }
-    let ca_der = match opts.ca {
+    // D8: `--ca` overrides the system trust store; without it the image's
+    // bundle (`\NeoDOS\System\config\roots.der`) is used.
+    let (ca_der, roots) = match opts.ca {
         Some(path) => {
             let Ok(path) = core::str::from_utf8(path) else {
                 fail("invalid --ca path");
                 return Err(1);
             };
             match read_ob_file(path) {
-                Ok(data) => Some(data),
+                Ok(data) => (Some(data.clone()), alloc::vec![data]),
                 Err(()) => {
                     fail("cannot read --ca file");
                     return Err(1);
                 }
             }
         }
-        None => None,
+        None => {
+            let roots = libnet::http_transport::system_roots();
+            (None, roots)
+        }
     };
+    if is_https && roots.is_empty() {
+        fail("no trust anchors: system bundle missing (see --ca)");
+        return Err(1);
+    }
 
     let mut limits = Limits::default();
     if let Some(ms) = opts.max_time_ms {
@@ -278,7 +283,6 @@ fn run(raw: &[u8]) -> Result<(), u32> {
         count: 0,
     };
     let result = if is_https {
-        let roots = alloc::vec![ca_der.clone().unwrap_or_default()];
         let mut transport = HttpsTransport::new(limits, roots);
         execute(&mut transport, &request, &limits, deadline, &mut sink)
     } else {

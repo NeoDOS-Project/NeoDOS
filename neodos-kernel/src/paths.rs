@@ -57,6 +57,9 @@ pub const LIBRARIES_DIR: &str = "C:\\NeoDOS\\Libraries";
 pub const PROGRAM_FILES: &str = "C:\\Program Files";
 /// Machine-wide application data.
 pub const PROGRAM_DATA: &str = "C:\\ProgramData";
+/// Trust anchors for libtls (concatenated DER certificates, D8). Packed by
+/// NeoDev from the host CA bundle; see `libneodos::paths::TRUST_BUNDLE`.
+pub const TRUST_BUNDLE: &str = "C:\\NeoDOS\\System\\config\\roots.der";
 /// User profiles (#400).
 pub const USERS_ROOT: &str = "C:\\Users";
 

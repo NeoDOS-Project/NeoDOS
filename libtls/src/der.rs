@@ -156,6 +156,22 @@ pub fn boolean(tlv: &Tlv<'_>) -> Result<bool> {
     Ok(tlv.value[0] != 0)
 }
 
+/// Split a concatenation of DER `Certificate` structures (a trust bundle).
+///
+/// Trust stores are shipped as one file with every certificate back to back, so
+/// the X.690 length prefix is enough to delimit them — no PEM/base64 in the
+/// image. Trailing bytes that do not form a complete element are ignored.
+pub fn split_certificates(bundle: &[u8]) -> alloc::vec::Vec<&[u8]> {
+    let mut out = alloc::vec::Vec::new();
+    let mut der = Der::new(bundle);
+    while let Ok(tlv) = der.next_tlv() {
+        if tlv.tag == TAG_SEQUENCE && !tlv.full.is_empty() {
+            out.push(tlv.full);
+        }
+    }
+    out
+}
+
 /// Days from 1970-01-01 to `y-m-d` (Howard Hinnant's algorithm).
 pub fn days_from_civil(y: i64, m: u32, d: u32) -> i64 {
     let y = if m <= 2 { y - 1 } else { y };
@@ -249,5 +265,32 @@ mod tests {
         // 1970-01-01T00:00:00Z
         assert_eq!(time_to_unix(TAG_UTC_TIME, b"700101000000Z").unwrap(), 0);
         assert!(time_to_unix(TAG_UTC_TIME, b"261116121530").is_err());
+    }
+}
+
+#[cfg(test)]
+mod bundle_tests {
+    use super::*;
+    use alloc::vec::Vec;
+
+    #[test]
+    fn split_certificates_yields_each_element() {
+        // Two minimal SEQUENCEs (as stand-ins for certificates) plus junk.
+        let one: [u8; 4] = [0x30, 0x02, 0x05, 0x00];
+        let mut bundle: Vec<u8> = Vec::new();
+        bundle.extend_from_slice(&one);
+        bundle.extend_from_slice(&one);
+        bundle.extend_from_slice(&[0x30, 0x05]); // truncated: ignored
+
+        let certs = split_certificates(&bundle);
+        assert_eq!(certs.len(), 2);
+        assert_eq!(certs[0], &one);
+        assert_eq!(certs[1], &one);
+    }
+
+    #[test]
+    fn split_certificates_handles_empty_and_garbage() {
+        assert!(split_certificates(&[]).is_empty());
+        assert!(split_certificates(&[0xff, 0xff, 0xff]).is_empty());
     }
 }

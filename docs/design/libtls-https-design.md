@@ -3,9 +3,8 @@
 > **Version:** v0.4 — M7–M11 landed (2026-11-16)
 > **Status:** All milestones implemented: M7 (trusted clock), M8 (Ring 3
 > CSPRNG), M9 (`libcrypto`), D1 (own TLS 1.3 over `libcrypto`), M10 (`libtls`:
-> TLS 1.3 client + X.509 chain/hostname/validity checks) and M11 (`neocurl
-> https://`). Notably missing: a production trust-anchor bundle (D8) — HTTPS
-> currently requires an explicit `--ca FILE`.
+> TLS 1.3 client + X.509 chain/hostname/validity checks), M11 (`neocurl
+> https://`) and **D8** (system trust store).
 > **Target Release:** v0.61–v0.62 — Security Hardening
 > **Related:** #89 (NXE signatures), #57 (module signing), #361 (NTP auth),
 > #467 (monotonic clock), #582 (NLT signatures), #696 (wait timeouts), #411;
@@ -348,6 +347,24 @@ Dependencies: M7 and M8 gate M10; M9 and the D1 spike gate the record layer. TLS
 must not start before the CSPRNG and the clock policy exist.
 
 ---
+
+### 3.6 Trust store (D8 — resolved)
+
+The image ships one **concatenated DER bundle** at
+`\NeoDOS\System\config\roots.der`:
+
+- NeoDev builds it at image time from the host's CA store
+  (`/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem`, or `NEODOS_TRUST_BUNDLE`),
+  decoding each `CERTIFICATE` block and concatenating the DER. No source → no
+  bundle, and HTTPS fails closed.
+- `libnet::http_transport::system_roots()` reads it through `ReadContent` and
+  splits it with `libtls::der::split_certificates` (the X.690 lengths delimit
+  each certificate, so no PEM parser is needed on the target).
+- `neocurl` uses the bundle when `--ca` is absent; `--ca` still overrides it.
+  With no anchors at all the client refuses to connect ("no trust anchors").
+
+Revocation (OCSP/CRL) remains out of scope; a compromised or removed root is
+handled by shipping a new image/bundle.
 
 ## 9. Open questions
 
