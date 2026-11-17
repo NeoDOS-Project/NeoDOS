@@ -6,6 +6,20 @@
 
 ### Added
 
+- **TLS failures say why.** `TlsError::as_str()` and
+  `TlsError::Certificate(X509Error)` keep the exact reason (bad signature,
+  issuer is not a CA, path length, unsupported algorithm) instead of
+  collapsing everything into `NotTrusted`, and `neocurl` prints it after the
+  failure via `libnet::http_transport::last_tls_error()`.
+
+- **SHA-384 and ECDSA P-384.** `libcrypto` gained the SHA-512 core with the
+  SHA-384 initial values and a verifier parameterised over the NIST curves,
+  and `libtls` accepts `ecdsa-with-SHA384` chains and the
+  `ecdsa_secp384r1_sha384` `CertificateVerify` scheme. Public CAs sign their
+  intermediates this way (`data.iana.org`: leaf → WE1 → GTS Root R4), which
+  previously failed as `UnsupportedAlgorithm`. Verified against the live
+  `tzdb-2026f.tar.lz` download anchored at GTS Root R4.
+
 - **HTTP/1.1 client + HTTPS (NeoHTTP, #712).** `libhttp` (offline core, framing
   and `execute`) plus `libnet::TcpTransport`/`HttpsTransport`, the `neocurl` CLI
   and an in-guest acceptance runner (`httptest`) with a host orchestrator
@@ -119,6 +133,27 @@
   growing `check-deps-baseline.txt`.
 
 ### Fixed
+
+- **`neocurl` lost its heap mid-handshake.** The userland allocator was a
+  plain `sbrk` bump allocator with a no-op `dealloc`, so every temporary
+  buffer was lost for good; public-key verification (thousands of small
+  big-integer allocations) exhausted the 2 MiB heap. Freed blocks now go to
+  size-class free lists, and every block in a class has the class capacity.
+
+- **`ntpd` stepped the clock to 2055.** A transient failure of the first
+  `\Global\Info\DateTime` read became `t1 = 0`, so the offset against a
+  real server looked like ~28 years (delay ~57 years) and was applied
+  verbatim. `libntp::clock_step` detects an unset RTC and sets the time from
+  the server instead, rejects unusable round trips and refuses results
+  outside 2020–2100. The status printers also dropped the leading digit of
+  every timestamp.
+
+- **Kernel panic writing into a fresh heap page.** Heap and mmap slots live
+  inside the identity-mapped USER window, and the user-memory validators
+  tested the window first and reported "always present", so the kernel wrote
+  into a demand-paged page that was not mapped yet (`Ring 0 #PF`). Heap and
+  mmap are now checked first, so a non-resident page yields `EFAULT`;
+  `libnet` faults its receive buffers in before calling `SocketRecv`.
 
 - **Boot-time `PAGE_TABLE_CORRUPTION` from the buddy bitmap (#714).** The bitmap
   was sized from `phys_max`, which includes the multi-TiB PCIe ECAM window, so a
