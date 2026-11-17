@@ -184,7 +184,11 @@ pub fn create_process_from_ob_path(
         None => return Err(CreateProcessError::NoMemory),
     };
 
-    let result = match crate::elf::load_elf(&bin_data, None, slot.code_base) {
+    // #762: the image may only occupy this process's code region. The slot
+    // also carries the stack right after it, so the size bound is the code
+    // part only, not `USER_SLOT_SIZE`.
+    let region = crate::elf::LoadRegion::new(slot.code_base, MAX_PROCESS_BIN as u64);
+    let result = match crate::elf::load_elf(&bin_data, region, None, slot.code_base) {
         Ok(r) => r,
         Err(_) => {
             crate::arch::x64::paging::free_user_slot(slot.slot_idx);

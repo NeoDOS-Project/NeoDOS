@@ -247,7 +247,8 @@ pub fn nxl_load(path: &str) -> Option<u64> {
 
     kinfo!(LogSubsys::Nxl, "Loading '{}' @ slot {} => 0x{:x} (compiled 0x{:x})", path, slot_idx, base, compiled_base);
 
-    let result = match crate::elf::load_elf(data, None, 0) {
+    let region = crate::elf::LoadRegion::new(base, NXL_SLOT_SIZE);
+    let result = match crate::elf::load_elf(data, region, None, 0) {
         Ok(r) => r,
         Err(e) => {
             kerror!(LogSubsys::Nxl, "ELF load failed: {:?}", e);
@@ -597,7 +598,8 @@ fn nxl_load_pie(data: &[u8], image_size: usize, path: &str) -> Option<u64> {
     kinfo!(LogSubsys::Nxl, "Loading PIE '{}' @ slot {} => 0x{:x} (link 0x{:x}, offset 0x{:x})",
         path, slot_idx, base, min_vaddr, load_offset);
 
-    let result = match crate::elf::load_elf(data, None, load_offset) {
+    let region = crate::elf::LoadRegion::new(base, NXL_SLOT_SIZE);
+    let result = match crate::elf::load_elf(data, region, None, load_offset) {
         Ok(r) => r,
         Err(e) => {
             kerror!(LogSubsys::Nxl, "PIE ELF load failed for '{}': {:?}", path, e);
