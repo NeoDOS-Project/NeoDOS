@@ -19,6 +19,32 @@ mod power;
 mod object;
 mod time;
 
+/// True if `info_class` is routed by some set domain. Completeness guard for
+/// ObSetInfoClass (NEODOS-06/#636, CH-06/#510, AUD-006/#526).
+pub fn set_class_handled(info_class: u32) -> bool {
+    process::handles(info_class)
+        || keyboard::handles(info_class)
+        || fs::handles(info_class)
+        || ipc::handles(info_class)
+        || net::handles(info_class)
+        || registry::handles(info_class)
+        || service::handles(info_class)
+        || power::handles(info_class)
+        || object::handles(info_class)
+        || time::handles(info_class)
+}
+
+/// Set-info classes that carry no payload: the operation ignores the buffer, so
+/// a null/empty buffer is valid. All other classes require a non-empty,
+/// user-valid buffer. `SocketListen`/`SocketClose` were missing here, so the
+/// public ABI rejected them with `EINVAL` before the handler ran.
+pub fn set_info_allows_empty_payload(info_class: u32) -> bool {
+    info_class == ObSetInfoClass::FileDelete as u32
+        || info_class == ObSetInfoClass::SetForegroundProcess as u32
+        || info_class == ObSetInfoClass::SocketListen as u32
+        || info_class == ObSetInfoClass::SocketClose as u32
+}
+
 pub fn handler_ob_set_info(regs: crate::syscall::Registers) -> u64 {
     let fd = regs.rbx as u8;
     let info_class = regs.rcx as u32;
@@ -30,9 +56,7 @@ pub fn handler_ob_set_info(regs: crate::syscall::Registers) -> u64 {
     }
 
     // Classes that carry no payload accept a null/empty buffer.
-    if info_class != (ObSetInfoClass::FileDelete as u32)
-        && info_class != (ObSetInfoClass::SetForegroundProcess as u32)
-    {
+    if !set_info_allows_empty_payload(info_class) {
         if buf_ptr == 0 || buf_size == 0 {
             if info_class == ObSetInfoClass::SetNicIp as u32 {
                 kdebug!(LogSubsys::Object, "ObSetInfo SetNicIp: REJECTED (null buf)");
@@ -106,6 +130,36 @@ pub fn validate_datetime(second: u8, minute: u8, hour: u8, day: u8, month: u8, y
 pub fn register_ob_set_tests() {
     use crate::{test_case, test_true};
 
+    // #745: a range that starts inside the heap region but is not fully inside
+    // this process's break must be rejected, not accepted through the USER
+    // window shortcut (that path wrote past the break and panicked).
+    test_case!("ob_user_ptr_past_heap_break_rejected", {
+        let (base, brk) = crate::scheduler::current_process_heap_range();
+        test_true!(base != 0);
+        test_true!(brk > base);
+        test_true!(crate::syscall::util::is_user_ptr_valid(base, 8));
+        test_true!(!crate::syscall::util::is_user_ptr_valid(brk, 8));
+        test_true!(!crate::syscall::util::is_user_ptr_valid(brk + 0x1000, 8));
+        // A range that starts before the break but ends past it is rejected too.
+        test_true!(!crate::syscall::util::is_user_ptr_valid(brk - 4, 8));
+    });
+
+    test_case!("ob_set_empty_payload_classes", {
+        use crate::object::types::ObSetInfoClass as C;
+        // No-payload classes accept a null/empty buffer (Ring 3 calls these
+        // with an empty slice). SocketListen/SocketClose were previously
+        // rejected with EINVAL before the handler ran.
+        test_true!(set_info_allows_empty_payload(C::SocketListen as u32));
+        test_true!(set_info_allows_empty_payload(C::SocketClose as u32));
+        test_true!(set_info_allows_empty_payload(C::FileDelete as u32));
+        test_true!(set_info_allows_empty_payload(C::SetForegroundProcess as u32));
+        // Payload-carrying classes still require a non-empty, valid buffer.
+        test_true!(!set_info_allows_empty_payload(C::SocketSend as u32));
+        test_true!(!set_info_allows_empty_payload(C::SocketConnect as u32));
+        test_true!(!set_info_allows_empty_payload(C::SocketBind as u32));
+        test_true!(!set_info_allows_empty_payload(C::SetNicIp as u32));
+    });
+
     test_case!("ob_set_datetime_accepts_valid", {
         test_true!(validate_datetime(0, 0, 0, 1, 1, 0));
         test_true!(validate_datetime(59, 59, 23, 29, 2, 24)); // 2024-02-29
@@ -121,6 +175,43 @@ pub fn register_ob_set_tests() {
         test_true!(!validate_datetime(0, 0, 0, 30, 2, 24)); // Feb 30
         test_true!(!validate_datetime(0, 0, 0, 29, 2, 23)); // 2023 not leap
         test_true!(!validate_datetime(0, 0, 0, 31, 4, 24)); // Apr 31
+    });
+
+    // #487: hostname normalization/validation for `SetHostname`.
+    test_case!("ob_set_hostname_validation", {
+        test_true!(net::validate_hostname("neodos-pc").is_ok());
+        test_true!(net::validate_hostname("neodos-525400123456").is_ok());
+        test_true!(net::validate_hostname("host.example.com").is_ok());
+        test_true!(net::validate_hostname("_svc-1").is_ok());
+        test_true!(net::validate_hostname("x").is_ok());
+        test_true!(net::validate_hostname("neodos-pc\0").is_ok());
+        test_true!(net::validate_hostname("").is_err());
+        test_true!(net::validate_hostname("-bad").is_err());
+        test_true!(net::validate_hostname("bad-").is_err());
+        test_true!(net::validate_hostname("has space").is_err());
+        test_true!(net::validate_hostname("bad!char").is_err());
+        test_true!(net::validate_hostname("a/b").is_err());
+    });
+
+    test_case!("neodos06_ob_class_coverage", {
+        // Complete coverage guard (NEODOS-06/#636, CH-06/#510, AUD-006/#526):
+        // every ObInfoClass variant must be routed by a query domain. PowerState
+        // (=32) is the known CH-06 gap and is excluded *explicitly*; any NEW gap
+        // fails the test.
+        let known_unhandled: [u32; 1] = [crate::object::types::ObInfoClass::PowerState as u32];
+        for c in 0..=49u32 {
+            if !known_unhandled.contains(&c) {
+                test_true!(crate::syscall::ob::query::info_class_handled(c));
+            }
+        }
+        // Every defined ObSetInfoClass variant must be routed.
+        for c in [
+            0u32, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21,
+            22, 23, 24, 25, 26, 27, 28, 29, 33, 34, 35, 36, 37, 38, 39, 43, 44, 45, 46, 47,
+            49, 50, 51,
+        ] {
+            test_true!(set_class_handled(c));
+        }
     });
 
     // #491: the RTC-write ACK guard lives in `time` (the module that already

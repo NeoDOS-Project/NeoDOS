@@ -2,7 +2,7 @@
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 use crate::log::LogSubsys;
-use crate::scheduler::types::{Kthread, ThreadState, BOOT_TID, PRIORITY_COUNT, IDLE_TIME_SLICE, AGING_INTERVAL_TICKS, MAX_STARVATION_TICKS};
+use crate::scheduler::types::{Kthread, ThreadState, BOOT_TID, PRIORITY_COUNT, IDLE_TIME_SLICE, TIME_SLICES, AGING_INTERVAL_TICKS, MAX_STARVATION_TICKS};
 use crate::arch::x64::cpu_local::MAX_CPUS;
 use crate::scheduler::Scheduler;
 use crate::scheduler::lifecycle::reap_pending_zombies;
@@ -132,6 +132,27 @@ pub(crate) fn candidate_owned_elsewhere(kptr: *const Kthread, self_cpu: u32) -> 
         }
         _ => false,
     }
+}
+
+/// Decide whether a non-Ring-3 `next` selected by the syscall-return or timer
+/// user-preempt path may be dispatched.
+///
+/// `handoff` is the #355 anti-starvation signal (the target is this CPU's idle).
+/// Otherwise only a genuine, non-idle kernel thread is accepted: it runs in
+/// Ring 0 by design and its saved context is a valid Ring-0 dispatch frame, so
+/// it may be resumed directly from a Ring-3 context. A *user* thread interrupted
+/// inside a syscall is never accepted here (`is_kernel == false`).
+///
+/// Shared by both return paths so their acceptance policy cannot diverge.
+#[inline]
+pub(crate) fn accept_non_ring3_dispatch(handoff: bool, next: *const Kthread) -> bool {
+    if handoff {
+        return true;
+    }
+    if next.is_null() {
+        return false;
+    }
+    unsafe { (*next).is_kernel && !(*next).is_idle }
 }
 
 /// Fallback Ring-3 selection used by the syscall-return path when the current
@@ -532,7 +553,7 @@ impl Scheduler {
             n.push_u32(cpu);
             idle.name = n;
         }
-        self.kthreads[th_slot] = Some(Box::new(idle));
+        self.put_kthread(th_slot, Box::new(idle));
         let ptr = &**self.kthreads[th_slot].as_ref()? as *const Kthread as *mut Kthread;
         Some((tid, ptr))
     }
@@ -606,10 +627,12 @@ impl Scheduler {
         // deferred (I-RUNREADY); see `candidate_owned_elsewhere`.
         let self_cpu = unsafe { crate::arch::x64::cpu_local::this_cpu_id() };
 
-        // #355: bounded anti-starvation hand-off. A Ready Ring-0 kernel thread
-        // cannot be committed from a Ring-3 selection; when one has been starved
-        // past the threshold, run this CPU's idle for one turn so the next
-        // selection (from Ring-0) can dispatch it. Callers consume the signal.
+        // #355: anti-starvation hand-off, now a fallback. Ring-0 kernel threads
+        // are normally selectable from a Ring-3 context (see the frame gate in
+        // steps 1-3). This branch only fires if such a thread is still Ready
+        // past the starvation threshold (e.g. it is being outranked by an even
+        // higher-priority thread); it runs this CPU's idle for one turn so the
+        // next Ring-0 selection can dispatch the kernel thread.
         if require_ring3 && allow_handoff && self.kernel_thread_starved(self_cpu) {
             let ptr = self.dispatch_idle(self_cpu);
             if !ptr.is_null() {
@@ -625,7 +648,7 @@ impl Scheduler {
                 unsafe {
                     let k = &mut *ptr;
                     if k.state == ThreadState::Ready
-                        && (!require_ring3 || frame_is_ring3(k))
+                        && (!require_ring3 || k.is_kernel || frame_is_ring3(k))
                         && !candidate_owned_elsewhere(ptr, self_cpu)
                         // #382: never commit a lower-priority candidate while a
                         // higher-priority thread is Ready — fall through to the
@@ -680,7 +703,7 @@ impl Scheduler {
                 unsafe {
                     let k = &mut *ptr;
                     if k.state == ThreadState::Ready
-                        && (!require_ring3 || frame_is_ring3(k))
+                        && (!require_ring3 || k.is_kernel || frame_is_ring3(k))
                         && !candidate_owned_elsewhere(ptr, self_cpu)
                         // #382: never commit a lower-priority candidate while a
                         // higher-priority thread is Ready — fall through to the
@@ -743,7 +766,7 @@ impl Scheduler {
                 let check_tid = (start + offset) % self.next_tid.max(1);
                 for k in self.kthreads.iter_mut().flatten() {
                     if k.tid == check_tid && k.state == ThreadState::Ready && k.priority == priority
-                        && (!require_ring3 || frame_is_ring3(k))
+                        && (!require_ring3 || k.is_kernel || frame_is_ring3(k))
                         // Never pick an idle thread here: idles are CPU-bound and
                         // selected by the per-CPU idle fallback.
                         && !k.is_idle
@@ -842,11 +865,25 @@ impl Scheduler {
     /// Must be called with the scheduler lock held. No `&self` so it can be used
     /// while a mutable borrow of a Kthread from `self.kthreads` is live.
     #[inline]
-    fn account_dispatch(k: &mut Kthread) {
+    pub(crate) fn account_dispatch(k: &mut Kthread) {
+        // A dispatched thread is, by definition, no longer starved: reset the
+        // starvation counter and restore the base priority. Aging then only
+        // boosts a thread while it remains Ready-but-unrun; the boost is
+        // temporary and cannot invert fairness permanently.
+        k.ticks_since_scheduled = 0;
+        if k.priority < k.base_priority {
+            k.priority = k.base_priority;
+        }
         if k.is_idle || k.state == ThreadState::Terminated {
             k.cpu_time_base = Kthread::CPU_TIME_UNSET;
             return;
         }
+        // Grant a fresh timeslice at dispatch. The timer preemption paths
+        // already did this; doing it here makes the syscall-return dispatch
+        // path consistent, so an accepted thread can never be committed with
+        // `time_slice_remaining == 0` (which would republish it after one tick).
+        let idx = (k.priority as usize).min(PRIORITY_COUNT as usize - 1);
+        k.time_slice_remaining = TIME_SLICES[idx];
         crate::scheduler::accounting::mark_dispatch(k);
     }
 
@@ -859,7 +896,7 @@ impl Scheduler {
     /// slot (`user_slot.is_some()`, set only by `Eprocess::new_ring3`).
     #[inline]
     pub(crate) fn is_kernel_thread(&self, k: &Kthread) -> bool {
-        if k.pid == 0 || k.is_idle {
+        if k.is_kernel || k.pid == 0 || k.is_idle {
             return true;
         }
         match self.find_eprocess(k.pid) {

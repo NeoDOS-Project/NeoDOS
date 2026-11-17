@@ -9,8 +9,11 @@ pub const ARP_OP_REQUEST: u16 = 1;
 pub const ARP_OP_REPLY: u16 = 2;
 
 pub const ARP_CACHE_SIZE: usize = 64;
-pub const ARP_TIMEOUT_TICKS: u64 = 300; // 300 seconds
-pub const TICKS_PER_SEC: u64 = 100;
+/// Entry lifetime, in milliseconds of real time. Expiry must not be counted in
+/// `arp_tick` calls: the RX pump drives it at thousands of ticks per second, so
+/// a tick-based 300 s budget expired in about a second and bulk TCP downloads
+/// lost their ACKs when address resolution lapsed (#721).
+pub const ARP_TIMEOUT_MS: u64 = 300_000;
 
 #[repr(C, packed)]
 #[derive(Debug, Clone, Copy)]
@@ -65,7 +68,8 @@ impl ArpPacket {
 struct ArpEntry {
     ip: Ipv4Addr,
     mac: MacAddr,
-    tick_count: u64,
+    /// TSC at the last insert/refresh.
+    last_seen_tsc: u64,
     is_static: bool,
 }
 
@@ -85,7 +89,7 @@ impl ArpCache {
     pub fn tick(&mut self) {
         self.tick_count = self.tick_count.wrapping_add(1);
         if self.tick_count.is_multiple_of(10) {
-            self.evict_expired();
+            self.evict_expired(crate::net::now_tsc());
         }
     }
 
@@ -94,9 +98,10 @@ impl ArpCache {
     }
 
     pub fn insert(&mut self, ip: Ipv4Addr, mac: MacAddr) {
+        let now = crate::net::now_tsc();
         if let Some(entry) = self.entries.iter_mut().find(|e| e.ip == ip) {
             entry.mac = mac;
-            entry.tick_count = self.tick_count;
+            entry.last_seen_tsc = now;
             return;
         }
         if self.entries.len() >= ARP_CACHE_SIZE {
@@ -105,16 +110,17 @@ impl ArpCache {
         self.entries.push(ArpEntry {
             ip,
             mac,
-            tick_count: self.tick_count,
+            last_seen_tsc: now,
             is_static: false,
         });
     }
 
     pub fn insert_static(&mut self, ip: Ipv4Addr, mac: MacAddr) {
+        let now = crate::net::now_tsc();
         if let Some(entry) = self.entries.iter_mut().find(|e| e.ip == ip) {
             entry.mac = mac;
             entry.is_static = true;
-            entry.tick_count = self.tick_count;
+            entry.last_seen_tsc = now;
             return;
         }
         if self.entries.len() >= ARP_CACHE_SIZE {
@@ -123,7 +129,7 @@ impl ArpCache {
         self.entries.push(ArpEntry {
             ip,
             mac,
-            tick_count: self.tick_count,
+            last_seen_tsc: now,
             is_static: true,
         });
     }
@@ -136,9 +142,10 @@ impl ArpCache {
         self.entries.retain(|e| e.is_static);
     }
 
-    fn evict_expired(&mut self) {
+    fn evict_expired(&mut self, now: u64) {
+        let timeout = crate::net::ms_to_tsc(ARP_TIMEOUT_MS);
         self.entries.retain(|e| {
-            e.is_static || self.tick_count.wrapping_sub(e.tick_count) < ARP_TIMEOUT_TICKS * TICKS_PER_SEC
+            e.is_static || now.wrapping_sub(e.last_seen_tsc) < timeout
         });
     }
 
@@ -148,9 +155,9 @@ impl ArpCache {
         let mut oldest_tick = u64::MAX;
         for (i, e) in self.entries.iter().enumerate() {
             if e.is_static { continue; }
-            if e.tick_count < oldest_tick {
+            if e.last_seen_tsc < oldest_tick {
                 oldest = i;
-                oldest_tick = e.tick_count;
+                oldest_tick = e.last_seen_tsc;
             }
         }
         if oldest == usize::MAX {
@@ -201,10 +208,9 @@ pub fn arp_cache_entries() -> alloc::vec::Vec<(Ipv4Addr, MacAddr)> {
     cache.entries.iter().map(|e| (e.ip, e.mac)).collect()
 }
 
-/// Resolve an IP to a MAC address. First checks the cache; if not found,
-/// sends an ARP request over the default NIC and returns None immediately.
-/// The caller should retry later after the reply arrives.
-pub fn arp_resolve(target_ip: Ipv4Addr) -> Option<MacAddr> {
+/// Resolve an IP to a MAC address on a specific NIC (#317). Checks the cache;
+/// if not found, sends an ARP request over `nic_id` and returns None.
+pub fn arp_resolve_on(nic_id: u32, target_ip: Ipv4Addr) -> Option<MacAddr> {
     // Broadcast IP maps to broadcast MAC directly (no ARP needed)
     if target_ip.is_broadcast() {
         return Some(MacAddr::broadcast());
@@ -212,12 +218,11 @@ pub fn arp_resolve(target_ip: Ipv4Addr) -> Option<MacAddr> {
     if let Some(mac) = arp_lookup(target_ip) {
         return Some(mac);
     }
-    let nic_id = crate::net::nic::nic_default_id()?;
-    let mut registry = crate::net::nic::NIC_REGISTRY.lock();
-    let nic = registry.get_mut(nic_id)?;
-    let src_mac = nic.mac_address();
-    let src_ip = nic.ip_address();
-    drop(registry);
+    let (src_mac, src_ip) = {
+        let mut registry = crate::net::nic::NIC_REGISTRY.lock();
+        let nic = registry.get_mut(nic_id)?;
+        (nic.mac_address(), nic.ip_address())
+    };
 
     let arp_pkt = arp_make_packet(ARP_OP_REQUEST, src_mac, src_ip, MacAddr::zero(), target_ip);
     let arp_bytes = unsafe {
@@ -231,6 +236,14 @@ pub fn arp_resolve(target_ip: Ipv4Addr) -> Option<MacAddr> {
     );
     let _ = crate::net::nic::nic_send_packet(nic_id, &frame);
     None
+}
+
+/// Resolve an IP to a MAC address. First checks the cache; if not found,
+/// sends an ARP request over the default NIC and returns None immediately.
+/// The caller should retry later after the reply arrives.
+pub fn arp_resolve(target_ip: Ipv4Addr) -> Option<MacAddr> {
+    let nic_id = crate::net::nic::nic_default_id()?;
+    arp_resolve_on(nic_id, target_ip)
 }
 
 pub fn send_gratuitous_arp(nic_id: u32) {

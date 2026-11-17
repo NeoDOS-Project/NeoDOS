@@ -1,5 +1,8 @@
 # Driver Migration Reference — NeoDOS v0.42
 
+> **Nota:** snapshot v0.42. En esa fecha había 7 drivers `.nem`; el árbol actual
+> (`drivers/*/`) tiene **10**. La tabla de abajo es un snapshot v0.42.
+
 Documento de referencia sobre el estado actual de los drivers del kernel y su
 relación con los drivers .nem.
 
@@ -7,7 +10,7 @@ relación con los drivers .nem.
 
 ```text
 ┌─────────────────────────────────────────────────────────┐
-│  Drivers .nem (7)     │  Kernel stubs (5)               │
+│  Drivers .nem (10)    │  Kernel stubs (5)               │
 │                       │                                  │
 │  ps2kbd.nem  BOOT     │  ps2.rs        ← init HW        │
 │  serial.nem  BOOT     │  ata.rs        ← fallback PIO   │
@@ -40,7 +43,7 @@ relación con los drivers .nem.
 | 6 | `ata.nem` | SYSTEM | 616 | ATA full: IDE controller, DMA+PIO, primary+secondary, hst_register_block_device | `ata.rs` (133L) | init, activate, on_event |
 | 7 | `ahci.nem` | SYSTEM | 794 | AHCI full: HBA init, multi-port, ATA+ATAPI, PRDT, SCTL reset | `boot_ahci.rs` (532L) | init, activate, on_event |
 
-**Total .nem**: 2,516 líneas en 7 drivers.
+**Total .nem**: 2,516 líneas en 10 drivers.
 
 ## 2. Kernel Stubs (existen como .nem también)
 
@@ -113,7 +116,7 @@ Phase 3.85: boot_loader/ → carga todos los .nem (BOOT → SYSTEM)
 
 | Categoría | Count | Total líneas |
 | ----------- | ------- | ------------- |
-| Drivers .nem | 7 | 2,516 |
+| Drivers .nem | 10 | 2,516 |
 | Kernel stubs (con .nem) | 5 | 1,019 |
 | Kernel-only drivers | 6 | 2,820 |
 | Infraestructura .nem | 11 módulos | ~3,729 |

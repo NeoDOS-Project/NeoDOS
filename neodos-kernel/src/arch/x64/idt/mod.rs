@@ -252,6 +252,14 @@ lazy_static! {
         idt[36].set_handler_fn(serial_handler);
         idt[44].set_handler_fn(mouse_handler);
 
+        // Every remaining vector (48..=255) shares the MSI stub, which recovers
+        // the vector from the Local APIC and forwards it to `msi_dispatch`. The
+        // explicit syscall gate (0x80) and IPI (0xF0-0xF2) entries below
+        // intentionally overwrite their slots.
+        for v in MSI_VECTOR_BASE..IDT_SIZE {
+            idt[v].set_handler_fn(msi_generic_handler);
+        }
+
         unsafe {
             idt[0x80]
                 .set_handler_addr(x86_64::VirtAddr::new(syscall_handler_asm as *const () as u64))
@@ -615,9 +623,14 @@ extern "x86-interrupt" fn gpf_handler(stack_frame: InterruptStackFrame, error_co
 }
 
 extern "x86-interrupt" fn page_fault_handler(
-    stack_frame: InterruptStackFrame,
+    mut stack_frame: InterruptStackFrame,
     error_code: PageFaultErrorCode,
 ) {
+    // Recoverable probe (#649): a kernel-mode fault while a probe is armed is
+    // redirected to the probe's recovery label instead of bugchecking.
+    if crate::arch::x64::probe::try_recover(&mut stack_frame, error_code) {
+        return;
+    }
     // INV-14: Page fault at IRQL >= DISPATCH is fatal (bugcheck).
     let irql = unsafe { crate::arch::x64::cpu_local::this_cpu_irql() };
     if irql >= crate::hal::irql::DISPATCH_LEVEL {
@@ -901,9 +914,17 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
             if next_cs & 3 != 3 {
                 // #355: accept the scheduler's idle hand-off (a Ring-0 kernel
                 // thread is starved). `schedule_with` already committed idle.
+                //
+                // A genuine kernel thread (`is_kernel`, not idle) is also a valid
+                // non-Ring-3 target from this Ring-3 interrupt: it runs in Ring 0
+                // by design with a dispatch frame, so it may be resumed directly
+                // instead of only via the starvation hand-off.
                 let this_cpu = unsafe { crate::arch::x64::cpu_local::this_cpu_id() };
-                if crate::scheduler::Scheduler::take_kernel_handoff(this_cpu) {
-                    crate::serial_println!("[K355] timer handoff -> idle tid={}", next_tid);
+                let handoff = crate::scheduler::Scheduler::take_kernel_handoff(this_cpu);
+                if crate::scheduler::schedule::accept_non_ring3_dispatch(handoff, next) {
+                    if handoff {
+                        crate::serial_println!("[K355] timer handoff -> idle tid={}", next_tid);
+                    }
                     unsafe { prepare_timer_return(next); }
                     unsafe {
                         crate::arch::x64::cpu_local::this_cpu_set_current_thread_site(
@@ -914,7 +935,7 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
                     crate::hal::ack_irq(32);
                     crate::invariants::timer_irq_exit();
                     crate::invariants::irq_exit_clear();
-                    audit_iretq_frame(&scheduler, next_rsp, next, "timer_k355_idle");
+                    audit_iretq_frame(&scheduler, next_rsp, next, "timer_kernel_dispatch");
                     return next_rsp;
                 }
                 if (tid == 5 || next_tid == 5) && crate::scheduler::sched_forensic_verbose() {
@@ -1448,13 +1469,18 @@ pub fn msi_register_handler(vector: u8, handler: MsiHandlerFn) {
         "msi_register_handler: vector {} is in the legacy range",
         vector
     );
-    let mut table = MSI_HANDLER_TABLE.lock();
-    assert!(
-        table[vector as usize].is_none(),
-        "msi_register_handler: vector {} already has a handler",
-        vector
-    );
-    table[vector as usize] = Some(handler);
+    // INV-3 / Rule 3.5.1: `msi_dispatch` takes this lock from IRQ context, so it
+    // must never be held with interrupts enabled — otherwise a device MSI that
+    // fires while a handler is being registered/removed would deadlock the CPU.
+    crate::hal::without_interrupts(|| {
+        let mut table = MSI_HANDLER_TABLE.lock();
+        assert!(
+            table[vector as usize].is_none(),
+            "msi_register_handler: vector {} already has a handler",
+            vector
+        );
+        table[vector as usize] = Some(handler);
+    });
 }
 
 /// Unregister the handler for an MSI vector (call before freeing the vector).
@@ -1462,7 +1488,14 @@ pub fn msi_unregister_handler(vector: u8) {
     if (vector as usize) < MSI_VECTOR_BASE {
         return;
     }
-    MSI_HANDLER_TABLE.lock()[vector as usize] = None;
+    crate::hal::without_interrupts(|| {
+        MSI_HANDLER_TABLE.lock()[vector as usize] = None;
+    });
+}
+
+/// Introspection/test helper: is a handler currently installed for `vector`?
+pub fn msi_handler_registered(vector: u8) -> bool {
+    crate::hal::without_interrupts(|| MSI_HANDLER_TABLE.lock()[vector as usize].is_some())
 }
 
 /// Generic MSI dispatch — called from the IDT stub for every MSI vector.
@@ -1481,4 +1514,36 @@ pub extern "C" fn msi_dispatch(vector: u8) {
     }
     // Send EOI via the HAL (no-op if APIC is not configured yet).
     crate::hal::ack_irq(vector);
+}
+
+/// Recover the vector currently being serviced from the Local APIC In-Service
+/// Register (highest-priority in-service vector).
+///
+/// The shared MSI IDT stub receives only the interrupt frame — external
+/// interrupts carry no vector in the frame — so the vector is read from the
+/// LAPIC ISR before EOI. Returns 0 when the LAPIC is not published yet.
+fn msi_in_service_vector() -> u8 {
+    let eoi = crate::hal::lapic_eoi_addr();
+    if eoi == 0 {
+        return 0;
+    }
+    // LAPIC registers are 4 KiB-aligned; EOI lives at base + 0xB0, ISR at
+    // base + 0x100 (8 x 32-bit words).
+    let base = eoi & !0xFFF;
+    for word in (0..8u64).rev() {
+        let bits = unsafe { crate::hal::mmio::read32((base + 0x100 + word * 0x10) as usize) };
+        if bits != 0 {
+            return (word as u8) * 32 + (31 - bits.leading_zeros() as u8);
+        }
+    }
+    0
+}
+
+/// IDT entry shared by every MSI/MSI-X vector (48..=255).
+extern "x86-interrupt" fn msi_generic_handler(_frame: InterruptStackFrame) {
+    let vector = msi_in_service_vector();
+    if vector < MSI_VECTOR_BASE as u8 {
+        return; // LAPIC unavailable / not an MSI vector
+    }
+    msi_dispatch(vector);
 }

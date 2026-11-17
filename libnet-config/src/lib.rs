@@ -186,7 +186,20 @@ pub fn format_ip(ip: u32, buf: &mut [u8]) -> usize {
     pos
 }
 
-/// True when `ip` (big-endian u32) is in the APIPA range 169.254.0.0/16.
+/// Convert the canonical big-endian IPv4 `u32` to the four-octet wire form
+/// (`[u8; 4]`) used by `libdns`/`libnet` and the network services (#592).
+#[inline]
+pub fn ip_to_octets(ip: u32) -> [u8; 4] {
+    ip.to_be_bytes()
+}
+
+/// Convert four octets (wire form) to the canonical big-endian IPv4 `u32`
+/// (#592).
+#[inline]
+pub fn ip_from_octets(octets: [u8; 4]) -> u32 {
+    u32::from_be_bytes(octets)
+}
+
 /// Prefix length of a contiguous subnet mask (`None` if not contiguous).
 pub fn mask_to_prefix(mask: u32) -> Option<u8> {
     let prefix = mask.leading_ones();
@@ -256,6 +269,63 @@ pub fn build_interface_path(iface: u32, buf: &mut [u8]) -> usize {
     pos
 }
 
+// ── Hostname discovery (#487) ──
+
+/// Maximum hostname bytes (DHCP option 12 / MAC-derived).
+pub const HOSTNAME_MAX: usize = 64;
+
+/// Byte allowed in a hostname; mirrors the kernel `SetHostname` rule.
+pub fn hostname_byte_ok(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || b == b'-' || b == b'_' || b == b'.'
+}
+
+/// Sanitize a DHCP option-12 host name into `out`: stop at NUL, keep hostname
+/// bytes only, trim leading/trailing separators. Returns the used length, or
+/// `None` when nothing valid remains.
+pub fn sanitize_hostname_into(raw: &[u8], out: &mut [u8; HOSTNAME_MAX]) -> Option<usize> {
+    let mut n = 0usize;
+    for &b in raw {
+        if b == 0 || n >= HOSTNAME_MAX - 1 {
+            break;
+        }
+        if hostname_byte_ok(b) {
+            out[n] = b;
+            n += 1;
+        }
+    }
+    while n > 0 && matches!(out[n - 1], b'.' | b'-' | b'_') {
+        n -= 1;
+    }
+    let mut s = 0usize;
+    while s < n && matches!(out[s], b'.' | b'-' | b'_') {
+        s += 1;
+    }
+    if s > 0 {
+        out.copy_within(s..n, 0);
+        n -= s;
+    }
+    if n == 0 {
+        None
+    } else {
+        Some(n)
+    }
+}
+
+/// Build the MAC-derived fallback hostname `neodos-<12 lowercase hex>` into
+/// `out`; returns the used length.
+pub fn derived_hostname_into(mac: &[u8; 6], out: &mut [u8; HOSTNAME_MAX]) -> usize {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let prefix = b"neodos-";
+    out[..prefix.len()].copy_from_slice(prefix);
+    let mut n = prefix.len();
+    for &b in mac.iter() {
+        out[n] = HEX[(b >> 4) as usize];
+        out[n + 1] = HEX[(b & 0x0F) as usize];
+        n += 2;
+    }
+    n
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -279,6 +349,18 @@ mod tests {
         assert_eq!(&buf[..n], b"0.0.0.0");
         let n = format_ip(0xC0A8_0101, &mut buf);
         assert_eq!(&buf[..n], b"192.168.1.1");
+    }
+
+    #[test]
+    fn ip_octet_bridge_roundtrip() {
+        let ip = parse_ip("192.168.1.7").unwrap();
+        assert_eq!(ip_to_octets(ip), [192, 168, 1, 7]);
+        assert_eq!(ip_from_octets([192, 168, 1, 7]), ip);
+        assert_eq!(ip_from_octets([10, 0, 1, 1]), parse_ip("10.0.1.1").unwrap());
+        assert_eq!(ip_to_octets(ip_from_octets([1, 2, 3, 4])), [1, 2, 3, 4]);
+        // 0.0.0.0 / broadcast round-trip.
+        assert_eq!(ip_to_octets(0), [0, 0, 0, 0]);
+        assert_eq!(ip_to_octets(0xFFFF_FFFF), [255, 255, 255, 255]);
     }
 
     #[test]
@@ -379,5 +461,50 @@ mod tests {
         assert!(!cfg.is_static());
         assert!(!cfg.has_ip());
         assert_eq!(cfg.dns, [0, 0, 0]);
+    }
+
+    // ── Hostname discovery (#487) ──
+
+    #[test]
+    fn sanitize_hostname_keeps_valid_bytes_only() {
+        let mut out = [0u8; HOSTNAME_MAX];
+        assert_eq!(sanitize_hostname_into(b"neodos-lab", &mut out), Some(10));
+        assert_eq!(&out[..10], b"neodos-lab");
+        assert_eq!(sanitize_hostname_into(b"host.example.com", &mut out), Some(16));
+        assert_eq!(sanitize_hostname_into(b"bad!name", &mut out), Some(7));
+        assert_eq!(&out[..7], b"badname");
+        assert_eq!(sanitize_hostname_into(b"  spaced ", &mut out), Some(6));
+        assert_eq!(&out[..6], b"spaced");
+        assert_eq!(sanitize_hostname_into(b"name\0junk", &mut out), Some(4));
+        assert_eq!(&out[..4], b"name");
+    }
+
+    #[test]
+    fn sanitize_hostname_trims_separators() {
+        let mut out = [0u8; HOSTNAME_MAX];
+        assert_eq!(sanitize_hostname_into(b"-lead-trail-", &mut out), Some(10));
+        assert_eq!(&out[..10], b"lead-trail");
+        assert_eq!(sanitize_hostname_into(b".dotted.", &mut out), Some(6));
+        assert_eq!(&out[..6], b"dotted");
+    }
+
+    #[test]
+    fn sanitize_hostname_rejects_empty_results() {
+        let mut out = [0u8; HOSTNAME_MAX];
+        assert_eq!(sanitize_hostname_into(b"", &mut out), None);
+        assert_eq!(sanitize_hostname_into(b"---", &mut out), None);
+        assert_eq!(sanitize_hostname_into(b"!!!", &mut out), None);
+        assert_eq!(sanitize_hostname_into(b"\0", &mut out), None);
+    }
+
+    #[test]
+    fn derived_hostname_is_neodos_prefixed_mac() {
+        let mut out = [0u8; HOSTNAME_MAX];
+        let n = derived_hostname_into(&[0x52, 0x54, 0x00, 0x12, 0x34, 0x56], &mut out);
+        assert_eq!(&out[..n], b"neodos-525400123456");
+        let n = derived_hostname_into(&[0x00, 0x00, 0x00, 0x00, 0x00, 0x00], &mut out);
+        assert_eq!(&out[..n], b"neodos-000000000000");
+        let n = derived_hostname_into(&[0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF], &mut out);
+        assert_eq!(&out[..n], b"neodos-aabbccddeeff");
     }
 }

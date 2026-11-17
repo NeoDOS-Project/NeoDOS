@@ -168,6 +168,14 @@ impl IrpPool {
 /// Global IRP pool.
 pub static IRP_POOL: IrpPool = IrpPool::new();
 
+/// IRQ-safe access to the global IRP pool (INV-3, Rule 3.5.1). The pool lock is
+/// reachable from the timer IRQ's DPC dispatch (`apc::irp_complete_with_apc`),
+/// so it MUST never be held with interrupts enabled by a non-IRQ caller.
+#[inline]
+pub(crate) fn with_pool<R>(f: impl FnOnce(&mut IrpPoolInner) -> R) -> R {
+    crate::hal::without_interrupts(|| f(&mut IRP_POOL.inner.lock()))
+}
+
 /// Allocate an IRP from the global pool.
 /// Returns `None` if the pool slot for this ID is already in use.
 pub fn irp_alloc(
@@ -180,24 +188,24 @@ pub fn irp_alloc(
     callback_ctx: *mut u8,
 ) -> Option<IrpId> {
     let id = IRP_POOL.next_id.fetch_add(1, Ordering::Relaxed);
-    let mut pool = IRP_POOL.inner.lock();
-    let irp = pool.alloc(id)?;
-    irp.op = op;
-    irp.lba = lba;
-    irp.count = count;
-    irp.buf = buf;
-    irp.buf_len = buf_len;
-    irp.status = IrpStatus::Pending;
-    irp.callback = callback;
-    irp.callback_ctx = callback_ctx;
-    irp.waiting_pid = None;
-    Some(id)
+    with_pool(|pool| {
+        let irp = pool.alloc(id)?;
+        irp.op = op;
+        irp.lba = lba;
+        irp.count = count;
+        irp.buf = buf;
+        irp.buf_len = buf_len;
+        irp.status = IrpStatus::Pending;
+        irp.callback = callback;
+        irp.callback_ctx = callback_ctx;
+        irp.waiting_pid = None;
+        Some(id)
+    })
 }
 
 /// Free an IRP, returning it to the pool.
 pub fn irp_free(id: IrpId) {
-    let mut pool = IRP_POOL.inner.lock();
-    pool.free(id);
+    with_pool(|pool| pool.free(id));
 }
 
 /// Get a snapshot of IRP parameters for a device driver.
@@ -205,22 +213,22 @@ pub fn irp_free(id: IrpId) {
 /// This avoids double-lock deadlock (the pool lock is released before the
 /// driver calls `irp_complete`, which also takes the pool lock).
 pub fn irp_get_params(id: IrpId) -> Option<IrpParams> {
-    let mut pool = IRP_POOL.inner.lock();
-    let irp = pool.get_mut(id)?;
-    Some(IrpParams {
-        op: irp.op,
-        lba: irp.lba,
-        count: irp.count,
-        buf: irp.buf,
-        buf_len: irp.buf_len,
-        id: irp.id,
+    with_pool(|pool| {
+        let irp = pool.get_mut(id)?;
+        Some(IrpParams {
+            op: irp.op,
+            lba: irp.lba,
+            count: irp.count,
+            buf: irp.buf,
+            buf_len: irp.buf_len,
+            id: irp.id,
+        })
     })
 }
 
 /// Get the current status of an IRP.
 pub fn irp_get_status(id: IrpId) -> IrpStatus {
-    let mut pool = IRP_POOL.inner.lock();
-    pool.get_mut(id).map_or(IrpStatus::Error(1), |irp| irp.status)
+    with_pool(|pool| pool.get_mut(id).map_or(IrpStatus::Error(1), |irp| irp.status))
 }
 
 // ── Work queue dispatch for completion callbacks ──────────────────────
@@ -261,14 +269,13 @@ pub fn irp_complete(irp_id: IrpId, status: IrpStatus) {
     let mut cb_info: Option<(IrpCallback, *mut u8)> = None;
     let mut waiter_pid: Option<u32> = None;
 
-    {
-        let mut pool = IRP_POOL.inner.lock();
+    with_pool(|pool| {
         if let Some(irp) = pool.get_mut(irp_id) {
             irp.status = status;
             waiter_pid = irp.waiting_pid.take();
             cb_info = irp.callback.take().map(|cb| (cb, irp.callback_ctx));
         }
-    }
+    });
 
     if let Some(pid) = waiter_pid {
         irp_wake_waiter(pid);

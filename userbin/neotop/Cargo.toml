@@ -10,6 +10,8 @@ test = false
 
 [dependencies]
 libneodos = { path = "../../libneodos" }
+libmath = { path = "../../libmath" }
+libneodiag = { path = "../../libneodiag" }
 
 [profile.release]
 panic = "abort"

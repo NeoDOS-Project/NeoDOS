@@ -1,7 +1,7 @@
 //! Ob query — registry key/value info.
 
 use crate::object::types::ObInfoClass;
-use crate::syscall::{err_to_u64, SyscallError};
+use crate::syscall::{err_to_u64, SyscallError, copy_from_user, copy_to_user};
 
 pub(super) fn handles(info_class: u32) -> bool {
     info_class == ObInfoClass::RegistryKey as u32
@@ -44,8 +44,8 @@ pub(super) fn dispatch(
             ];
             let sz = 8;
             if buf_size < sz { return err_to_u64(SyscallError::Inval); }
-            unsafe {
-                core::ptr::copy_nonoverlapping(header.as_ptr(), buf_ptr as *mut u8, sz);
+            if copy_to_user(buf_ptr, &header).is_err() {
+                return err_to_u64(SyscallError::Fault);
             }
             sz as u64
         }
@@ -54,12 +54,15 @@ pub(super) fn dispatch(
             if entry.obj_type() != Some(crate::object::ObType::Key) {
                 return err_to_u64(SyscallError::Inval);
             }
-            // Read value name from buf (null-terminated)
-            let base = buf_ptr as *const u8;
+            // Read value name from buf (null-terminated) via a fault-safe copy
+            let mut kbuf = alloc::vec::Vec::with_capacity(buf_size);
+            kbuf.resize(buf_size, 0u8);
+            if copy_from_user(&mut kbuf, buf_ptr).is_err() {
+                return err_to_u64(SyscallError::Fault);
+            }
             let name = {
                 let mut s = alloc::string::String::new();
-                for i in 0..buf_size {
-                    let c = unsafe { core::ptr::read_volatile(base.add(i)) };
+                for &c in kbuf.iter() {
                     if c == 0 { break; }
                     s.push(c as char);
                 }
@@ -84,13 +87,13 @@ pub(super) fn dispatch(
                         ((data.len() >> 16) & 0xFF) as u8, ((data.len() >> 24) & 0xFF) as u8,
                     ];
                     let copy_len = if buf_size >= total_size { total_size } else { buf_size };
-                    unsafe {
-                        core::ptr::copy_nonoverlapping(header.as_ptr(), buf_ptr as *mut u8, 8);
-                        if copy_len > 8 {
-                            let data_copy = &data[..core::cmp::min(data.len(), buf_size - 8)];
-                            core::ptr::copy_nonoverlapping(
-                                data_copy.as_ptr(), (buf_ptr + 8) as *mut u8, data_copy.len(),
-                            );
+                    if copy_to_user(buf_ptr, &header).is_err() {
+                        return err_to_u64(SyscallError::Fault);
+                    }
+                    if copy_len > 8 {
+                        let data_copy = &data[..core::cmp::min(data.len(), buf_size - 8)];
+                        if copy_to_user(buf_ptr + 8, data_copy).is_err() {
+                            return err_to_u64(SyscallError::Fault);
                         }
                     }
                     total_size as u64

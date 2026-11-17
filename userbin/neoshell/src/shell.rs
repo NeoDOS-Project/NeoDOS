@@ -48,16 +48,7 @@ pub fn first_token(s: &[u8]) -> &[u8] {
     t.split(|&b| b == b' ' || b == b'\t').next().unwrap_or(t)
 }
 
-pub fn to_ob_path<'a>(vfs: &'a str, buf: &'a mut [u8; 512]) -> &'a str {
-    let p = b"\\Global\\FileSystem\\";
-    let vb = vfs.as_bytes();
-    let t = p.len() + vb.len();
-    if t > 510 { return vfs; }
-    buf[..p.len()].copy_from_slice(p);
-    buf[p.len()..t].copy_from_slice(vb);
-    buf[t] = 0;
-    unsafe { core::str::from_utf8_unchecked(&buf[..t]) }
-}
+pub use libneoutil::to_ob_path;
 
 // ── Shell ──────────────────────────────────────
 

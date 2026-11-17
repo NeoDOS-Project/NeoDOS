@@ -203,7 +203,16 @@ pub unsafe fn init(boot_info: &BootInfo) -> ! {
     // ============================================
     // PHASE 2.8: SMP — Start Application Processors
     // ============================================
-    println!("[+] Initializing SMP (per-CPU data structures)...");
+    // NEODOS-09 (#639): detect CPU security features and enable SMEP/SMAP/NXE on
+    // the BSP before APs are started. CPUID-gated: no-op on hardware without
+    // support.
+    arch::x64::features::detect();
+    unsafe { arch::x64::features::enable_on_this_cpu(); }
+    println!(
+        "[+] Initializing SMP (per-CPU data structures)... [CPU_FEAT] SMEP={}/{} SMAP={}/{} NX={}/{}",
+        arch::x64::features::smep_supported(), arch::x64::features::smep_enabled(),
+        arch::x64::features::smap_supported(), arch::x64::features::smap_enabled(),
+        arch::x64::features::nx_supported(), arch::x64::features::nx_enabled());
     // Force scheduler initialization on the BSP *before* APs can lazily build
     // it. `Scheduler::new()` captures the bootstrap stack, so it must run on
     // the BSP, not on an AP.
@@ -239,6 +248,8 @@ pub unsafe fn init(boot_info: &BootInfo) -> ! {
     crate::serial_println!("[INT] about to STI, CR3=0x{:x} GS=0x{:x}", crate::hal::read_cr3(), crate::hal::safe::GsBase::read());
     hal::enable_interrupts();
     crate::serial_println!("[INT] STI done");
+    // MSI/MSI-X delivery path self-check (needs interrupts enabled), #676.
+    crate::interrupts::msi::run_delivery_self_check();
 
     // ============================================
     // PHASE 6 / PHASE 3: Custom Page Tables & User Memory
@@ -481,8 +492,23 @@ pub unsafe fn init(boot_info: &BootInfo) -> ! {
     // Creates \Device\Tcp and \Device\Udp namespace objects.
     // NICs are registered by NEM drivers (e.g. e1000.nem).
     // ============================================
+    // ============================================
+    // PHASE 3.9: User profiles (#400)
+    // Creates C:\Users\<usuario>\{Desktop,Documents,Downloads,AppData\...}
+    // for every SAM account and records the SID binding in the registry.
+    // ============================================
+    let profiles = cm::profile::ensure_all();
+    println!("[+] User profiles ready: {}", profiles);
+
     println!("[+] Initializing networking subsystem...");
     net::init_networking();
+
+    // ============================================
+    // PHASE 3.885: CSPRNG (\Device\Random, #712/M8)
+    // Seeds the ChaCha20 DRBG from RDSEED/RDRAND and exposes it to Ring 3.
+    // ============================================
+    println!("[+] Initializing CSPRNG...");
+    random::init();
 
     // ============================================
     // PHASE 3.881: Cm (Configuration Manager) — Registry
@@ -731,11 +757,11 @@ pub unsafe fn init(boot_info: &BootInfo) -> ! {
         // Phase 14-A: track the human-readable name of the init binary actually
         // loaded (primary NeoInit, fallback NeoShell).
         let mut boot_name: &str = "neoinit";
-        let entry = try_load("C:\\Programs\\neoinit.nxe", &mut addr)
+        let entry = try_load("C:\\NeoDOS\\System\\neoinit.nxe", &mut addr)
             .or_else(|| {
                 kinfo!(LogSubsys::Init, "NeoInit not found, trying NEOSHELL.NXE as fallback...");
                 boot_name = "neoshell";
-                try_load("C:\\Programs\\neoshell.nxe", &mut addr)
+                try_load("C:\\NeoDOS\\System\\neoshell.nxe", &mut addr)
             })
             .unwrap_or(0);
             let loaded = entry != 0;

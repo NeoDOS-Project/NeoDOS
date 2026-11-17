@@ -18,7 +18,16 @@ use crate::{res, syscall};
 
 const MAX_TABLES: usize = 8;
 /// Maximum raw `.nlt` file size (payload + optional region/signature blocks).
-const MAX_FILE: usize = 18432;
+///
+/// Kept modest on purpose (#576): the table pool and the three load scratch
+/// buffers are all `MAX_FILE`-sized, so the static footprint is
+/// `(MAX_TABLES + 3) * MAX_FILE`. The largest shipped NLT is ~1 KB, so 8 KiB
+/// leaves ample headroom while keeping the per-binary `.bss` well under
+/// `MAX_BIN_SIZE` (192 KiB). A `.bss` larger than `MAX_BIN_SIZE` makes the ELF
+/// loader's zero-fill spill into the process stack region, silently clobbering
+/// i18n statics such as `NLT_COUNT` (observed with neotop, whose large stack
+/// buffers reached the pool tail).
+const MAX_FILE: usize = 8192;
 const MAX_APP_NAME: usize = 32;
 const MAX_LANG: usize = 16;
 
@@ -254,7 +263,7 @@ fn try_load_table(app: &str, locale: &str) -> Result<(), LoadError> {
 }
 
 fn build_nlt_path(app: &str, locale: &str) -> Result<([u8; 256], usize), ()> {
-    let prefix = b"C:\\System\\Locale\\";
+    let prefix = b"C:\\NeoDOS\\System\\Globalization\\";
     let sep = b"\\";
     let ext = b".nlt";
     let total = prefix.len() + locale.len() + sep.len() + app.len() + ext.len();
@@ -286,25 +295,16 @@ pub fn i18n_init() {
         }
         INITIALIZED = true;
     }
-    if let Ok(fd) = syscall::sys_cm_open_key(REG_LOCALE_KEY) {
+    if let Ok(key) = crate::registry::RegistryKey::open(REG_LOCALE_KEY) {
         let mut buf = [0u8; 128];
-        if let Ok(size) = syscall::sys_cm_query_value(fd, REG_LANG_VALUE, &mut buf) {
-            if size > 8 {
-                let data_len = u32::from_le_bytes([buf[4], buf[5], buf[6], buf[7]]) as usize;
-                let end = buf.len().min(8 + data_len);
-                let data = &buf[8..end];
-                let trimmed = match data.iter().position(|&b| b == 0) {
-                    Some(z) => &data[..z],
-                    None => data,
-                };
-                if let Ok(l) = str::from_utf8(trimmed) {
-                    if !l.is_empty() {
-                        set_lang(l);
-                    }
+        let n = key.query_string(REG_LANG_VALUE, &mut buf);
+        if n > 0 {
+            if let Ok(l) = str::from_utf8(&buf[..n]) {
+                if !l.is_empty() {
+                    set_lang(l);
                 }
             }
         }
-        let _ = syscall::sys_close(fd);
     }
     unsafe {
         if LANG_LEN == 0 {
@@ -837,7 +837,7 @@ static mut LOCALE_SCANNED: bool = false;
 /// so a single pass with a large-enough buffer is the only correct usage.
 /// Looping over it expecting a continuation cursor hangs (this was the bug).
 fn scan_locales_once() {
-    const LOCALE_PATH: &str = "\\Global\\FileSystem\\C:\\System\\Locale";
+    const LOCALE_PATH: &str = "\\Global\\FileSystem\\C:\\NeoDOS\\System\\Globalization";
     unsafe {
         if LOCALE_SCANNED {
             return;

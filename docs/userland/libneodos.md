@@ -279,15 +279,56 @@ The resulting ELF binary is the `.NXE` file placed in the disk image at `\Progra
 
 ## NXL Loading
 
-NXL (NeoDOS eXecutable Library) files are loaded via `sys_loadlib` (RAX 21) into region `0x1e000000..0x1e200000` (2 MB total). Divided into 8 slots of 256 KB each.
+NXL (NeoDOS eXecutable Library) files are loaded via `sys_loadlib` (RAX 25) into
+region `0x1e000000..0x1e200000` (2 MB total), divided into 8 slots of 256 KB
+each. The maximum library size is one slot (256 KB); a larger file is rejected
+rather than silently truncated.
 
-| Slot | NXL | Load Policy | Description |
-| ------ | ----- | ------------- | ------------- |
-| 0 | `libneodos.nxl` | Auto-loaded at boot | Core user library routines |
-| 1 | `libmath.nxl` | Manual (`sys_loadlib`) | Math library |
-| 2 | `console.nxl` | Lazy-loaded by console module | Terminal I/O, history, completion, progress bar |
+Two library models are supported:
 
-Slot allocation is static; each NXL has a fixed slot that cannot be changed at runtime.
+- **Legacy (`ET_EXEC`, fixed base):** linked to a specific slot base and loaded
+  without relocation. Only the core `libneodos.nxl` remains on this model: its
+  `AbiTable` is the syscall gateway and thin clients reference it at
+  `0x1e000000`.
+- **Relocatable (`ET_DYN` / PIE):** linked at virtual 0 and loaded into **any
+  free slot**; the loader applies `R_X86_64_RELATIVE` relocations and reports
+  the `.export_table` address. A PIE NXL may import symbols from already-loaded
+  libraries (`R_X86_64_64` / `GLOB_DAT` / `JUMP_SLOT`), resolved by name from a
+  loader-maintained symbol registry built from each library's `.dynsym`. Build
+  such a library as a shared object with `--export-dynamic`.
+
+Every NXL export table starts with `version: u32` (uniform convention); a zero
+version is rejected (fail closed). The core `libneodos.nxl` `AbiTable` is
+version 8, version-first.
+
+| NXL | Model | Load policy |
+| ----- | ----- | ------------- |
+| `libneodos.nxl` (`fs.nxl`) | Legacy (fixed slot 0) | Auto-loaded at boot |
+| `libmath.nxl` | PIE | Auto-loaded at boot |
+| `libarith.nxl` | PIE | Auto-loaded at boot (imports `math_add`) |
+| `console.nxl` | PIE | Lazy-loaded by the console module |
+| `net.nxl` | PIE | Lazy-loaded by `libnet` |
+
+Fixed-base (legacy) libraries occupy their designated slot; PIE libraries take
+the first free slot at load time.
+
+### NXL path resolution
+
+Userland thin clients (`libmath`, `libnet`, `libneodos::console`) resolve the
+library path with `libneodos::nxl::library_path(name, buf)`: a `KnownDlls`-style
+Registry value first, then a built-in fallback.
+
+```text
+\Registry\Machine\System\CurrentControlSet\Control\Library\<name>   REG_SZ
+    math      C:\System\Libraries\math.nxl
+    net       C:\System\Libraries\net.nxl
+    console   C:\System\Libraries\console.nxl
+```
+
+Defaults are created at boot by `cm::init::ensure_boot_defaults`. The kernel
+itself never reads these values: `math.nxl`/`net.nxl`/`console.nxl` are userland
+libraries and are loaded on demand. Only `fs.nxl` (the syscall gateway) is
+boot-loaded, at a fixed path.
 
 ## ABI Table (Version 8)
 

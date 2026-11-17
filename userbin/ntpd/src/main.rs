@@ -85,12 +85,16 @@ fn write_u32(mut v: u32) {
         write_str(b"0");
         return;
     }
-    while v > 0 && i > 0 {
+    // The buffer must fit every digit the type can hold.
+    while v > 0 {
         buf[i] = b'0' + (v % 10) as u8;
         v /= 10;
+        if i == 0 {
+            break;
+        }
         i -= 1;
     }
-    write_str(&buf[i + 1..=9]);
+    write_str(&buf[i..=9]);
 }
 
 fn write_i64(mut v: i64) {
@@ -104,21 +108,23 @@ fn write_i64(mut v: i64) {
         write_str(b"0");
         return;
     }
-    while v > 0 && i > 0 {
+    // The buffer must fit every digit the type can hold.
+    while v > 0 {
         buf[i] = b'0' + (v % 10) as u8;
         v /= 10;
+        if i == 0 {
+            break;
+        }
         i -= 1;
     }
-    write_str(&buf[i + 1..=19]);
+    write_str(&buf[i..=19]);
 }
 
+// Shared IPv4 formatting (#592); only the console shim.
 fn write_ip(ip: [u8; 4]) {
-    for (i, o) in ip.iter().enumerate() {
-        if i > 0 {
-            write_str(b".");
-        }
-        write_u32(*o as u32);
-    }
+    let mut buf = [0u8; 16];
+    let n = libnet::config::format_ip(libnet::config::ip_from_octets(ip), &mut buf);
+    write_str(&buf[..n]);
 }
 
 // ── Timing ──
@@ -238,6 +244,10 @@ struct NtpConfig {
     servers: Vec<String>,
     interval: u32,
     timeout_ms: u32,
+    /// RFC 5905 symmetric-key authentication: key id + pre-shared key (empty =
+    /// unauthenticated).
+    key_id: u32,
+    key: Vec<u8>,
 }
 
 fn load_config() -> NtpConfig {
@@ -246,6 +256,8 @@ fn load_config() -> NtpConfig {
         servers: alloc::vec![String::from(DEFAULT_SERVER)],
         interval: DEFAULT_INTERVAL,
         timeout_ms: DEFAULT_TIMEOUT_MS,
+        key_id: 0,
+        key: Vec::new(),
     };
 
     if let Ok(fd) = syscall::sys_cm_open_key(REG_PARAM) {
@@ -263,6 +275,21 @@ fn load_config() -> NtpConfig {
         }
         if let Some(v) = read_reg_dword(fd, "Timeout") {
             cfg.timeout_ms = v.max(100);
+        }
+        // RFC 5905 symmetric-key authentication (#361). `Key` is hex; `Mac=off`
+        // disables it even when a key is present.
+        if let Some(v) = read_reg_dword(fd, "KeyId") {
+            cfg.key_id = v;
+        }
+        if let Some(s) = read_reg_string(fd, "Key") {
+            if let Some(k) = libntp::parse_key_hex(&s) {
+                cfg.key = k;
+            }
+        }
+        if let Some(m) = read_reg_string(fd, "Mac") {
+            if m.eq_ignore_ascii_case("off") {
+                cfg.key.clear();
+            }
         }
         let _ = syscall::sys_close(fd);
     }
@@ -345,78 +372,73 @@ struct SyncResult {
     server: [u8; 4],
     /// Corrected absolute UTC time (Unix seconds).
     unix_secs: i64,
+    /// The local RTC was unset, so this is a cold step from the server time.
+    cold: bool,
 }
 
-fn ntp_sync(ip: [u8; 4], timeout_ms: u32) -> Result<SyncResult, &'static str> {
-    let fd = libnet::socket_create(2); // SocketType::Udp
-    if fd < 0 {
-        return Err("socket create failed");
-    }
-    if libnet::socket_bind(fd, 0, 0) < 0 {
-        let _ = libnet::socket_close(fd);
-        return Err("socket bind failed");
-    }
-    if libnet::socket_connect(fd, u32::from_be_bytes(ip), libntp::NTP_PORT) < 0 {
-        let _ = libnet::socket_close(fd);
-        return Err("socket connect failed");
-    }
-
-    let t1 = rtc_now_ns().unwrap_or(0);
+fn ntp_sync(ip: [u8; 4], timeout_ms: u32, key_id: u32, key: &[u8]) -> Result<SyncResult, &'static str> {
+    let authed = !key.is_empty();
+    // A transient RTC read failure used to become `t1 = 0` and, paired with a
+    // successful read at `t4`, produced a ~56-year "delay" and a bogus step to
+    // 2055. `clock_step` decides how to use the two readings.
+    let local_before = rtc_now_ns();
+    let t1 = local_before.unwrap_or(0);
     let t1_secs = (t1 / 1_000_000_000) as i64;
-    let request = libntp::build_request(libntp::unix_secs_to_ntp(t1_secs));
+    let ntp_ts = libntp::unix_secs_to_ntp(t1_secs);
 
-    // ARP may still be resolving; retry the send like the DNS resolver does.
-    let mut sent = false;
-    for _ in 0..50 {
-        if libnet::socket_send(fd, &request) >= 0 {
-            sent = true;
-            break;
-        }
-        let _ = syscall::sys_yield();
-        for _ in 0..2000 {
-            core::hint::spin_loop();
-        }
-    }
-    if !sent {
-        let _ = libnet::socket_close(fd);
-        return Err("send failed");
-    }
+    // Request: plain 48 bytes, or header + key id + MD5 MAC (#361).
+    let mut request = [0u8; libntp::NTP_AUTH_PACKET_SIZE];
+    let req_len = if authed {
+        let pkt = libntp::build_request_authed(ntp_ts, key_id);
+        request.copy_from_slice(&pkt);
+        libntp::sign_request_md5(&mut request, key);
+        libntp::NTP_AUTH_PACKET_SIZE
+    } else {
+        request[..libntp::NTP_PACKET_SIZE].copy_from_slice(&libntp::build_request(ntp_ts));
+        libntp::NTP_PACKET_SIZE
+    };
 
-    let mut buf = [0u8; libntp::NTP_PACKET_SIZE];
+    // Shared UDP exchange (#593): create → bind → connect → send with ARP retry
+    // → timed receive → close.
+    let mut buf = [0u8; libntp::NTP_AUTH_PACKET_SIZE];
     let budget = timeout_ms as u64 * TICKS_PER_MS;
-    let start = rdtsc();
-    let mut received = 0usize;
-    loop {
-        let n = libnet::socket_recv(fd, &mut buf);
-        if n > 0 {
-            received = n as usize;
-            break;
-        }
-        if rdtsc().wrapping_sub(start) >= budget {
-            break;
-        }
-        let _ = syscall::sys_yield();
-    }
-    let _ = libnet::socket_close(fd);
+    let received = match libnet::udp::exchange(
+        u32::from_be_bytes(ip),
+        libntp::NTP_PORT,
+        &request[..req_len],
+        &mut buf,
+        budget,
+    ) {
+        Ok(n) => n,
+        Err(libnet::udp::UdpError::Timeout) => return Err("timeout"),
+        Err(_) => return Err("send failed"),
+    };
 
-    if received == 0 {
-        return Err("timeout");
-    }
-
-    let reply = libntp::parse_reply(&buf[..received], libntp::unix_secs_to_ntp(t1_secs))
-        .map_err(|_| "invalid NTP response")?;
+    let reply = if authed {
+        libntp::parse_reply_authed(&buf[..received], ntp_ts, key_id, key).map_err(|e| match e {
+            libntp::NtpError::AuthMissing => "unauthenticated reply",
+            libntp::NtpError::AuthKeyMismatch => "key id mismatch",
+            libntp::NtpError::AuthFailed => "bad MAC",
+            _ => "invalid NTP response",
+        })?
+    } else {
+        libntp::parse_reply(&buf[..received], ntp_ts).map_err(|_| "invalid NTP response")?
+    };
     let t2 = libntp::ntp_to_unix_ns(reply.receive_ts);
     let t3 = libntp::ntp_to_unix_ns(reply.transmit_ts);
-    let t4 = rtc_now_ns().unwrap_or(t1);
-    let (offset_ns, delay_ns) = libntp::offset_and_delay(t1, t2, t3, t4);
-    let unix_secs = (t4 + offset_ns).div_euclid(1_000_000_000) as i64;
+    let local_after = rtc_now_ns();
+    let step = libntp::clock_step(local_before, t2, t3, local_after).map_err(|e| match e {
+        libntp::StepError::ImplausibleDelay => "unusable round-trip delay",
+        libntp::StepError::ImplausibleTime => "implausible server time",
+    })?;
 
     Ok(SyncResult {
-        offset_ns,
-        delay_ns,
+        offset_ns: step.offset_ns,
+        delay_ns: step.delay_ns,
         stratum: reply.stratum,
         server: ip,
-        unix_secs,
+        unix_secs: step.unix_secs,
+        cold: step.cold,
     })
 }
 
@@ -443,13 +465,36 @@ fn network_ready() -> bool {
     libnet::iface_info(0, &mut iface) == 0 && iface.ip != [0u8; 4]
 }
 
+/// True when invoked as `ntpd once` / `-q` / `--once` (one-shot, `ntpdate` role).
+fn arg_once() -> bool {
+    let a = libneodos::args::read_args();
+    for w in a.split(|&b| b == b' ' || b == b'\t' || b == b'\0' || b == b'\r' || b == b'\n') {
+        if w.eq_ignore_ascii_case(b"once") || w == b"-q" || w == b"--once" {
+            return true;
+        }
+    }
+    false
+}
+
 #[no_mangle]
 pub extern "C" fn _start() -> ! {
     write_str(b"\r\n[ntpd] NeoDOS NTP Service v0.1\r\n");
 
+    // `ntpd once` (or `-q`): synchronize a single time and exit — the `ntpdate`
+    // role. Without it the daemon runs the periodic loop.
+    let once = arg_once();
+
     let cfg = load_config();
+    if !cfg.key.is_empty() {
+        write_str(b"[ntpd] authentication enabled (MD5, key id ");
+        write_u32(cfg.key_id);
+        write_str(b")\r\n");
+    }
     if !cfg.enabled {
         write_str(b"[ntpd] NTP disabled by configuration; idling\r\n");
+        if once {
+            syscall::sys_exit(1);
+        }
         publish("Disabled", "", 0, 0, 0, 0, "", 0);
         loop {
             // #358: observe graceful shutdown even while idling.
@@ -466,6 +511,10 @@ pub extern "C" fn _start() -> ! {
     loop {
         if !network_ready() {
             write_str(b"[ntpd] network not ready; waiting\r\n");
+            if once {
+                write_str(b"[ntpd] one-shot: network not ready\r\n");
+                syscall::sys_exit(1);
+            }
             publish("WaitingNetwork", "", 0, 0, 0, 0, "network unavailable", sync_count);
             if wait_seconds(backoff) {
                 graceful_exit();
@@ -493,18 +542,25 @@ pub extern "C" fn _start() -> ! {
             write_ip(ip);
             write_str(b")\r\n");
 
-            match ntp_sync(ip, cfg.timeout_ms) {
+            match ntp_sync(ip, cfg.timeout_ms, cfg.key_id, &cfg.key) {
                 Ok(r) => {
                     let offset_ms = (r.offset_ns / 1_000_000) as i64;
                     let delay_ms = (r.delay_ns / 1_000_000) as i64;
                     match apply_time(r.unix_secs) {
                         Ok(()) => {
                             sync_count += 1;
-                            write_str(b"[ntpd] synced: offset=");
-                            write_i64(offset_ms);
-                            write_str(b"ms delay=");
-                            write_i64(delay_ms);
-                            write_str(b"ms stratum=");
+                            if r.cold {
+                                // No offset is measurable against an unset RTC.
+                                write_str(b"[ntpd] cold start: stepped clock to ");
+                                write_u32(r.unix_secs.max(0) as u32);
+                                write_str(b" stratum=");
+                            } else {
+                                write_str(b"[ntpd] synced: offset=");
+                                write_i64(offset_ms);
+                                write_str(b"ms delay=");
+                                write_i64(delay_ms);
+                                write_str(b"ms stratum=");
+                            }
                             write_u32(r.stratum as u32);
                             write_str(b"\r\n");
                             publish("Synced", server, offset_ms, delay_ms, r.stratum,
@@ -533,6 +589,10 @@ pub extern "C" fn _start() -> ! {
 
         if synced {
             backoff = INITIAL_BACKOFF_SECS;
+            if once {
+                write_str(b"[ntpd] one-shot sync complete\r\n");
+                syscall::sys_exit(0);
+            }
             if wait_seconds(cfg.interval) {
                 graceful_exit();
             }
@@ -540,6 +600,10 @@ pub extern "C" fn _start() -> ! {
             write_str(b"[ntpd] all servers failed; backoff ");
             write_u32(backoff);
             write_str(b"s\r\n");
+            if once {
+                write_str(b"[ntpd] one-shot sync failed\r\n");
+                syscall::sys_exit(1);
+            }
             if wait_seconds(backoff) {
                 graceful_exit();
             }

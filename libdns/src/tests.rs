@@ -255,6 +255,41 @@
         assert_eq!(validate_hostname(&long_label), Err(DnsError::InvalidHostname));
     }
 
+    // ── Local name matching (#485) ──
+
+    #[test]
+    fn is_localhost_tolerates_trailing_dot() {
+        assert!(is_localhost("localhost"));
+        assert!(is_localhost("LOCALHOST"));
+        assert!(is_localhost("localhost."));
+        assert!(is_localhost("LocalHost."));
+        assert!(!is_localhost("localhost.localdomain"));
+        assert!(!is_localhost("notlocalhost"));
+        assert!(!is_localhost(""));
+        assert!(!is_localhost("."));
+    }
+
+    #[test]
+    fn is_local_name_matches_own_hostname_case_insensitively() {
+        assert!(is_local_name("NeoDOS-PC", "NeoDOS-PC"));
+        assert!(is_local_name("neodos-pc", "NeoDOS-PC"));
+        assert!(is_local_name("NEODOS-PC", "neodos-pc"));
+        assert!(is_local_name("NeoDOS-PC.", "NeoDOS-PC"));
+        assert!(is_local_name("neodos-pc", "NeoDOS-PC."));
+    }
+
+    #[test]
+    fn is_local_name_rejects_non_local_and_empty() {
+        assert!(!is_local_name("other-pc", "NeoDOS-PC"));
+        assert!(!is_local_name("example.com", "NeoDOS-PC"));
+        assert!(!is_local_name("sub.neodos-pc", "NeoDOS-PC"));
+        assert!(!is_local_name("NeoDOS-PC", "NeoDOS-PC2"));
+        // An empty (unset) hostname never matches — not even the empty name.
+        assert!(!is_local_name("", ""));
+        assert!(!is_local_name("anything", ""));
+        assert!(!is_local_name(".", "NeoDOS-PC"));
+    }
+
     // ── Server selection / transport ──
 
     #[test]
@@ -459,4 +494,71 @@
             resolve_with_servers(&mut transport, "example.com", &servers, 1).unwrap();
         assert!(!answer.addresses.is_empty());
         assert!(servers.contains(&server));
+    }
+
+    // ── Answer cache ──
+
+    #[test]
+    fn cache_ttl_expiry_and_slots() {
+        let mut cache = AnswerCache::new(4, DEFAULT_MAX_TTL_S);
+        let server = [10, 0, 2, 3];
+        let addr = [93, 184, 216, 34];
+
+        cache.insert("example.com", server, addr, 60, 1_000);
+        assert_eq!(cache.lookup("example.com", server, 1_000), Some((addr, 60)));
+        // The remaining TTL is reported, rounded up.
+        assert_eq!(cache.lookup("example.com", server, 60_999), Some((addr, 1)));
+        // At the deadline the entry is dropped.
+        assert_eq!(cache.lookup("example.com", server, 61_000), None);
+        assert!(cache.is_empty());
+        // A different server does not share the entry.
+        cache.insert("example.com", server, addr, 60, 2_000);
+        assert_eq!(cache.lookup("example.com", [10, 0, 2, 4], 2_000), None);
+    }
+
+    #[test]
+    fn cache_zero_ttl_is_not_cached() {
+        let mut cache = AnswerCache::new(4, DEFAULT_MAX_TTL_S);
+        let server = [10, 0, 2, 3];
+        cache.insert("example.com", server, [1, 2, 3, 4], 60, 1_000);
+        cache.insert("example.com", server, [5, 6, 7, 8], 0, 1_000);
+        assert_eq!(cache.lookup("example.com", server, 1_000), None);
+        assert!(cache.is_empty());
+    }
+
+    #[test]
+    fn cache_caps_long_ttls_and_refreshes() {
+        let mut cache = AnswerCache::new(4, 100);
+        let server = [10, 0, 2, 3];
+        cache.insert("example.com", server, [1, 1, 1, 1], 10_000, 0);
+        assert!(cache.lookup("example.com", server, 100_000 - 1).is_some());
+        assert_eq!(cache.lookup("example.com", server, 100_000), None);
+
+        cache.insert("example.com", server, [1, 1, 1, 1], 30, 10_000);
+        cache.insert("example.com", server, [2, 2, 2, 2], 30, 20_000);
+        assert_eq!(
+            cache.lookup("example.com", server, 20_000),
+            Some(([2, 2, 2, 2], 30))
+        );
+    }
+
+    #[test]
+    fn cache_is_bounded_and_evicts_earliest_expiry() {
+        let mut cache = AnswerCache::new(2, DEFAULT_MAX_TTL_S);
+        let server = [10, 0, 2, 3];
+        cache.insert("short.example", server, [1, 0, 0, 1], 10, 0);
+        cache.insert("long.example", server, [1, 0, 0, 2], 100, 0);
+        cache.insert("new.example", server, [1, 0, 0, 3], 50, 0);
+        assert_eq!(cache.len(), 2);
+        assert_eq!(cache.lookup("short.example", server, 0), None);
+        assert!(cache.lookup("new.example", server, 0).is_some());
+        assert!(cache.lookup("long.example", server, 0).is_some());
+    }
+
+    #[test]
+    fn cache_capacity_zero_disables_it() {
+        let mut cache = AnswerCache::new(0, DEFAULT_MAX_TTL_S);
+        cache.insert("example.com", [10, 0, 2, 3], [1, 2, 3, 4], 60, 0);
+        assert!(cache.is_empty());
+        assert_eq!(cache.lookup("example.com", [10, 0, 2, 3], 0), None);
     }

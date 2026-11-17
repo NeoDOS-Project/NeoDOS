@@ -1,7 +1,7 @@
 //! Ob query — basic/name/pipe/version/keyboard/service classes.
 
 use crate::object::types::ObInfoClass;
-use crate::syscall::{err_to_u64, SyscallError};
+use crate::syscall::{err_to_u64, SyscallError, copy_to_user};
 use crate::syscall::ob::types::{ObBasicInfo, ObPipeInfo};
 
 pub(super) fn handles(info_class: u32) -> bool {
@@ -50,11 +50,11 @@ pub(super) fn dispatch(
                 };
                 let sz = core::mem::size_of::<ObBasicInfo>();
                 if buf_size < sz { return err_to_u64(SyscallError::Inval); }
-                unsafe {
-                    core::ptr::copy_nonoverlapping(
-                        &basic as *const ObBasicInfo as *const u8,
-                        buf_ptr as *mut u8, sz,
-                    );
+                let bytes = unsafe {
+                    core::slice::from_raw_parts(&basic as *const ObBasicInfo as *const u8, sz)
+                };
+                if copy_to_user(buf_ptr, bytes).is_err() {
+                    return err_to_u64(SyscallError::Fault);
                 }
                 return sz as u64;
             }
@@ -70,11 +70,11 @@ pub(super) fn dispatch(
                 };
                 let sz = core::mem::size_of::<ObBasicInfo>();
                 if buf_size < sz { return err_to_u64(SyscallError::Inval); }
-                unsafe {
-                    core::ptr::copy_nonoverlapping(
-                        &basic as *const ObBasicInfo as *const u8,
-                        buf_ptr as *mut u8, sz,
-                    );
+                let bytes = unsafe {
+                    core::slice::from_raw_parts(&basic as *const ObBasicInfo as *const u8, sz)
+                };
+                if copy_to_user(buf_ptr, bytes).is_err() {
+                    return err_to_u64(SyscallError::Fault);
                 }
                 sz as u64
             } else {
@@ -89,9 +89,11 @@ pub(super) fn dispatch(
                 let name_str = obj.name_str();
                 let bytes = name_str.as_bytes();
                 let copy_len = bytes.len().min(buf_size - 1).min(255);
-                unsafe {
-                    core::ptr::copy_nonoverlapping(bytes.as_ptr(), buf_ptr as *mut u8, copy_len);
-                    (buf_ptr as *mut u8).add(copy_len).write(0u8);
+                let mut out = alloc::vec::Vec::with_capacity(copy_len + 1);
+                out.extend_from_slice(&bytes[..copy_len]);
+                out.push(0);
+                if copy_to_user(buf_ptr, &out).is_err() {
+                    return err_to_u64(SyscallError::Fault);
                 }
                 copy_len as u64
             } else {
@@ -113,11 +115,11 @@ pub(super) fn dispatch(
             };
             let sz = core::mem::size_of::<ObPipeInfo>();
             if buf_size < sz { return err_to_u64(SyscallError::Inval); }
-            unsafe {
-                core::ptr::copy_nonoverlapping(
-                    &info as *const ObPipeInfo as *const u8,
-                    buf_ptr as *mut u8, sz,
-                );
+            let bytes = unsafe {
+                core::slice::from_raw_parts(&info as *const ObPipeInfo as *const u8, sz)
+            };
+            if copy_to_user(buf_ptr, bytes).is_err() {
+                return err_to_u64(SyscallError::Fault);
             }
             sz as u64
         }
@@ -134,8 +136,8 @@ pub(super) fn dispatch(
             }
             let ver = crate::KERNEL_VERSION.as_bytes();
             let copy_len = ver.len().min(buf_size);
-            unsafe {
-                core::ptr::copy_nonoverlapping(ver.as_ptr(), buf_ptr as *mut u8, copy_len);
+            if copy_to_user(buf_ptr, &ver[..copy_len]).is_err() {
+                return err_to_u64(SyscallError::Fault);
             }
             ver.len() as u64
         }
@@ -149,16 +151,20 @@ pub(super) fn dispatch(
             };
             if obj.obj_type == crate::object::ObType::KeyboardDevice {
                 if buf_size < 1 { return err_to_u64(SyscallError::Inval); }
-                let kbd = crate::kbd::KBD.lock();
-                unsafe { core::ptr::write_volatile(buf_ptr as *mut u8, kbd.state.active_layout_index as u8); }
+                let layout = { crate::kbd::KBD.lock().state.active_layout_index as u8 };
+                if copy_to_user(buf_ptr, &[layout]).is_err() {
+                    return err_to_u64(SyscallError::Fault);
+                }
                 return 1u64;
             }
             if obj.obj_type != crate::object::ObType::Key || obj.native_id != 9 {
                 return err_to_u64(SyscallError::Inval);
             }
             if buf_size < 1 { return err_to_u64(SyscallError::Inval); }
-            let kbd = crate::kbd::KBD.lock();
-            unsafe { core::ptr::write_volatile(buf_ptr as *mut u8, kbd.state.active_layout_index as u8); }
+            let layout = { crate::kbd::KBD.lock().state.active_layout_index as u8 };
+            if copy_to_user(buf_ptr, &[layout]).is_err() {
+                return err_to_u64(SyscallError::Fault);
+            }
             1u64
         }
         _ if info_class == ObInfoClass::KeyboardInfo as u32 => {
@@ -171,17 +177,19 @@ pub(super) fn dispatch(
             }
             let sz = core::mem::size_of::<crate::kbd::KbdState>();
             if buf_size < sz { return err_to_u64(SyscallError::Inval); }
-            let kbd = crate::kbd::KBD.lock();
-            let state = crate::kbd::KbdState {
-                modifiers: kbd.state.modifiers,
-                leds: kbd.state.leds,
-                active_layout_index: kbd.state.active_layout_index,
+            let state = {
+                let kbd = crate::kbd::KBD.lock();
+                crate::kbd::KbdState {
+                    modifiers: kbd.state.modifiers,
+                    leds: kbd.state.leds,
+                    active_layout_index: kbd.state.active_layout_index,
+                }
             };
-            unsafe {
-                core::ptr::copy_nonoverlapping(
-                    &state as *const crate::kbd::KbdState as *const u8,
-                    buf_ptr as *mut u8, sz,
-                );
+            let bytes = unsafe {
+                core::slice::from_raw_parts(&state as *const crate::kbd::KbdState as *const u8, sz)
+            };
+            if copy_to_user(buf_ptr, bytes).is_err() {
+                return err_to_u64(SyscallError::Fault);
             }
             sz as u64
         }
@@ -195,20 +203,22 @@ pub(super) fn dispatch(
             }
             let sz = core::mem::size_of::<crate::kbd::KbdCaps>();
             if buf_size < sz { return err_to_u64(SyscallError::Inval); }
-            let kbd = crate::kbd::KBD.lock();
-            let caps = crate::kbd::KbdCaps {
-                max_layouts: 64,
-                supports_repeat_config: true,
-                supports_led_control: true,
-                supports_hotkeys: true,
-                num_layouts: kbd.layouts.len() as u32,
-                _pad: [0u8; 3],
+            let caps = {
+                let kbd = crate::kbd::KBD.lock();
+                crate::kbd::KbdCaps {
+                    max_layouts: 64,
+                    supports_repeat_config: true,
+                    supports_led_control: true,
+                    supports_hotkeys: true,
+                    num_layouts: kbd.layouts.len() as u32,
+                    _pad: [0u8; 3],
+                }
             };
-            unsafe {
-                core::ptr::copy_nonoverlapping(
-                    &caps as *const crate::kbd::KbdCaps as *const u8,
-                    buf_ptr as *mut u8, sz,
-                );
+            let bytes = unsafe {
+                core::slice::from_raw_parts(&caps as *const crate::kbd::KbdCaps as *const u8, sz)
+            };
+            if copy_to_user(buf_ptr, bytes).is_err() {
+                return err_to_u64(SyscallError::Fault);
             }
             sz as u64
         }
@@ -220,21 +230,24 @@ pub(super) fn dispatch(
             if obj.obj_type != crate::object::ObType::KeyboardDevice {
                 return err_to_u64(SyscallError::Inval);
             }
-            let kbd = crate::kbd::KBD.lock();
             let entry_sz = core::mem::size_of::<crate::kbd::KbdLayoutInfo>();
-            let max_entries = buf_size / entry_sz;
-            let count = kbd.layouts.len().min(max_entries);
-            for i in 0..count {
-                let info = kbd.layouts[i].to_info(i as u32);
-                let offset = i * entry_sz;
-                unsafe {
-                    core::ptr::copy_nonoverlapping(
-                        &info as *const crate::kbd::KbdLayoutInfo as *const u8,
-                        (buf_ptr + offset as u64) as *mut u8, entry_sz,
-                    );
+            let mut out = alloc::vec::Vec::new();
+            {
+                let kbd = crate::kbd::KBD.lock();
+                let max_entries = buf_size / entry_sz;
+                let count = kbd.layouts.len().min(max_entries);
+                for i in 0..count {
+                    let info = kbd.layouts[i].to_info(i as u32);
+                    let bytes = unsafe {
+                        core::slice::from_raw_parts(&info as *const crate::kbd::KbdLayoutInfo as *const u8, entry_sz)
+                    };
+                    out.extend_from_slice(bytes);
                 }
             }
-            (count * entry_sz) as u64
+            if copy_to_user(buf_ptr, &out).is_err() {
+                return err_to_u64(SyscallError::Fault);
+            }
+            out.len() as u64
         }
         _ if info_class == ObInfoClass::ServiceState as u32 => {
             if entry.object_id == 0 {
@@ -264,8 +277,9 @@ pub(super) fn dispatch(
             ];
             let sz = out.len();
             if buf_size < sz { return err_to_u64(SyscallError::Inval); }
-            unsafe {
-                core::ptr::copy_nonoverlapping(out.as_ptr(), buf_ptr as *mut u8, sz);
+            drop(sm);
+            if copy_to_user(buf_ptr, &out).is_err() {
+                return err_to_u64(SyscallError::Fault);
             }
             sz as u64
         }
@@ -305,8 +319,9 @@ pub(super) fn dispatch(
             out.extend_from_slice(&binpath);
             let sz = out.len();
             if buf_size < sz { return err_to_u64(SyscallError::Inval); }
-            unsafe {
-                core::ptr::copy_nonoverlapping(out.as_ptr(), buf_ptr as *mut u8, sz);
+            drop(sm);
+            if copy_to_user(buf_ptr, &out).is_err() {
+                return err_to_u64(SyscallError::Fault);
             }
             sz as u64
         }
@@ -342,8 +357,9 @@ pub(super) fn dispatch(
             out[21..29].copy_from_slice(&tick);
             let sz = out.len();
             if buf_size < sz { return err_to_u64(SyscallError::Inval); }
-            unsafe {
-                core::ptr::copy_nonoverlapping(out.as_ptr(), buf_ptr as *mut u8, sz);
+            drop(sm);
+            if copy_to_user(buf_ptr, &out).is_err() {
+                return err_to_u64(SyscallError::Fault);
             }
             sz as u64
         }

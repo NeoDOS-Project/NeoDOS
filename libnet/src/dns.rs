@@ -14,7 +14,11 @@
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
-use libdns::{is_localhost, is_unspecified, validate_hostname};
+use libdns::{is_local_name, is_localhost, is_unspecified, validate_hostname};
+use libneodos::registry::RegistryKey;
+use libneodos::syscall;
+use libdns::AnswerCache;
+use libnet_config::{build_interface_path, VALUE_DNS1, VALUE_DNS2, VALUE_DNS3};
 
 pub use libdns::{
     build_query, decode_name, encode_name, parse_dotted_ip, parse_response, query_server,
@@ -26,24 +30,23 @@ pub use libdns::{
 pub const DNS_MAX_SERVERS: usize = 3;
 /// Bounded resolver cache entries.
 pub const DNS_CACHE_SIZE: usize = 16;
+/// Longest TTL kept in the cache, in seconds.
+pub const DNS_CACHE_MAX_TTL_S: u32 = libdns::DEFAULT_MAX_TTL_S;
 /// Extra retries per server (total attempts = DNS_MAX_RETRIES + 1).
 pub const DNS_MAX_RETRIES: usize = 1;
 /// How many `socket_recv` + `sys_yield` polls before a server times out.
 pub const DNS_RECV_POLLS: usize = 200;
 /// RDTSC budget for waiting for a DNS reply (roughly 0.7–2 s depending on TSC).
 pub const DNS_RECV_TICKS: u64 = 2_000_000_000;
-/// Safety cap on the receive wait loop iterations.
-pub const DNS_RECV_MAX_SPINS: u32 = 2_000_000;
-/// How many times to retry the UDP send while waiting for ARP resolution.
-pub const DNS_SEND_ATTEMPTS: usize = 50;
+/// Safety cap on the receive wait loop iterations (shared; #593).
+pub const DNS_RECV_MAX_SPINS: u32 = crate::udp::RECV_MAX_SPINS;
+/// How many times to retry the UDP send while waiting for ARP resolution
+/// (shared; #593).
+pub const DNS_SEND_ATTEMPTS: usize = crate::udp::SEND_ATTEMPTS;
 
-const REG_NET_PATH: &str =
-    "\\Registry\\Machine\\System\\CurrentControlSet\\Services\\Network\\Interfaces\\0";
-
-/// Registry value names holding DNS servers, in preference order.
-/// DNS servers read from the Registry, in preference order. Written by the DHCP
-/// client (option 6) and/or by `netcfg /setdns`. `0.0.0.0` = unset.
-const DNS_VALUE_NAMES: [&str; DNS_MAX_SERVERS] = ["DnsServer", "DnsServer2", "DnsServer3"];
+/// Registry value names holding DNS servers, in preference order (canonical
+/// names from the `libnet-config` contract; `0.0.0.0` = unset).
+const DNS_VALUE_NAMES: [&str; DNS_MAX_SERVERS] = [VALUE_DNS1, VALUE_DNS2, VALUE_DNS3];
 
 // ── Result ──
 
@@ -77,75 +80,20 @@ impl DnsTransport for NetTransport {
         query: &[u8],
         resp: &mut [u8],
     ) -> Result<usize, DnsError> {
-        let table = crate::get_table().ok_or(DnsError::Network)?;
-
-        // SocketType::Udp is encoded as 2 in the Ob attrs (see net.nxl).
-        let fd = (table.socket_create)(2);
-        if fd < 0 {
-            return Err(DnsError::Network);
-        }
-
-        if (table.socket_bind)(fd, 0, 0) < 0 {
-            let _ = (table.socket_close)(fd);
-            return Err(DnsError::ServerUnreachable);
-        }
-
-        let server_ip = u32::from_be_bytes(server);
-        if (table.socket_connect)(fd, server_ip, DNS_PORT) < 0 {
-            let _ = (table.socket_close)(fd);
-            return Err(DnsError::ServerUnreachable);
-        }
-
-        // `arp_resolve` is fire-and-forget: on a cache miss it transmits an ARP
-        // request and returns None immediately. The reply is processed later by
-        // netd. Yield and retry the send so the ARP cache can be populated
-        // before we give up (otherwise the first datagram to a new peer always
-        // fails).
-        let mut sent = -1i32;
-        for _ in 0..DNS_SEND_ATTEMPTS {
-            sent = unsafe { (table.socket_send)(fd, query.as_ptr(), query.len() as u32) };
-            if sent >= 0 {
-                break;
-            }
-            libneodos::syscall::sys_yield();
-            for _ in 0..2000 {
-                core::hint::spin_loop();
-            }
-        }
-        if sent < 0 {
-            let _ = (table.socket_close)(fd);
-            return Err(DnsError::ServerUnreachable);
-        }
-
-        // netd drives packet polling; we must wait for the reply here. A bare
-        // `sys_yield` loop returns too early (yield does not sleep), so pace the
-        // wait with a real time budget using RDTSC, mirroring the kernel's
-        // ICMP/ARP timeouts.
-        let start = unsafe { core::arch::x86_64::_rdtsc() };
-        let mut received = 0usize;
-        let mut spins: u32 = 0;
-        loop {
-            let n = unsafe { (table.socket_recv)(fd, resp.as_mut_ptr(), resp.len() as u32) };
-            if n > 0 {
-                received = n as usize;
-                break;
-            }
-            spins += 1;
-            if spins > DNS_RECV_MAX_SPINS {
-                break;
-            }
-            if unsafe { core::arch::x86_64::_rdtsc() }.wrapping_sub(start) > DNS_RECV_TICKS {
-                break;
-            }
-            libneodos::syscall::sys_yield();
-        }
-
-        let _ = (table.socket_close)(fd);
-
-        if received == 0 {
-            Err(DnsError::Timeout)
-        } else {
-            Ok(received)
+        use crate::udp::UdpError;
+        // Shared UDP exchange (#593): create → bind → connect → send with ARP
+        // retry → timed receive → close.
+        match crate::udp::exchange(
+            u32::from_be_bytes(server),
+            DNS_PORT,
+            query,
+            resp,
+            DNS_RECV_TICKS,
+        ) {
+            Ok(n) => Ok(n),
+            Err(UdpError::Create) => Err(DnsError::Network),
+            Err(UdpError::Timeout) => Err(DnsError::Timeout),
+            Err(_) => Err(DnsError::ServerUnreachable),
         }
     }
 }
@@ -161,49 +109,36 @@ pub fn configured_servers() -> Vec<[u8; 4]> {
 }
 
 fn read_servers() -> Result<Vec<[u8; 4]>, DnsError> {
-    let fd = libneodos::sys_cm_open_key(REG_NET_PATH).map_err(|_| DnsError::NoConfig)?;
+    let mut pbuf = [0u8; 128];
+    let n = build_interface_path(0, &mut pbuf);
+    let path = core::str::from_utf8(&pbuf[..n]).map_err(|_| DnsError::NoConfig)?;
+    let key = RegistryKey::open(path).map_err(|_| DnsError::NoConfig)?;
 
     let mut servers: Vec<[u8; 4]> = Vec::new();
     for value_name in DNS_VALUE_NAMES {
-        if let Some(ip) = read_server_value(fd, value_name) {
+        if let Some(ip) = read_server_value(&key, value_name) {
             if !is_unspecified(ip) && !servers.contains(&ip) {
                 servers.push(ip);
             }
         }
     }
-
-    let _ = libneodos::sys_close(fd);
     Ok(servers)
 }
 
-fn read_server_value(fd: u8, name: &str) -> Option<[u8; 4]> {
-    let mut buf = [0u8; 64];
-    let total = libneodos::sys_cm_query_value(fd, name, &mut buf).ok()?;
-    if total < 8 {
-        return None;
+fn read_server_value(key: &RegistryKey, name: &str) -> Option<[u8; 4]> {
+    // REG_DWORD: IP stored as a big-endian value in a little-endian DWORD.
+    if let Some(v) = key.query_dword(name) {
+        return Some(v.to_be_bytes());
     }
-
-    let value_type = u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]);
-    let data_len = u32::from_le_bytes([buf[4], buf[5], buf[6], buf[7]]) as usize;
-    let available = total.saturating_sub(8).min(buf.len() - 8);
-    let data_len = data_len.min(available);
-    let data = &buf[8..8 + data_len];
-
-    match value_type {
-        // REG_DWORD: IP stored as a big-endian value in a little-endian DWORD.
-        2 if data_len >= 4 => {
-            let ip_u32 = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
-            Some(ip_u32.to_be_bytes())
+    // Fallback: REG_SZ dotted-decimal string.
+    let mut s = [0u8; 64];
+    let n = key.query_string(name, &mut s);
+    if n > 0 {
+        if let Ok(text) = core::str::from_utf8(&s[..n]) {
+            return parse_dotted_ip(text.trim());
         }
-        // REG_BINARY / REG_NONE: raw 4 bytes.
-        _ if data_len >= 4 => Some([data[0], data[1], data[2], data[3]]),
-        // REG_SZ: dotted-decimal string.
-        1 => {
-            let s = core::str::from_utf8(data).ok()?;
-            parse_dotted_ip(s.trim().trim_matches('\0'))
-        }
-        _ => None,
     }
+    None
 }
 
 // ── Resolver ──
@@ -216,16 +151,40 @@ fn localhost_result() -> DnsResult {
     }
 }
 
+/// The local machine's hostname, or `None` when it is empty or still the
+/// registry default placeholder. Used to resolve the machine's own name
+/// locally without querying DNS (#485).
+fn local_hostname() -> Option<String> {
+    let mut buf = [0u8; 128];
+    let n = libneodos::sys_get_hostname(&mut buf).ok()?;
+    if n == 0 {
+        return None;
+    }
+    // The kernel copies the name NUL-terminated; trim the terminator.
+    let end = buf[..n].iter().position(|&b| b == 0).unwrap_or(n);
+    let name = core::str::from_utf8(&buf[..end]).ok()?;
+    if name.is_empty() || name.eq_ignore_ascii_case(crate::DEFAULT_HOSTNAME) {
+        return None;
+    }
+    Some(name.to_string())
+}
+
 /// Resolve `hostname` using the configured DNS servers, in preference order.
 ///
-/// `localhost` resolves locally. `NXDOMAIN` from any server is returned
-/// immediately. Other per-server failures fall through to the next server; if
-/// all servers fail, the last error is returned.
+/// `localhost` and the machine's own hostname resolve locally. `NXDOMAIN` from
+/// any server is returned immediately. Other per-server failures fall through to
+/// the next server; if all servers fail, the last error is returned.
 pub fn resolve(hostname: &str) -> Result<DnsResult, DnsError> {
     validate_hostname(hostname)?;
 
     if is_localhost(hostname) {
         return Ok(localhost_result());
+    }
+
+    if let Some(local) = local_hostname() {
+        if is_local_name(hostname, &local) {
+            return Ok(localhost_result());
+        }
     }
 
     let servers = read_servers()?;
@@ -235,11 +194,11 @@ pub fn resolve(hostname: &str) -> Result<DnsResult, DnsError> {
 
     // Cache hit for any configured server?
     for &server in &servers {
-        if let Some(addr) = cache_lookup(hostname, server) {
+        if let Some((addr, ttl)) = cache_lookup(hostname, server) {
             return Ok(DnsResult {
                 server,
                 addresses: alloc::vec![addr],
-                ttl: 0,
+                ttl,
             });
         }
     }
@@ -259,7 +218,8 @@ pub fn resolve(hostname: &str) -> Result<DnsResult, DnsError> {
 /// Resolve `hostname` using an explicit DNS server.
 ///
 /// The unspecified address (`0.0.0.0`) is rejected with [`DnsError::NoServer`];
-/// a query is never sent to it.
+/// a query is never sent to it. `localhost` and the machine's own hostname
+/// resolve locally.
 pub fn resolve_with_server(hostname: &str, server: [u8; 4]) -> Result<DnsResult, DnsError> {
     validate_hostname(hostname)?;
 
@@ -271,11 +231,17 @@ pub fn resolve_with_server(hostname: &str, server: [u8; 4]) -> Result<DnsResult,
         return Ok(localhost_result());
     }
 
-    if let Some(addr) = cache_lookup(hostname, server) {
+    if let Some(local) = local_hostname() {
+        if is_local_name(hostname, &local) {
+            return Ok(localhost_result());
+        }
+    }
+
+    if let Some((addr, ttl)) = cache_lookup(hostname, server) {
         return Ok(DnsResult {
             server,
             addresses: alloc::vec![addr],
-            ttl: 0,
+            ttl,
         });
     }
 
@@ -292,64 +258,29 @@ pub fn resolve_with_server(hostname: &str, server: [u8; 4]) -> Result<DnsResult,
 
 // ── Cache ──
 
-struct CacheEntry {
-    host: String,
-    server: [u8; 4],
-    addr: [u8; 4],
-}
+/// Bounded cache of resolver answers, keyed by `(hostname, server)` and
+/// expired by the answer's TTL.
+static mut CACHE: AnswerCache = AnswerCache::new(DNS_CACHE_SIZE, DNS_CACHE_MAX_TTL_S);
 
-static mut CACHE: [Option<CacheEntry>; DNS_CACHE_SIZE] = [const { None }; DNS_CACHE_SIZE];
-
-fn cache_lookup(host: &str, server: [u8; 4]) -> Option<[u8; 4]> {
+fn cache_lookup(host: &str, server: [u8; 4]) -> Option<([u8; 4], u32)> {
+    let now = syscall::ob_uptime_ms().ok()?;
     // SAFETY: userland tools are single-threaded and the resolver is not reentrant.
-    unsafe {
-        for entry in CACHE.iter() {
-            if let Some(e) = entry {
-                if e.host == host && e.server == server {
-                    return Some(e.addr);
-                }
-            }
-        }
-    }
-    None
+    unsafe { CACHE.lookup(host, server, now) }
 }
 
 fn cache_answer(host: &str, server: [u8; 4], answer: &DnsAnswer) {
-    if let Some(addr) = answer.first() {
-        cache_insert(host, server, addr);
-    }
-}
-
-fn cache_insert(host: &str, server: [u8; 4], addr: [u8; 4]) {
-    // SAFETY: see `cache_lookup`.
-    unsafe {
-        for entry in CACHE.iter_mut() {
-            if let Some(e) = entry {
-                if e.host == host && e.server == server {
-                    e.addr = addr;
-                    return;
-                }
-            }
-        }
-        for entry in CACHE.iter_mut() {
-            if entry.is_none() {
-                *entry = Some(CacheEntry {
-                    host: host.to_string(),
-                    server,
-                    addr,
-                });
-                return;
-            }
-        }
-    }
+    let Ok(now) = syscall::ob_uptime_ms() else { return };
+    let Some(addr) = answer.first() else {
+        // A successful answer without an A record invalidates any stale entry.
+        unsafe { CACHE.remove(host, server) };
+        return;
+    };
+    // SAFETY: see `cache_lookup`. `insert` ignores a zero TTL.
+    unsafe { CACHE.insert(host, server, addr, answer.ttl, now) };
 }
 
 /// Drop all cached resolver entries.
 pub fn clear_cache() {
     // SAFETY: see `cache_lookup`.
-    unsafe {
-        for entry in CACHE.iter_mut() {
-            *entry = None;
-        }
-    }
+    unsafe { CACHE.clear() }
 }

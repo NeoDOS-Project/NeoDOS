@@ -1,6 +1,6 @@
 # NeoDOS Service Manager — Design Document
 
-> **Status:** Draft v1 — Pre-implementation design review
+> **Status:** Implemented — kernel Service Manager (`neodos-kernel/src/services/`); this document is the design record.
 > **Target Kernel:** v0.51+
 > **Filosofía:** NT-like Service Control Manager, Object Manager-centric
 
@@ -223,12 +223,12 @@ pub enum ObType {
 | 35 | ServiceRestart | Stop then restart | `timeout_ms` (u32) |
 | 36 | ServiceSetConfig | Modify service configuration | Binary: start_type(1) + restart_policy(1) + max_failures(4) |
 
-### 3.4 New Syscall: `sys_ob_service` (RAX = 77)
+### 3.4 Syscall: `sys_ob_service` (RAX = 47)
 
-Since RAX 77 is the next available slot (currently `MAX_VALID = 76`), and the rule mandates `sys_ob_*` for new syscalls:
+`sys_ob_service` is `RAX 47` (SSDT spans RAX 0–99; `MAX_VALID = 99`), and the rule mandates `sys_ob_*` for new syscalls:
 
 ```rust
-// RAX = 77
+// RAX = 47
 pub fn sys_ob_service(
     fd: u64,         // Handle to service Ob object (obtained via ob_open)
     control: u32,    // 0=START, 1=STOP, 2=RESTART, 3=QUERY_STATUS, 4=SET_CONFIG
@@ -257,14 +257,14 @@ pub fn sys_ob_service(
 | File | Change |
 | ------ | -------- |
 | `src/object/types.rs` | Add `Service = 20` to `ObType` enum. Add `ObInfoClass::ServiceState(29)`, `::ServiceConfig(30)`, `::ServiceStatus(31)`. Add `ObSetInfoClass::ServiceStart(33)`, `::ServiceStop(34)`, `::ServiceRestart(35)`, `::ServiceSetConfig(36)`. |
-| `src/syscall/mod.rs` | Add `MAX_VALID = 77`. Add SSDT entry for `sys_ob_service` at RAX 77. Update `validate_abi()`. |
+| `src/syscall/mod.rs` | Add SSDT entry for `sys_ob_service` at RAX 47. Update `validate_abi()`. |
 | `src/syscall/ob.rs` | Add `handler_ob_service()`. Add case arms in `handler_ob_query_info` for classes 29-31. Add case arms in `handler_ob_set_info` for classes 33-36. |
 | `src/syscall/permission.rs` | Add `service_start/stop/set_config` permission entries. Service operations require admin token. |
 | `src/infra/globals.rs` | Add `SERVICE_MANAGER: Mutex<ServiceManager>` global. |
 | `src/main.rs` | Call `init_service_manager()` in Phase 3.882 (after Registry init). Call `sm_start_auto_services()` in Phase 4 (after NeoInit spawn). |
 | `userbin/neoinit/src/main.rs` | Remove `spawn_service()` / `AutoStartServices` logic. Delegate to kernel Service Manager. Add `sm_register_service()` call for each entry in Registry. |
 | `libneodos/src/syscall.rs` | Add `SERVICE_CONTROL_START(0)`..`SET_CONFIG(4)` constants. Add `sys_ob_service()` wrapper. Add `ObInfoClass::ServiceState(29)` etc. Add `ObSetInfoClass::ServiceStart(33)` etc. |
-| `docs/syscalls.md` | Add RAX 77 entry. Update MAX_VALID. |
+| `docs/syscalls.md` | Add RAX 47 entry. |
 | `docs/objects.md` | Add ObType::Service=20. Add namespace path `\Service\`. Add info classes 29-31 and set classes 33-36. |
 
 ### 3.7 Namespace Layout
@@ -472,7 +472,7 @@ Convert all services to NEM drivers running in Ring 3 isolation slots.
 | Subsystem | Nature of Change |
 | ----------- | ----------------- |
 | **Object Manager** (`src/object/types.rs`) | Add `ObType::Service=20`, 3 new `ObInfoClass` variants, 4 new `ObSetInfoClass` variants |
-| **Syscall dispatch** (`src/syscall/mod.rs`) | Add RAX 77 `sys_ob_service` to SSDT, update `MAX_VALID`, update `validate_abi()` |
+| **Syscall dispatch** (`src/syscall/mod.rs`) | Add RAX 47 `sys_ob_service` to SSDT, update `validate_abi()` |
 | **Syscall handlers** (`src/syscall/ob.rs`) | New `handler_ob_service()`, extend `handler_ob_query_info` and `handler_ob_set_info` |
 | **Syscall permissions** (`src/syscall/permission.rs`) | Admin-only flag for service operations |
 | **Globals** (`src/infra/globals.rs`) | New `SERVICE_MANAGER` global |
@@ -522,7 +522,7 @@ pub fn sm_start_auto_services()
 - **Postconditions:** Services with `StartType::System` and `StartType::Auto` are spawned in dependency order. Each service's `state` is `Running` (or `Failed` if spawn failed).
 - **Error handling:** Failed spawn → service state = Failed, continue to next service.
 
-### 6.3 `sys_ob_service(RAX=77)` — Public syscall
+### 6.3 `sys_ob_service(RAX=47)` — Public syscall
 
 ```rust
 pub fn handler_ob_service(fd: u64, control: u32, buf: u64, buf_len: u64) -> u64
@@ -671,7 +671,7 @@ pub fn handler_ob_service(fd: u64, control: u32, buf: u64, buf_len: u64) -> u64
 | `sm_restart_never` | Service process exits, restart=Never | state = Stopped, no respawn |
 | `sm_restart_exhausted` | Service crashes max_failures times | state = Failed |
 | `sm_dependency_ordering` | Service B depends on A; start B | A starts first, then B |
-| `sm_set_config_syscall` | Change start_type via RAX 77 SET_CONFIG | Registry updated, state reflects change |
+| `sm_set_config_syscall` | Change start_type via RAX 47 SET_CONFIG | Registry updated, state reflects change |
 | `sm_init_skips_disabled` | Service with StartType=Disabled | Not started, state = Stopped |
 
 ### 7.5 User-Mode Tests (`userbin/neoshell/` or dedicated test binary)
@@ -742,10 +742,10 @@ pub fn handler_ob_service(fd: u64, control: u32, buf: u64, buf_len: u64) -> u64
 
 **Files:** `src/syscall/ob.rs`, `src/syscall/mod.rs`, `src/syscall/permission.rs`
 
-- Add `handler_ob_service()` for RAX 77
+- Add `handler_ob_service()` for RAX 47
 - Add arms in `handler_ob_query_info` for classes 29/30/31
 - Add arms in `handler_ob_set_info` for classes 33/34/35/36
-- Register in SSDT, update `MAX_VALID`, update `validate_abi()`
+- Register in SSDT, update `validate_abi()`
 - Add permission entries (admin for control, read for status)
 
 ### Step 8: Wire auto-start at boot
@@ -776,7 +776,7 @@ pub fn handler_ob_service(fd: u64, control: u32, buf: u64, buf_len: u64) -> u64
 
 **Files:** `docs/kernel/syscalls.md`, `docs/kernel/objects.md`, `docs/boot/boot-flow.md`
 
-- Add RAX 77 to syscall table
+- Add RAX 47 to syscall table
 - Add ObType::Service=20 to object types
 - Add Phase 3.882 to boot phases
 - Mark item as in-progress/completed

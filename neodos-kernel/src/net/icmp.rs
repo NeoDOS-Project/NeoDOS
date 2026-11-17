@@ -3,6 +3,34 @@ use core::sync::atomic::{Ordering, AtomicU64};
 use crate::net::ipv4::{Ipv4Header, IPV4_HDR_MIN_LEN};
 use crate::net::udp::UdpHeader;
 
+/// Resolve `target_ip` on `nic_id`, waiting (bounded) for an ARP reply by
+/// polling RX, as `icmp_ping` does. Sends the request itself if the cache is
+/// empty, so the first datagram to a new peer is not dropped (#311).
+pub fn arp_resolve_wait(
+    nic_id: u32,
+    target_ip: crate::net::types::Ipv4Addr,
+    timeout_us: u64,
+) -> Option<crate::net::types::MacAddr> {
+    if let Some(m) = crate::net::arp::arp_lookup(target_ip) {
+        return Some(m);
+    }
+    // Fire the request (a fast reply may already populate the cache).
+    let _ = crate::net::arp::arp_resolve_on(nic_id, target_ip);
+    let start = crate::boot_benchmark::rdtsc();
+    let per_us = (crate::boot_benchmark::get_tsc_khz() / 1000).max(1);
+    let max_ticks = per_us.saturating_mul(timeout_us);
+    loop {
+        crate::net::network_poll_all();
+        if let Some(m) = crate::net::arp::arp_lookup(target_ip) {
+            return Some(m);
+        }
+        if crate::boot_benchmark::rdtsc().wrapping_sub(start) > max_ticks {
+            return None;
+        }
+        core::hint::spin_loop();
+    }
+}
+
 pub const ICMP_TYPE_ECHO_REPLY: u8 = 0;
 pub const ICMP_TYPE_ECHO_REQUEST: u8 = 8;
 pub const ICMP_TYPE_DEST_UNREACH: u8 = 3;

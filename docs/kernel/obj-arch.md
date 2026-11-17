@@ -3,7 +3,9 @@
 > **Autor:** Arquitecto Jefe de Sistemas Operativos
 > **Versión:** v0.2
 > **Fecha:** 2026-06-23
-> **Estado:** Documento de referencia v0.44.1 — implementado parcialmente
+> **Estado:** Documento histórico (v0.44.1) — implementado parcialmente.
+> **Nota:** las numeraciones de syscalls citadas (p. ej. `RAX 60–66`) están obsoletas;
+> el ABI vigente es `docs/kernel/syscalls.md` (Ob 40–48, Cm 50–59).
 
 ---
 

@@ -589,6 +589,11 @@ impl FileSystem for NeoDosFsV2 {
             c.root = new_root;
             c.entry = new_entry;
         }
+        // Commit the new root + freelist + snapshot table so the write survives a
+        // crash or remount. Without this the on-disk superblock keeps pointing at
+        // the pre-write root: file writes were lost and `cm_flush_key` was not
+        // durable (the hive file is written in place).
+        self.save_sb().map_err(|_| VfsError::IOError)?;
         Ok(buf.len())
     }
 
@@ -1018,6 +1023,32 @@ pub fn register_neodos_v2_tests() {
         let d3 = fs3.lookup(0, "D").unwrap().inode;
         crate::test_true!(fs3.lookup(d3, "H.TXT").is_ok());
         crate::test_true!(fs3.lookup(d3, "F.TXT").is_ok());
+
+        let _ = crate::globals::BLOCK_DEVICES.lock().force_remove(dev_id);
+    });
+
+    crate::test_case!("neofs_v2_file_write_persists_across_remount", {
+        // Regression: NeoDosFsV2::write() must commit the superblock root, or
+        // the write is lost on remount/crash (and cm_flush_key is not durable,
+        // since the hive file is written in place).
+        let sectors = alloc::vec![[0u8; 512]; 2048];
+        let dev_id = crate::fs::fsck::register_test_device(sectors);
+        let io = IoStack::new(dev_id);
+        mkfs_ne2(&io, 256, "TEST").unwrap();
+
+        let mut fs = NeoDosFsV2::new(io).unwrap();
+        fs.create(0, "W.TXT").unwrap();
+        let ino = fs.lookup(0, "W.TXT").unwrap().inode;
+        let payload = b"hello-durable";
+        crate::test_eq!(fs.write(ino, 0, payload).unwrap(), payload.len());
+        drop(fs);
+
+        // Remount: the payload must survive.
+        let mut fs2 = NeoDosFsV2::new(IoStack::new(dev_id)).unwrap();
+        let ino2 = fs2.lookup(0, "W.TXT").unwrap().inode;
+        let mut buf = [0u8; 32];
+        let n = fs2.read(ino2, 0, &mut buf).unwrap();
+        crate::test_eq!(&buf[..n], &payload[..]);
 
         let _ = crate::globals::BLOCK_DEVICES.lock().force_remove(dev_id);
     });

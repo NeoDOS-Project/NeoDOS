@@ -21,6 +21,7 @@ pub type HstAckIrq = unsafe extern "C" fn(u8);
 pub type HstLog = unsafe extern "C" fn(u32, *const u8, usize);
 
 #[repr(C)]
+#[derive(Clone, Copy)]
 pub struct HalServiceTable {
     pub inb: HstInb,
     pub outb: HstOutb,

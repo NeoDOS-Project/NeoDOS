@@ -15,8 +15,25 @@ mod time;
 mod devices;
 mod fs;
 mod session;
+mod keyboard;
+mod random;
 
 pub use stats::register_ob_stats_tests;
+
+/// True if `info_class` is routed by some query domain. Completeness guard for
+/// ObInfoClass (NEODOS-06/#636, CH-06/#510, AUD-006/#526).
+pub fn info_class_handled(info_class: u32) -> bool {
+    process::handles(info_class)
+        || stats::handles(info_class)
+        || net::handles(info_class)
+        || registry::handles(info_class)
+        || time::handles(info_class)
+        || devices::handles(info_class)
+        || fs::handles(info_class)
+        || session::handles(info_class)
+        || keyboard::handles(info_class)
+        || random::handles(info_class)
+}
 
 pub fn handler_ob_query_info(regs: crate::syscall::Registers) -> u64 {
     let fd = regs.rbx as u8;
@@ -45,6 +62,8 @@ pub fn handler_ob_query_info(regs: crate::syscall::Registers) -> u64 {
         _ if devices::handles(info_class) => devices::dispatch(info_class, fd, entry, buf_ptr, buf_size),
         _ if fs::handles(info_class) => fs::dispatch(info_class, fd, entry, buf_ptr, buf_size),
         _ if session::handles(info_class) => session::dispatch(info_class, fd, entry, buf_ptr, buf_size),
+        _ if keyboard::handles(info_class) => keyboard::dispatch(info_class, fd, entry, buf_ptr, buf_size),
+        _ if random::handles(info_class) => random::dispatch(info_class, fd, entry, buf_ptr, buf_size),
         _ => err_to_u64(SyscallError::Inval),
     }
 }

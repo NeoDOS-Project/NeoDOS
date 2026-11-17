@@ -13,9 +13,9 @@
 
 | Subsistema | Estado actual | APIs públicas disponibles | Documento de diseño |
 | --- | --- | --- | --- |
-| **Object Manager** | ✅ Completo (ObType 0–20, RAX 60–66) | `ob_open`, `ob_create`, `ob_query_info`, `ob_set_info`, `ob_enum`, `ob_wait`, `ob_destroy` | `docs/kernel/objects.md` |
-| **Registry (Cm)** | ✅ Completo (RAX 67–76, cell-based hive) | `cm_open_key`, `cm_create_key`, `cm_query_value`, `cm_set_value`, `cm_enum_key`, `cm_enum_value`, `cm_delete_key`, `cm_flush_key` | `docs/registry/registry.md` |
-| **Service Manager** | ✅ Completo (ObType::Service=20, RAX 77) | `sys_ob_service` con START/STOP/RESTART/QUERY_STATUS/SET_CONFIG | `docs/kernel/syscalls.md` |
+| **Object Manager** | ✅ Completo (ObType 0–22, RAX 40–48) | `ob_open`, `ob_create`, `ob_query_info`, `ob_set_info`, `ob_enum`, `ob_wait`, `ob_destroy` | `docs/kernel/objects.md` |
+| **Registry (Cm)** | ✅ Completo (RAX 50–59, cell-based hive) | `cm_open_key`, `cm_create_key`, `cm_query_value`, `cm_set_value`, `cm_enum_key`, `cm_enum_value`, `cm_delete_key`, `cm_flush_key` | `docs/registry/registry.md` |
+| **Service Manager** | ✅ Completo (ObType::Service=20, RAX 47) | `sys_ob_service` con START/STOP/RESTART/QUERY_STATUS/SET_CONFIG | `docs/kernel/syscalls.md` |
 | **Keyboard layout** | ✅ Completo (ObInfoClass::KeyboardLayout=14, ObSetInfoClass::KeyboardLayout=5) | `ob_query_info(KeyboardLayout)`, `ob_set_info(KeyboardLayout)` | `docs/kernel/objects.md` |
 | **System info** (Version, Memory, CPU, DateTime, Drives) | ✅ Completo via `\Global\Info\*` objects | `ob_open` + `ob_query_info` con clases 7–11 | `docs/kernel/objects.md` |
 | **Power Manager** | ❌ No implementado (diseño en `docs/services/power-manager.md`) | Propuesto: ObType::PowerManager=21, info classes 32–34 y 37–42 | `docs/services/power-manager.md` |
@@ -25,7 +25,7 @@
 
 ### 1.2 Patrón de aplicaciones Ring 3 existentes
 
-Las 48 aplicaciones .NXE en `userbin/` siguen el mismo patrón:
+Las 52 aplicaciones .NXE en `userbin/` siguen el mismo patrón:
 
 ```rust
 #![no_std]
@@ -293,8 +293,8 @@ Sin dependencias externas. Implementable inmediatamente con la API Ob existente.
 tr!("keyboard.current"):      tr!("keyboard.layout.sp")
 
 tr!("keyboard.available"):
-  1. tr!("keyboard.layout.us")      "us" — US
-  2. tr!("keyboard.layout.sp")      "es" — Spanish  [*]
+  1. tr!("keyboard.layout.us")      "en-US" — English (US)
+  2. tr!("keyboard.layout.sp")      "es-ES" — Spanish (Spain)  [*]
 
 tr!("keyboard.actions"):
   1. tr!("keyboard.change")
@@ -302,7 +302,7 @@ tr!("keyboard.actions"):
 [Esc] tr!("neocfg.back")
 ```
 
-**Implementación** (vía Ob API existente, mismo patrón que `userbin/keyb/`).
+**Implementación** (vía Ob API existente, mismo patrón que `userbin/neokey/`).
 El layout se identifica por **nombre** (string NUL-terminado, p. ej. `"us"`,
 `"es"`), no por índice numérico:
 
@@ -335,7 +335,7 @@ tr!("about.kernel"):          neodos-kernel v0.51.3
 tr!("about.abi"):             v8 (syscall ABI)
 tr!("about.arch"):            x86_64
 tr!("about.neofs"):           NE2 v2
-tr!("about.libneodos"):       v7 (NXL ABI table)
+tr!("about.libneodos"):       v8 (NXL ABI table)
 tr!("about.build"):           2026-07-11
 
 [Esc] tr!("neocfg.back")
@@ -345,7 +345,7 @@ tr!("about.build"):           2026-07-11
 
 - Version → `ob_open("\Global\Info\Version")` + `ob_query_info(Version=8)` → string del kernel
 - Valores fijos compilados: Syscall ABI (v8), arch, NeoFS version
-- `libneodos::export::ABI_VERSION` (v7) para la NXL ABI table de libneodos
+- `libneodos::export::ABI_VERSION` (v8) para la NXL ABI table de libneodos
 
 > **Nota:** el kernel no expone una *fecha de compilación* por el namespace Ob,
 > así que la fila "Build date" se omite hasta que exista esa fuente. La versión
@@ -446,22 +446,22 @@ NeoCfg no extiende el kernel. Es una aplicación Ring 3 que **consume** APIs exi
 
 | Operación | API | RAX o clase |
 | --- | --- | --- |
-| Abrir información del sistema | `ob_open(\Global\Info\*)` + `ob_query_info` | RAX 60, 62 |
+| Abrir información del sistema | `ob_open(\Global\Info\*)` + `ob_query_info` | RAX 40, 42 |
 | Leer versión | `ob_query_info(Version=8)` | Clase 8 |
 | Leer memoria | `ob_query_info(Memory=10)` | Clase 10 |
 | Leer CPU | `ob_query_info(CpuInfo=7)` | Clase 7 |
 | Leer unidades | `ob_query_info(Drives=11)` | Clase 11 |
-| Enumerar procesos | `ob_enum(\Ob\Process)` | RAX 64 |
-| Enumerar servicios | `ob_enum(\Service)` + `ob_query_info(ServiceStatus=31)` | RAX 64, clase 31 |
+| Enumerar procesos | `ob_enum(\Ob\Process)` | RAX 44 |
+| Enumerar servicios | `ob_enum(\Service)` + `ob_query_info(ServiceStatus=31)` | RAX 44, clase 31 |
 | Cambiar teclado | `ob_set_info(KeyboardLayout=5)` | Clase 5 |
 | Leer teclado | `ob_query_info(KeyboardLayout=14)` | Clase 14 |
-| Abrir Power Manager (futuro) | `ob_open(\Device\PowerManager)` | RAX 60 |
+| Abrir Power Manager (futuro) | `ob_open(\Device\PowerManager)` | RAX 40 |
 | Consultar plan (futuro) | `ob_query_info(PowerPlanInfo=32)` | Clase 32 |
 | Cambiar plan (futuro) | `ob_set_info(PowerSetPlan=41)` | Clase 41 |
 | Apagar (futuro) | `ob_set_info(PowerShutdown=37)` | Clase 37 |
 | Reiniciar (futuro) | `ob_set_info(PowerReboot=38)` | Clase 38 |
-| Leer Registry para locale (futuro) | `cm_open_key` + `cm_query_value` | RAX 67, 69 |
-| Escribir Registry para locale (futuro) | `cm_set_value` | RAX 70 |
+| Leer Registry para locale (futuro) | `cm_open_key` + `cm_query_value` | RAX 50, 52 |
+| Escribir Registry para locale (futuro) | `cm_set_value` | RAX 53 |
 
 ### 3.14 Archivos nuevos
 
@@ -514,7 +514,7 @@ NeoCfg no extiende el kernel. Es una aplicación Ring 3 que **consume** APIs exi
 
 ### Alternative B: Herramientas independientes por subsistema (ej. `powercfg.nxe`, `langcfg.nxe`, `kbdcfg.nxe`)
 
-**Descripción**: Crear un binario .NXE separado para cada área de configuración, como ya se hace con `keyb.nxe`, `ipconfig.nxe`.
+**Descripción**: Crear un binario .NXE separado para cada área de configuración, como ya se hace con `neokey.nxe`, `ipconfig.nxe`.
 
 **Rechazada porque**:
 
@@ -522,7 +522,7 @@ NeoCfg no extiende el kernel. Es una aplicación Ring 3 que **consume** APIs exi
 2. **Duplicación de UI**: Cada herramienta implementa su propia interfaz de usuario. NeoCfg centraliza la UI en `ui/menu.rs` y `ui/dialog.rs`, reutilizables.
 3. **Dificultad de descubrimiento**: Un usuario nuevo no sabe qué herramientas existen ni qué hace cada una. NeoCfg ofrece un listado completo.
 4. **Alineación con la visión**: El roadmap (`ADM-5+6: neocfg + neofs`) ya prevé una herramienta de administración unificada.
-5. **No excluye herramientas independientes**: `keyb.nxe`, `ipconfig.nxe` pueden coexistir con NeoCfg, que las invoca o emula su funcionalidad.
+5. **No excluye herramientas independientes**: `neokey.nxe`, `ipconfig.nxe` pueden coexistir con NeoCfg, que las invoca o emula su funcionalidad.
 
 ### Alternative C: Aplicación GUI desde el inicio
 
@@ -667,8 +667,8 @@ pub fn i18n_reload_all();
 | # | Test | Expected |
 | --- | --- | --- |
 | 8 | Keyboard muestra layout actual | Coincide con `ob_query_info(KeyboardLayout)` |
-| 9 | Seleccionar "US" → layout cambia a US | `ob_query_info(KeyboardLayout)` retorna `"us"` |
-| 10 | Seleccionar "Spanish" → layout cambia a Spanish | `ob_query_info(KeyboardLayout)` retorna `"es"` |
+| 9 | Seleccionar "en-US" → layout cambia a en-US | `ob_query_info(KeyboardLayout)` retorna `"en-US"` |
+| 10 | Seleccionar "es-ES" → layout cambia a es-ES | `ob_query_info(KeyboardLayout)` retorna `"es-ES"` |
 | 11 | Keyboard no modifica nada excepto `ob_set_info(KeyboardLayout)` | Solo se invoca la clase 5 |
 
 ### 7.4 Tests del módulo About (invariante: los datos de versión son consistentes)
@@ -793,7 +793,7 @@ userbin/neocfg/
 **Archivos:** `src/modules/keyboard.rs`
 
 1. `ob_open("\Global\Info\Keyboard")` → `ob_query_info(KeyboardLayout)` → get current
-2. Mostrar menú con layouts disponibles (US=0, Spanish=1)
+2. Mostrar menú con layouts disponibles (en-US=0, es-ES=1)
 3. `ob_set_info(KeyboardLayout, &[layout])` si el usuario selecciona cambio
 4. Esperar tecla, retornar
 
@@ -913,8 +913,8 @@ keyboard.title          = "===== Keyboard Layout ====="
 keyboard.current        = "Current layout"
 keyboard.available      = "Available layouts"
 keyboard.change         = "Change layout"
-keyboard.layout.us      = "US"
-keyboard.layout.sp      = "Spanish"
+keyboard.layout.us      = "en-US"
+keyboard.layout.sp      = "es-ES"
 
 # About module
 about.title             = "===== About NeoDOS ====="

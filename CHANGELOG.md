@@ -2,6 +2,265 @@
 
 <!-- markdownlint-disable MD013 MD024 MD056 -->
 
+## v0.52 — 2026-11-17
+
+### Added
+
+- **Per-user profiles (#400).** `security::profile` creates
+  `C:\Users\<usuario>\{Desktop,Documents,Downloads,AppData\{Local,Roaming}}`
+  for every SAM account at boot (idempotent, NT name rules, `SYSTEM` excluded)
+  and records `ProfilePath`/`OwnerSid`/`Username` under
+  `\Registry\Machine\Software\NeoDOS\Profiles\<usuario>` so the filesystem
+  ACL work (Phase 3) has the owner binding it needs. Enforcement itself is
+  still pending: `DirEntryV2` carries no owner SID yet.
+
+- **TLS failures say why.** `TlsError::as_str()` and
+  `TlsError::Certificate(X509Error)` keep the exact reason (bad signature,
+  issuer is not a CA, path length, unsupported algorithm) instead of
+  collapsing everything into `NotTrusted`, and `neocurl` prints it after the
+  failure via `libnet::http_transport::last_tls_error()`.
+
+- **SHA-384 and ECDSA P-384.** `libcrypto` gained the SHA-512 core with the
+  SHA-384 initial values and a verifier parameterised over the NIST curves,
+  and `libtls` accepts `ecdsa-with-SHA384` chains and the
+  `ecdsa_secp384r1_sha384` `CertificateVerify` scheme. Public CAs sign their
+  intermediates this way (`data.iana.org`: leaf → WE1 → GTS Root R4), which
+  previously failed as `UnsupportedAlgorithm`. Verified against the live
+  `tzdb-2026f.tar.lz` download anchored at GTS Root R4.
+
+- **HTTP/1.1 client + HTTPS (NeoHTTP, #712).** `libhttp` (offline core, framing
+  and `execute`) plus `libnet::TcpTransport`/`HttpsTransport`, the `neocurl` CLI
+  and an in-guest acceptance runner (`httptest`) with a host orchestrator
+  (`tools/http-e2e`). Bulk downloads are reliable: ARP entries expire on
+  wall-clock time and are refreshed from received frames, TCP never drops an ACK
+  silently, receive-window updates are pushed when the app drains, FINs are
+  consumed only in order and RSTs close the connection (#721).
+
+- **TLS 1.3 stack.** `libcrypto` (SHA-256, HMAC/HKDF, ChaCha20-Poly1305,
+  X25519, RSA PKCS#1/PSS and ECDSA P-256 verification, with RFC/NIST and
+  OpenSSL vectors), `libtls` (TLS 1.3 client with X.509
+  chain/hostname/validity checks, SNI and ALPN) and `neocurl --ca FILE
+  https://…`. Server authentication is mandatory; there is no insecure mode.
+
+- **Trusted clock and Ring 3 CSPRNG.** `libclock` turns the RTC plus
+  `Services\Ntpd\Status` into a fail-closed `Clock`; `\Device\Random` exposes a
+  ChaCha20 DRBG seeded from RDSEED/RDRAND through `ObInfoClass::Random=48`/
+  `RandomCaps=49`. A TTL-aware DNS cache (`libdns::AnswerCache`) completes the
+  prerequisites.
+
+- **GitHub Actions CI (`.github/workflows/ci.yml`).** Compile-oriented: builds the
+  kernel with a pinned nightly, runs `neodev check-deps` (rule 12) and
+  `scripts/check-skills.sh`. It never publishes artifacts, builds images or boots
+  VMs. `neodev` is installed from a pinned NeoDev revision — upstream has no
+  releases yet, tracked in NeoDev#37.
+
+- **`scripts/check-skills.sh`: keep `skills/*/SKILL.md` in sync with docs/code
+  (#605).** Lightweight drift guard that fails when a skill cites a missing
+  `scripts/<name>`, an obsolete heuristic (e.g. `RAX >= 77`, Registry RAX
+  67-76), the removed `TestSpec`/`TestResult` harness or `nem_driver!` macro, or
+  a stale path (`src/vfs/`, `src/slab.rs`, `src/handle.rs`,
+  `src/work_queue.rs`). References that intentionally document a token as
+  obsolete are allow-listed per file. Wired into the release, review and
+  documentation checklists and the commit workflow.
+
+- **NXL v2: relocatable PIE libraries with symbol resolution (#601, #586).**
+  NXL shared libraries can be built position-independent (`ET_DYN`) and load
+  into any free slot: the loader applies `R_X86_64_RELATIVE` relocations and
+  reports the `.export_table` address. Only the core `libneodos.nxl` (`fs.nxl`,
+  the syscall gateway) stays a fixed-base legacy library. The loader also builds
+  a symbol registry from each library's `.dynsym` and resolves
+  `R_X86_64_64` / `GLOB_DAT` / `JUMP_SLOT`, enabling NXL→NXL imports
+  (`libarith-nxl` imports `math_add`). `libmath-nxl`, `libconsole-nxl` and
+  `libnet-nxl` are now PIE. Includes uniform version-first export tables (core
+  `AbiTable` v7 → v8), a 256 KB slot size cap with fail-closed rejection (#584),
+  a compile-time AbiTable layout freeze (#585) and NXL contract tests.
+
+- **Units service in `math.nxl` + `libmath` client (#590).** `math.nxl` (v3)
+  exports `kib_to_bytes`, `bytes_to_kib`, `scale_size`, `format_size` and
+  `format_size_compact`; the new `libmath` crate is the userland client.
+  `neomem`, `drives` and `neotop` now format sizes through the shared service.
+
+- **Userland NXL path resolution via the Registry (#73).** `libmath`, `libnet`
+  and `console` resolve their path through
+  `\Registry\Machine\System\CurrentControlSet\Control\Library\<name>` (REG_SZ,
+  `KnownDlls`-style) with a `C:\System\Libraries\<name>.nxl` fallback; defaults
+  are created by `cm::init::ensure_boot_defaults`. The kernel boot-loads only
+  `fs.nxl`; `math`/`console`/`net`/`libarith` are userland libraries loaded on
+  demand.
+
+- **`libneodos::registry::RegistryKey` (CM-LIB, #73).** RAII Registry client
+  (`open` / `create_tree` / `query_dword` / `query_string` / `set_dword` /
+  `set_string` / `delete_key` / `delete_value` / `query_multi_string` / `flush`,
+  plus `RegistryError`). `libnet::config`, `libnet::dns`, `libneodos::keyboard`
+  and `libneodos::i18n` now use it, removing the ad-hoc `[type][len][data]`
+  parsers and the duplicated Registry path/value strings (#588).
+
+- **`libneodiag` — table/column padding (#590).** Pure, host-testable
+  `pad_width` / `pad_left` / `pad_right`; `ps` and `neotop` use it.
+
+- **`libneoutil` — path/text utilities (#589).** Pure, host-testable
+  `to_ob_path` / `to_ob_path_bytes` / `nul_str` / `parse_u32` /
+  `split_first_token` / `errno_str`, plus `libneodos::path::normalize_path` for
+  cwd resolution. 15 tools migrated off their duplicated `to_ob_path` and 6 off
+  `normalize_path`.
+
+- **Shared date/time formatting in `libntp` (#590).** `format_date` /
+  `format_time` / `format_datetime`; `datetime` and `ipconfig` use them.
+
+- **Security: `ObType::Session` + built-in SAM accounts (USR-P1a, #19).** Added
+  `ObType::Session = 19` — `ob_create`/`ob_destroy` now accept it and create a
+  `Session` object in the namespace. Added the built-in account-domain SIDs
+  (`sid_builtin_administrator()` = `S-1-5-21-0-0-0-500`, `sid_builtin_guest()` =
+  `S-1-5-21-0-0-0-501`, `sid_builtin_system()` = `S-1-5-18`) plus a
+  `WELL_KNOWN_SIDS` (`SeWellKnownSids`) table and `well_known_sid(name)`.
+  `SamDatabase::with_builtins()` seeds `Administrator` (enabled, admin), `Guest`
+  (disabled) and `SYSTEM` (admin); `init_security()` (Phase 2.77) creates the
+  global `SAM_DB`. Session tokens and the `\Session\{id}` manager are USR-P2.
+  5 new tests.
+
+- **Security: `Token` integrity level + creation time (USR-P1b, #20).** Added the
+  `IntegrityLevel` enum (`Untrusted`/`Low`/`Medium`/`High`/`System`) and the
+  `Token.integrity_level` + `Token.creation_time` (TSC ticks) fields. Admin
+  tokens default to `System`, standard users to `Medium`; `inherit_from` keeps
+  the parent's level with a fresh timestamp. Integrity enforcement in
+  `SeAccessCheck` is USR-P5a. Also added a focused test for the `ob_create` type
+  map (covers the `ObType::Session` acceptance from #19). 3 new tests.
+
+### Changed
+
+- **Image tree moved to `\NeoDOS` (#398).** System binaries live in
+  `\NeoDOS\System` (`\Tools` for the rest, until multi-block directories
+  land), libraries in `\NeoDOS\Libraries`, hives in `\NeoDOS\System\config`,
+  keyboard/localization/drivers under `\NeoDOS\System\…`, and the image now
+  ships `\Program Files`, `\ProgramData` and `\Users`. Locations live in
+  `neodos-kernel/src/paths.rs` / `libneodos::paths`, and the VFS resolves the
+  canonical spelling of a legacy path first so old literals keep working
+  while they are migrated.
+
+- **AGENTS.md slimmed down; long agent policies moved to their homes.**
+  The Mandatory Scheduler Change Validation Policy now lives in
+  `skills/scheduler/SKILL.md` and the Proactive Capability Discovery workflow in
+  `docs/development/capability-discovery.md` (indexed in `docs/README.md`); the
+  GitHub workflow section was de-duplicated. AGENTS.md keeps the permanent rules
+  and short pointers only.
+
+- **`drivers/` no longer depends on `fs::vfs` (rule 12).** The
+  `neodos07_mount_manager_consistent` test moved to `fs/vfs/mount.rs`
+  (`vfs_mount_manager_consistent`), so `neodev check-deps` is green again without
+  growing `check-deps-baseline.txt`.
+
+### Fixed
+
+- **`neocurl` lost its heap mid-handshake.** The userland allocator was a
+  plain `sbrk` bump allocator with a no-op `dealloc`, so every temporary
+  buffer was lost for good; public-key verification (thousands of small
+  big-integer allocations) exhausted the 2 MiB heap. Freed blocks now go to
+  size-class free lists, and every block in a class has the class capacity.
+
+- **`ntpd` stepped the clock to 2055.** A transient failure of the first
+  `\Global\Info\DateTime` read became `t1 = 0`, so the offset against a
+  real server looked like ~28 years (delay ~57 years) and was applied
+  verbatim. `libntp::clock_step` detects an unset RTC and sets the time from
+  the server instead, rejects unusable round trips and refuses results
+  outside 2020–2100. The status printers also dropped the leading digit of
+  every timestamp.
+
+- **Kernel panic writing into a fresh heap page.** Heap and mmap slots live
+  inside the identity-mapped USER window, and the user-memory validators
+  tested the window first and reported "always present", so the kernel wrote
+  into a demand-paged page that was not mapped yet (`Ring 0 #PF`). Heap and
+  mmap are now checked first, so a non-resident page yields `EFAULT`;
+  `libnet` faults its receive buffers in before calling `SocketRecv`.
+
+- **Boot-time `PAGE_TABLE_CORRUPTION` from the buddy bitmap (#714).** The bitmap
+  was sized from `phys_max`, which includes the multi-TiB PCIe ECAM window, so a
+  512 MB guest allocated a 32 MB bitmap and placed it at the end of the highest
+  clean segment. When firmware left a large unfragmented region (e.g. the disk
+  image carried no `neodos.fs`), the zero-fill swept over UEFI page-table pages
+  and read-only W^X RAM, faulting on write at `0x1f403000` (the PDPT page) and
+  panicking as `PAGE_TABLE_CORRUPTION` before the Object Manager came up. The
+  bitmap is now sized from the highest usable address (~16 KB for 512 MB),
+  placed only in pages the active page tables map writable, and every frame
+  backing the live firmware page tables or mapped read-only is reserved until
+  the kernel installs its own tables. Post-init reservations now rebuild the
+  buddy free lists (they previously only flipped bitmap bits, so reserved
+  frames were still handed out), and `free_frames` now clears the used bit
+  instead of setting it. Adds `memory_bitmap_sized_by_usable`,
+  `buddy_reserve_after_init_takes_effect` and `buddy_free_clears_bitmap`.
+
+- **`check-deps` violation in the page-cache tests (#715).**
+  `buffer/page_cache/tests.rs` imported `fs::fsck::TestBlockDevice`, creating a
+  forbidden `buffer -> fs` edge that made `neodev check-deps` fail on `develop`.
+  The test now defines its own in-memory device, reusing the `BlockDevice`
+  trait already imported by the parent module (and `IrpId` is a `u32` alias, so
+  no new `drivers`/`irp` edge either).
+
+- **IRQ-reentrant graphical-console lock caused a system-wide freeze after
+  network init.** The BSP timer IRQ renders the blinking cursor via
+  `console::cursor_timer_tick` → `draw_cursor`, which took the
+  `graphics::RENDERER` `spin::Mutex` with a blocking `lock()`. A thread that held
+  the lock (e.g. `scroll()` during the burst of console writes from
+  `netd`/`dhcpd`/`ntpd` while the shell has cursor blink enabled) could be
+  interrupted by the timer; the handler then spun forever on the same CPU with
+  interrupts disabled, wedging the BSP. In VirtualBox the shell stopped echoing
+  input and the cursor stopped advancing right after the network services
+  finished starting; a second CPU was then observed spinning in `font::draw_char`
+  (QEMU `-d int`). Fixed by using `try_lock` in the cursor path and adding a
+  lock-free glyph blit helper, with a regression test that deadlocks pre-fix.
+
+- **IRQ lock-safety hardening (INV-3 / Rule 3.5.1).** Every `graphics::RENDERER`
+  acquisition now goes through `graphics::with_renderer`, which disables
+  interrupts for the critical section; this also covers the keyboard
+  `Alt+F1..F8` VT-switch path (`redraw_from_shadow`), not just the timer cursor
+  blink (which keeps `try_lock`). The IRP pool lock (`irp::IRP_POOL.inner`) is
+  acquired IRQ-safe too, so the timer DPC completion path cannot deadlock
+  against a driver holding it. The rule — no IRQ handler may block on a lock
+  that interruptible code on the same CPU can hold — is codified in
+  `docs/architecture/source-of-truth.md` and the review checklist.
+
+- **AP bring-up triple fault ("AP-bringup layout cliff", #522).** The AP
+  trampoline enabled long mode (`EFER.LME`) but not no-execute (`EFER.NXE`).
+  With NXE clear, bit 63 of a leaf PTE is reserved, so the first AP access
+  through such a page raised `#PF(RSVD)` → `#DF` → triple fault (with `-no-reboot`,
+  QEMU exits and the VM never boots). Whether the AP stack landed on an NX leaf
+  depended on frame-allocation order, so a small kernel change could kill every
+  AP. Fixed by enabling `LME | NXE` before paging is enabled.
+
+- **`neotop` i18n: oversized i18n `.bss` spilled into the process stack (#576).**
+  The i18n table pool plus its three load scratch buffers totalled ~203 KiB of
+  static `.bss` (`(MAX_TABLES + 3) * MAX_FILE`). `neotop`'s large stack buffers
+  (an ~11 KiB `proc_buf`) pushed its `.bss` past `MAX_BIN_SIZE` (192 KiB) into
+  the process stack region, so the stack silently clobbered `NLT_COUNT` and every
+  `tr_id!` fell back to the `#<id>` marker — while `neotop --help`, which exits
+  before allocating those buffers, stayed translated. `MAX_FILE` is reduced from
+  18 KiB to 8 KiB (the largest shipped NLT is ~1 KiB), bringing the per-binary
+  `.bss` well under `MAX_BIN_SIZE`. Verified in VirtualBox: `neotop` renders
+  `NeoTOP 0.2 - Monitor del Sistema`, `PROCESO`, `HILO`, `ESTADO`, … in Spanish.
+
+- **`MemoryStats.total_pages` derived from managed frames (#611).** It was
+  computed from `phys_max` (including high MMIO regions), so it was inconsistent
+  with `free_pages`/`used_pages`; it now counts the managed region frames.
+
+- **`nslookup` toolchain (#618).** It pinned `nightly-2024-09-15`, which cannot
+  compile the current `libneodos` (E0658); aligned with the project nightly.
+
+- **`neomem` memory ABI drift (#591).** `neomem` declared a private 13-field
+  `MemInfo` that no longer matched the kernel's 15-field `MemoryStats` (120 B),
+  so it printed misaligned garbage. It now queries directly into
+  `libneodos::syscall::MemInfo`.
+
+- **Security: NT-correct `SeAccessCheck` — empty DACL, group SIDs, SACL audit
+  (#22).** `se_access_check` now **denies all access on an empty DACL** (present,
+  zero ACEs) while keeping **NULL DACL / absent descriptor = full access**, and
+  matches ACEs against the caller's primary SID **and group SIDs**
+  (`token.groups`), not only the primary SID. Deny-first ordering is preserved.
+  Added a SACL (`SecurityDescriptor::sacl`, `ACE_TYPE_SYSTEM_AUDIT`) and a global
+  audit switch (`set_auditing` / `se_audit`) that emits audit records for matching
+  audit ACEs without affecting the access decision. 7 new tests
+  (`se_empty_dacl_denies`, `se_null_dacl_allows`, `se_absent_sd_allows`,
+  `se_group_sid_allow`, `se_group_sid_deny_wins`, `se_audit_absent_sacl_is_noop`,
+  `se_acl_sacl_present`); kernel suite now 868/868.
+
 ## v0.51.5 — 2026-10-09
 
 ### Added

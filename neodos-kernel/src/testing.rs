@@ -221,13 +221,18 @@ pub fn register_tests() {
     crate::input::register_tests();
     crate::input::vt::register_tests();
     crate::scheduler::register_tests();
+    crate::id_index::register_tests();
     crate::syscall::register_syscall_table_tests();
     crate::syscall::register_path_tests();
     crate::syscall::register_sync_tests();
     crate::syscall::register_ob_stats_tests();
+    crate::cm::profile::register_profile_service_tests();
+    crate::paths::register_tests();
+    crate::random::register_tests();
     crate::syscall::register_ob_set_tests();
     crate::nem::register_nem_tests();
     crate::elf::register_elf_tests();
+    crate::nxl::register_nxl_tests();
     crate::eventbus::register_tests();
     crate::drivers::caps::register_cap_tests();
     crate::drivers::isolation::register_isolation_tests();
@@ -237,6 +242,7 @@ pub fn register_tests() {
     crate::drivers::abi::register_abi_tests();
     crate::drivers::dependency::register_dependency_tests();
     crate::drivers::pci::register_tests();
+    crate::drivers::register_registry_tests();
     crate::fs::btree::register_btree_tests();
     crate::fs::freelist::register_freelist_tests();
     crate::fs::snapshot::register_snapshot_tests();
@@ -273,6 +279,8 @@ pub fn register_tests() {
     register_irql_tests();
     // B4.4 B2 ANSI terminal tests
     crate::console::register_ansi_tests();
+    // Console rendering / graphics-lock IRQ-safety regression tests
+    crate::console::register_render_tests();
     // NT6 Security Reference Monitor tests
     crate::security::register_security_tests();
     // A2.1: PCIe ECAM tests
@@ -281,6 +289,8 @@ pub fn register_tests() {
     crate::timers::hpet::register_tests();
     // A2.2: I/O APIC tests
     crate::interrupts::ioapic::register_tests();
+    // MSI / MSI-X delivery tests (#676)
+    crate::interrupts::msi::register_msi_tests();
     // NT5.5: Unified resource namespace (URN) tests
     crate::urn::register_urn_tests();
     // A3.3: Watchdog subsystem tests

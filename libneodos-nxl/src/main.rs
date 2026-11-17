@@ -43,6 +43,9 @@ fn nxl_panic(info: &core::panic::PanicInfo) -> ! {
 // ============================================================
 #[repr(C)]
 pub struct AbiTable {
+    // ABI version first, so the loader can validate every NXL export table
+    // uniformly (#584).
+    pub version: u32,
     // Core syscall wrappers
     pub sys_exit: extern "C" fn(u32) -> !,
     pub sys_write: extern "C" fn(u8, *const u8, usize) -> i64,
@@ -93,12 +96,21 @@ pub struct AbiTable {
     pub sys_ob_set_info: extern "C" fn(u8, u32, *const u8, usize) -> i64,
     pub sys_ob_enum: extern "C" fn(u8, *mut u8, usize) -> i64,
     pub sys_ob_wait: extern "C" fn(u8) -> i64,
-    pub version: u32,
 }
+
+// Compile-time freeze of the core export-table layout (v8, version-first).
+// The consumer (`libneodos`) asserts the same offsets.
+const _: () = {
+    assert!(core::mem::offset_of!(AbiTable, version) == 0);
+    assert!(core::mem::offset_of!(AbiTable, sys_exit) == 8);
+    assert!(core::mem::offset_of!(AbiTable, sys_write) == 16);
+    assert!(core::mem::size_of::<AbiTable>() == 8 + 43 * 8);
+};
 
 #[no_mangle]
 #[link_section = ".export_table"]
 pub static EXPORT_TABLE: AbiTable = AbiTable {
+    version: 8,
     sys_exit: crate::process::nxl_sys_exit,
     sys_write: crate::io::nxl_sys_write,
     sys_read: crate::io::nxl_sys_read,
@@ -142,5 +154,4 @@ pub static EXPORT_TABLE: AbiTable = AbiTable {
     sys_ob_set_info: crate::fs::nxl_sys_ob_set_info,
     sys_ob_enum: crate::fs::nxl_sys_ob_enum,
     sys_ob_wait: crate::fs::nxl_sys_ob_wait,
-    version: 7,
 };

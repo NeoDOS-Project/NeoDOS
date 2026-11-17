@@ -3,7 +3,7 @@ pub mod manager;
 pub mod kbd;
 
 pub use vt::VtInputQueue;
-pub use manager::{init, active_vt, switch_vt, push_byte, pop_byte_from_vt, vt_active_occupancy_for};
+pub use manager::{init, active_vt, switch_vt, push_byte, pop_byte_from_vt, vt_active_occupancy_for, request_shutdown};
 pub type InputBuffer = VtInputQueue;
 
 // ── Tests ──────────────────────────────────────────────────────────
@@ -12,6 +12,11 @@ pub fn register_tests() {
     use crate::test_case;
     use crate::test_eq;
     use crate::test_ne;
+
+    // Raw keyboard event ring + VK mapping (#466).
+    crate::input::kbd::ring::register_tests();
+    // Layout switching + locale layouts (#394).
+    crate::input::kbd::register_tests();
 
     test_case!("input_empty_pop", {
         let buf = InputBuffer::new();

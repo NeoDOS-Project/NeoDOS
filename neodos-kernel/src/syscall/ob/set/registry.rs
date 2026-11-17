@@ -1,7 +1,7 @@
 //! Ob set — registry key/value mutation.
 
 use crate::object::types::ObSetInfoClass;
-use crate::syscall::{err_to_u64, SyscallError};
+use crate::syscall::{err_to_u64, SyscallError, copy_from_user};
 
 pub(super) fn handles(info_class: u32) -> bool {
     info_class == ObSetInfoClass::RegistryCreateKey as u32
@@ -23,11 +23,14 @@ pub(super) fn dispatch(
             if entry.obj_type() != Some(crate::object::ObType::Key) {
                 return err_to_u64(SyscallError::Inval);
             }
-            let base = buf_ptr as *const u8;
+            let mut kbuf = alloc::vec::Vec::with_capacity(buf_size);
+            kbuf.resize(buf_size, 0u8);
+            if copy_from_user(&mut kbuf, buf_ptr).is_err() {
+                return err_to_u64(SyscallError::Fault);
+            }
             let name = {
                 let mut s = alloc::string::String::new();
-                for i in 0..buf_size {
-                    let c = unsafe { core::ptr::read_volatile(base.add(i)) };
+                for &c in kbuf.iter() {
                     if c == 0 { break; }
                     s.push(c as char);
                 }
@@ -48,8 +51,16 @@ pub(super) fn dispatch(
             if entry.obj_type() != Some(crate::object::ObType::Key) {
                 return err_to_u64(SyscallError::Inval);
             }
+            // Fault-safe read of the name buffer (may be empty / NULL).
+            let mut kbuf = alloc::vec::Vec::new();
+            if buf_size > 0 {
+                kbuf.resize(buf_size, 0u8);
+                if copy_from_user(&mut kbuf, buf_ptr).is_err() {
+                    return err_to_u64(SyscallError::Fault);
+                }
+            }
             // If buf is empty, delete the key itself (like handler_cm_delete_key)
-            if buf_size == 0 || unsafe { core::ptr::read_volatile(buf_ptr as *const u8) } == 0 {
+            if buf_size == 0 || kbuf[0] == 0 {
                 let native_id = match entry.native_id() {
                     Some(id) => id,
                     None => return err_to_u64(SyscallError::BadF),
@@ -62,11 +73,9 @@ pub(super) fn dispatch(
                     Err(()) => err_to_u64(SyscallError::Inval),
                 }
             } else {
-                let base = buf_ptr as *const u8;
                 let name = {
                     let mut s = alloc::string::String::new();
-                    for i in 0..buf_size {
-                        let c = unsafe { core::ptr::read_volatile(base.add(i)) };
+                    for &c in kbuf.iter() {
                         if c == 0 { break; }
                         s.push(c as char);
                     }
@@ -93,48 +102,44 @@ pub(super) fn dispatch(
             if entry.obj_type() != Some(crate::object::ObType::Key) {
                 return err_to_u64(SyscallError::Inval);
             }
-            let base = buf_ptr as *const u8;
+            let mut base = alloc::vec::Vec::with_capacity(buf_size);
+            base.resize(buf_size, 0u8);
+            if copy_from_user(&mut base, buf_ptr).is_err() {
+                return err_to_u64(SyscallError::Fault);
+            }
             let mut name_end = 0;
             while name_end < buf_size && buf_size - name_end >= 4 {
-                let c = unsafe { core::ptr::read_volatile(base.add(name_end)) };
+                let c = base[name_end];
                 if c == 0 { break; }
                 name_end += 1;
             }
             if name_end == 0 || name_end >= buf_size - 8 {
                 return err_to_u64(SyscallError::Inval);
             }
-            let name_bytes = unsafe {
-                core::slice::from_raw_parts(base, name_end)
-            };
+            let name_bytes = &base[..name_end];
             let name = core::str::from_utf8(name_bytes).unwrap_or("");
             if name.is_empty() { return err_to_u64(SyscallError::Inval); }
             let payload_start = name_end + 1;
             if payload_start + 8 > buf_size {
                 return err_to_u64(SyscallError::Inval);
             }
-            let value_type = unsafe {
-                u32::from_le_bytes([
-                    core::ptr::read_volatile(base.add(payload_start)),
-                    core::ptr::read_volatile(base.add(payload_start + 1)),
-                    core::ptr::read_volatile(base.add(payload_start + 2)),
-                    core::ptr::read_volatile(base.add(payload_start + 3)),
-                ])
-            };
-            let data_len = unsafe {
-                u32::from_le_bytes([
-                    core::ptr::read_volatile(base.add(payload_start + 4)),
-                    core::ptr::read_volatile(base.add(payload_start + 5)),
-                    core::ptr::read_volatile(base.add(payload_start + 6)),
-                    core::ptr::read_volatile(base.add(payload_start + 7)),
-                ]) as usize
-            };
+            let value_type = u32::from_le_bytes([
+                base[payload_start],
+                base[payload_start + 1],
+                base[payload_start + 2],
+                base[payload_start + 3],
+            ]);
+            let data_len = u32::from_le_bytes([
+                base[payload_start + 4],
+                base[payload_start + 5],
+                base[payload_start + 6],
+                base[payload_start + 7],
+            ]) as usize;
             let data_start = payload_start + 8;
             if data_start + data_len > buf_size {
                 return err_to_u64(SyscallError::Inval);
             }
-            let data = unsafe {
-                core::slice::from_raw_parts(base.add(data_start), data_len)
-            };
+            let data = &base[data_start..data_start + data_len];
             let native_id = match entry.native_id() {
                 Some(id) => id,
                 None => return err_to_u64(SyscallError::BadF),
@@ -149,11 +154,14 @@ pub(super) fn dispatch(
             if entry.obj_type() != Some(crate::object::ObType::Key) {
                 return err_to_u64(SyscallError::Inval);
             }
-            let base = buf_ptr as *const u8;
+            let mut kbuf = alloc::vec::Vec::with_capacity(buf_size);
+            kbuf.resize(buf_size, 0u8);
+            if copy_from_user(&mut kbuf, buf_ptr).is_err() {
+                return err_to_u64(SyscallError::Fault);
+            }
             let name = {
                 let mut s = alloc::string::String::new();
-                for i in 0..buf_size {
-                    let c = unsafe { core::ptr::read_volatile(base.add(i)) };
+                for &c in kbuf.iter() {
                     if c == 0 { break; }
                     s.push(c as char);
                 }

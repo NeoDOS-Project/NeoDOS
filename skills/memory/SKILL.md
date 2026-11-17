@@ -7,77 +7,113 @@ description: Modify frame allocator, page tables, heap, slab, mmap, or demand pa
 
 ## When to use
 
-Modifying the frame allocator, page table management, heap allocation, mmap region, slab allocator, or demand paging.
+Modifying the frame allocator, page table management, heap allocation, the mmap
+region, the slab allocator, or demand paging.
 
 ## Goal
 
-Change memory subsystem correctly without breaking allocation invariants or introducing leaks/corruption.
+Change the memory subsystem correctly without breaking allocation invariants or
+introducing leaks/corruption.
+
+## References
+
+- `docs/memory/memory.md` — subsystem documentation
+- `src/memory/buddy.rs` — physical frame allocator (buddy system)
+- `src/memory/layout.rs` — `MemoryLayout`, reserved regions, `init_default()`
+- `src/memory/slab.rs` — kernel slab allocator + per-CPU hot cache
+- `src/memory/allocator.rs` — `#[global_allocator]` wiring
+- `src/memory/mod.rs` — physical memory init (`init_from_regions`)
+- `src/arch/x64/paging.rs` — page tables, demand paging, heap page mgmt
+
+## Regions (canonical layout)
+
+| Name | Base | Size | Purpose |
+| ------ | ------ | ------ | --------- |
+| `user_window` | 0x400000 | 32 MB | Ring 3 code + stack slots |
+| `kernel_heap` | 0x2400000 | 16 MB | Kernel linked-list heap |
+| `kernel_image` | 0x4000000 | ~1.2 MB | Kernel `.text/.rodata/.data/.bss` |
+| `crash_dump` | 0xF000000 | 16 MB | Panic-time crash dump |
+| `user_heap` | 0x10000000 | 32 MB | Per-process heap (16 × 2 MB) |
+| `nxl_region` | 0x1E000000 | 2 MB | NXL user libraries |
+| `mmap_region` | 0x20000000 | 32 MB | Anonymous + file-backed mmap |
+| `driver_iso` | 0x30000000 | 16 MB | Isolated NEM driver slots |
+
+`validate_layout_consistency()` asserts no overlaps and that regions fit in
+detected physical memory.
 
 ## Steps
 
-1. **Identify subsystem**
-   - **Frame allocator**: `src/memory/buddy.rs` — physical page allocation (buddy system, 4KB frames)
-   - **Memory regions**: `src/memory/layout.rs` — memory map, region definitions
-   - **General init**: `src/memory/mod.rs` — memory subsystem initialization sequence
-   - **Slab allocator**: `src/slab.rs` — 9 size classes (8B–2KB), per-CPU hot cache
-   - **Page tables**: `src/arch/x64/paging.rs` — page table walk, TLB management, demand paging
-   - **Heap**: Fixed at `0x10000000..0x12000000`
-   - **Mmap**: Fixed at `0x20000000..0x22000000`
+1. **Identify the subsystem**
+   - **Frame allocator**: `src/memory/buddy.rs` (buddy system, 4 KB frames).
+   - **Physical init / regions**: `src/memory/mod.rs`, `src/memory/layout.rs`.
+   - **Slab**: `src/memory/slab.rs` (9 size classes, per-CPU hot cache).
+   - **Page tables / demand paging**: `src/arch/x64/paging.rs`.
+   - **Heap**: user heap at `0x10000000..0x12000000`.
+   - **Mmap**: `0x20000000..0x22000000`.
 
-2. **Read `docs/memory/memory.md`**
-   Understand the buddy allocator invariants, slab hot cache refill policy, demand paging fault handling.
+2. **Read `docs/memory/memory.md`** — buddy invariants, slab hot-cache policy,
+   demand-paging fault handling.
 
 3. **Buddy allocator changes** (`src/memory/buddy.rs`)
-   - Maintain 10 free lists for orders 0–9 (4KB – 2MB).
-   - Allocation: split larger blocks. Deallocation: coalesce buddies.
-   - Update `BUDDY_MAX_ORDER` if changing max block size.
-   - Never allocate during interrupt context above IRQL DISPATCH_LEVEL.
+   - 11 power-of-2 orders (0–10): 4 KB … 4 MB.
+   - Free lists: `free_lots[[u64; MAX_FREE_SLOTS]; 11]` with
+     `MAX_FREE_SLOTS = 512`; a used/free bitmap gives O(1) buddy lookup.
+   - Allocation splits larger blocks; deallocation coalesces buddies.
+   - Use `alloc_frames(order)` / `free_frames(addr, order)` (and
+     `allocate_frame()` / `free_frame()` for order 0) — never touch metadata
+     directly.
 
-4. **Slab allocator changes** (`src/slab.rs`)
-   - Size classes: index 0=8, 1=16, 2=32, 3=64, 4=128, 5=256, 6=512, 7=1024, 8=2048.
-   - Per-CPU hot cache holds a small batch of pre-filled slabs (refill from central pool).
-   - Adding a new size class: update `SLAB_CLASSES` array and rebuild.
+4. **Slab allocator changes** (`src/memory/slab.rs`)
+   - Classes: `CACHE_SIZES = [8, 16, 32, 64, 128, 256, 512, 1024, 2048]`.
+   - Each slab page is 4 KB with a 32-byte header; free slots form an intrusive
+     linked list; allocation is O(1) within a page.
+   - Per-CPU hot cache holds 32 objects per class (lock-free fast path); the slow
+     path takes the global mutex and moves a batch of 32.
+   - Objects > 2048 B fall through to `linked_list_allocator::LockedHeap`.
 
-5. **Demand paging / page fault handler** (`src/arch/x64/paging.rs`)
-   - Fault types: page-not-present, protection violation, write to read-only.
-   - For mmap'd regions: allocate a physical page on first access.
-   - Handle copy-on-write for forked process pages.
-   - Update `PageTableEntry` flags (Present, Writable, User, etc.).
+5. **Demand paging / fault handler** (`src/arch/x64/paging.rs`)
+   - The kernel identity-maps the first 4 GiB with 2 MB huge pages; heap/mmap
+     regions are split into 4 KB PTEs.
+   - `heap_alloc_page(virt)` / `heap_free_page` / `heap_free_range` manage the
+     per-process heap; anonymous mmap faults allocate + zero + map
+     `USER_ACCESSIBLE`; file-backed faults read via the page cache first.
+   - Always flush the TLB after PTE changes (`invlpg` / CR3 reload). Cross-CPU:
+     `shootdown_single_page()` / `shootdown_range()` build an all-others mask and
+     send IPI 0xF1 (lock-free mask builder; see
+     `docs/investigation/smp331-exit-tlb-shootdown-self-deadlock.md`).
 
-6. **Heap/mmap region changes** (`src/memory/layout.rs`)
-   - If changing heap bounds: update `HEAP_START`, `HEAP_END`, `MMAP_START`, `MMAP_END`.
-   - Ensure no overlap with kernel image, stack, or MMIO regions.
-   - Update `MemoryRegion` enum and the region descriptor table.
+6. **Heap/mmap bound changes** (`src/memory/layout.rs`)
+   Update the region descriptors and ensure no overlap with kernel image, stack,
+   or MMIO. `reserve_region()` panics on overlap.
 
-7. **Write tests**
-   Add tests in `src/testing.rs` for:
-   - Buddy: allocate and free all orders, verify coalescing
-   - Slab: allocate from each class, verify alignment and recycling
-   - Demand paging: mmap a page, access it, verify page fault is handled
-   - Heap: repeated alloc/free patterns, ensure no corruption
+7. **Write tests** with `test_case!`: buddy alloc/free all orders + coalescing;
+   slab alloc/free per class + reuse; demand-paging mmap → fault → map → access;
+   heap alloc/free patterns.
 
 ## Best practices
 
-- Always zero frames before handing to userspace (security).
-- Slab allocations from a single class must be 8-byte aligned minimum.
-- Use `allocate_frames()` / `free_frames()` for physical pages — never touch the buddy metadata directly.
-- Page table changes must flush TLB via `invlpg` or full `cr3` reload.
-- Validate mmap region bounds against `MMAP_END` before mapping.
+- Zero frames before handing them to userspace.
+- Allocate physical pages only through the buddy API; never rewrite bitmap
+  metadata ad hoc.
+- Flush the TLB after any page-table modification.
+- `validate_layout_consistency()` must keep passing after region changes.
+- Do not block/allocate in interrupt context above `DISPATCH_LEVEL`.
 
 ## Common mistakes
 
-- Coalescing buddies that are not actually buddies (wrong order or not adjacent).
-- Leaking slab objects when hot cache is discarded without returning to central pool.
-- Forgetting TLB flush after modifying page table entries.
-- Allocating in interrupt context above DISPATCH_LEVEL (can't block for refill).
-- Overlapping heap and mmap regions after adjusting bounds.
+- Coalescing non-buddies (wrong order / not adjacent).
+- Leaking slab objects when the hot cache is discarded without draining.
+- Forgetting the TLB flush after editing PTEs.
+- Overlapping heap and mmap regions after changing bounds.
+- Treating `mmap` as eager — it registers a VMA only; pages are populated on
+  first access.
 
 ## Final checklist
 
-- [ ] Buddy allocator maintains coalescing invariant (no memory leak)
-- [ ] Slab hot cache refill/return policy correct
-- [ ] TLB flush after any page table modification
-- [ ] Heap and mmap regions non-overlapping, within valid address space
-- [ ] Demand paging path tested (mmap → page fault → map → access)
-- [ ] Kernel tests added and pass
-- [ ] `docs/memory/memory.md` updated if bounds or algorithm changed
+- [ ] Buddy coalescing invariant holds (no leak)
+- [ ] Slab hot-cache refill/drain policy correct
+- [ ] TLB flushed after PTE changes
+- [ ] Heap/mmap regions non-overlapping and in valid address space
+- [ ] Demand-paging path tested (mmap → fault → map → access)
+- [ ] Tests added; `cargo build`, `neodev test`, `neodev check-deps` pass
+- [ ] `docs/memory/memory.md` updated if bounds or algorithms changed

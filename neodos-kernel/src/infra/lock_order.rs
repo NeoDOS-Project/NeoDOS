@@ -30,6 +30,27 @@
 use core::sync::atomic::{AtomicU64, Ordering};
 
 /// Lock ranks, ordered highest (acquired first) to lowest.
+///
+/// Process-lifecycle locks (NEODOS-02/03, #632/#633; checker coverage added by
+/// #667). Canonical order:
+///
+/// ```text
+/// SCHEDULER -> USER_MEMORY_LOCK
+///           -> ZOMBIE_QUEUE / KSTACK_QUARANTINE            (siblings)
+///           -> OB_TABLE -> OB_NAMESPACE
+///           -> VFS -> MOUNT_MANAGER -> PAGE_CACHE -> BLOCK_DEVICES
+/// ```
+///
+/// `ZOMBIE_QUEUE`, `KSTACK_QUARANTINE` and `OB_TABLE` are never nested with
+/// each other: the reaper drops the zombie lock before `recycle_terminated`
+/// takes the Ob locks, and drains the kstack quarantine before locking the
+/// queue. Their relative rank is therefore only a tie-breaker.
+pub const SCHEDULER: u8 = 10;
+pub const USER_MEMORY_LOCK: u8 = 9;
+pub const ZOMBIE_QUEUE: u8 = 8;
+pub const KSTACK_QUARANTINE: u8 = 7;
+pub const OB_TABLE: u8 = 6;
+pub const OB_NAMESPACE: u8 = 5;
 pub const VFS: u8 = 4;
 /// The `MountManager` (drive mount points). Acquired under `VFS`.
 pub const MOUNT_MANAGER: u8 = 3;
@@ -149,6 +170,45 @@ pub fn register_tests() {
         {
             let _v = Guard::new(VFS);
             let _m = Guard::new(MOUNT_MANAGER);
+        }
+        test_eq!(violations(), 0);
+    });
+
+    test_case!("lock_order_lifecycle_canonical_is_clean", {
+        // #667: the documented lifecycle order must not be flagged.
+        VIOLATIONS.store(0, Ordering::Relaxed);
+        {
+            let _s = Guard::new(SCHEDULER);
+            let _u = Guard::new(USER_MEMORY_LOCK);
+            let _z = Guard::new(ZOMBIE_QUEUE);
+            let _k = Guard::new(KSTACK_QUARANTINE);
+            let _o = Guard::new(OB_TABLE);
+            let _n = Guard::new(OB_NAMESPACE);
+        }
+        test_eq!(violations(), 0);
+    });
+
+    test_case!("lock_order_detects_lifecycle_inversion", {
+        // The Object Manager never acquires SCHEDULER (verified by inspection);
+        // taking OB_TABLE then SCHEDULER is an inversion and must be detected.
+        VIOLATIONS.store(0, Ordering::Relaxed);
+        {
+            let _o = Guard::new(OB_TABLE);
+            let _s = Guard::new(SCHEDULER);
+        }
+        test_true!(violations() >= 1);
+        // ZOMBIE_QUEUE is acquired under SCHEDULER, not the reverse.
+        VIOLATIONS.store(0, Ordering::Relaxed);
+        {
+            let _z = Guard::new(ZOMBIE_QUEUE);
+            let _u = Guard::new(USER_MEMORY_LOCK);
+        }
+        test_true!(violations() >= 1);
+        // Canonical descent stays clean afterwards.
+        VIOLATIONS.store(0, Ordering::Relaxed);
+        {
+            let _s = Guard::new(SCHEDULER);
+            let _o = Guard::new(OB_TABLE);
         }
         test_eq!(violations(), 0);
     });

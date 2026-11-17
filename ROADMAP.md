@@ -31,7 +31,7 @@
 ## 1. Resumen Ejecutivo
 
 NeoDOS ha completado su fase de prototipo funcional. El kernel tiene una base sólida:
-Object Manager completo (16 ObTypes, 7 syscalls Ob), stack TCP/IP, drivers NEM con
+Object Manager completo (23 ObTypes, 9 syscalls Ob), stack TCP/IP, drivers NEM con
 aislamiento, Registry con persistencia, VFS con NeoFS v2, planificación SMP, IRQL,
 KWait, Service Manager, y subsistema de internacionalización NLTv3 (`libnlt`).
 
@@ -127,7 +127,7 @@ v4.x ── Escalabilidad enterprise
 |----|-------|-----------|--------------|
 | SH-TOKEN+QUOTE | Shell tokenizer con quoting/escaping | ALTA | — |
 | SH-REDIR | Redirección Shell (>, <, >>, 2>) | ALTA | SH-TOKEN+QUOTE |
-| NFSv2-SYSCALL | sys_ob_snapshot (RAX 77) | ALTA | NFSv2-BTREE, NFSv2-SNAPSHOT |
+| NFSv2-SYSCALL | sys_ob_snapshot (RAX 48) | ALTA | NFSv2-BTREE, NFSv2-SNAPSHOT |
 | PM-PHASE2 | Power Manager kernel core (ObType=21, Registry) | ALTA | — |
 | AUDIT-32 | 5+ `.expect()` panic paths → Result | ALTA | — |
 | AUDIT-33 | Boot/init hardening (panic → Result/fallback) | ALTA | — |
@@ -410,7 +410,7 @@ y estabilización de la ABI.
 | ID | Tarea | Prioridad | Dependencias |
 |----|-------|-----------|--------------|
 | SEC-AUDIT-FULL | Auditoría de seguridad completa del kernel | CRÍTICA | — |
-| SEC-FUZZ-SYSCALLS | Fuzzing de todas las syscalls (0–77) | CRÍTICA | — |
+| SEC-FUZZ-SYSCALLS | Fuzzing de todas las syscalls (0–99) | CRÍTICA | — |
 | SEC-FUZZ-DRIVERS | Fuzzing de interfaz HST de drivers NEM | ALTA | — |
 | SEC-ASLR-V2 | ASLR v2: pila aleatoria + heap aleatorio | ALTA | ASLR v1 |
 | SEC-ASLR-V3 | ASLR v3: full randomization (PIE + stack + heap + mmap) | MEDIA | SEC-ASLR-V2 |
@@ -459,7 +459,7 @@ y estabilización de la ABI.
 | V1.0-NXE-COMPAT | Todos los binarios de usuario compilados contra ABI final | ALTA | V1.0-ABI-FROZEN |
 
 **Objetivo:** Primera versión con API estable. Todo lo que se congela en v1.0
-no cambia hasta v2.0. Contrato: drivers NEM v3, syscalls 0–77, formato NXE/NXP,
+no cambia hasta v2.0. Contrato: drivers NEM v3, syscalls 0–99, formato NXE/NXP,
 formato NeoFS v2.
 
 ---
@@ -690,7 +690,7 @@ M0.1 (v0.50): Sin dependencias externas (es el milestone actual)
 |-------|----------|----------------------|
 | B6.2 (COW fork) | fork es modelo Unix, no NT. NeoDOS usa sys_spawn | Despriorizar. Si se necesita, implementar como sys_clone estilo NT (CreateProcess) |
 | VFS-6.4 (Async VFS via IRP) | Ya existe IOCP en el diseño (§7.5 ARCHITECTURAL_VISION) | Implementar IOCP en lugar de async IRP directo |
-| sys_poll (RAX 59) | Ya existe sys_ob_wait con KWait | sys_poll debe delegar en KWait, no implementar lógica propia |
+| sys_poll (RAX 24) | Ya existe sys_ob_wait con KWait | sys_poll debe delegar en KWait, no implementar lógica propia |
 
 ### 13.2 Tareas Alineadas con la Filosofía NT
 

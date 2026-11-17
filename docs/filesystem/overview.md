@@ -207,3 +207,20 @@ pub static PAGE_CACHE: Mutex<PageCache>;
 ```
 
 Write-back: dirty entries are written to disk when evicted or on explicit sync.
+
+## Registry & Mount Layering (NEODOS-07 / #637)
+
+Two structures are involved in mounting, and they are **different resources**,
+not duplicate sources of truth:
+
+| Structure | Owns | Keyed by |
+|-----------|------|----------|
+| `MountManager` (`fs/vfs/mount.rs`, `MOUNT_MANAGER`) | volume/letter registry: Ob `MountPoint` + `\DosDevices\X:` symlink | drive letter |
+| `Vfs.drives[]` / `Vfs.mounts[]` (`fs/vfs/mod.rs`) | the mounted `FileSystem` instance and subdirectory mounts | drive index / (drive, inode) |
+
+The **transition is centralized**: `vfs_mount_filesystem` /
+`vfs_unmount_filesystem` (`fs/vfs/mount.rs`) update both while the VFS lock is
+held, so no caller performs a manual two-table rollback, and a lookup can never
+observe a half-mounted drive. Driver registries (`DRIVER_RUNTIME`,
+`LOADED_DRIVERS`, `ISOLATED_REGIONS`) are all lock-protected — there is no
+`static mut` registry (the driver-id context is an `AtomicU32`).

@@ -1,7 +1,7 @@
 //! Ob query — file, cwd, volume label and FSCK status.
 
 use crate::object::types::ObInfoClass;
-use crate::syscall::{err_to_u64, SyscallError};
+use crate::syscall::{err_to_u64, SyscallError, copy_to_user};
 use crate::scheduler;
 use crate::syscall::ob::types::ObFileInfo;
 
@@ -39,11 +39,11 @@ pub(super) fn dispatch(
             };
             let sz = core::mem::size_of::<ObFileInfo>();
             if buf_size < sz { return err_to_u64(SyscallError::Inval); }
-            unsafe {
-                core::ptr::copy_nonoverlapping(
-                    &fi as *const ObFileInfo as *const u8,
-                    buf_ptr as *mut u8, sz,
-                );
+            let bytes = unsafe {
+                core::slice::from_raw_parts(&fi as *const ObFileInfo as *const u8, sz)
+            };
+            if copy_to_user(buf_ptr, bytes).is_err() {
+                return err_to_u64(SyscallError::Fault);
             }
             sz as u64
         }
@@ -77,8 +77,8 @@ pub(super) fn dispatch(
             });
             match result {
                 Ok(bytes_read) => {
-                    unsafe {
-                        core::ptr::copy_nonoverlapping(temp_buf.as_ptr(), buf_ptr as *mut u8, bytes_read);
+                    if copy_to_user(buf_ptr, &temp_buf[..bytes_read]).is_err() {
+                        return err_to_u64(SyscallError::Fault);
                     }
                     crate::hal::without_interrupts(|| {
                         let s = scheduler::current_scheduler();
@@ -108,9 +108,11 @@ pub(super) fn dispatch(
                 Ok(label) => {
                     let bytes = label.as_bytes();
                     let copy_len = bytes.len().min(buf_size.saturating_sub(1));
-                    unsafe {
-                        core::ptr::copy_nonoverlapping(bytes.as_ptr(), buf_ptr as *mut u8, copy_len);
-                        (buf_ptr as *mut u8).add(copy_len).write(0);
+                    let mut out = alloc::vec::Vec::with_capacity(copy_len + 1);
+                    out.extend_from_slice(&bytes[..copy_len]);
+                    out.push(0);
+                    if copy_to_user(buf_ptr, &out).is_err() {
+                        return err_to_u64(SyscallError::Fault);
                     }
                     copy_len as u64
                 }
@@ -132,9 +134,11 @@ pub(super) fn dispatch(
             let full = alloc::format!("{}:{}", (b'A' + drive) as char, path);
             let bytes = full.as_bytes();
             let copy_len = bytes.len().min(buf_size.saturating_sub(1));
-            unsafe {
-                core::ptr::copy_nonoverlapping(bytes.as_ptr(), buf_ptr as *mut u8, copy_len);
-                (buf_ptr as *mut u8).add(copy_len).write(0);
+            let mut out = alloc::vec::Vec::with_capacity(copy_len + 1);
+            out.extend_from_slice(&bytes[..copy_len]);
+            out.push(0);
+            if copy_to_user(buf_ptr, &out).is_err() {
+                return err_to_u64(SyscallError::Fault);
             }
             copy_len as u64
         }
@@ -164,11 +168,11 @@ pub(super) fn dispatch(
             });
             let sz = core::mem::size_of::<crate::fs::fsck::FsckStatsRaw>();
             if buf_size < sz { return err_to_u64(SyscallError::Inval); }
-            unsafe {
-                core::ptr::copy_nonoverlapping(
-                    &stat as *const _ as *const u8,
-                    buf_ptr as *mut u8, sz,
-                );
+            let bytes = unsafe {
+                core::slice::from_raw_parts(&stat as *const _ as *const u8, sz)
+            };
+            if copy_to_user(buf_ptr, bytes).is_err() {
+                return err_to_u64(SyscallError::Fault);
             }
             sz as u64
         }

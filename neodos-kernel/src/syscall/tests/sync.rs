@@ -80,6 +80,77 @@ pub fn register_sync_tests() {
         test_true!(vaddr <= offset);
         test_true!(offset < vaddr + 0x10000);
     });
+
+    // ── NEODOS-04 (#634): fault-safe user copy fuzz ──────────────────────────
+
+    test_case!("neodos04_copy_rejects_bad_user_ptrs", {
+        use super::super::{copy_from_user, copy_to_user};
+        let mut buf = [0u8; 16];
+        // null source/dest
+        test_true!(copy_from_user(&mut buf, 0).is_err());
+        test_true!(copy_to_user(0, &buf[..1]).is_err());
+        // kernel address (above USER_LIMIT) must never be dereferenced
+        test_true!(copy_from_user(&mut buf, 0x4000_0000).is_err());
+        test_true!(copy_to_user(0x4000_0000, &buf[..1]).is_err());
+        // cross-page: starts inside the USER window, ends past USER_LIMIT
+        let last = crate::arch::x64::paging::USER_LIMIT - 1;
+        test_true!(copy_from_user(&mut buf[..2], last).is_err());
+        // 0-byte copy to a null dest is a no-op (Ok), not an error
+        test_true!(copy_to_user(0, &[]).is_ok());
+    });
+
+    test_case!("neodos04_copy_reads_user_window_atomically", {
+        use super::super::{copy_from_user, copy_to_user};
+        // The USER window is identity-mapped PRESENT|USER, so a valid pointer
+        // reads/writes without faulting in Ring 0.
+        let mut buf = [0u8; 4];
+        test_true!(copy_from_user(&mut buf, crate::arch::x64::paging::USER_BASE).is_ok());
+        test_true!(copy_to_user(crate::arch::x64::paging::USER_BASE, &[1, 2, 3]).is_ok());
+    });
+
+    test_case!("neodos04_user_copy_serializes_with_freers", {
+        use super::super::{copy_from_user, copy_to_user};
+        use crate::syscall::util::USER_MEMORY_LOCK;
+        // The brk/munmap page freers hold USER_MEMORY_LOCK while freeing. While
+        // it is held here (simulating a concurrent freer), a user copy must not
+        // proceed — it fails closed with EFAULT (retryable), never racing the
+        // free and never faulting in Ring 0 (NEODOS-04 / #634).
+        let guard = USER_MEMORY_LOCK.lock();
+        let mut buf = [0u8; 4];
+        test_true!(copy_from_user(&mut buf, crate::arch::x64::paging::USER_BASE).is_err());
+        test_true!(copy_to_user(crate::arch::x64::paging::USER_BASE, &buf).is_err());
+        drop(guard);
+        // Once the freer releases the lock, the same valid window succeeds.
+        let mut buf2 = [0u8; 4];
+        test_true!(copy_from_user(&mut buf2, crate::arch::x64::paging::USER_BASE).is_ok());
+    });
+
+    // ── NEODOS-09 (#639): CPU security features are CPUID-gated ──────────────
+    test_case!("neodos09_cpu_security_features_gated", {
+        use crate::arch::x64::features as f;
+        // A feature can only be enabled if the CPU advertises it, and on the BSP
+        // (where boot enables them) a supported feature must be active.
+        test_true!(!f::smep_enabled() || f::smep_supported());
+        test_true!(!f::smap_enabled() || f::smap_supported());
+        test_true!(!f::nx_enabled() || f::nx_supported());
+        if f::smep_supported() { test_true!(f::smep_enabled()); }
+        if f::smap_supported() { test_true!(f::smap_enabled()); }
+        if f::nx_supported() { test_true!(f::nx_enabled()); }
+    });
+
+    // ── NEODOS-09 (#649): recoverable fault probe ────────────────────────────
+    test_case!("neodos09_fault_probe_recovers_inaccessible_access", {
+        use crate::arch::x64::probe::{probe_armed, probe_read_u8};
+        // A readable kernel address returns its byte.
+        let x: u8 = 0x5A;
+        test_eq!(probe_read_u8(&x as *const u8 as u64), Some(0x5A));
+        test_true!(!probe_armed());
+        // A ring-0 access to an unmapped address faults and is recovered — it
+        // returns None instead of bugchecking (no silent access). 0x1_0000_0000
+        // is beyond the 4 GiB identity map.
+        test_true!(probe_read_u8(0x1_0000_0000).is_none());
+        test_true!(!probe_armed());
+    });
 }
 
 // ── DOS path canonicalization tests (cd/chdir resolution) ──────────────

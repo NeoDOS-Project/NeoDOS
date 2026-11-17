@@ -116,12 +116,12 @@ pub extern "C" fn _start() -> ! {
     let shell_name = if key_fd != 0xFF {
         match read_reg_str(key_fd, "DefaultShell", &mut shell_buf) {
             Some(len) if len > 0 => {
-                core::str::from_utf8(&shell_buf[..len]).unwrap_or("C:\\Programs\\neoshell.nxe")
+                core::str::from_utf8(&shell_buf[..len]).unwrap_or("C:\\NeoDOS\\System\\neoshell.nxe")
             }
-            _ => "C:\\Programs\\neoshell.nxe",
+            _ => "C:\\NeoDOS\\System\\neoshell.nxe",
         }
     } else {
-        "C:\\Programs\\neoshell.nxe"
+        "C:\\NeoDOS\\System\\neoshell.nxe"
     };
 
     // ── Read EnableVT ──
@@ -168,6 +168,9 @@ pub extern "C" fn _start() -> ! {
     // ── Run user-mode test binaries (if enabled) ──
     if enable_tests != 0 {
         try_spawn_test("C:\\Programs\\cmdtest.nxe", "CMDTEST");
+        try_spawn_test("C:\\System\\Tools\\tcptest.nxe", "TCPTEST");
+        try_spawn_test("C:\\System\\Tools\\netcli.nxe", "NETCLI");
+        try_spawn_test("C:\\System\\Tools\\netsrv.nxe", "NETSRV");
         try_spawn_test("C:\\System\\Tools\\stresscmd.nxe", "STRESSCMD");
         try_spawn_test("C:\\System\\Tools\\shtest.nxe", "SHTEST");
     }

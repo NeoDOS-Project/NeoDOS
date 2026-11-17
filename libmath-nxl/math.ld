@@ -1,8 +1,9 @@
 ENTRY(nxl_entry)
 SECTIONS
 {
-    /* Single LOAD segment: export table first, then code */
-    . = 0x1e040000;
+    /* PIE: link at virtual 0. The loader relocates the library to any free
+     * slot (R_X86_64_RELATIVE); the export table stays at offset 0. */
+    . = 0;
     __nxl_start = .;
 
     .export_table : {

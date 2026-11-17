@@ -1,7 +1,7 @@
 //! Ob query — process / thread info classes.
 
 use crate::object::types::ObInfoClass;
-use crate::syscall::{err_to_u64, SyscallError};
+use crate::syscall::{err_to_u64, SyscallError, copy_to_user};
 use crate::scheduler::ThreadState;
 use crate::syscall::ob::types::{ObProcessInfo, ObThreadInfo};
 
@@ -100,11 +100,11 @@ pub(super) fn dispatch(
             });
             let sz = core::mem::size_of::<ObProcessInfo>();
             if buf_size < sz { return err_to_u64(SyscallError::Inval); }
-            unsafe {
-                core::ptr::copy_nonoverlapping(
-                    &pi as *const ObProcessInfo as *const u8,
-                    buf_ptr as *mut u8, sz,
-                );
+            let bytes = unsafe {
+                core::slice::from_raw_parts(&pi as *const ObProcessInfo as *const u8, sz)
+            };
+            if copy_to_user(buf_ptr, bytes).is_err() {
+                return err_to_u64(SyscallError::Fault);
             }
             sz as u64
         }
@@ -138,11 +138,11 @@ pub(super) fn dispatch(
             });
             let sz = core::mem::size_of::<ObThreadInfo>();
             if buf_size < sz { return err_to_u64(SyscallError::Inval); }
-            unsafe {
-                core::ptr::copy_nonoverlapping(
-                    &ti as *const ObThreadInfo as *const u8,
-                    buf_ptr as *mut u8, sz,
-                );
+            let bytes = unsafe {
+                core::slice::from_raw_parts(&ti as *const ObThreadInfo as *const u8, sz)
+            };
+            if copy_to_user(buf_ptr, bytes).is_err() {
+                return err_to_u64(SyscallError::Fault);
             }
             sz as u64
         }
@@ -162,8 +162,8 @@ pub(super) fn dispatch(
                 crate::scheduler::current_scheduler().lock().current_pid()
             });
             let bytes = (pid as u32).to_le_bytes();
-            unsafe {
-                core::ptr::copy_nonoverlapping(bytes.as_ptr(), buf_ptr as *mut u8, 4);
+            if copy_to_user(buf_ptr, &bytes).is_err() {
+                return err_to_u64(SyscallError::Fault);
             }
             4u64
         }
@@ -182,12 +182,14 @@ pub(super) fn dispatch(
             });
             let arg_len = args.iter().position(|&b| b == 0).unwrap_or(256);
             let copy_len = core::cmp::min(arg_len, buf_size.saturating_sub(1));
-            unsafe {
-                if copy_len > 0 {
-                    core::ptr::copy_nonoverlapping(args.as_ptr(), buf_ptr as *mut u8, copy_len);
+            if copy_len > 0 {
+                if copy_to_user(buf_ptr, &args[..copy_len]).is_err() {
+                    return err_to_u64(SyscallError::Fault);
                 }
-                if buf_size > 0 {
-                    (buf_ptr as *mut u8).add(copy_len).write(0u8);
+            }
+            if buf_size > 0 {
+                if copy_to_user(buf_ptr + copy_len as u64, &[0u8]).is_err() {
+                    return err_to_u64(SyscallError::Fault);
                 }
             }
             return arg_len as u64;
@@ -212,8 +214,8 @@ pub(super) fn dispatch(
                     None => false,
                 }
             };
-            unsafe {
-                (buf_ptr as *mut u8).write(requested as u8);
+            if copy_to_user(buf_ptr, &[requested as u8]).is_err() {
+                return err_to_u64(SyscallError::Fault);
             }
             1u64
         }

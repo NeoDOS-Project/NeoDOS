@@ -8,6 +8,7 @@ fn noop_test_runner(_tests: &[&dyn Fn()]) {
     loop {}
 }
 
+pub mod paths;
 pub mod export;
 pub mod syscall;
 pub mod io;
@@ -22,6 +23,9 @@ pub mod i18n;
 pub mod i18n_keymap;
 pub mod res;
 pub mod service;
+pub mod nxl;
+pub mod registry;
+pub mod path;
 // Re-export commonly used syscall helpers for convenience.
 pub use syscall::{sys_cm_open_key, sys_cm_query_value, sys_close, sys_ob_open, sys_get_hostname};
 

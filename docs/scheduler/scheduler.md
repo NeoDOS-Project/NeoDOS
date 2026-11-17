@@ -359,7 +359,7 @@ It runs `netpump_entry()` which loops:
 ```rust
 pub fn netpump_entry() -> ! {
     loop {
-        net_tick();                       // network_poll_all + arp_tick + dns_tick
+        net_tick();                       // network_poll_all + arp_tick + tcp_tick
         yield_current_thread();
         for _ in 0..64 { core::hint::spin_loop(); }
     }

@@ -20,6 +20,7 @@ impl Kthread {
             cpu_time_base: Kthread::CPU_TIME_UNSET,
             waiting_for: None,
             priority: PRIORITY_IDLE,
+            base_priority: PRIORITY_IDLE,
             time_slice_remaining: IDLE_TIME_SLICE,
             ticks_since_scheduled: 0,
             kernel_stack_top: stack_top,
@@ -32,6 +33,7 @@ impl Kthread {
             user_apc_queue: VecDeque::new(),
             apc_pending: false,
             is_idle: true,
+            is_kernel: true,
             yield_requested: false,
             name: crate::scheduler::types::KernelName::from_str("idle"),
         }
@@ -59,6 +61,7 @@ impl Kthread {
             cpu_time_base: Kthread::CPU_TIME_UNSET,
             waiting_for: None,
             priority: PRIORITY_IDLE,
+            base_priority: PRIORITY_IDLE,
             time_slice_remaining: IDLE_TIME_SLICE,
             ticks_since_scheduled: 0,
             kernel_stack_top: stack_top,
@@ -73,6 +76,7 @@ impl Kthread {
             user_apc_queue: VecDeque::new(),
             apc_pending: false,
             is_idle: true,
+            is_kernel: true,
             yield_requested: false,
             name: crate::scheduler::types::KernelName::from_str("idle"),
         }
@@ -106,6 +110,7 @@ impl Kthread {
             cpu_time_base: Kthread::CPU_TIME_UNSET,
             waiting_for: None,
             priority: PRIORITY_NORMAL,
+            base_priority: PRIORITY_NORMAL,
             time_slice_remaining: TIME_SLICES[PRIORITY_NORMAL as usize],
             ticks_since_scheduled: 0,
             kernel_stack_top,
@@ -118,6 +123,7 @@ impl Kthread {
             user_apc_queue: VecDeque::new(),
             apc_pending: false,
             is_idle: false,
+            is_kernel: false,
             yield_requested: false,
             name: crate::scheduler::types::KernelName::from_str("thread"),
         }

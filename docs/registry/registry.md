@@ -103,15 +103,23 @@ Root path: `\Registry\Machine` maps to an `ObType::Key` object in the Ob namespa
         DaylightStartDay
         DaylightEndMonth
         DaylightEndDay
+      \Library
+        math      C:\System\Libraries\math.nxl
+        net       C:\System\Libraries\net.nxl
+        console   C:\System\Libraries\console.nxl
 ```
+
+The `\Control\Library` key is the `KnownDlls`-style source of userland NXL
+paths (see [libneodos](../userland/libneodos.md#nxl-path-resolution)). Clients
+resolve it with `libneodos::nxl::library_path`.
 
 ### CmManager
 
-File: `src/cm/mod.rs`. `CmManager` maintains up to 8 mounted hives. Each hive is backed by a `HiveBuffer` and registered as an ObObject.
+File: `src/cm/manager.rs`. `CmManager` maintains mounted hives (`Vec<HiveMount>`); each hive is backed by a `HiveBuffer` and registered as an ObObject.
 
 ```rust
 pub struct CmManager {
-    hives: [Option<Hive>; 8],
+    hives: Vec<HiveMount>,
 }
 ```
 
@@ -179,7 +187,7 @@ Dirty tracking: `cm_set_value` marks the containing cell as dirty via `Cell::set
 
 | File | Responsibility |
 | ------ | --------------- |
-| `src/cm/mod.rs` | `CmManager` + syscall dispatch |
+| `src/cm/manager.rs` | `CmManager` + syscall dispatch |
 | `src/cm/hive/` | Cell-based hive buffer, key/value CRUD |
 | `src/cm/security.rs` | Key ACLs (planned) |
 | `src/syscall/cm.rs` | Syscall handlers for RAX 50-59 |

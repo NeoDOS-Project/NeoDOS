@@ -26,6 +26,7 @@ pub enum ObType {
     Thread = 16,
     Section = 17,
     Socket = 18,
+    Session = 19,
     Service = 20,
     PowerManager = 21,
     KeyboardDevice = 22,
@@ -53,6 +54,7 @@ impl ObType {
             ObType::Thread => "THREAD",
             ObType::Section => "SECTION",
             ObType::Socket => "SOCKET",
+            ObType::Session => "SESSION",
             ObType::Service => "SERVICE",
             ObType::PowerManager => "POWERMANAGER",
             ObType::KeyboardDevice => "KEYBOARD",
@@ -112,7 +114,7 @@ pub struct ObObjectSnapshot {
 // OB-012: ObQueryInfo — Info Classes
 // ═══════════════════════════════════════════════════════════════════════
 
-/// Info classes for sys_ob_query_info (RAX=62).
+/// Info classes for sys_ob_query_info (RAX=42).
 #[repr(u32)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ObInfoClass {
@@ -168,9 +170,30 @@ pub enum ObInfoClass {
     /// caller's service. Returns a single byte: 0 = normal, 1 = shutdown
     /// requested. Read on the caller's own Process object.
     ProcessShutdownState = 42,
+    /// Accept a completed incoming connection from a listening TCP socket.
+    /// The 4-byte output buffer receives the new connection's object handle
+    /// (u32) as a direct fd. Returns `Again` (EAGAIN) when no connection is
+    /// pending. Read on the listener's Socket object.
+    SocketAccept = 43,
+    /// Read raw keyboard events for the caller's VT (#466).
+    /// in: `{ count: u32, timeout_ms: u32 }`; out: `count` × `KeyEvent`.
+    KeyboardRead = 44,
+    /// Non-blocking raw keyboard event poll (#466). out: `KeyEvent` array.
+    KeyboardPoll = 45,
+    /// Monotonic system uptime: `{ uptime_ms: u64, tick_hz: u32, _pad: u32 }`
+    /// (16 bytes). Never decreases; SMP-safe (single BSP tick source) (#467).
+    Uptime = 46,
+    /// High-resolution monotonic time: `{ tsc: u64, tsc_khz: u32, _pad: u32 }`
+    /// (16 bytes), from the calibrated TSC (#467).
+    HighResTime = 47,
+    /// Fill the buffer with CSPRNG bytes (`\Device\Random`). The whole buffer
+    /// is written; the return value is the byte count (#712/M8).
+    Random = 48,
+    /// Random source capabilities: `SysRandomCaps` (4 bytes) (#712/M8).
+    RandomCaps = 49,
 }
 
-/// Info classes for sys_ob_set_info (RAX=63).
+/// Info classes for sys_ob_set_info (RAX=43).
 #[repr(u32)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ObSetInfoClass {
@@ -224,13 +247,16 @@ pub enum ObSetInfoClass {
     /// VT, i.e. the Ctrl+C target. Declared explicitly by the interactive shell
     /// for the child it is about to wait on; ignored for other callers.
     SetForegroundProcess = 51,
+    /// Toggle raw keyboard mode for the caller's VT (#466). 1 byte: 0 = cooked,
+    /// 1 = raw. Idempotent; cleared when the VT's foreground process exits.
+    KeyboardSetRawMode = 55,
 }
 
 // ═══════════════════════════════════════════════════════════════════════
 // OB-014: ObEnum — Directory Entry
 // ═══════════════════════════════════════════════════════════════════════
 
-/// ABI-stable entry written by sys_ob_enum (RAX=64).
+/// ABI-stable entry written by sys_ob_enum (RAX=44).
 /// Compatible extension: old code can read id+obj_type+name (first 44 bytes),
 /// new code additionally reads mode+size (52 bytes total).
 #[repr(C)]

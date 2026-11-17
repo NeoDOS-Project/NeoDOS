@@ -23,10 +23,14 @@ pub fn register_hal_tests() {
         Ok(())
     });
 
-    // x86_64-specific: CR2 is readable via the HAL.
+    // x86_64-specific: CR2 is readable via the HAL. CR2 holds the last
+    // page-fault linear address (0 only if no fault has occurred), so compare the
+    // HAL wrapper against the raw read instead of assuming 0 — that assumption
+    // was broken by any earlier faulting test (e.g. the recoverable fault probe).
     crate::testing::register("x64_cr2_page_fault_addr", || {
-        let cr2 = crate::hal::safe::read_cr2();
-        crate::test_eq!(cr2, 0u64);
+        let raw = unsafe { crate::hal::raw::raw_read_cr2() };
+        let safe = crate::hal::safe::read_cr2();
+        crate::test_eq!(safe, raw);
         Ok(())
     });
 

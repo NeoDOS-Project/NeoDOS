@@ -395,9 +395,61 @@ Esto evita duplicar la lógica de configuración y permite que `neocfg` configur
 la red sin conocer internals de NIC. El Registry sigue siendo la única fuente de
 verdad (sin segunda fuente).
 
+### 2.7 Hostname — detección automática (#487)
+
+El hostname del sistema vive en `CurrentControlSet\Control\ComputerName` y se
+lee/escribe con `sys_get_hostname` / `sys_set_hostname` (`SetHostname`, admin).
+Arranca con el placeholder `NeoDOS-PC` (`libnet::DEFAULT_HOSTNAME`).
+
+- **Manual**: `hostname` muestra el nombre; `hostname <nombre>` lo fija
+  (`sys_set_hostname`, persistido en el Registry). El kernel valida/normaliza
+  (RFC 952/1035: `[A-Za-z0-9._-]`, sin `-` al inicio/final, ≤63) y devuelve
+  error legible para nombres inválidos.
+
+`dhcpd` lo descubre automáticamente al obtener concesión, en este orden:
+
+1. **DHCP opción 12 (Host Name)** — se solicita en la *parameter request list*
+   y, si el servidor la devuelve, se sanea (solo `[A-Za-z0-9._-]`, sin
+   separadores al principio/final, ≤63) y se publica con `SetHostname`
+   (persistencia + `hostname` / `sys_get_hostname`).
+2. **Fallback derivado de la MAC** — si no hay opción 12 (o no hubo DHCP), se
+   usa `neodos-<12 hex>` (p. ej. `neodos-525400123456`), de modo que la máquina
+   siempre tiene un nombre estable.
+
+La lógica pura (`sanitize_hostname_into` / `derived_hostname_into` /
+`hostname_byte_ok` / `HOSTNAME_MAX`) vive en `libnet-config` (host-testeable); el
+kernel valida el mismo alfabeto en `SetHostname`. Nunca se sobrescribe un
+hostname que el usuario ya haya fijado (solo se actúa si el actual está vacío o
+sigue siendo el placeholder). Un hostname propio resuelve localmente (#485).
+
 ---
 
 ## 3. Herramientas NXE de Red
+
+### 3.0 netsrv.nxe / netcli.nxe — cliente y servidor TCP reales
+
+Utilidades Ring 3 que usan la ABI pública de sockets (`ObType::Socket`,
+`ob_create` + `ObSetInfoClass::Socket*` + `ObInfoClass::SocketRecv`/`SocketAccept`).
+
+```text
+NETCLI <ip> <puerto>     conecta, envía PING!, verifica el eco y sale
+NETCLI selftest          round-trip cliente/servidor por loopback (sin NIC)
+NETCLI                   (sin args) ejecuta selftest
+
+NETSRV <puerto> [max]    bind+listen, acepta y hace eco de cada conexión
+NETSRV selftest          round-trip accept/echo por loopback
+NETSRV                   (sin args) ejecuta selftest
+```
+
+- El listener permanece en `Listen`; cada conexión se acepta con
+  `ob_query_info(fd, SocketAccept)` y se cierra sin afectar al listener.
+- `ob_wait` con timeout finito (`sys_ob_wait_timeout`): 0 = indefinido; con
+  timeout, la espera termina al expirar (el llamador reevalúa la disponibilidad;
+  no hay código de retorno distinto para el timeout).
+- Para escritura, `sys_ob_wait_write_timeout` (`wait_type = 2`) espera a que el
+  buffer de envío TCP (16 KiB) tenga espacio cuando `SocketSend` devuelve
+  `EAGAIN`. `SocketRecv` devuelve `0` en EOF.
+- Empaquetado por el flujo normal de imagen en `C:\System\Tools\`.
 
 ### 3.1 ipconfig.nxe
 
@@ -649,6 +701,7 @@ libdns   (crate no_std, sin dependencias)
   ├─ encode_name / decode_name
   ├─ build_query / parse_response   (A, CNAME, RCODE, truncation)
   ├─ validate_hostname / parse_dotted_ip
+  ├─ AnswerCache     → caché acotada con caducidad por TTL (reloj inyectado)
   └─ DnsError, DnsAnswer, DnsTransport, resolve_with_servers()
 
 libnet   (librería de red userland)
@@ -656,7 +709,7 @@ libnet   (librería de red userland)
   ├─ configured_servers() → Registry: DnsServer, DnsServer2, DnsServer3
   ├─ resolve(hostname)            → DnsResult { server, addresses, ttl }
   ├─ resolve_with_server(host, s)
-  └─ caché acotada (16 entradas, por host + servidor)
+  └─ AnswerCache (16 entradas, clave host + servidor, TTL del registro A)
 
 nslookup.nxe   ─┐
 ping.nxe        ├─ usan libnet::dns
@@ -720,6 +773,118 @@ La lógica de protocolo vive en `libntp`, igual que el DNS vive en `libdns`; el
 daemon solo aporta transporte, configuración y estado. La documentación
 completa (configuración, ciclo de vida, estado y limitaciones) está en
 [`docs/services/ntpd.md`](../services/ntpd.md).
+
+**Modo one-shot (`ntpdate`).** Invocado como `ntpd once` (o `-q`/`--once`),
+`ntpd` realiza una única sincronización y sale (0 si sincronizó, 1 si no). Es el
+papel de `ntpdate`: no hay un binario aparte, se reutiliza el mismo daemon.
+
+**Servidores.** La lista se configura por Registry en
+`Ntpd\Parameters\Servers` (separados por `;`). El hive por defecto trae
+`pool.ntp.org;time.cloudflare.com;time.google.com` — los fallbacks van en la
+configuración, no en el código, para que el primer sync sea fiable detrás de
+NAT. `Interval` (segundos) y `Timeout` (ms) también son valores del Registry.
+
+**Confianza del reloj (`libclock`).** El RTC es legible y `ntpd` puede
+ajustarlo, pero ninguno de los dos basta para decidir la validez de un
+certificado: una máquina sin sincronizar (o con la pila del CMOS muerta) puede
+anunciar cualquier fecha.
+
+```text
+libclock            (política pura, host-testeable)
+  ├─ RtcFields / NtpdStatus / ClockError
+  ├─ unix_from_rtc   → segundos Unix (año de 2 dígitos: 2000..2099)
+  ├─ evaluate        → RTC válido + State=="Synced" + LastSync≠0 + RTC ≥ sync
+  ├─ Clock           (trait; None = no fiable)
+  └─ system (feature `sys`) → ob_datetime + Registry Ntpd\Status
+```
+
+- `libclock::system::unix_seconds()` da el RTC en segundos Unix **sin** juicio
+  de confianza (lo usa `libnet::config::now_unix` para los leases DHCP).
+- `libclock::system::trusted_now_unix()` aplica la política y devuelve
+  `ClockError::{RtcInvalid,Unsynced,Implausible}` si no se puede confiar.
+- `SystemClock` implementa `Clock`; TLS y el actualizador **fallan cerrados**
+  (`ClockUnsynced`) cuando devuelve `None`. No hay bypass.
+- Tolerancia de 300 s para un RTC ligeramente por detrás del último sync.
+
+### 3.7 neocurl.nxe — cliente HTTP/1.1 (implementado)
+
+`neocurl` es la primera aplicación HTTP de userland. Es una CLI fina: el
+protocolo (URL, petición, cabeceras, framing del cuerpo, límites y errores) vive
+en `libhttp`; el transporte TCP con deadlines en `libnet::http_transport`; el
+DNS en `libnet::dns`.
+
+```text
+neocurl URL                    GET; cuerpo a stdout
+neocurl -I URL                 HEAD; cabeceras a stdout
+neocurl -i URL                 incluye cabeceras antes del cuerpo
+neocurl -d DATO URL            POST (x-www-form-urlencoded)
+neocurl -d @- URL              POST leyendo el cuerpo de stdin (máx. 256 KiB)
+neocurl -o FICHERO URL         descarga en streaming a fichero
+neocurl --max-time MS URL      deadline total
+neocurl --max-bytes N URL      límite de cuerpo (0 = sin límite)
+neocurl --ca FICHERO URL       ancla de confianza DER para HTTPS (fixture)
+neocurl -s URL                 sin resumen de estado en stderr
+```
+
+```text
+neocurl.nxe
+  ├─ libhttp                 (offline: parser, framing, límites, execute)
+  ├─ libnet::TcpTransport    (sockets net.nxl, deadlines, EAGAIN/EOF)
+  └─ libneodos               (syscalls, ficheros, uptime)
+```
+
+- Una petición por conexión (`Connection: close`); sin redirecciones, keep-alive
+  ni compresión (el cliente envía `Accept-Encoding: identity`).
+- Errores tipados (`libhttp::HttpError`) → mensaje en stderr y exit code 1;
+  errores de uso → exit code 2.
+- `https://` usa `libtls` (TLS 1.3, ChaCha20-Poly1305, X25519). La cadena,
+  validez, hostname y `CertificateVerify` se verifican siempre; el reloj debe
+  ser fiable (M7) y el CSPRNG tener respaldo hardware (M8). Todavía no hay
+  almacén de raíces del sistema: `--ca FICHERO` aporta el ancla (pensado para
+  fixtures; falla cerrado sin ella).
+- El cuerpo se entrega por streaming (`BodySink`), nunca se acumula en RAM.
+
+### 3.8 httptest.nxe + tools/http-e2e — aceptación HTTP reproducible
+
+`httptest` es el runner de aceptación que corre **en el huésped**: ejecuta una
+matriz fija contra un servidor fixture y resume el resultado en una línea que
+el orquestador del host puede leer del serial.
+
+```text
+httptest http://10.0.2.2:18080
+
+PASS get_hello 200 16
+...
+HTTP-E2E: PASS 11/11
+```
+
+| Caso | Comprueba |
+| --- | --- |
+| `get_hello` | GET 200 y cuerpo exacto |
+| `head_hello` | HEAD 200 sin cuerpo |
+| `get_chunked` | cuerpo chunked completo |
+| `post_echo` | POST con eco (`POST 3 a=1`) |
+| `status_404` | código no-2xx |
+| `get_close` | cuerpo delimitado por cierre |
+| `get_big` / `get_huge` | 64 KiB / 1 MiB contados en memoria (sin FS) |
+| `timeout_slow` | deadline de lectura |
+| `connect_refused` | puerto cerrado |
+| `dns_failure` | nombre inexistente |
+
+El cuerpo se cuenta en un `BodySink` en memoria: el caso de 1 MiB mide la pila
+de red, no la escritura en NE2 (que es el cuello de botella real de `-o`).
+
+`tools/http-e2e` es el orquestador de host (Rust, sin dependencias): levanta el
+fixture (mismos endpoints), arranca la VM headless con `neodev run`, teclea el
+comando con scancodes de VirtualBox y busca `HTTP-E2E:` en el serial. Sale con
+código 0 si la matriz pasa.
+
+```text
+cargo run --release --manifest-path tools/http-e2e/Cargo.toml -- \
+    --neodev "$(command -v neodev)"
+```
+
+Requiere `httptest.nxe` instalado en `C:\System\Tools` (lista de NeoDev).
 
 ---
 
@@ -1059,7 +1224,7 @@ proceso Ring 3.
 
 ```text
 netd    (Ring 3) ── observa NIC / link state (NicInfo) y expone estado
-netpump (Ring 0) ── network_poll_all() + arp_tick + dns_tick  (RX pump)
+netpump (Ring 0) ── network_poll_all() + arp_tick + tcp_tick  (RX pump)
 ```
 
 - v1: identidad de proceso/servicio, bucle con `yield` y monitorización de

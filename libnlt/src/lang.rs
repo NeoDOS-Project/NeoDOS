@@ -128,7 +128,6 @@ pub fn app_to_id(app: &str) -> u32 {
         b"nxres" => 42,
         b"nxverify" => 43,
         b"hostname" => 44,
-        b"keyb" => 45,
         b"nslookup" => 46,
         b"ping" => 47,
         b"dhcptest" => 48,
@@ -276,7 +275,7 @@ mod tests {
             "pri", "cd", "colors", "progress", "vol", "corerd", "coremd",
             "coreren", "coredel", "corecls", "tree", "dhcpd", "netcfg",
             "ipconfig", "cpuinfo", "stresscmd", "cmdtest", "shtest", "nxlocale",
-            "nxres", "nxverify", "hostname", "keyb", "nslookup", "ping",
+            "nxres", "nxverify", "hostname", "nslookup", "ping",
             "dhcptest", "ntpd", "netd", "netapplier", "neocfg",
         ];
         let mut ids: Vec<u32> = KNOWN.iter().map(|a| app_to_id(a)).collect();

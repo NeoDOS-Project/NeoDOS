@@ -17,11 +17,11 @@ El contenido de `C:` se genera íntegramente en `neodev/src/image.rs::collect_fi
 C:\
 ├── README.TXT
 ├── Temp/.empty
-├── Programs\                      # 28 .NXE del OS (mezcla shell + utilidades core)
+├── Programs\                      # 27 .NXE del OS (mezcla shell + utilidades core)
 │   ├── neoshell.nxe  neoinit.nxe  cmdtest.nxe
 │   ├── cd.nxe  corehelp.nxe  coredir.nxe  coretype.nxe
 │   ├── corecls.nxe corecopy.nxe coredel.nxe coreren.nxe
-│   ├── coremd.nxe corerd.nxe  drives.nxe  ps.nxe  keyb.nxe
+│   ├── coremd.nxe corerd.nxe  drives.nxe  ps.nxe
 │   └── datetime neomem echo label poweroff colors neokey
 │       nxres nxlocale nxverify ping hostname
 └── System\
@@ -31,7 +31,7 @@ C:\
     │   ├── nslookup
     │   └── reboot shtest stresscmd tree ver vol   # movidos aquí por capacidad
     ├── Libraries\                 # fs.nxl math.nxl console.nxl net.nxl
-    ├── Keyboard\                  # US.kbd Spanish.kbd
+    ├── Keyboard\                  # en-US.kbd es-ES.kbd
     ├── Locale\<lang>\*.nlt
     ├── Drivers\                   # *.nem BOOT y SYSTEM mezclados
     └── Registry\SYSTEM.hiv
@@ -92,7 +92,7 @@ C:\
 │   │   ├── config\                      # hives: SYSTEM.hiv (+ SOFTWARE/SAM/SECURITY/DEFAULT)
 │   │   ├── drivers\                     # .NEM SYSTEM
 │   │   │   └── BOOT\                    # .NEM boot-critical (ps2kbd, serial, rtc…)
-│   │   ├── Keyboard\                    # US.kbd, Spanish.kbd
+│   │   ├── Keyboard\                    # en-US.kbd, es-ES.kbd
 │   │   ├── Globalization\<lang>\        # *.nlt
 │   │   ├── Fonts\
 │   │   ├── INF\
@@ -192,11 +192,21 @@ ejecutable**, no en una ruta global.
 - Asegurar quoting para `Program Files` (espacio) antes de escribir en esa ruta.
 - Independiente de la Fase 1; ambas desbloquean la Fase 3.
 
-### Fase 3 — Migración del builder y consumidores
+### Fase 3 — Migración del builder y consumidores — **HECHA** (#398)
 
-- Reescribir `collect_files()` al árbol de §4.
-- Ajustar `cm/init.rs`, `i18n.rs`, `res.rs`, `console.rs`, servicios y `main.rs`.
-- `SYSTEM.hiv` → `config\SYSTEM.hiv` (valorar sin extensión).
+- `collect_files()` (NeoDev) emite el árbol de §4: hives en
+  `\NeoDOS\System\config`, `.NXE` core en `\NeoDOS\System` y herramientas en
+  `\NeoDOS\System\Tools`, `.NXL` en `\NeoDOS\Libraries`, `.kbd`/`.nlt`/`.NEM`
+  bajo `\NeoDOS\System\…`, más `\Program Files`, `\ProgramData` y `\Users`.
+- `SYSTEM.hiv` vive en `\NeoDOS\System\config\SYSTEM.hiv`.
+- Rutas centralizadas en `neodos-kernel/src/paths.rs` y `libneodos::paths`
+  (`cm/init`, teclados, NXL, INIT/NeoInit/NeoShell, servicios, harness de estrés,
+  recursos/localización del userland).
+- `Vfs::resolve_path` prueba primero la grafía canónica de una ruta legacy, así
+  los literales antiguos siguen funcionando mientras se migran uno a uno.
+- **Pendiente de Fase 1:** `.NXE` de sistema sigue partido entre `System` y
+  `System\Tools` porque una hoja NE2 admite ~28 entradas y no hay directorios
+  multi-bloque; al aterrizar Fase 1 se puede aplanar.
 
 ### Fase 4 — Documentación e invariantes
 
@@ -208,8 +218,11 @@ ejecutable**, no en una ruta global.
 
 ### Fase 5 — Opcional
 
-- `\Users\<usuario>` + `AppData` ligado a SAM/SID/ACL.
-- GPT estilo NT: `ESP → MSR(16 MB) → NeoDOS → Recovery`.
+- `\Users\<usuario>` + `AppData` ligado a SAM/SID/ACL — **perfiles creados**
+  (`security::profile`, #400): árbol estándar por cuenta y SID anotado en el
+  registro. La *aplicación* de ACL espera a la Fase 3 de
+  `users-security-design.md`.
+- GPT estilo NT: `ESP → MSR(16 MB) → NeoDOS → Recovery` (#499).
 
 ### Orden recomendado
 

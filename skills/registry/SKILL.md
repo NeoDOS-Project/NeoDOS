@@ -1,266 +1,187 @@
 ---
 name: registry
-description: Add registry keys, modify hive persistence, implement registry security
+description: Add registry keys/values, hive persistence, Cm syscalls, hive security
 ---
 
 # Registry (Cm — Configuration Manager)
 
 ## When to use
 
-Adding a registry key/value, modifying hive persistence, implementing registry security, working with `src/cm/` or `src/syscall/cm.rs`, or extending the cell-based hive format.
+Adding a registry key/value, modifying hive persistence, extending the
+cell-based hive format, working with `src/cm/`, or touching the Cm syscalls.
 
 ## Goal
 
-Correctly implement registry operations following the NT-style cell-based hive architecture, with proper cell allocation, sibling chains, dirty tracking, and security.
+Implement registry operations following the NT-style cell-based hive
+architecture: cell allocation, sibling/value chains, dirty tracking, and
+persistence.
 
 ## References
 
 - `docs/registry/registry.md` — subsystem documentation
-- `docs/design/registry-improvements.md` — planned improvements design
-- `src/cm/hive.rs` — cell-based hive buffer, key/value CRUD
-- `src/cm/mod.rs` — CmManager, mount/unmount, persistence, default values
-- `src/cm/security.rs` — key ACLs (planned, not yet implemented)
-- `src/cm/cache.rs` — cell cache (unused, intended for optimization)
-- `src/cm/wal.rs` — WAL (planned, not yet implemented)
-- `src/syscall/cm.rs` — syscall handlers for RAX 67-76
-- `src/object/types.rs` — `ObType::Key (12)`, ObInfoClass/ObSetInfoClass variants (21-26)
-- `libneodos/src/syscall.rs` — user-mode wrappers (only 3 of 10 exist)
-- `scripts/gen_system_hiv.py` — offline SYSTEM.HIV generator for build-time
-- `scripts/mcp_server/parsers/registry_hive.py` — offline NEOH hive parser for MCP tools
+- `src/cm/mod.rs` — `CmManager`, mount/unmount, dispatch
+- `src/cm/api.rs` — `cm_open_key`, `cm_create_key`, `cm_query_value`,
+  `cm_set_value`, `cm_enum_key`, `cm_enum_value`, `cm_delete_key`,
+  `cm_flush_key`, `cm_flush_all_hives`, `cm_load_hive`, `cm_unload_hive`
+- `src/cm/hive/` — cell buffer and CRUD (`core.rs`, `keys.rs`, `values.rs`,
+  `serialize.rs`, `types.rs`)
+- `src/cm/manager.rs` — `CmManager { hives: [Option<Hive>; 8] }`,
+  `encode_cell` / `decode_cell`
+- `src/cm/init.rs` — boot init and default values (Phase 3.881)
+- `src/cm/timezone.rs`, `src/cm/cache.rs`, `src/cm/tests.rs`
+- `src/syscall/cm.rs` — syscall handlers for RAX 50-59
+- `src/object/types.rs` — `ObType::Key = 12`; `ObInfoClass::RegistryKey=21`,
+  `RegistryValue=22`; `ObSetInfoClass::RegistryCreateKey=23`,
+  `RegistryDeleteKey=24`, `RegistrySetValue=25`, `RegistryDeleteValue=26`
+- `libneodos/src/syscall/cm.rs` — user-mode wrappers
+- `tools/gen-hiv` — offline SYSTEM.HIV generator (NEOHv1) → `data/system.hiv`
 
-## Architecture
+## Cm syscalls (RAX 50-59)
 
-```text
-RAX 67-76 (Cm syscalls)
-    │
-    ├── cm_open_key (67)      ─── ObType::Key open by path
-    ├── cm_create_key (68)     ─── Create subkey under parent handle
-    ├── cm_query_value (69)    ─── Read value by name
-    ├── cm_set_value (70)      ─── Set value (type + data)
-    ├── cm_enum_key (71)       ─── Enumerate subkeys by index
-    ├── cm_enum_value (72)     ─── Enumerate values by index
-    ├── cm_delete_key (73)     ─── Delete key and all subkeys
-    ├── cm_flush_key (74)      ─── Flush hive to disk
-    ├── cm_load_hive (75)      ─── Mount hive file (admin)
-    └── cm_unload_hive (76)    ─── Unmount hive (admin)
+Handlers are `handler_cm_*` in `src/syscall/cm.rs`; they operate on Ob objects of
+type `ObType::Key (12)`. Register convention: `RBX`=arg0, `RCX`=arg1,
+`RDX`=arg2, `R8`=arg3, `R9`=arg4.
 
-ObSetInfoClass (RAX 63):
-    RegistryCreateKey (23)
-    RegistryDeleteKey (24)
-    RegistrySetValue (25)
-    RegistryDeleteValue (26)
-    RegistryDeleteValue actually frees the cell (v0.50+)
+| RAX | Syscall | Purpose | Parameters |
+| ----- | -------- | --------- | ------------ |
+| 50 | `cm_open_key` | Open a key by path | rbx=path → fd |
+| 51 | `cm_create_key` | Create subkey under a key handle | rbx=parent_fd, rcx=name → fd |
+| 52 | `cm_query_value` | Read a value by name | rbx=key_fd, rcx=name, rdx=buf, r8=len → size |
+| 53 | `cm_set_value` | Set a value (type + data) | rbx=key_fd, rcx=name, rdx=type, r8=data, r9=len |
+| 54 | `cm_enum_key` | Enumerate subkeys by index | rbx=key_fd, rcx=index, rdx=buf |
+| 55 | `cm_enum_value` | Enumerate values by index | rbx=key_fd, rcx=index, rdx=buf |
+| 56 | `cm_delete_key` | Delete a key and its subkeys | rbx=key_fd |
+| 57 | `cm_flush_key` | Flush hive to disk | rbx=key_fd |
+| 58 | `cm_load_hive` (admin) | Load a hive file | rbx=name, rcx=mount |
+| 59 | `cm_unload_hive` (admin) | Unload a hive (flushes if dirty) | rbx=mount |
 
-ObInfoClass (RAX 62):
-    RegistryKey (21)    → [subkey_count: u32, value_count: u32]
-    RegistryValue (22)  → [type: u32, data_len: u32, data...]
-```
+Path format: `\Registry\Machine\System\CurrentControlSet\Services\...`
+
+## Cell-based hive format
+
+Source: `src/cm/hive/`. Each hive is a contiguous buffer (`HiveBuffer`) of cells
+indexed by `u32` offset; `MAX_CELLS = 2048`. Cell 0 is always the root.
+
+| Value | Variant | Contents |
+| ------- | --------- | ---------- |
+| 0 | `Free` | Unallocated cell |
+| 1 | `Key` | `KeyCell`: `name`, `parent_cell`, `subkeys_head`, `subkeys_sibling`, `values_head`, `sec_desc_cell`, `last_write_time` |
+| 2 | `Value` | `ValueCell`: `name`, `value_type`, `data`, `data_len`, `next` |
+| 3 | `Security` | `SecurityCell`: serialized security descriptor (present in the format; not yet enforced) |
+
+Value types: `REG_NONE(0)`, `REG_SZ(1)`, `REG_DWORD(2)`, `REG_BINARY(3)`.
+Subkeys form a singly-linked sibling chain; values form a singly-linked chain.
+Cell allocation is **next-fit** from `next_alloc_hint` (`core.rs::alloc_cell`),
+and `free_cell` returns a cell to the pool.
 
 ## Steps
 
-### 1. Understand the cell-based hive format
-
-The hive is a flat array of `Option<Cell>` (max 2048). Cells are 4 types:
-
-| Type | Value | Struct | Key fields |
-| ------ | ------- | -------- | ------------ |
-| Free | 0 | — | part of free list |
-| Key | 1 | `KeyCell` | `name`, `parent_cell`, `subkeys_head`, `subkeys_sibling`, `values_head`, `sec_desc_cell`, `last_write` |
-| Value | 2 | `ValueCell` | `name`, `value_type`, `data`, `next` |
-| Security | 3 | `SecurityCell` | `sd_data`, `next` |
-
-Cell 0 is always the root key. Subkeys form a singly-linked list via `subkeys_head`/`subkeys_sibling`. Values form a singly-linked list via `values_head`/`next`.
-
-The free list uses a `free_head` pointer, but **the current implementation is broken** — `scan_next_free` does a linear scan instead of proper chaining. Fix: use next-fit from `next_alloc_hint`.
-
-### 2. Add a new key/value
-
-In `src/cm/hive.rs`:
+### 1. Add a key or value
 
 ```rust
-// Create a subkey under parent
-let child = hive.create_key(parent_idx, "NewKey");
-
-// Set a value
+// In src/cm/hive/ (values.rs / keys.rs) or via src/cm/api.rs
+hive.create_key(parent_idx, "NewKey");
 hive.set_value(key_idx, "MyValue", REG_DWORD, &42u32.to_le_bytes());
 ```
 
-In `src/cm/mod.rs` (via syscall dispatch):
+### 2. Navigate keys
 
 ```rust
-// Open key by path, creating intermediate keys if needed
-if let Some(key) = ensure_key_path(&mut hm.hive, root, "Path\\To\\Key") {
-    hm.hive.set_value(key, "ValueName", REG_SZ, b"data");
-}
-```
+let child = hive.find_key(parent_idx, "SubKey");      // case-insensitive
+let key   = hive.open_key_by_path(root, "CurrentControlSet\\Services\\NeoInit");
 
-### 3. Navigate keys
-
-```rust
-// Find subkey by name (case-insensitive)
-let child = hive.find_key(parent_idx, "SubKey");
-
-// Walk the sibling chain
+// Walk subkeys
 let mut idx = key.subkeys_head;
 while idx != NULL_CELL {
-    if let Some(Cell::Key(child)) = hive.slot(idx) {
-        // process child
-        idx = child.subkeys_sibling;
-    }
+    if let Some(Cell::Key(child)) = hive.slot(idx) { /* ... */ idx = child.subkeys_sibling; }
 }
-
-// Walk the value chain
-let mut idx = key.values_head;
-while idx != NULL_CELL {
-    if let Some(Cell::Value(val)) = hive.slot(idx) {
-        // process val
-        idx = val.next;
-    }
-}
-
-// Open by full path from root
-let key = hive.open_key_by_path(root, "CurrentControlSet\\Services\\NeoInit");
 ```
 
-### 4. Delete a key or value
+### 3. Delete a key or value
 
 ```rust
-// Delete a value (v0.50+)
-hive.delete_value(key_idx, "ValueName");
-// This unlinks from the value chain and calls free_cell().
-
-// Delete a key and all subkeys (iterative, not recursive)
-hive.delete_key(key_idx);
-// Uses an explicit Vec stack to avoid kernel stack overflow.
-// Unlinks from parent's sibling chain, frees all cells.
+hive.delete_value(key_idx, "ValueName");  // unlinks the value and frees the cell
+hive.delete_key(key_idx);                 // deletes the key and all subkeys
 ```
 
-### 5. Flush a hive to disk
+### 4. Flush / persistence
 
 ```rust
-// Flush a specific key's hive
-cm_flush_key(key_native_id);
-
-// Flush all dirty hives (called on poweroff)
-cm_flush_all_hives();
-
-// At boot, hives are loaded from C:\System\Registry\<name>.hiv
-// If the file doesn't exist, a fresh hive is created with defaults.
-// Defaults are created in cm_ensure_default_values() at Phase 3.881.
+cm_flush_key(key_native_id);   // serialize one hive
+cm_flush_all_hives();          // called on poweroff
 ```
 
-### 6. Implement registry security (planned)
+Hives persist to `C:\System\Registry\<name>.hiv`. On boot (Phase 3.881) a hive is
+loaded if the file exists; otherwise defaults are created. `cm_unload_hive`
+flushes a dirty hive before unmounting.
 
-`KeyCell.sec_desc_cell` points to a `SecurityCell` containing a serialized `SecurityDescriptor`.
+### 5. Registry security (planned)
 
-```rust
-// On key creation, ensure a SecurityCell exists
-cm_ensure_security(key_native_id, process_token);
+`KeyCell.sec_desc_cell` exists in the format but is always `NULL`; there is no
+enforcement code yet. Planned work: a `src/cm/security.rs` with
+`ensure_security` / `check_access` / `inherit_security`, hooks in the `cm_*`
+handlers, and `SeAccessCheck` integration from `src/security/access.rs`.
 
-// On access, check permissions
-cm_check_access(process_token, key_native_id, KEY_READ | KEY_WRITE);
-```
-
-The `SecurityCell` type 3 already exists in the serialization format but no code creates or checks it. Security enforcement requires:
-
-- `src/cm/security.rs` with `cm_check_access()`, `cm_ensure_security()`, `cm_inherit_security()`
-- Hooks in all cm_* syscall handlers in `src/syscall/cm.rs`
-- `SeAccessCheck` integration from `src/security/access.rs`
-
-### 7. Offline hive inspection (MCP tools)
-
-```markdown
-# Query a hive from the build image
-bash scripts/mcp-server.sh --tool registry_list \
-    key_path='\CurrentControlSet\Services\NeoInit' \
-    hive=SYSTEM
-
-bash scripts/mcp-server.sh --tool registry_query \
-    key_path='\CurrentControlSet\Services\NeoInit' \
-    value_name=DefaultShell hive=SYSTEM
-
-bash scripts/mcp-server.sh --tool registry_tree \
-    hive=SYSTEM
-
-bash scripts/mcp-server.sh --tool registry_hive_info \
-    hive=SYSTEM
-```
-
-### 8. Generate a hive offline (for build-time inclusion)
+### 6. Offline hive
 
 ```bash
-python3 scripts/gen_system_hiv.py
-# Produces scripts/system.hiv (NEOHv1)
-# Embedded in neodos_image.img during build.sh --neodos-image
-# at C:\System\Registry\SYSTEM.HIV
+cd tools/gen-hiv && cargo run --release -- ../../data/system.hiv
 ```
 
-## Known issues
+Generates `data/system.hiv` (NEOHv1), embedded in the image during the NeoDev
+build. There is no offline registry-parser CLI; inspect the running registry
+through the Ob syscalls or the `neodos-mcp` tools (`kernel_index`,
+`search_symbol`, `check_consistency`).
 
-| Issue | Status | Workaround |
-| ------- | -------- | ------------ |
-| Free list allocation is broken | **BUG** | `scan_next_free` doesn't properly chain freed cells. Fix: use linear next-fit scan from `next_alloc_hint`. |
-| No `delete_value` method | **v0.50+** | `RegistryDeleteValue` (26) currently sets data to empty instead of freeing the cell. Use `hive.delete_value()` once implemented. |
-| Unmount doesn't flush dirty data | **BUG** | `cm_unload_hive()` removes hive without persisting. Call `cm_flush_key()` first. |
-| Recursive `delete_key` | **BUG** | Can overflow kernel stack on deep trees. Use iterative version with `Vec<u32>` stack. |
-| `cm_flush_key` double-lock | **BUG** | `cm_flush_key()` and `cm_flush_all_hives()` have deadlock potential. Hold lock once for clone+flush+mark_clean. |
-| Checksum is `wrapping_add` | **Weak** | Can have false positives. Will be replaced with CRC32 in NEOHv2 (planned). |
-| Security descriptors not enforced | **Missing** | `sec_desc_cell` always NULL. Key ACLs need `security.rs` implementation. |
-| `CellCache` not wired | **Unused** | `cache.rs` exists but is never instantiated. Needs integration in `slot()`/`slot_mut()`. |
-| Missing libneodos wrappers | **Missing** | Only `sys_cm_open_key`, `sys_cm_query_value`, `sys_cm_set_value` have wrappers. 7 missing. |
-| No WAL | **Missing** | Write-ahead logging planned for crash recovery (NEOHv2). |
+### 7. Tests and build
+
+Add tests in `src/cm/tests.rs` (registered by `register_cm_tests()`), then:
+
+```bash
+cd neodos-kernel && cargo build
+neodev build --quick --image && neodev test
+neodev check-deps
+```
+
+## Known limitations
+
+| Area | Status |
+| ------ | -------- |
+| Security descriptors | Format supports `SecurityCell`, but key ACLs are not enforced |
+| `CellCache` | Defined in `cache.rs`, not wired into `slot()`/`slot_mut()` |
+| WAL / crash-safe transactions | Not implemented (planned for NEOHv2) |
+| Multi-hive split | SYSTEM/SOFTWARE/SECURITY/DEFAULT split is planned; currently SYSTEM is mounted |
+| Checksum | `wrapping_add` over cell fields (weak, planned CRC32) |
 
 ## Best practices
 
-- Always case-insensitive matching for key/value names (uppercase comparison).
-- Cell 0 (root) is protected from deletion — check before calling `delete_key`.
-- Use `encode_cell(hive_idx, cell_idx)` to pack hive+cell index into `native_id`.
-- Dirty tracking is per-cell (v0.50+) — always set dirty bit when mutating.
-- Hive operations hold `CM_MANAGER.lock()` — avoid long operations while holding it.
-- `ensure_key_path()` creates intermediate keys if they don't exist — use for boot defaults.
-- New hives mount at `\Registry\Machine\<name>` in the Ob namespace.
-- When adding new default values, modify `cm_ensure_default_values()` in `src/cm/mod.rs`.
+- Case-insensitive comparison for key/value names.
+- Cell 0 (root) is protected from deletion.
+- `encode_cell(hive_idx, cell_idx)` packs a hive+cell reference into `native_id`.
+- Mark the cell dirty on mutation so flush persists only changed cells.
+- Hive operations hold `CM_MANAGER`; avoid long work while holding it.
+- New hives mount under `\Registry\Machine\<name>` in the Ob namespace.
+- When adding default values, update `cm_ensure_default_values()` and regenerate
+  `data/system.hiv` so offline and kernel defaults match.
 
-## Common mistakes
+## Test checklist (in `src/cm/tests.rs`)
 
-- Using `delete_key` recursively — causes stack overflow on deep trees. Use the iterative version.
-- Forgetting `mark_clean()` after `flush_to_io()` — hive stays dirty, flushes repeatedly.
-- Using `slot(idx)` without checking bounds — `idx` must be a valid cell index.
-- Mutating the value linked list without updating both `prev.next` and `values_head` for head insertion.
-- Adding values without checking for existing value by name first — `set_value` handles this, but manual linked-list manipulation doesn't.
-- Not regenerating `system.hiv` after changing default values — the offline hive in `scripts/system.hiv` must match `cm_ensure_default_values()`.
-
-## Test checklist
-
-When modifying registry code, add tests in `src/cm/mod.rs` (registered via `register_cm_tests()`):
-
-- [ ] Create key + verify with find_key
+- [ ] Create key + verify with `find_key`
 - [ ] Set value + query + verify type and data
-- [ ] Case-insensitive lookup works
-- [ ] Enumeration of subkeys (multiple)
-- [ ] Enumeration of values (multiple)
+- [ ] Case-insensitive lookup
+- [ ] Subkey and value enumeration (multiple)
 - [ ] Key deletion frees all subkey cells
-- [ ] Value deletion frees cell and unlinks from chain
-- [ ] Serialize → deserialize → verify all data survives round-trip
-- [ ] Flush + reload persists data
+- [ ] Value deletion frees the cell and unlinks the chain
+- [ ] Serialize → deserialize round-trip
+- [ ] Flush + reload persistence
 - [ ] Default values created and idempotent
-- [ ] Multi-hive isolation (create in SYSTEM, not visible in SOFTWARE)
-- [ ] Security: access granted/denied correctly
-- [ ] Free list reuses freed cells
+- [ ] Multi-hive isolation (SYSTEM vs. SOFTWARE)
+- [ ] Free-cell reuse via next-fit
 
-## Build and test
+## Final checklist
 
-```bash
-cargo build  # in neodos-kernel/
-python3 scripts/auto_test.py
-scripts/check_deps.py
-
-# Regenerate offline hive if default values changed
-python3 scripts/gen_system_hiv.py
-
-# Rebuild image with new hive
-bash scripts/build.sh --neodos-image
-
-# Verify with MCP tools
-bash scripts/mcp-server.sh --tool registry_hive_info hive=SYSTEM
-```
+- [ ] Cell allocation/free keeps the hive consistent
+- [ ] Dirty tracking set on mutation; flush persists
+- [ ] `data/system.hiv` regenerated if defaults changed (`tools/gen-hiv`)
+- [ ] Tests added; `cargo build`, `neodev test`, `neodev check-deps` pass
+- [ ] `docs/registry/registry.md` updated for new syscalls/keys/classes

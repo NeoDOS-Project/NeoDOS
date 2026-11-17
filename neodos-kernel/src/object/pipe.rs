@@ -559,6 +559,25 @@ pub fn register_tests() {
         test_eq!(pid, pid2);
     });
 
+    test_case!("ob_destroy_object_callback_runs_without_lock", {
+        // #662: `ob_destroy_object` must run `on_destroy` WITHOUT holding
+        // OB_TABLE. `PIPE_OPS::on_destroy` -> `PIPE_MANAGER.free_pipe` ->
+        // `ob_destroy_object(kobj)` re-enters the Object Manager; under the
+        // non-reentrant table mutex that self-deadlocks. This must complete,
+        // remove the object, and release the pipe slot.
+        let pid = PIPE_MANAGER.alloc().expect("pipe alloc");
+        let name = alloc::format!("OBDPIPE{}", pid);
+        let ob_id = crate::object::ob_create_object(
+            crate::object::ObType::Pipe, &name, pid as u64, 0,
+            Some(&crate::object::pipe::PIPE_OPS),
+        ).expect("ob create");
+        test_true!(ob_id > 0);
+        crate::object::ob_destroy_object(ob_id).expect("destroy pipe object");
+        test_true!(crate::object::ob_lookup(ob_id).is_none());
+        let pid2 = PIPE_MANAGER.alloc().expect("reuse after destroy");
+        test_eq!(pid, pid2);
+    });
+
     test_case!("pipe_ob_read_write", {
         let pid = PIPE_MANAGER.alloc().expect("pipe alloc");
         PIPE_MANAGER.inc_read_ref(pid);

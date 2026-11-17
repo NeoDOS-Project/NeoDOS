@@ -1,0 +1,11 @@
+[package]
+name = "http-e2e"
+version = "0.1.0"
+edition = "2021"
+description = "Host-side driver for the NeoDOS HTTP acceptance test"
+
+[[bin]]
+name = "http-e2e"
+path = "src/main.rs"
+
+[dependencies]

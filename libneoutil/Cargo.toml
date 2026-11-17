@@ -1,0 +1,13 @@
+[package]
+name = "libneoutil"
+version = "0.1.0"
+edition = "2021"
+description = "NeoDOS userland text/path utilities (pure, host-testable)"
+
+[lib]
+name = "libneoutil"
+path = "src/lib.rs"
+crate-type = ["lib"]
+
+[profile.release]
+panic = "abort"

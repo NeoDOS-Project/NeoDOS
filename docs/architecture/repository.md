@@ -18,7 +18,7 @@ future multi-repository organization under the [NeoDOS-Project](https://github.c
 
 ```text
 neodos/
-├── neodos-kernel/          # Kernel (52,945 lines, 49 modules)
+├── neodos-kernel/          # Kernel (75,296 lines)
 ├── neodos-bootloader/      # UEFI bootloader
 ├── libneodos/              # Standard user library (syscall wrappers)
 ├── libneodos-nxl/          # NXL DLL — core runtime
@@ -26,20 +26,18 @@ neodos/
 ├── libconsole-nxl/         # NXL DLL — console/progress
 ├── libnet-nxl/             # NXL DLL — networking
 ├── libnet/                 # User-mode networking library
-├── userbin/                # 28 user binaries (PID 1, shell, utilities)
+├── userbin/                # 52 user binaries (PID 1, shell, utilities)
 ├── drivers/                # 10 standalone NEM drivers
-├── tools/                  # 6 Rust tools + 1 Python script
-│   ├── neodev/             # Build/run/test toolchain
-│   ├── nltc/               # NLT compiler
-│   ├── nxdump/             # ELF/NXE/NEM dumper
-│   ├── nxeinfo/            # NXE binary inspector
-│   ├── nxpkg/              # NXP package tool
-│   └── kbdcompile/         # Keyboard layout compiler
-├── scripts/                # Python/bash utilities + MCP server
-├── data/                   # Locale TOML (81 files) + keyboard layouts
-├── docs/                   # 45 Markdown documentation files
+├── tools/                  # 5 Rust host tools + 1 Python script
+│   ├── crashdump/          # Crash dump decoder
+│   ├── gen-hiv/            # Registry hive generator
+│   ├── kbdcompile/         # Keyboard layout compiler (.klc → .kbd)
+│   ├── xkbcompile/         # Keyboard layout compiler (XKB → .kbd)
+│   └── nltc/               # NLT compiler
+├── scripts/                # bash utilities (MCP server migrated → neodos-dev-server)
+├── data/                   # Locale TOML (141 files) + keyboard layouts
+├── docs/                   # 110 Markdown documentation files
 ├── skills/                 # 18 AI agent skill definitions
-├── preferences/            # Test preferences
 ├── .opencode/              # AI dev environment config
 └── opencode.json           # OpenCode configuration
 ```
@@ -48,14 +46,14 @@ neodos/
 
 | Metric | Value |
 |--------|-------|
-| Total `.rs` files | 294 |
-| Total lines of Rust | 81,008 |
-| Kernel lines | 52,945 (65.4%) |
-| User binaries lines | ~15,000 |
-| Tools lines | ~4,000 |
-| Python scripts | 35 files |
-| Documentation | 45 `.md` files |
-| Locale files | 81 `.toml` files |
+| Total `.rs` files | 470 |
+| Total lines of Rust | 109,447 |
+| Kernel lines | 75,296 (68.8%) |
+| User binaries lines | 12,433 |
+| Tools lines | 2,309 |
+| Python scripts | 13 files |
+| Documentation | 110 `.md` files |
+| Locale files | 141 `.toml` files |
 | Keyboard layouts | 4 files |
 | Skills | 18 `.md` files |
 
@@ -71,7 +69,7 @@ kernel              ─── (no external deps beyond Rust std)
 kernel (NEM ABI)    ←─── drivers/* (10 standalone)
 kernel (syscall ABI) ←── libneodos
 kernel (NXL ABI)    ←─── libneodos-nxl, libmath-nxl, libconsole-nxl, libnet-nxl
-libneodos           ←─── userbin/* (28 binaries), libnet, libneodos-nxl
+libneodos           ←─── userbin/* (52 binaries), libnet, libneodos-nxl
 libnet-nxl          ───→ kernel (net subsystem)
 libnet              ───→ libneodos, libnet-nxl
 neodev (host)       ───→ build artifacts (read-only)
@@ -99,7 +97,7 @@ kbdcompile (host)   ───→ data/keyboard (layout sources)
 
 | Component | Reason |
 |-----------|--------|
-| `drivers/*` | NEM ABI is versioned (currently v8). Already compile independently. Could publish ABI spec. |
+| `drivers/*` | NEM ABI is versioned (currently v1/v2; the syscall ABI is v8). Already compile independently. Could publish ABI spec. |
 
 #### Loose coupling (standalone already)
 
@@ -112,7 +110,8 @@ kbdcompile (host)   ───→ data/keyboard (layout sources)
 | `nxdump` | Host tool, reads ELF/NXE/NEM files. |
 | `nxeinfo` | Host tool, reads NXE headers. |
 | `nxpkg` | Host tool, creates/extracts NXP packages. |
-| `kbdcompile` | Host tool, compiles keyboard layouts. |
+| `kbdcompile` | Host tool, compiles keyboard layouts (`.klc` → `.kbd`). |
+| `xkbcompile` | Host tool, converts XKB layouts → `.kbd`. |
 | `scripts/mcp_server` | Python, completely independent. |
 | `scripts/check_deps.py` | Python, standalone validation. |
 | `scripts/gen_*` | Python, host-side data generation. |
@@ -145,7 +144,7 @@ kbdcompile (host)   ───→ data/keyboard (layout sources)
 |-----------|-----------|-----------|
 | `neodev` | `NeoDev` | Fully standalone host tool. Standard Rust deps (clap, anyhow, serde). Changes at own pace. Can version independently. Build/test/image creation for any repo. |
 | `neodos-lsp` + `scripts/mcp_server` | `NeoDOS Dev Server` (merged) | **Migrated.** LSP + MCP merged into single Rust workspace at [neodos-dev-server](https://github.com/NeoDOS-Project/neodos-dev-server). Shared toolkit (neodos-toolkit) + LSP binary + MCP binary. |
-| `nltc, kbdcompile` | `NeoToolchain` or separate | Both are host-side compilers for OS data formats. Can evolve independently of kernel version. |
+| `nltc, kbdcompile, xkbcompile` | `NeoToolchain` or separate | Host-side compilers for OS data formats. Can evolve independently of kernel version. |
 | `nxdump, nxeinfo, nxpkg` | `NeoTools` | UX-focused analysis tools. Independent release cycle. Useful for OS analysis even without building kernel. |
 | `scripts/mcp_server` | `NeoMCP` | Python MCP server for AI-assisted development. Completely independent of kernel. |
 | `data/locale/*` | `NeoTranslations` | Translation data. Community contributions don't need kernel access. Can be translated entirely by non-developers. |
@@ -154,7 +153,7 @@ kbdcompile (host)   ───→ data/keyboard (layout sources)
 
 | Component | Reasoning |
 |-----------|-----------|
-| `drivers/*` | NEM ABI is stable (v8), but drivers are still in active development. Separation would increase build complexity without clear benefit. Re-evaluate at v1.0. |
+| `drivers/*` | NEM ABI is stable (v1/v2), but drivers are still in active development. Separation would increase build complexity without clear benefit. Re-evaluate at v1.0. |
 | `scripts/*` | Most scripts are tightly integrated with the build process. Only `mcp_server` and `check_deps.py` are independent. |
 | `docs/*` | Documentation references kernel code directly. Separation would create maintenance overhead. Move to `NeoDocs` after v1.0 when docs are stable. |
 | `skills/*` | Tied to AGENTS.md which lives in the main repo. Separation would require cross-repo sync. Keep integrated. |
@@ -169,7 +168,7 @@ kbdcompile (host)   ───→ data/keyboard (layout sources)
 NeoDOS-Project/
 ├── NeoDOS                    # Kernel, bootloader, libneodos, NXLs, userbin, drivers, scripts, docs
 │                              # (core OS — tightly coupled components)
-├── NeoDev                    # Build/run/test toolchain
+├── NeoDev                    # Build/run/test toolchain (migrated → NeoDev repo)
 ├── neodos-dev-server         # LSP server + MCP server + shared toolkit (merged)
 ├── NeoTools                  # nxdump, nxeinfo, nxpkg (OS analysis tools)
 ├── NeoTranslations           # Locale data (NLT files) + translation tools (nltc)

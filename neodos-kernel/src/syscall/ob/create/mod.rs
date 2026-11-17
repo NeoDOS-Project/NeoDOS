@@ -13,6 +13,28 @@ mod ipc;
 mod socket;
 mod service;
 mod driver;
+mod session;
+
+/// Map a user-supplied object-type discriminant (`ob_create` RCX) to a concrete
+/// `ObType`. Only these types may be created from user mode.
+pub(crate) fn create_obj_type(v: u32) -> Option<crate::object::ObType> {
+    use crate::object::ObType;
+    Some(match v {
+        1 => ObType::Process,
+        2 => ObType::Driver,
+        4 => ObType::Pipe,
+        11 => ObType::Directory,
+        13 => ObType::Event,
+        14 => ObType::Semaphore,
+        15 => ObType::Timer,
+        16 => ObType::Thread,
+        17 => ObType::Section,
+        18 => ObType::Socket,
+        19 => ObType::Session,
+        20 => ObType::Service,
+        _ => return None,
+    })
+}
 
 pub fn handler_ob_create(regs: crate::syscall::Registers) -> u64 {
     let path_ptr = regs.rbx;
@@ -33,19 +55,9 @@ pub fn handler_ob_create(regs: crate::syscall::Registers) -> u64 {
         return err_to_u64(SyscallError::Inval);
     }
 
-    let obj_type = match obj_type_val {
-        1 => crate::object::ObType::Process,
-        2 => crate::object::ObType::Driver,
-        4 => crate::object::ObType::Pipe,
-        11 => crate::object::ObType::Directory,
-        13 => crate::object::ObType::Event,
-        14 => crate::object::ObType::Semaphore,
-        15 => crate::object::ObType::Timer,
-        16 => crate::object::ObType::Thread,
-         17 => crate::object::ObType::Section,
-         18 => crate::object::ObType::Socket,
-         20 => crate::object::ObType::Service,
-        _ => return err_to_u64(SyscallError::Inval),
+    let obj_type = match create_obj_type(obj_type_val) {
+        Some(t) => t,
+        None => return err_to_u64(SyscallError::Inval),
     };
 
     match obj_type {
@@ -56,6 +68,7 @@ pub fn handler_ob_create(regs: crate::syscall::Registers) -> u64 {
         _ if socket::handles(obj_type) => socket::dispatch(obj_type, &path_str, fds_out, attrs),
         _ if service::handles(obj_type) => service::dispatch(obj_type, &path_str, fds_out, attrs),
         _ if driver::handles(obj_type) => driver::dispatch(obj_type, &path_str, fds_out, attrs),
+        _ if session::handles(obj_type) => session::dispatch(obj_type, &path_str, fds_out, attrs),
         _ => err_to_u64(SyscallError::Inval),
     }
 }

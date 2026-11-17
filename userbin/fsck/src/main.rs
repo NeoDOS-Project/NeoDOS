@@ -48,16 +48,7 @@ fn trim_ascii(s: &[u8]) -> &[u8] {
     &s[start..end]
 }
 
-fn to_ob_path<'a>(vfs: &'a str, buf: &'a mut [u8; 512]) -> &'a str {
-    let prefix = b"\\Global\\FileSystem\\";
-    let vfs_bytes = vfs.as_bytes();
-    let total = prefix.len() + vfs_bytes.len();
-    if total > 510 { return vfs; }
-    buf[..prefix.len()].copy_from_slice(prefix);
-    buf[prefix.len()..total].copy_from_slice(vfs_bytes);
-    buf[total] = 0;
-    unsafe { core::str::from_utf8_unchecked(&buf[..total]) }
-}
+use libneoutil::to_ob_path;
 
 fn print_help() {
     write_str(b"\r\nFSCK [drive:] [/F]\r\n  Check filesystem integrity on a NeoDOS volume.\r\n  Without /F, only checks and reports errors.\r\n  With /F, attempts to repair detected issues.\r\n\r\n  FSCK C:             check-only on C:\r\n  FSCK C: /F          check and repair C:\r\n\r\n");

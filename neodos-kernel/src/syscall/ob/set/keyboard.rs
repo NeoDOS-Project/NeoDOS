@@ -1,7 +1,7 @@
 //! Ob set — keyboard layout, repeat and LED configuration.
 
 use crate::object::types::ObSetInfoClass;
-use crate::syscall::{err_to_u64, SyscallError};
+use crate::syscall::{err_to_u64, SyscallError, copy_from_user};
 use alloc::string::ToString;
 
 pub(super) fn handles(info_class: u32) -> bool {
@@ -11,6 +11,7 @@ pub(super) fn handles(info_class: u32) -> bool {
         || info_class == ObSetInfoClass::KeyboardSetRepeatRate as u32
         || info_class == ObSetInfoClass::KeyboardSetLeds as u32
         || info_class == ObSetInfoClass::KeyboardSetModifier as u32
+        || info_class == ObSetInfoClass::KeyboardSetRawMode as u32
 }
 
 /// Dispatch the `keyboard` info classes.
@@ -22,6 +23,19 @@ pub(super) fn dispatch(
     buf_size: usize,
 ) -> u64 {
     match info_class {
+        // #466: toggle raw mode for the caller's VT (1 byte: 0/1).
+        _ if info_class == ObSetInfoClass::KeyboardSetRawMode as u32 => {
+            if buf_size < 1 {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let mut b = [0u8; 1];
+            if copy_from_user(&mut b, buf_ptr).is_err() {
+                return err_to_u64(SyscallError::Fault);
+            }
+            let vt = crate::scheduler::current_vt_num() as usize;
+            crate::input::manager::set_raw_mode(vt, b[0] != 0);
+            0
+        }
         _ if info_class == ObSetInfoClass::KeyboardLayout as u32 => {
             if entry.object_id == 0 {
                 return err_to_u64(SyscallError::Inval);
@@ -32,7 +46,11 @@ pub(super) fn dispatch(
             };
             if obj.obj_type == crate::object::ObType::KeyboardDevice {
                 if buf_size < 1 { return err_to_u64(SyscallError::Inval); }
-                let layout = unsafe { core::ptr::read_volatile(buf_ptr as *const u8) };
+                let mut lb = [0u8; 1];
+                if copy_from_user(&mut lb, buf_ptr).is_err() {
+                    return err_to_u64(SyscallError::Fault);
+                }
+                let layout = lb[0];
                 let mut kbd = crate::kbd::KBD.lock();
                 if (layout as usize) >= kbd.layouts.len() {
                     return err_to_u64(SyscallError::NoEnt);
@@ -51,7 +69,11 @@ pub(super) fn dispatch(
                 return err_to_u64(SyscallError::Inval);
             }
             if buf_size < 1 { return err_to_u64(SyscallError::Inval); }
-            let layout = unsafe { core::ptr::read_volatile(buf_ptr as *const u8) };
+            let mut lb = [0u8; 1];
+            if copy_from_user(&mut lb, buf_ptr).is_err() {
+                return err_to_u64(SyscallError::Fault);
+            }
+            let layout = lb[0];
             let mut kbd = crate::kbd::KBD.lock();
             if (layout as usize) >= kbd.layouts.len() {
                 return err_to_u64(SyscallError::NoEnt);
@@ -75,8 +97,8 @@ pub(super) fn dispatch(
             if buf_size < 1 { return err_to_u64(SyscallError::Inval); }
             let name_len = buf_size.min(32);
             let mut name_buf = [0u8; 32];
-            unsafe {
-                core::ptr::copy_nonoverlapping(buf_ptr as *const u8, name_buf.as_mut_ptr(), name_len);
+            if copy_from_user(&mut name_buf[..name_len], buf_ptr).is_err() {
+                return err_to_u64(SyscallError::Fault);
             }
             let name_end = name_buf.iter().position(|&b| b == 0).unwrap_or(name_len);
             let name = match core::str::from_utf8(&name_buf[..name_end]) {
@@ -98,7 +120,11 @@ pub(super) fn dispatch(
                 return err_to_u64(SyscallError::Inval);
             }
             if buf_size < 4 { return err_to_u64(SyscallError::Inval); }
-            let delay = unsafe { core::ptr::read_volatile(buf_ptr as *const u32) };
+            let mut db = [0u8; 4];
+            if copy_from_user(&mut db, buf_ptr).is_err() {
+                return err_to_u64(SyscallError::Fault);
+            }
+            let delay = u32::from_ne_bytes(db);
             let mut kbd = crate::kbd::KBD.lock();
             match kbd.set_repeat_delay(delay) {
                 Ok(()) => 0,
@@ -114,7 +140,11 @@ pub(super) fn dispatch(
                 return err_to_u64(SyscallError::Inval);
             }
             if buf_size < 4 { return err_to_u64(SyscallError::Inval); }
-            let rate = unsafe { core::ptr::read_volatile(buf_ptr as *const u32) };
+            let mut rb = [0u8; 4];
+            if copy_from_user(&mut rb, buf_ptr).is_err() {
+                return err_to_u64(SyscallError::Fault);
+            }
+            let rate = u32::from_ne_bytes(rb);
             let mut kbd = crate::kbd::KBD.lock();
             match kbd.set_repeat_rate(rate) {
                 Ok(()) => 0,
@@ -130,7 +160,11 @@ pub(super) fn dispatch(
                 return err_to_u64(SyscallError::Inval);
             }
             if buf_size < 1 { return err_to_u64(SyscallError::Inval); }
-            let leds = unsafe { core::ptr::read_volatile(buf_ptr as *const u8) };
+            let mut lb = [0u8; 1];
+            if copy_from_user(&mut lb, buf_ptr).is_err() {
+                return err_to_u64(SyscallError::Fault);
+            }
+            let leds = lb[0];
             let mut kbd = crate::kbd::KBD.lock();
             kbd.set_leds(leds);
             0
@@ -147,7 +181,11 @@ pub(super) fn dispatch(
             if !crate::syscall::is_current_admin() {
                 return err_to_u64(SyscallError::Perm);
             }
-            let mods = unsafe { core::ptr::read_volatile(buf_ptr as *const u8) };
+            let mut mb = [0u8; 1];
+            if copy_from_user(&mut mb, buf_ptr).is_err() {
+                return err_to_u64(SyscallError::Fault);
+            }
+            let mods = mb[0];
             let mut kbd = crate::kbd::KBD.lock();
             kbd.set_modifiers(mods);
             0

@@ -169,10 +169,15 @@ core::arch::global_asm!(
     "mov al, 0x33",
     "out dx, al",
 
-    // Enable long mode (EFER.LME = bit 8)
+    // Enable long mode (EFER.LME = bit 8) AND no-execute (EFER.NXE = bit 11).
+    // NXE MUST be enabled before paging: the kernel's page tables set the NX
+    // bit (63) on non-executable leaves. If NXE is clear, bit 63 is a reserved
+    // bit and any access through such a PTE raises #PF(RSVD) -> #DF -> triple
+    // fault. Whether the AP stack lands on an NX leaf is allocation-order
+    // dependent, which is exactly the "AP-bringup layout cliff" (#522).
     "mov ecx, 0xC0000080",                 // IA32_EFER
     "rdmsr",
-    "or  eax, (1 << 8)",
+    "or  eax, (1 << 8) | (1 << 11)",       // LME | NXE
     "wrmsr",
     // Marker '4' after EFER
     "mov dx, 0x3F8",
@@ -455,6 +460,10 @@ pub extern "sysv64" fn ap_entry(stack_top: u64) -> ! {
     if pml4 != 0 {
         crate::hal::write_cr3(pml4);
     }
+
+    // NEODOS-09 (#639): enable SMEP/SMAP/NXE on this AP too (BSP detected the
+    // capabilities). Must run before any user-memory access on this CPU.
+    unsafe { crate::arch::x64::features::enable_on_this_cpu(); }
 
     // Register this CPU's idle Kthread and install it as the KPRCB current
     // context BEFORE enabling interrupts. `stack_top` is this AP's own

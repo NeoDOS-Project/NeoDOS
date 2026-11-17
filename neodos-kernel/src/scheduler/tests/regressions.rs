@@ -205,6 +205,290 @@ pub fn register() {
         let next2 = sched.schedule_with(false);
         test_eq!(unsafe { (*next2).tid }, 11);
     });
+    test_case!("n355_kernel_thread_selectable_from_ring3_context", {
+        // Regression for the K355 starvation: a *Ready* genuine Ring-0 kernel
+        // thread must be committable by the Ring-3-context selection path
+        // (`require_ring3 = true`) even when it is NOT past the starvation
+        // threshold. Before the fix it was only reachable via the 5000-tick
+        // hand-off, so it ran once per window and the hand-off flooded.
+        let this_cpu = unsafe { crate::arch::x64::cpu_local::this_cpu_id() };
+        unsafe {
+            if crate::arch::x64::cpu_local::kprcb_page(this_cpu as usize).is_some() {
+                crate::arch::x64::cpu_local::cpu_run_queue_mut(this_cpu as usize).clear();
+            }
+        }
+        let mut sched = Scheduler::new();
+        sched.next_tid = 100;
+        for k in sched.kthreads.iter_mut().flatten() {
+            if k.is_idle { k.cpu = this_cpu; }
+        }
+
+        // Current Ring-3 yielder, Running (the syscall-return context).
+        let s3 = crate::scheduler::AlignedKStack::new_boxed();
+        let t3 = s3.0.as_ptr() as u64 + crate::scheduler::KERNEL_STACK_SIZE as u64;
+        let r3 = crate::scheduler::init_ring3_frame(t3, 0x400000, 0x800000);
+        let mut k3 = Kthread::new_ring3_with_stack(10, 10, 0x400000, r3, t3, s3);
+        k3.state = ThreadState::Running;
+        k3.priority = PRIORITY_NORMAL;
+        k3.base_priority = PRIORITY_NORMAL;
+        k3.cpu = this_cpu;
+        let i3 = sched.alloc_kthread_slot().unwrap();
+        sched.kthreads[i3] = Some(Box::new(k3));
+        sched.current_tid = 10;
+
+        // A genuine Ring-0 kernel thread: Ready, NOT starved (ticks == 0),
+        // normal priority, enqueued on this CPU.
+        let sk = crate::scheduler::AlignedKStack::new_boxed();
+        let tk = sk.0.as_ptr() as u64 + crate::scheduler::KERNEL_STACK_SIZE as u64;
+        let rk = crate::scheduler::stack::init_ring0_frame(tk, 0x500000);
+        let mut kk = Kthread::new_ring3_with_stack(11, 11, 0x500000, rk, tk, sk);
+        kk.is_kernel = true;
+        kk.state = ThreadState::Ready;
+        kk.priority = PRIORITY_NORMAL;
+        kk.base_priority = PRIORITY_NORMAL;
+        kk.ticks_since_scheduled = 0;
+        kk.cpu = this_cpu;
+        let ik = sched.alloc_kthread_slot().unwrap();
+        sched.kthreads[ik] = Some(Box::new(kk));
+        Scheduler::enqueue_to_cpu_run_queue(sched.find_kthread(11).unwrap());
+
+        // The Ring-3 syscall-return selection must commit the kernel thread
+        // directly (not the idle fallback / hand-off).
+        let next = sched.schedule_with_handoff(true, true);
+        test_eq!(unsafe { (*next).tid }, 11);
+        test_true!(unsafe { (*next).is_kernel });
+
+        unsafe {
+            if crate::arch::x64::cpu_local::kprcb_page(this_cpu as usize).is_some() {
+                crate::arch::x64::cpu_local::cpu_run_queue_mut(this_cpu as usize).clear();
+            }
+        }
+    });
+    test_case!("n355_aging_boost_persists_until_dispatch", {
+        // End-to-end aging lifecycle through the REAL scheduler path.
+        // A boost must persist while the thread stays Ready (a counter reset
+        // alone must not cancel it) and must end at dispatch, where the base
+        // priority is restored and a fresh slice is granted.
+        let this_cpu = unsafe { crate::arch::x64::cpu_local::this_cpu_id() };
+        unsafe {
+            if crate::arch::x64::cpu_local::kprcb_page(this_cpu as usize).is_some() {
+                crate::arch::x64::cpu_local::cpu_run_queue_mut(this_cpu as usize).clear();
+            }
+        }
+        let mut sched = Scheduler::new();
+        sched.next_tid = 100;
+        for k in sched.kthreads.iter_mut().flatten() {
+            if k.is_idle { k.cpu = this_cpu; }
+        }
+        let sk = crate::scheduler::AlignedKStack::new_boxed();
+        let tk = sk.0.as_ptr() as u64 + crate::scheduler::KERNEL_STACK_SIZE as u64;
+        let rk = crate::scheduler::stack::init_ring0_frame(tk, 0x500000);
+        let mut kk = Kthread::new_ring3_with_stack(12, 12, 0x500000, rk, tk, sk);
+        kk.is_kernel = true;
+        kk.state = ThreadState::Ready;
+        kk.priority = PRIORITY_NORMAL;
+        kk.base_priority = PRIORITY_NORMAL;
+        kk.ticks_since_scheduled = MAX_STARVATION_TICKS;
+        kk.time_slice_remaining = 0;
+        kk.cpu = this_cpu;
+        let ik = sched.alloc_kthread_slot().unwrap();
+        sched.kthreads[ik] = Some(Box::new(kk));
+        Scheduler::enqueue_to_cpu_run_queue(sched.find_kthread(12).unwrap());
+
+        // 1st aging pass: boost.
+        sched.apply_aging();
+        test_eq!(sched.find_kthread(12).unwrap().priority, PRIORITY_ABOVE_NORMAL);
+
+        // 2nd aging pass: the counter was reset, but the boost MUST persist
+        // (it ends at dispatch, not at an arbitrary aging tick).
+        sched.apply_aging();
+        test_eq!(sched.find_kthread(12).unwrap().priority, PRIORITY_ABOVE_NORMAL);
+        test_true!(sched.find_kthread(12).unwrap().ticks_since_scheduled > 0);
+
+        // Queue/bitmap must be consistent at the boosted priority.
+        test_true!(unsafe {
+            crate::arch::x64::cpu_local::with_runqueue(this_cpu as usize, |rq| rq.contains(12))
+        });
+        test_true!(
+            (crate::arch::x64::cpu_local::read_active_bitmap(this_cpu as usize)
+                >> PRIORITY_ABOVE_NORMAL) & 1 == 1
+        );
+
+        // Dispatch through the real scheduler: base priority restored, slice
+        // granted, starvation counter cleared, thread Running.
+        let next = sched.schedule();
+        test_eq!(unsafe { (*next).tid }, 12);
+        let k = sched.find_kthread(12).unwrap();
+        test_eq!(k.priority, PRIORITY_NORMAL);
+        test_eq!(k.ticks_since_scheduled, 0);
+        test_eq!(k.state, ThreadState::Running);
+        test_eq!(k.time_slice_remaining, TIME_SLICES[PRIORITY_NORMAL as usize]);
+
+        unsafe {
+            if crate::arch::x64::cpu_local::kprcb_page(this_cpu as usize).is_some() {
+                crate::arch::x64::cpu_local::cpu_run_queue_mut(this_cpu as usize).clear();
+            }
+        }
+    });
+    test_case!("n355_timer_accepts_kernel_thread_dispatch", {
+        // Timer user-preempt return path: `schedule_with_handoff(true, true)`
+        // selects a genuine kernel thread, and the shared acceptance predicate
+        // (used by both the timer and syscall return paths) accepts it while
+        // rejecting idle-without-handoff and user threads.
+        use crate::scheduler::schedule::accept_non_ring3_dispatch;
+        let this_cpu = unsafe { crate::arch::x64::cpu_local::this_cpu_id() };
+        unsafe {
+            if crate::arch::x64::cpu_local::kprcb_page(this_cpu as usize).is_some() {
+                crate::arch::x64::cpu_local::cpu_run_queue_mut(this_cpu as usize).clear();
+            }
+        }
+        let mut sched = Scheduler::new();
+        sched.next_tid = 100;
+        for k in sched.kthreads.iter_mut().flatten() {
+            if k.is_idle { k.cpu = this_cpu; }
+        }
+        let sk = crate::scheduler::AlignedKStack::new_boxed();
+        let tk = sk.0.as_ptr() as u64 + crate::scheduler::KERNEL_STACK_SIZE as u64;
+        let rk = crate::scheduler::stack::init_ring0_frame(tk, 0x500000);
+        let mut kk = Kthread::new_ring3_with_stack(11, 11, 0x500000, rk, tk, sk);
+        kk.is_kernel = true;
+        kk.state = ThreadState::Ready;
+        kk.priority = PRIORITY_NORMAL;
+        kk.base_priority = PRIORITY_NORMAL;
+        kk.ticks_since_scheduled = 0;
+        kk.cpu = this_cpu;
+        let ik = sched.alloc_kthread_slot().unwrap();
+        sched.kthreads[ik] = Some(Box::new(kk));
+        Scheduler::enqueue_to_cpu_run_queue(sched.find_kthread(11).unwrap());
+
+        let next = sched.schedule_with_handoff(true, true);
+        test_eq!(unsafe { (*next).tid }, 11);
+        // Non-Ring-3 frame (Ring-0 kernel thread).
+        test_true!(unsafe { *(((*next).rsp + 128) as *const u64) & 3 } != 3);
+        // No #355 handoff: acceptance must come from the kernel-thread rule.
+        test_true!(!crate::scheduler::Scheduler::take_kernel_handoff(this_cpu));
+        test_true!(accept_non_ring3_dispatch(false, next));
+
+        // idle without handoff is NOT accepted; with handoff it is.
+        let idle = sched.find_idle_ptr(this_cpu);
+        test_true!(!idle.is_null());
+        test_true!(!accept_non_ring3_dispatch(false, idle));
+        test_true!(accept_non_ring3_dispatch(true, idle));
+
+        // A user thread with a Ring-0 frame (as if interrupted in a syscall)
+        // must never be accepted as a kernel dispatch.
+        let su = crate::scheduler::AlignedKStack::new_boxed();
+        let tu = su.0.as_ptr() as u64 + crate::scheduler::KERNEL_STACK_SIZE as u64;
+        let ru = crate::scheduler::stack::init_ring0_frame(tu, 0x400000);
+        let ku = Kthread::new_ring3_with_stack(13, 13, 0x400000, ru, tu, su);
+        test_true!(!ku.is_kernel);
+        test_true!(!accept_non_ring3_dispatch(false, &ku as *const Kthread));
+
+        unsafe {
+            if crate::arch::x64::cpu_local::kprcb_page(this_cpu as usize).is_some() {
+                crate::arch::x64::cpu_local::cpu_run_queue_mut(this_cpu as usize).clear();
+            }
+        }
+    });
+    test_case!("n355_smp_owned_kernel_thread_not_committed", {
+        // A Ready kernel thread whose live execution context is still owned by
+        // another CPU (KPRCB.current_thread) must be rejected, never committed
+        // on the wrong CPU. `candidate_owned_elsewhere` is not weakened.
+        let this_cpu = unsafe { crate::arch::x64::cpu_local::this_cpu_id() };
+        unsafe {
+            if crate::arch::x64::cpu_local::kprcb_page(this_cpu as usize).is_some() {
+                crate::arch::x64::cpu_local::cpu_run_queue_mut(this_cpu as usize).clear();
+            }
+        }
+        let mut sched = Scheduler::new();
+        sched.next_tid = 100;
+        for k in sched.kthreads.iter_mut().flatten() {
+            if k.is_idle { k.cpu = this_cpu; }
+        }
+        let sk = crate::scheduler::AlignedKStack::new_boxed();
+        let tk = sk.0.as_ptr() as u64 + crate::scheduler::KERNEL_STACK_SIZE as u64;
+        let rk = crate::scheduler::stack::init_ring0_frame(tk, 0x500000);
+        let mut kk = Kthread::new_ring3_with_stack(11, 11, 0x500000, rk, tk, sk);
+        kk.is_kernel = true;
+        kk.state = ThreadState::Ready;
+        kk.priority = PRIORITY_NORMAL;
+        kk.base_priority = PRIORITY_NORMAL;
+        kk.cpu = this_cpu;
+        let ik = sched.alloc_kthread_slot().unwrap();
+        sched.kthreads[ik] = Some(Box::new(kk));
+        Scheduler::enqueue_to_cpu_run_queue(sched.find_kthread(11).unwrap());
+
+        let kptr = sched.find_kthread(11).unwrap() as *const Kthread;
+        let other = if this_cpu == 0 { 1 } else { 0 };
+        let other_kprcb = crate::arch::x64::cpu_local::kprcb_page(other as usize);
+        test_true!(other_kprcb.is_some());
+        if let Some(base) = other_kprcb {
+            let slot =
+                (base + crate::arch::x64::cpu_local::OFFSET_CURRENT_THREAD as u64) as *mut u64;
+            let saved = unsafe { *slot };
+            // Simulate the other CPU still owning this thread's live context.
+            unsafe { *slot = kptr as u64; }
+            test_eq!(
+                crate::arch::x64::cpu_local::kthread_current_cpu(kptr),
+                Some(other)
+            );
+
+            let next = sched.schedule_with_handoff(true, true);
+            test_ne!(unsafe { (*next).tid }, 11);
+            test_eq!(sched.find_kthread(11).unwrap().state, ThreadState::Ready);
+
+            unsafe { *slot = saved; }
+        }
+
+        unsafe {
+            if crate::arch::x64::cpu_local::kprcb_page(this_cpu as usize).is_some() {
+                crate::arch::x64::cpu_local::cpu_run_queue_mut(this_cpu as usize).clear();
+            }
+        }
+    });
+    test_case!("n355_syscall_dispatch_grants_fresh_slice", {
+        // F2: a kernel thread accepted through the syscall-return selection must
+        // not be committed with `time_slice_remaining == 0` (which would
+        // republish it after a single tick).
+        let this_cpu = unsafe { crate::arch::x64::cpu_local::this_cpu_id() };
+        unsafe {
+            if crate::arch::x64::cpu_local::kprcb_page(this_cpu as usize).is_some() {
+                crate::arch::x64::cpu_local::cpu_run_queue_mut(this_cpu as usize).clear();
+            }
+        }
+        let mut sched = Scheduler::new();
+        sched.next_tid = 100;
+        for k in sched.kthreads.iter_mut().flatten() {
+            if k.is_idle { k.cpu = this_cpu; }
+        }
+        let sk = crate::scheduler::AlignedKStack::new_boxed();
+        let tk = sk.0.as_ptr() as u64 + crate::scheduler::KERNEL_STACK_SIZE as u64;
+        let rk = crate::scheduler::stack::init_ring0_frame(tk, 0x500000);
+        let mut kk = Kthread::new_ring3_with_stack(11, 11, 0x500000, rk, tk, sk);
+        kk.is_kernel = true;
+        kk.state = ThreadState::Ready;
+        kk.priority = PRIORITY_NORMAL;
+        kk.base_priority = PRIORITY_NORMAL;
+        kk.ticks_since_scheduled = 0;
+        kk.time_slice_remaining = 0; // as left by a prior timer expiry
+        kk.cpu = this_cpu;
+        let ik = sched.alloc_kthread_slot().unwrap();
+        sched.kthreads[ik] = Some(Box::new(kk));
+        Scheduler::enqueue_to_cpu_run_queue(sched.find_kthread(11).unwrap());
+
+        let next = sched.schedule_with_handoff(true, true);
+        test_eq!(unsafe { (*next).tid }, 11);
+        test_eq!(
+            sched.find_kthread(11).unwrap().time_slice_remaining,
+            TIME_SLICES[PRIORITY_NORMAL as usize]
+        );
+
+        unsafe {
+            if crate::arch::x64::cpu_local::kprcb_page(this_cpu as usize).is_some() {
+                crate::arch::x64::cpu_local::cpu_run_queue_mut(this_cpu as usize).clear();
+            }
+        }
+    });
     test_case!("n382_fifo_fast_path_respects_priority", {
         let this_cpu = unsafe { crate::arch::x64::cpu_local::this_cpu_id() };
         // Isolate the real per-CPU run queue for this CPU.
@@ -1273,5 +1557,553 @@ pub fn register() {
             sched.on_timer_tick(0x700000, 0x08);
             test_eq!(sched.kthreads[slot].as_ref().unwrap().state, ThreadState::Running);
         }
+    });
+
+    // ── NEODOS-01 (#631): zombie queue observability and boundedness ─────────
+    test_case!("neodos01_zombie_queue_dedup_is_single_entry", {
+        use crate::scheduler::lifecycle::ZombieQueue;
+        let mut q = ZombieQueue::new();
+        test_true!(q.enqueue(42));
+        test_true!(!q.enqueue(42)); // duplicate is refused
+        test_true!(!q.enqueue(0));  // pid 0 is never enqueued
+        test_eq!(q.len(), 1);
+        test_true!(!q.is_empty());
+    });
+    test_case!("neodos01_zombie_reclaim_skips_running", {
+        use crate::scheduler::lifecycle::ZombieQueue;
+        let mut q = ZombieQueue::new();
+        q.enqueue(1);
+        q.enqueue(2);
+        q.enqueue(3);
+        // pid 2 still running; 1 and 3 are reclaimable.
+        let pos = q.find_reclaimable(0, |p| p == 2).unwrap();
+        test_eq!(q.take_at(pos).unwrap(), 1);
+        let pos = q.find_reclaimable(0, |p| p == 2).unwrap();
+        test_eq!(q.take_at(pos).unwrap(), 3);
+        test_true!(q.find_reclaimable(0, |p| p == 2).is_none());
+        test_eq!(q.len(), 1);
+    });
+    test_case!("neodos01_zombie_requeue_is_idempotent", {
+        use crate::scheduler::lifecycle::ZombieQueue;
+        let mut q = ZombieQueue::new();
+        q.enqueue(7);
+        test_eq!(q.take_at(0).unwrap(), 7);
+        q.requeue(7);
+        q.requeue(7); // must not duplicate
+        test_eq!(q.len(), 1);
+    });
+    // #631 regression: the hard cap must NEVER be enforced by evicting a
+    // pending entry. These tests fail against the removed `trim_to_hard_cap`
+    // (which did `pids.remove(0)` unconditionally and counted the victim as
+    // `ZOMBIE_STALE_DROPPED`), and pass with reclamation-only enforcement.
+    test_case!("neodos01_zombie_enqueue_over_cap_preserves_all_pending", {
+        use crate::scheduler::lifecycle::{ZombieQueue, ZOMBIE_HARD_CAP, zombie_queue_stats};
+        let mut q = ZombieQueue::new();
+        let before = zombie_queue_stats();
+        let total = ZOMBIE_HARD_CAP + 8;
+        // Repeated enqueue on the SAME instance, well beyond the hard cap.
+        for p in 1..=total as u32 {
+            test_true!(q.enqueue(p));
+        }
+        test_eq!(q.len(), total);
+        // Nothing was evicted to make room: every pending PID is still queued.
+        for p in 1..=total as u32 {
+            test_true!(q.contains(p));
+        }
+        // Enqueueing past the cap is neither a stale drop nor an overflow
+        // *eviction*; the queue never discards work on its own.
+        let after = zombie_queue_stats();
+        test_eq!(after.stale_dropped - before.stale_dropped, 0);
+        test_eq!(after.overflow - before.overflow, 0);
+        test_eq!(after.enqueued - before.enqueued, total as u64);
+    });
+    test_case!("neodos01_zombie_requeue_over_cap_preserves_all_pending", {
+        use crate::scheduler::lifecycle::{ZombieQueue, ZOMBIE_HARD_CAP, zombie_queue_stats};
+        let mut q = ZombieQueue::new();
+        for p in 1..=ZOMBIE_HARD_CAP as u32 {
+            q.enqueue(p);
+        }
+        let before = zombie_queue_stats();
+        q.requeue(9999);
+        // Requeue must not evict the oldest pending entry (pid 1).
+        test_eq!(q.len(), ZOMBIE_HARD_CAP + 1);
+        test_true!(q.contains(9999));
+        test_true!(q.contains(1));
+        let after = zombie_queue_stats();
+        test_eq!(after.requeued - before.requeued, 1);
+        test_eq!(after.stale_dropped - before.stale_dropped, 0);
+        test_eq!(after.overflow - before.overflow, 0);
+        // Requeueing the same PID again is deduped, not overflow.
+        q.requeue(9999);
+        test_eq!(q.len(), ZOMBIE_HARD_CAP + 1);
+        test_eq!(zombie_queue_stats().requeued - before.requeued, 1);
+    });
+    test_case!("neodos01_zombie_duplicate_at_cap_is_not_overflow", {
+        use crate::scheduler::lifecycle::{ZombieQueue, ZOMBIE_HARD_CAP, zombie_queue_stats};
+        let mut q = ZombieQueue::new();
+        for p in 1..=ZOMBIE_HARD_CAP as u32 {
+            q.enqueue(p);
+        }
+        let before = zombie_queue_stats();
+        // A duplicate at capacity is suppressed, not counted as overflow/stale.
+        test_true!(!q.enqueue(ZOMBIE_HARD_CAP as u32));
+        test_eq!(q.len(), ZOMBIE_HARD_CAP);
+        let after = zombie_queue_stats();
+        test_eq!(after.dedup_skipped - before.dedup_skipped, 1);
+        test_eq!(after.enqueued - before.enqueued, 0);
+        test_eq!(after.overflow - before.overflow, 0);
+        test_eq!(after.stale_dropped - before.stale_dropped, 0);
+    });
+    test_case!("neodos01_zombie_full_queue_all_running_retains_and_orders", {
+        use crate::scheduler::lifecycle::{ZombieQueue, ZOMBIE_HARD_CAP};
+        let mut q = ZombieQueue::new();
+        for p in 1..=ZOMBIE_HARD_CAP as u32 {
+            q.enqueue(p);
+        }
+        // Full queue where every entry is still running: no reclaimable
+        // candidate, and the entries must be retained (never evicted to make
+        // room), which is the state `defer_reap_with_scheduler` reports as
+        // ZOMBIE_OVERFLOW instead of losing work.
+        test_eq!(q.len(), ZOMBIE_HARD_CAP);
+        test_true!(q.over_hard_cap());
+        test_true!(q.find_reclaimable(0, |_| true).is_none());
+        test_true!(q.find_reclaimable(0, |_| false).is_some());
+        // Documented ordering: FIFO — the oldest reclaimable entry is returned
+        // first and `take_at(0)` removes it in enqueue order.
+        test_eq!(q.take_at(0).unwrap(), 1);
+        test_eq!(q.take_at(0).unwrap(), 2);
+        test_eq!(q.take_at(q.len() - 1).unwrap(), ZOMBIE_HARD_CAP as u32);
+    });
+    test_case!("neodos01_zombie_repeated_overflow_drain_no_growth", {
+        use crate::scheduler::lifecycle::{ZombieQueue, ZOMBIE_HARD_CAP};
+        // Many fill/drain cycles on one instance: cumulative enqueue beyond the
+        // cap followed by a full reclaim must not leave residue.
+        let mut q = ZombieQueue::new();
+        for cycle in 0..8u32 {
+            for i in 0..(ZOMBIE_HARD_CAP as u32 * 3) {
+                test_true!(q.enqueue(cycle * 100_000 + i + 1));
+            }
+            let mut drained = 0usize;
+            while let Some(pos) = q.find_reclaimable(0, |_| false) {
+                q.take_at(pos).unwrap();
+                drained += 1;
+            }
+            test_eq!(drained, ZOMBIE_HARD_CAP * 3);
+            test_eq!(q.len(), 0);
+            test_true!(q.is_empty());
+        }
+    });
+    test_case!("neodos01_zombie_take_recheck_requeue_retains_record", {
+        // Models the reaper's select -> take -> (post-take) recheck -> requeue
+        // sequence. A record that becomes ineligible between selection and
+        // reclamation must be retained (never dropped as stale) and a record
+        // removed once cannot be claimed again (single-claim under the lock).
+        use crate::scheduler::lifecycle::{ZombieQueue, ZOMBIE_HARD_CAP, zombie_queue_stats};
+        let mut q = ZombieQueue::new();
+        for p in 1..=ZOMBIE_HARD_CAP as u32 {
+            q.enqueue(p);
+        }
+        let before = zombie_queue_stats();
+
+        // Select the first reclaimable entry (FIFO: pid 1) and remove it...
+        let pos = q.find_reclaimable(0, |_| false).unwrap();
+        test_eq!(pos, 0);
+        let claimed = q.take_at(pos).unwrap();
+        test_eq!(claimed, 1);
+        // ...then the recheck finds it is running again: requeue and retain.
+        q.requeue(claimed);
+        test_eq!(q.len(), ZOMBIE_HARD_CAP);
+        test_true!(q.contains(1));
+
+        // A second claim cannot return the same record.
+        let claimed2 = q.take_at(0).unwrap();
+        test_ne!(claimed2, 1);
+        q.requeue(claimed2);
+        test_eq!(q.len(), ZOMBIE_HARD_CAP);
+
+        // The take/recheck/requeue cycle is neither a stale drop nor overflow.
+        let after = zombie_queue_stats();
+        test_eq!(after.stale_dropped - before.stale_dropped, 0);
+        test_eq!(after.overflow - before.overflow, 0);
+        test_eq!(after.requeued - before.requeued, 2);
+    });
+    test_case!("neodos01_zombie_overflow_recovery_after_capacity_release", {
+        // Full queue with every entry "running" is the overflow condition; once
+        // one entry becomes eligible again it must be reclaimable immediately,
+        // proving the retained work was not lost while capacity was exhausted.
+        use crate::scheduler::lifecycle::{ZombieQueue, ZOMBIE_HARD_CAP};
+        let mut q = ZombieQueue::new();
+        for p in 1..=ZOMBIE_HARD_CAP as u32 {
+            q.enqueue(p);
+        }
+        test_true!(q.over_hard_cap());
+        test_true!(q.find_reclaimable(0, |_| true).is_none());
+        // pid 5 stops running -> reclaimable; taken without disturbing the rest.
+        let pos = q.find_reclaimable(0, |p| p != 5).unwrap();
+        test_eq!(q.take_at(pos).unwrap(), 5);
+        test_eq!(q.len(), ZOMBIE_HARD_CAP - 1);
+        // The remaining still-running entries are retained, not evicted.
+        test_true!(q.contains(128));
+        test_true!(q.find_reclaimable(0, |_| true).is_none());
+    });
+    test_case!("neodos01_zombie_hard_cap_and_backpressure", {
+        use crate::scheduler::lifecycle::{ZombieQueue, ZOMBIE_HARD_CAP, MAX_ZOMBIES};
+        let mut q = ZombieQueue::new();
+        // Fill to the soft watermark; every entry is "running".
+        for p in 1..=MAX_ZOMBIES as u32 { q.enqueue(p); }
+        test_eq!(q.len(), MAX_ZOMBIES);
+        test_true!(!q.over_hard_cap());
+        test_true!(q.backpressured(|_| true));
+        // A single reclaimable entry clears backpressure.
+        test_true!(!q.backpressured(|p| p == 1));
+        // Cross the deterministic hard cap with unique PIDs.
+        while q.len() < ZOMBIE_HARD_CAP {
+            let next = (q.len() as u32) + 1000;
+            q.enqueue(next);
+        }
+        test_true!(q.over_hard_cap());
+        // Nothing reclaimable (all still running) -> no candidate.
+        test_true!(q.find_reclaimable(0, |_| true).is_none());
+    });
+    test_case!("neodos01_zombie_stress_4x_max_no_slot_leak", {
+        use crate::scheduler::lifecycle::{ZombieQueue, MAX_ZOMBIES};
+        let mut sched = Scheduler::new();
+        let base_pid: u32 = 10_000;
+        let n = MAX_ZOMBIES * 4; // 4×MAX_ZOMBIES = 256 exits
+
+        // 4×MAX real, already-terminated EPROCESS/KTHREAD pairs. `new_kernel`
+        // owns no external resources (no user slot / heap / handles), so the
+        // reaper only has to free the slot + kernel stack: exactly the leak
+        // surface of the zombie path.
+        for i in 0..n {
+            let pid = base_pid + i as u32;
+            let ep_slot = sched.alloc_eprocess_slot().unwrap();
+            sched.eprocesses[ep_slot] = Some(Eprocess::new_kernel(pid));
+            let th_slot = sched.alloc_kthread_slot().unwrap();
+            let mut k = Kthread::new_ring3(pid, pid, 0x400000, 0x800000);
+            k.state = ThreadState::Terminated;
+            sched.kthreads[th_slot] = Some(Box::new(k));
+        }
+        test_eq!(sched.eprocesses.iter().flatten().count(), n + 1); // + boot (pid 0)
+
+        // Feed all 256 dead PIDs through the zombie queue, then drain it exactly
+        // like the reaper does (`recycle_terminated`).
+        let mut q = ZombieQueue::new();
+        for i in 0..n {
+            q.enqueue(base_pid + i as u32);
+        }
+        let mut reclaimed = 0usize;
+        while let Some(pos) = q.find_reclaimable(0, |_| false) {
+            let pid = q.take_at(pos).unwrap();
+            test_true!(sched.recycle_terminated(pid));
+            reclaimed += 1;
+        }
+        test_eq!(reclaimed, n);
+        test_eq!(q.len(), 0);
+
+        // Zero slot leak: only the boot EPROCESS and the boot+idle KTHREADs
+        // remain, and none of the 256 pids is still tracked.
+        test_eq!(sched.eprocesses.iter().flatten().count(), 1);
+        test_eq!(sched.kthreads.iter().flatten().count(), 2);
+        for i in 0..n {
+            let pid = base_pid + i as u32;
+            test_true!(sched.find_eprocess(pid).is_none());
+            test_true!(sched.thread_tids_for_pid(pid).is_empty());
+        }
+    });
+    test_case!("neodos01_zombie_confirmed_stale_removal_is_not_overflow", {
+        // Exercises the REAL reaper (`reap_pending_zombies`) against the
+        // process-global queue. A queued PID with no EPROCESS/KTHREAD that no
+        // CPU runs is a *confirmed* stale record: it is removed and counted as
+        // stale, never as overflow (and never by a blind eviction).
+        use crate::scheduler::lifecycle::{
+            reap_pending_zombies, zombie_enqueue_for_test, zombie_queue_len, zombie_queue_stats,
+        };
+        let mut sched = Scheduler::new();
+        // Drain any residue first so this test is independent and the deltas
+        // are exact (the global queue is shared with the running kernel).
+        reap_pending_zombies(&mut sched, 0);
+        let before = zombie_queue_stats();
+        let stale = 0xFFFF_FFF0u32;
+        zombie_enqueue_for_test(stale);
+        test_eq!(zombie_queue_len(), before.len + 1);
+        reap_pending_zombies(&mut sched, 0);
+        let after = zombie_queue_stats();
+        test_eq!(after.stale_dropped - before.stale_dropped, 1);
+        test_eq!(after.overflow - before.overflow, 0);
+        test_eq!(zombie_queue_len(), before.len);
+        test_true!(!crate::scheduler::lifecycle::zombie_queue_contains(stale));
+    });
+
+    // ── NEODOS-02 (#632): current-identity reads are never silent ────────────
+    test_case!("neodos02_current_identity_prefers_kprcb_and_is_never_silent", {
+        // A local (non-global) Scheduler must keep using its own current_tid and
+        // current_pid, and must not record a KPRCB identity fallback while AP
+        // scheduling is inactive (the test/local-scheduler path). All the
+        // "current" accessors now funnel through `current_tid_checked`, so a
+        // production fallback is always counted, never silent.
+        let before = crate::scheduler::diag::kprcb_fallback_count();
+        let mut sched = Scheduler::new();
+        sched.next_tid = 5;
+        sched.current_tid = 3;
+        let slot = sched.alloc_kthread_slot().unwrap();
+        let mut k = Kthread::new_ring3(3, 7, 0x400000, 0x800000);
+        k.state = ThreadState::Running;
+        sched.kthreads[slot] = Some(Box::new(k));
+
+        test_eq!(sched.current_tid_for_this_cpu(), 3);
+        test_eq!(sched.current_pid(), 7);
+        test_true!(sched.current_kthread_mut().is_some());
+        // No Eprocess for pid 7 → resolving the current Eprocess yields None,
+        // not a wrong process from the global current_tid.
+        test_true!(sched.current_eprocess_mut().is_none());
+        test_true!(sched.current_eprocess().is_none());
+
+        if !crate::scheduler::ap_sched_active() {
+            test_eq!(crate::scheduler::diag::kprcb_fallback_count(), before);
+        }
+    });
+    test_case!("neodos02_no_kprcb_fallback_in_production", {
+        // AC3 (#632): on SMP>1 the production scheduler reads the current
+        // TID/PID exclusively from the per-CPU KPRCB — zero fallback events.
+        // The fallback counter only advances in the production condition, so it
+        // must not move across normal current-identity reads.
+        if crate::arch::x64::cpu_local::cpu_count() < 2 {
+            return Ok(());
+        }
+        let before = crate::scheduler::diag::kprcb_fallback_count();
+        let _ = crate::scheduler::current_tid();
+        let _ = crate::scheduler::current_pid();
+        let _ = crate::scheduler::current_scheduler().lock().current_tid_for_this_cpu();
+        let _ = crate::scheduler::current_scheduler().lock().current_pid();
+        test_eq!(crate::scheduler::diag::kprcb_fallback_count(), before);
+    });
+    test_case!("neodos02_ready_window_never_current_thread_of_other_cpu", {
+        // AC4 (#632): switch-out window. A KTHREAD published `Ready` while
+        // another CPU still owns it as `KPRCB.current_thread` must be deferred
+        // by the selection guard and never committed here; the escaped
+        // ownership counters must stay at zero (the check→commit race did not
+        // happen).
+        if crate::arch::x64::cpu_local::cpu_count() < 2 {
+            return Ok(());
+        }
+        let this_cpu = unsafe { crate::arch::x64::cpu_local::this_cpu_id() };
+        unsafe {
+            if crate::arch::x64::cpu_local::kprcb_page(this_cpu as usize).is_some() {
+                crate::arch::x64::cpu_local::cpu_run_queue_mut(this_cpu as usize).clear();
+            }
+        }
+        let mut sched = Scheduler::new();
+        sched.next_tid = 100;
+        for k in sched.kthreads.iter_mut().flatten() {
+            if k.is_idle { k.cpu = this_cpu; }
+        }
+        // Ready kernel thread enqueued on this CPU.
+        let sk = crate::scheduler::AlignedKStack::new_boxed();
+        let tk = sk.0.as_ptr() as u64 + crate::scheduler::KERNEL_STACK_SIZE as u64;
+        let rk = crate::scheduler::stack::init_ring0_frame(tk, 0x500000);
+        let mut kk = Kthread::new_ring3_with_stack(11, 11, 0x500000, rk, tk, sk);
+        kk.is_kernel = true;
+        kk.state = ThreadState::Ready;
+        kk.priority = PRIORITY_NORMAL;
+        kk.base_priority = PRIORITY_NORMAL;
+        kk.cpu = this_cpu;
+        let ik = sched.alloc_kthread_slot().unwrap();
+        sched.kthreads[ik] = Some(Box::new(kk));
+        Scheduler::enqueue_to_cpu_run_queue(sched.find_kthread(11).unwrap());
+
+        let kptr = sched.find_kthread(11).unwrap() as *const Kthread;
+        let other = if this_cpu == 0 { 1 } else { 0 };
+        let other_base = crate::arch::x64::cpu_local::kprcb_page(other as usize).unwrap();
+        let slot = (other_base + crate::arch::x64::cpu_local::OFFSET_CURRENT_THREAD as u64) as *mut u64;
+        let saved = unsafe { *slot };
+        // Simulate the window: the OTHER CPU still owns this KTHREAD.
+        unsafe { *slot = kptr as u64; };
+
+        let (rej0, rwr0, srd0, soc0) = crate::scheduler::schedule::sched_ready_guard_stats();
+        let next = sched.schedule_with_handoff(true, true);
+        test_ne!(unsafe { (*next).tid }, 11);
+        test_eq!(sched.find_kthread(11).unwrap().state, ThreadState::Ready);
+        let (rej1, rwr1, srd1, soc1) = crate::scheduler::schedule::sched_ready_guard_stats();
+        // Deferred (rejected >=1) but no escaped conflict (the three conflict
+        // counters must not advance).
+        test_true!(rej1 > rej0);
+        test_eq!(rwr1, rwr0);
+        test_eq!(srd1, srd0);
+        test_eq!(soc1, soc0);
+
+        unsafe { *slot = saved; }
+        unsafe {
+            if crate::arch::x64::cpu_local::kprcb_page(this_cpu as usize).is_some() {
+                crate::arch::x64::cpu_local::cpu_run_queue_mut(this_cpu as usize).clear();
+            }
+        }
+    });
+
+    // ── NEODOS-03 (#633): kernel-stack quarantine ───────────────────────────
+    test_case!("neodos03_kstack_quarantine_drains_no_leak", {
+        use crate::scheduler::lifecycle::{
+            quarantine_push_for_test, drain_kstack_quarantine, kstack_quarantine_stats,
+        };
+        let (_c0, push0, drain0, _m0, _o0) = kstack_quarantine_stats();
+        // A freshly-allocated stack has no CPU mid-switch on it, so it must be
+        // freed on the next drain (no leak).
+        test_eq!(quarantine_push_for_test(), 1);
+        drain_kstack_quarantine();
+        let (cur, push, drained, _max, ovf) = kstack_quarantine_stats();
+        test_eq!(cur, 0);
+        test_eq!(push - push0, 1);
+        test_true!(drained > drain0);
+        test_eq!(ovf, 0);
+    });
+    test_case!("neodos03_recycle_N_cycles_no_stack_leak", {
+        use crate::scheduler::lifecycle::{drain_kstack_quarantine, kstack_quarantine_stats};
+        let (_c0, push0, _d0, _m0, ovf0) = kstack_quarantine_stats();
+        let mut sched = Scheduler::new();
+        sched.next_tid = 1_000;
+        // 64 kill/exit cycles: normal (non-conflicting) recycle must not
+        // quarantine or leak the kernel stack.
+        for i in 0..64u32 {
+            let tid = 10 + i;
+            let slot = sched.alloc_kthread_slot().unwrap();
+            sched.kthreads[slot] = Some(Box::new(Kthread::new_ring3(tid, tid, 0x400000, 0x800000)));
+            // The freshly-created stack's canary must be intact (never corrupted
+            // by a previous cycle's recycle/free). #633.
+            if let Some(k) = sched.find_kthread(tid) {
+                if let Some(bottom) = crate::scheduler::stack::kernel_stack_canary_addr(
+                    k.kernel_stack_top, k.kernel_stack_size,
+                ) {
+                    let canary = unsafe { *(bottom as *const u64) };
+                    test_eq!(canary, crate::scheduler::types::STACK_CANARY);
+                }
+            }
+            test_true!(sched.recycle_thread(tid));
+        }
+        drain_kstack_quarantine();
+        let (cur, push1, _d1, _m1, ovf1) = kstack_quarantine_stats();
+        test_eq!(push1, push0);
+        test_eq!(ovf1, ovf0);
+        test_eq!(cur, 0);
+    });
+    test_case!("neodos03_guard_reclaim_quarantines_execution_owned_stack", {
+        // #633/SMP: a kernel stack a CPU is still abandoning (KPRCB repointed,
+        // `mov rsp` not yet executed) must NOT be freed by a reclamation
+        // attempt on another CPU. `guard_kstack_reclaim` must move it to the
+        // bounded quarantine and only free it after the window closes.
+        use crate::scheduler::diag::kstack;
+        use crate::scheduler::lifecycle::{drain_kstack_quarantine, kstack_quarantine_stats};
+        use crate::scheduler::types::KERNEL_STACK_SIZE;
+        use core::sync::atomic::Ordering;
+
+        kstack::switch_out_clear(); // start from a clean window on this CPU
+        drain_kstack_quarantine();
+        let (cur0, _push0, _drain0, _max0, _ovf0) = kstack_quarantine_stats();
+        let conflicts0 = kstack::CONFLICTS.load(Ordering::Relaxed);
+
+        // A live scheduler thread whose kernel stack we will try to recycle
+        // while `top` is still execution-owned by this CPU.
+        let tid = 0x5A5Au32;
+        let mut sched = Scheduler::new();
+        sched.next_tid = tid + 1;
+        let slot = sched.alloc_kthread_slot().unwrap();
+        let stack = crate::scheduler::stack::AlignedKStack::new_boxed();
+        let top = stack.0.as_ptr() as u64 + KERNEL_STACK_SIZE as u64;
+        let rsp = crate::scheduler::stack::init_ring0_frame(top, 0x600000);
+        let k = Kthread::new_ring3_with_stack(tid, tid, 0x600000, rsp, top, stack);
+        sched.kthreads[slot] = Some(Box::new(k));
+        let kptr = sched.find_kthread(tid).unwrap() as *const Kthread;
+
+        // Simulate the switch-out window: KPRCB already repointed (the PID is no
+        // longer "current") while this CPU still runs on `top`.
+        kstack::note(kptr, core::ptr::null(), 0xBAD0_0000);
+        test_true!(kstack::reclaim_conflict(top).is_some());
+
+        // Reclamation must quarantine, not free, the execution-owned stack.
+        test_true!(sched.recycle_thread(tid));
+        let (cur1, _p1, _d1, _m1, ovf1) = kstack_quarantine_stats();
+        test_eq!(cur1, cur0 + 1);
+        test_true!(kstack::CONFLICTS.load(Ordering::Relaxed) > conflicts0);
+        test_eq!(ovf1, 0);
+        test_true!(sched.find_kthread(tid).is_none());
+
+        // The ASM clear (after `mov rsp`) closes the window; the drain frees it.
+        kstack::switch_out_clear();
+        drain_kstack_quarantine();
+        let (cur2, _p2, _d2, _m2, _ovf2) = kstack_quarantine_stats();
+        test_eq!(cur2, cur0);
+    });
+
+    // ── NEODOS-08 (#638): boot-phase readiness ──────────────────────────────
+    test_case!("neodos08_boot_phase_monotonic_and_require", {
+        use core::sync::atomic::Ordering;
+        use crate::scheduler::{BootPhase, phase, set_phase, require_phase,
+            BOOT_PHASE_REGRESSION, READINESS_VIOLATIONS};
+        let before = phase();
+        let reg0 = BOOT_PHASE_REGRESSION.load(Ordering::Relaxed);
+        // Going backwards must be rejected (never silently accepted).
+        set_phase(BootPhase::Early);
+        if before != BootPhase::Early {
+            test_true!(BOOT_PHASE_REGRESSION.load(Ordering::Relaxed) > reg0);
+            test_eq!(phase() as u8, before as u8);
+        }
+        // The boot test suite runs at SmpReady: a Ready requirement must
+        // fail-control and record a violation (no silent no-op).
+        if phase() < BootPhase::Ready {
+            let v0 = READINESS_VIOLATIONS.load(Ordering::Relaxed);
+            test_true!(!require_phase(BootPhase::Ready, "neodos08_test"));
+            test_true!(READINESS_VIOLATIONS.load(Ordering::Relaxed) > v0);
+        }
+    });
+    test_case!("neodos08_resolve_slots_returns_ok_not_panic", {
+        // resolve_* used to `expect()`; now they return Err. A fresh scheduler
+        // with ensure_slots called must resolve.
+        let mut sched = Scheduler::new();
+        test_true!(sched.ensure_slots().is_ok());
+        test_true!(sched.resolve_eprocess_slot().is_ok());
+        test_true!(sched.resolve_kthread_slot().is_ok());
+    });
+
+    // ── NEODOS-05 (#635): scheduler id indexes ──────────────────────────────
+    test_case!("neodos05_scheduler_id_index", {
+        use crate::scheduler::types::Eprocess;
+        let mut sched = Scheduler::new();
+        // put via helper -> find via the O(log n) index resolves.
+        let tid = 200u32;
+        let slot = sched.alloc_kthread_slot().unwrap();
+        let mut k = Kthread::new_ring3(tid, 5, 0x400000, 0x800000);
+        k.state = ThreadState::Ready;
+        sched.put_kthread(slot, Box::new(k));
+        test_true!(sched.find_kthread(tid).is_some());
+        test_eq!(sched.find_kthread(tid).unwrap().pid, 5);
+        test_eq!(sched.find_kthread_mut(tid).unwrap().tid, tid);
+        sched.clear_kthread_slot(slot);
+        test_true!(sched.find_kthread(tid).is_none());
+
+        let slot2 = sched.alloc_eprocess_slot().unwrap();
+        sched.put_eprocess(slot2, Eprocess::new_kernel(77));
+        test_true!(sched.find_eprocess(77).is_some());
+        test_eq!(sched.find_eprocess(77).unwrap().pid, 77);
+        sched.clear_eprocess_slot(slot2);
+        test_true!(sched.find_eprocess(77).is_none());
+    });
+
+    // ── #665 / F-02-D: PIDs are monotonic and never reused ──────────────────
+    test_case!("neodos_pids_monotonic_never_reused", {
+        // INV-6 / Rule 6.3.2: there is no pid_gen because PIDs are monotonic and
+        // never reused, so a stale PID cannot alias a newer process. Pin that
+        // guarantee; if reuse is ever introduced the invariant must gain a
+        // generation counter.
+        let mut sched = Scheduler::new();
+        let before = sched.next_pid;
+        let t1 = sched.spawn_kthread_named(0x500000, PRIORITY_NORMAL, "pidtest1").unwrap();
+        let t2 = sched.spawn_kthread_named(0x500000, PRIORITY_NORMAL, "pidtest2").unwrap();
+        test_ne!(t1, t2);
+        test_true!(sched.next_pid > before);
+        // No two live processes share a pid.
+        let mut pids: Vec<u32> = sched.eprocesses.iter().flatten().map(|e| e.pid).collect();
+        let n = pids.len();
+        pids.sort_unstable();
+        pids.dedup();
+        test_eq!(pids.len(), n);
     });
 }

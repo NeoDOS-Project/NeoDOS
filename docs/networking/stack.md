@@ -47,12 +47,84 @@ Connection lifecycle: `build_tcp_segment()`, `send_tcp_segment()`, `tcp_send_syn
 Data path (#486): `tcp_send()` buffers; `tcp_tick()` (from `net_tick`) flushes
 up to MSS per connection, tracks `send_base`/`send_next`, advances the window
 on ACKs, retransmits on a 200 ms TSC-based RTO (8 retries max), and drives
-FIN (`fin_pending` when closing with unsent data). Incoming data is stored in
-the connection buffer, ACKed, and wakes `SocketRead` waiters; incoming FINs
-park in CloseWait. `tcp_dispatch()` never holds `SOCKET_MANAGER` across
-protocol actions (nested locks deadlocked SYN handling). Covered by the
-`net_tcp_loopback_e2e` test (handshake + both directions + orderly close over
-loopback, no NIC). Off-subnet TCP still limited by next-hop/MAC scope (#315).
+FIN (`fin_pending` when closing with unsent data). `SynReceived` connections
+also retransmit their SYN-ACK and time out with the same bound. Incoming data
+is stored in the connection buffer, ACKed, and wakes `SocketRead` waiters;
+incoming FINs park in CloseWait. `tcp_dispatch()` never holds `SOCKET_MANAGER`
+across protocol actions (nested locks deadlocked SYN handling).
+
+### Bulk receive (#721)
+
+Three rules keep a download from stalling above one receive window:
+
+* **Window updates.** `tcp_recv()` records when the application has freed at
+  least an MSS while the last advertised window was smaller than one. The ACK
+  is queued (`ack_pending`) and `tcp_tick()` transmits it; the peer no longer
+  depends on its zero-window probe timer.
+* **No silently dropped ACKs.** If the ACK cannot be sent yet (no next-hop MAC
+  or no NIC) it stays pending and `tcp_tick()` retries every 100 ms. The peer's
+  own retransmit timer is not the recovery mechanism.
+* **Stable next hop.** Every accepted unicast IPv4 frame refreshes the ARP
+  entry for its source address, so replies to an established flow do not need
+  a fresh ARP round trip. ARP entries also expire on wall-clock time (TSC),
+  not on `arp_tick` calls: the RX pump ticks far faster than the nominal
+  100 Hz and entries used to vanish in about a second.
+
+Ordering: a FIN is consumed only when its sequence number is exactly the next
+expected byte (a FIN following the segment's payload is passed as
+`seq + payload.len()`); an out-of-order FIN is ACKed without closing the read
+side, so the retransmitted tail is still accepted. A peer RST closes the
+connection immediately and wakes every waiter.
+
+### RX dispatch and locking
+
+`network_poll_all()` drains a bounded batch of frames **while holding
+`NIC_REGISTRY`**, then dispatches them **after releasing it**. The dispatcher
+must not hold the registry: the TCP send path re-locks it (`nic_next_hop`,
+`nic_default_id`, `nic_send_packet`), and `spin::Mutex` is non-reentrant, so
+holding it deadlocked netpump on the first TCP segment received over a real
+NIC. `net_handle_incoming_packet(nic_id, frame)` takes the interface id (not a
+borrowed interface) and emits replies through `net_send_frame()`, which routes
+loopback frames through the loopback queue.
+
+### RX validation
+
+Received IPv4 datagrams are bounded by the header's total length (so Ethernet
+padding never enters a transport checksum), the IPv4 header checksum is
+verified, and TCP/UDP checksums are verified (`tcp_checksum_valid`,
+`udp_checksum_valid`; a zero UDP checksum means "not computed" and is
+accepted). Invalid frames are counted as RX errors and dropped.
+
+### Connection teardown
+
+`socket_free` calls `tcp_release_connection`: a connection that still has
+buffered/unacknowledged data is not freed immediately — it is marked
+`reap_pending` and `tcp_tick` transmits the remaining payload and FIN before
+reaping it once Closed. Freed immediately only when already drained. This
+prevents losing the last write when an application closes right after `send`.
+There is no TIME_WAIT / delayed-ACK handling yet.
+
+### Socket wait (Ring 3)
+
+`ObSetInfoClass::SocketListen`/`SocketClose` carry no payload and are accepted
+with an empty buffer by the generic `ob_set_info` validation. `ob_wait` on a
+socket blocks on `WaitReason::SocketConnect` / `SocketAccept` / `SocketRead`
+(`socket_wait_reason`), and the handshake, inbound data, FIN and connection
+failure all wake the corresponding waiters. Before this, `ob_wait` returned
+`NoSys` for sockets, so Ring 3 callers had to busy-poll `socket_recv`.
+
+### Tests and validation
+
+Covered by the kernel tests `net_tcp_loopback_e2e` (handshake + both
+directions + orderly close over loopback), `net_tcp_nic_path_syn_synack_no_deadlock`
+(real dispatch path through a scripted NIC), `net_tcp_synack_retransmit_bounded`,
+`net_tcp_nic_bad_checksum_dropped`, `net_tcp_close_flushes_buffered_data`, and
+the checksum-validation tests. Off-subnet TCP uses `nic_next_hop` (gateway-
+aware); #315 is resolved. The Ring 3 utilities `netsrv`/`netcli` (real client
+and echo server: connect/accept, finite timeouts, clean close) and the
+`tcptest` self-test validate the public socket ABI. In VirtualBox NAT (e1000,
+guest 10.0.2.15) `netcli 10.0.2.2 5555` reached a host echo server and a host
+client reached `netsrv 6666` through a NAT port-forward.
 
 ## ObType Integration
 
@@ -67,6 +139,7 @@ loopback, no NIC). Off-subnet TCP still limited by next-hop/MAC scope (#315).
 | 19 | `TcpStatus` | TCP connection state |
 | 20 | `NicInfo` | NIC metadata: MAC, IP, link status, vendor/device PCI IDs, driver name, description |
 | 23 | `SocketRecv` | Received data (non-blocking read) |
+| 43 | `SocketAccept` | Accept a pending connection from a listener (4-byte fd out) |
 
 ### ObSetInfoClass (mutate)
 
@@ -93,6 +166,43 @@ Socket objects support KWait (kernel wait) for blocking I/O operations:
 | `SocketAccept` | New connection arrives on listening socket |
 
 Blocking syscalls suspend the calling thread via KWait and wake when the corresponding event fires.
+
+### Ring 3 listener / accept semantics
+
+A listening socket stays in `Listen`; each incoming pure SYN (SYN without
+ACK) creates a **distinct** socket + TCP connection, sends the SYN-ACK and
+queues the connection on the listener (`MAX_ACCEPT_BACKLOG = 8`; excess SYNs
+are dropped, the listener stays usable). `ob_query_info(SocketAccept)` pops an
+*established* connection, wraps it in a new `Socket` Ob object/handle and
+returns the new fd (EAGAIN when none is ready). This allows sequential — and,
+up to the backlog and `MAX_SOCKETS`, concurrent — connections without
+cross-talk. A SYN-ACK is never routed to a listener; it reaches the client
+connection.
+
+### Blocking and timeouts
+
+`ob_wait` on a socket blocks on `SocketAccept` (listener), `SocketConnect`
+(handshake in progress), `SocketRead` (data/EOF) or, with `wait_type = 2`,
+`SocketWrite` (TCP send-buffer space). Writers are woken when an ACK drains
+acknowledged bytes, and both readers and writers when the peer sends FIN or the
+connection fails. A non-zero `ob_wait` timeout arms a TSC deadline serviced by
+the RX pump (`net_tick` → `kwait::deadline_tick`), which wakes the waiter when
+it expires. **The timeout wake carries no distinct status** (`ob_wait` returns
+0); the caller must re-check readiness. Indefinite waits (`timeout = 0`) are
+unchanged.
+
+### Send / receive return values
+
+`SocketSend` returns the number of bytes buffered. A **full** TCP send buffer
+returns `EAGAIN` (16 KiB per connection): wait for space with
+`ob_wait(wait_type = 2)` and retry. Any other send failure is `EIO`.
+`SocketRecv` returns the bytes copied; **`0` means EOF** (the peer's FIN was
+consumed or the socket was closed) and `EAGAIN` means no data is buffered yet.
+The connection state (`TcpStatus`) remains the authoritative diagnostic.
+Zero-length sends/recvs are rejected as `EINVAL`.
+
+`sys_poll`'s `POLLOUT` now means "TCP send buffer has space" (it previously
+meant merely "connected").
 
 ## Packet Flow
 
@@ -269,6 +379,14 @@ Moving DHCP to userspace resolves all these issues:
 `dhcpd` only **publishes** here; the resident `netapplier` service reads this key
 and applies IP/mask/gateway to the runtime NIC (single applier; see #365).
 
+**Change notification (#364).** The applier no longer spin-polls the key. A
+config writer that applies a NIC address (`ObSetInfoClass::SetNicIp`/`SetNicGateway`,
+i.e. `libnet::config::apply`) makes the kernel signal `EVENT_NET_CONFIG_CHANGED`
+(18) via `kwait`; the applier blocks on an Event object
+(`ob_create(Event, attrs = 18)` + `ob_wait`) and re-reads the Registry on wake.
+`ob_wait` carries a finite timeout (2 s) so polling remains a fallback if the
+notification object is unavailable (degradation).
+
 ## DNS Resolver (Userland)
 
 DNS resolution is **not** a kernel subsystem: like DHCP, it runs in user mode on
@@ -281,10 +399,10 @@ top of the kernel's UDP sockets. The protocol is implemented once in the
 | Userland transport + config | `libnet/src/dns.rs` | UDP via `net.nxl`, Registry servers (`DnsServer`, `DnsServer2/3`), bounded cache, `resolve()` / `resolve_with_server()` |
 | Tools | `userbin/nslookup`, `userbin/ping` | Consume the shared resolver API |
 
-The kernel `src/net/dns.rs` module remains as an internal kernel-side parser and
-cache used by tests/`dns_tick`; it is not exposed to userland and does not
-duplicate the userland resolver path. Unifying it with `libdns` is tracked in
-issue #68.
+The kernel-side DNS parser/cache (`src/net/dns.rs`) has been **retired (#312)**:
+it was only reachable from `dns_tick()`/tests and duplicated `libdns`. DNS now
+has a single implementation — `libdns` (wire format) + `libnet::dns` (transport)
+— and the kernel only polls the NIC and runs ARP/TCP ticks.
 
 See `docs/networking/userland.md` §3.4–3.5 for the API, configuration and error
 taxonomy.
@@ -306,6 +424,13 @@ send path (both were latent because DHCP only uses broadcast):
   `ObSetInfoClass::SetNicGateway` (28) from DHCP Option 3 / static config, and
   persisted in `Network\Interfaces\0\Gateway`. `socket_send_udp_raw` and
   `icmp_ping` both use `nic_next_hop`. There is no implicit `10.0.1.1` fallback.
+  **Bound-interface selection (#317):** UDP (`socket_send_udp_raw_on`) and TCP
+  (`tcp_nic_for` → `resolve_src_ip` / `tcp_mac_for` / `send_tcp_segment`) now
+  select the source address/MAC, the next hop
+  (`nic_next_hop_for(nic_id, dst)`) and the ARP resolution
+  (`arp_resolve_on(nic_id, target)`) from the socket's bound `nic_id`
+  (`ObSetInfoClass::SocketBindNic` = 29), falling back to the default NIC when
+  unbound. `icmp_ping` has no socket and keeps using the default NIC.
 - **Datagram dispatch.** `udp_dispatch` matched connected sockets only by
   `remote.port`; it now matches the socket's **local port** (`dst_port`) and,
   when set, the remote port, so a previous socket cannot capture replies

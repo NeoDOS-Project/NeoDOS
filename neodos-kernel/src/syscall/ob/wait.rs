@@ -3,29 +3,33 @@ use alloc::string::{String, ToString};
 use crate::scheduler::{self, ThreadState};
 use crate::object::types::{ObInfoClass, ObSetInfoClass};
 use crate::log::LogSubsys;
-use crate::syscall::util::{is_user_ptr_valid, copy_user_string};
+use crate::syscall::util::copy_from_user;
 use crate::syscall::{current_handle_entry, copy_handle_entry_for_child, resolve_chdir_target, err_to_u64, ob_err_to_syscall, SyscallError};
 
 pub fn handler_ob_wait(regs: crate::syscall::Registers) -> u64 {
     let handle_count = regs.rbx as usize;
     let handles_ptr = regs.rcx;
     let wait_type = regs.rdx as u32;
-    let _timeout_ms = regs.r8;
+    let timeout_ms = regs.r8;
 
     if handle_count == 0 || handles_ptr == 0 {
         return err_to_u64(SyscallError::Inval);
     }
-    if !is_user_ptr_valid(handles_ptr, (handle_count as u64) * 8) {
-        return err_to_u64(SyscallError::Fault);
-    }
     if handle_count > 1 {
         return err_to_u64(SyscallError::NoSys);
     }
-    if wait_type > 1 {
+    // wait_type: 0 = default (read/connect/accept), 1 = reserved, 2 = writable.
+    // Only sockets interpret it today; for every other object it is ignored.
+    if wait_type > 2 {
         return err_to_u64(SyscallError::Inval);
     }
 
-    let fd = unsafe { (handles_ptr as *const u64).read() } as u8;
+    // Fault-safe read of the single handle (NEODOS-04 / #634).
+    let mut hbuf = [0u8; 8];
+    if copy_from_user(&mut hbuf, handles_ptr).is_err() {
+        return err_to_u64(SyscallError::Fault);
+    }
+    let fd = u64::from_ne_bytes(hbuf) as u8;
     let entry = current_handle_entry(fd);
 
     if entry.object_id == 0 {
@@ -67,6 +71,22 @@ pub fn handler_ob_wait(regs: crate::syscall::Registers) -> u64 {
         crate::object::ObType::Thread => {
             let tid = obj.native_id as u32;
             crate::kwait::WaitReason::ThreadJoin { tid }
+        }
+        crate::object::ObType::Socket => {
+            // Generic blocking waits for sockets: SocketConnect (in-progress
+            // handshake), SocketAccept (listener), SocketRead (data) and, with
+            // wait_type 2, SocketWrite (TCP send-buffer space).
+            let socket_id = obj.native_id as u32;
+            let decision = if wait_type == 2 {
+                crate::net::socket::socket_write_wait_reason(socket_id)
+            } else {
+                crate::net::socket::socket_wait_reason(socket_id)
+            };
+            match decision {
+                Ok(None) => return 0,
+                Ok(Some(reason)) => reason,
+                Err(()) => return err_to_u64(SyscallError::BadF),
+            }
         }
         _ => return err_to_u64(SyscallError::NoSys),
     };
@@ -115,6 +135,15 @@ pub fn handler_ob_wait(regs: crate::syscall::Registers) -> u64 {
             });
             return 0;
         }
+    }
+    // Arm a finite timeout for ANY object wait (socket, event, pipe, ...), not
+    // just sockets: an event wait without a deadline blocks forever, which
+    // stalled the network applier's notification fallback (#364).
+    if timeout_ms > 0 {
+        crate::kwait::register_deadline(
+            reason.encode_magic(),
+            crate::net::tcp::tcp_deadline_from_ms(timeout_ms),
+        );
     }
     crate::kwait::kwait_block(reason);
     0

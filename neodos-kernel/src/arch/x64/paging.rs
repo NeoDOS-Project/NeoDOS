@@ -440,39 +440,45 @@ pub unsafe fn init_custom_page_tables() {
     //      to a Write-Back framebuffer stay in the cache while the scanout
     //      reads directly from physical DRAM, causing a "slow sweep" as
     //      dirty lines are gradually evicted.
-    if let Some(ref renderer) = *crate::graphics::RENDERER.lock() {
-        let fb_start = renderer.fb.base_address;
-        let fb_size = renderer.fb.size;
-        if fb_size > 0 && fb_start < 0x1_0000_0000 {
-            let start_idx = (fb_start / HUGE_PAGE_SIZE) as usize;
-            let end_idx = ((fb_start + fb_size as u64 - 1) / HUGE_PAGE_SIZE) as usize;
-            for page_idx in start_idx..=end_idx.min(2047) {
-                let pd_idx = page_idx / 512;
-                let entry_idx = page_idx % 512;
-                if pd_idx < 4 {
-                    let phys = PD[pd_idx].0[entry_idx].addr();
-                    let flags = PD[pd_idx].0[entry_idx].flags() | PageTableFlags::NO_CACHE;
-                    PD[pd_idx].0[entry_idx].set_addr(phys, flags);
+    // This runs after `hal::enable_interrupts()`, so the renderer lock must be
+    // taken IRQ-safe (INV-3, Rule 3.5.1).
+    crate::hal::without_interrupts(|| {
+        if let Some(ref renderer) = *crate::graphics::RENDERER.lock() {
+            let fb_start = renderer.fb.base_address;
+            let fb_size = renderer.fb.size;
+            if fb_size > 0 && fb_start < 0x1_0000_0000 {
+                let start_idx = (fb_start / HUGE_PAGE_SIZE) as usize;
+                let end_idx = ((fb_start + fb_size as u64 - 1) / HUGE_PAGE_SIZE) as usize;
+                for page_idx in start_idx..=end_idx.min(2047) {
+                    let pd_idx = page_idx / 512;
+                    let entry_idx = page_idx % 512;
+                    if pd_idx < 4 {
+                        let phys = PD[pd_idx].0[entry_idx].addr();
+                        let flags = PD[pd_idx].0[entry_idx].flags() | PageTableFlags::NO_CACHE;
+                        PD[pd_idx].0[entry_idx].set_addr(phys, flags);
+                    }
                 }
+                ktrace!(crate::log::LogSubsys::Memory,
+                    "FB 0x{:x}..0x{:x}: {} page(s) -> UC-",
+                    fb_start, fb_start + fb_size as u64,
+                    end_idx - start_idx + 1
+                );
             }
-            ktrace!(crate::log::LogSubsys::Memory,
-                "FB 0x{:x}..0x{:x}: {} page(s) -> UC-",
-                fb_start, fb_start + fb_size as u64,
-                end_idx - start_idx + 1
-            );
         }
-    }
+    });
 
     // 4. Map framebuffer if it's above 4 GiB.
     //    This is common on real hardware with discrete GPUs.
-    if let Some(ref renderer) = *crate::graphics::RENDERER.lock() {
-        let fb_start = renderer.fb.base_address;
-        let fb_size = renderer.fb.size as u64;
-        if fb_size > 0 && fb_start + fb_size > 0x1_0000_0000 {
-            ktrace!(crate::log::LogSubsys::Memory, "Mapping framebuffer at 0x{:x} ({} MB, extends >4 GiB)", fb_start, fb_size / 0x100000);
-            map_phys_range_above_4g(fb_start, fb_start + fb_size, kernel_flags | PageTableFlags::HUGE_PAGE);
+    crate::hal::without_interrupts(|| {
+        if let Some(ref renderer) = *crate::graphics::RENDERER.lock() {
+            let fb_start = renderer.fb.base_address;
+            let fb_size = renderer.fb.size as u64;
+            if fb_size > 0 && fb_start + fb_size > 0x1_0000_0000 {
+                ktrace!(crate::log::LogSubsys::Memory, "Mapping framebuffer at 0x{:x} ({} MB, extends >4 GiB)", fb_start, fb_size / 0x100000);
+                map_phys_range_above_4g(fb_start, fb_start + fb_size, kernel_flags | PageTableFlags::HUGE_PAGE);
+            }
         }
-    }
+    });
 
     // 5. Load our PML4 into CR3.
     let pml4_addr = &PML4 as *const _ as u64;
@@ -577,7 +583,10 @@ pub fn mmap_alloc_page(virt: u64) -> Option<u64> {
     }
     let phys = crate::hal::alloc_page();
     if phys.is_null() { return None; }
-    let rc = crate::hal::map_page(phys as u64, virt, 0x6); // PRESENT | WRITABLE | USER_ACCESSIBLE
+    // PRESENT | WRITABLE | USER_ACCESSIBLE, plus NX when the CPU supports it:
+    // mmap data is never executable (W^X, NEODOS-09 / #639).
+    let nx = if crate::arch::x64::features::nx_enabled() { 1u64 << 63 } else { 0 };
+    let rc = crate::hal::map_page(phys as u64, virt, 0x6 | nx);
     if rc != 0 { return None; }
     Some(phys as u64)
 }
@@ -850,7 +859,10 @@ pub fn heap_alloc_page(virt: u64) -> Option<u64> {
     }
     let phys = crate::hal::alloc_page();
     if phys.is_null() { return None; }
-    let rc = crate::hal::map_page(phys as u64, virt, 0x6); // PRESENT | WRITABLE | USER_ACCESSIBLE
+    // PRESENT | WRITABLE | USER_ACCESSIBLE, plus NX when the CPU supports it:
+    // heap data is never executable (W^X, NEODOS-09 / #639).
+    let nx = if crate::arch::x64::features::nx_enabled() { 1u64 << 63 } else { 0 };
+    let rc = crate::hal::map_page(phys as u64, virt, 0x6 | nx);
     if rc != 0 { return None; }
     // MEM-PROC (#274): count this resident page against its heap slot.
     if let Some(slot) = heap_slot_of(virt) {

@@ -70,6 +70,21 @@ pub enum ObInfoClass {
     /// #358: whether a graceful shutdown has been requested for the caller's
     /// service (1 byte: 0 = normal, 1 = shutdown requested).
     ProcessShutdownState = 42,
+    /// Accept a pending connection from a listening TCP socket. The 4-byte
+    /// output buffer receives the new connection's fd (u32). Returns EAGAIN
+    /// (`-8`) when none is pending.
+    SocketAccept = 43,
+    /// Raw keyboard events for the caller's VT (#466).
+    KeyboardRead = 44,
+    KeyboardPoll = 45,
+    /// Monotonic uptime: `{ uptime_ms: u64, tick_hz: u32, _pad: u32 }` (#467).
+    Uptime = 46,
+    /// High-resolution monotonic time: `{ tsc: u64, tsc_khz: u32, _pad: u32 }` (#467).
+    HighResTime = 47,
+    /// Fill the buffer from `\Device\Random` (#712/M8).
+    Random = 48,
+    /// Random source capabilities (`SysRandomCaps`, 4 bytes) (#712/M8).
+    RandomCaps = 49,
 }
 
 pub mod ob_type {
@@ -81,6 +96,16 @@ pub mod ob_type {
     pub const THREAD: u32 = 16;
     pub const SOCKET: u32 = 18;
     pub const SERVICE: u32 = 20;
+}
+
+/// Well-known kernel event types (mirror of `eventbus`).
+pub const EVENT_NET_CONFIG_CHANGED: u32 = 18;
+
+/// ob_event_create: create an Event object bound to `event_type`. `ob_wait` /
+/// `sys_ob_wait_timeout` on the returned fd blocks until the kernel signals
+/// that event (#364).
+pub fn ob_event_create(path: &str, event_type: u32) -> Result<u8, i64> {
+    sys_ob_create(path, ob_type::EVENT, None, event_type as u64)
 }
 
 /// ObSetInfoClass — info classes for sys_ob_set_info (RAX=63).
@@ -136,6 +161,9 @@ pub enum ObSetInfoClass {
     /// Mark the target process object as the foreground process of the caller's
     /// VT (the Ctrl+C target). Used by the interactive shell.
     SetForegroundProcess = 51,
+    /// Toggle raw keyboard mode for the caller's VT (#466). 1 byte: 0 = cooked,
+    /// 1 = raw.
+    KeyboardSetRawMode = 55,
 }
 
 /// Backward-compatible constants for `ObSetInfoClass`.
@@ -347,6 +375,30 @@ pub fn sys_ob_wait(fd: u8) -> Result<(), i64> {
     let handles = [fd as u64];
     let fd_ptr = handles.as_ptr() as u64;
     let r = unsafe { ob_syscall_3!(45, 1u64, fd_ptr, 0u64) };
+    if r < 0 { Err(r) } else { Ok(()) }
+}
+
+/// sys_ob_wait with a finite timeout (milliseconds; 0 = indefinite).
+/// On timeout the call returns `Ok(())`; the caller must re-check readiness
+/// (the kernel does not return a distinct timeout status).
+pub fn sys_ob_wait_timeout(fd: u8, timeout_ms: u64) -> Result<(), i64> {
+    let handles = [fd as u64];
+    let fd_ptr = handles.as_ptr() as u64;
+    let r = unsafe { ob_syscall_4!(45, 1u64, fd_ptr, 0u64, timeout_ms) };
+    if r < 0 { Err(r) } else { Ok(()) }
+}
+
+/// sys_ob_wait with **write intent** (`wait_type = 2`, milliseconds; 0 =
+/// indefinite): blocks until the TCP socket has space in its send buffer, the
+/// connection changes state, or the timeout expires.
+///
+/// Use it instead of `sys_ob_wait_timeout` when a send returned `EAGAIN`
+/// because the 16 KiB send buffer is full. `SocketSend` reports that case as
+/// `EAGAIN`, not as an I/O error.
+pub fn sys_ob_wait_write_timeout(fd: u8, timeout_ms: u64) -> Result<(), i64> {
+    let handles = [fd as u64];
+    let fd_ptr = handles.as_ptr() as u64;
+    let r = unsafe { ob_syscall_4!(45, 1u64, fd_ptr, 2u64, timeout_ms) };
     if r < 0 { Err(r) } else { Ok(()) }
 }
 

@@ -42,6 +42,7 @@ const DHCP_ACK: u8 = 5;
 const DHCP_NAK: u8 = 6;
 const DHCP_OPTION_SUBNET_MASK: u8 = 1;
 const DHCP_OPTION_ROUTER: u8 = 3;
+const DHCP_OPTION_HOSTNAME: u8 = 12;
 #[allow(dead_code)]
 const DHCP_OPTION_DNS: u8 = 6;
 const DHCP_OPTION_DOMAIN: u8 = 15;
@@ -62,6 +63,8 @@ const LEASE_RENEW_DIVISOR: u64 = 2;
 const YIELD_BATCH: u32 = 100;
 /// Maximum DNS servers taken from DHCP option 6 (it is a list of IPv4 addrs).
 const MAX_DHCP_DNS: usize = 3;
+/// DHCP hostname buffer size (option 12 / derived from MAC, #487).
+const MAX_HOSTNAME: usize = config::HOSTNAME_MAX;
 
 #[repr(C, packed)]
 struct DhcpHeader {
@@ -156,6 +159,8 @@ struct DhcpClient {
     ntp: [u32; MAX_DHCP_NTP],
     ntp_count: usize,
     mtu: u32,
+    hostname: [u8; MAX_HOSTNAME],
+    hostname_len: usize,
     nak_count: u32,
     obtained: u32,
     renew_interval: u64,
@@ -198,23 +203,11 @@ fn write_dec_u32(mut v: u32) {
     write_str(&buf[i + 1..=9]);
 }
 
+// Shared IPv4 formatting (#592); only the console shim.
 fn write_ip(ip: u32) {
-    let octets = ip.to_be_bytes();
-    for (i, &o) in octets.iter().enumerate() {
-        if i > 0 { write_str(b"."); }
-        let mut buf = [0u8; 3];
-        let mut n = 0;
-        let mut v = o as u32;
-        loop {
-            buf[n] = b'0' + (v % 10) as u8;
-            n += 1;
-            v /= 10;
-            if v == 0 { break; }
-        }
-        for j in (0..n).rev() {
-            let _ = write_str(&buf[j..=j]);
-        }
-    }
+    let mut buf = [0u8; 16];
+    let n = libnet::config::format_ip(ip, &mut buf);
+    let _ = write_str(&buf[..n]);
 }
 
 fn yield_for(batches: u32) {
@@ -279,10 +272,11 @@ fn build_dhcp_packet(
 
     // Parameter request list
     buf[opt] = DHCP_OPTION_REQUEST_LIST; opt += 1;
-    buf[opt] = 10; opt += 1;
+    buf[opt] = 11; opt += 1;
     buf[opt] = 1; opt += 1;   // subnet mask
     buf[opt] = 3; opt += 1;   // router
     buf[opt] = 6; opt += 1;   // dns
+    buf[opt] = 12; opt += 1;  // host name (#487)
     buf[opt] = 15; opt += 1;  // domain name
     buf[opt] = 26; opt += 1;  // interface MTU
     buf[opt] = 28; opt += 1;  // broadcast
@@ -336,6 +330,8 @@ struct DhcpOptions {
     ntp: [u32; MAX_DHCP_NTP],
     ntp_count: usize,
     mtu: u32,
+    hostname: [u8; MAX_HOSTNAME],
+    hostname_len: usize,
 }
 
 fn parse_dhcp_options(data: &[u8]) -> Option<DhcpOptions> {
@@ -360,6 +356,8 @@ fn parse_dhcp_options(data: &[u8]) -> Option<DhcpOptions> {
     let mut ntp = [0u32; MAX_DHCP_NTP];
     let mut ntp_count = 0usize;
     let mut mtu = 0u32;
+    let mut hostname = [0u8; MAX_HOSTNAME];
+    let mut hostname_len = 0usize;
 
     let mut i = 0;
     while i < options.len() {
@@ -395,6 +393,17 @@ fn parse_dhcp_options(data: &[u8]) -> Option<DhcpOptions> {
                 if opt_len == 0 && options.get(i + 1).is_none() {
                     break;
                 }
+                i += opt_len + 2;
+            }
+            DHCP_OPTION_HOSTNAME => {
+                // Option 12 is a plain host name string (not label-encoded).
+                let opt_len = options.get(i + 1).copied().unwrap_or(0) as usize;
+                let end = (i + 2 + opt_len).min(options.len());
+                let start = (i + 2).min(end);
+                let src = &options[start..end];
+                let n = src.len().min(MAX_HOSTNAME - 1);
+                hostname[..n].copy_from_slice(&src[..n]);
+                hostname_len = n;
                 i += opt_len + 2;
             }
             DHCP_OPTION_DNS => {
@@ -499,6 +508,8 @@ fn parse_dhcp_options(data: &[u8]) -> Option<DhcpOptions> {
         ntp,
         ntp_count,
         mtu,
+        hostname,
+        hostname_len,
     })
 }
 
@@ -525,6 +536,8 @@ impl DhcpClient {
             ntp: [0; MAX_DHCP_NTP],
             ntp_count: 0,
             mtu: 0,
+            hostname: [0; MAX_HOSTNAME],
+            hostname_len: 0,
             nak_count: 0,
             obtained: 0,
             renew_interval: 43200,
@@ -697,7 +710,8 @@ impl DhcpClient {
         None
     }
 
-    /// Copy the #532 extra options (T1/T2/domain/broadcast/NTP/MTU).
+    /// Copy the #532 extra options (T1/T2/domain/broadcast/NTP/MTU) and the
+    /// #487 hostname (option 12).
     fn copy_extra_options(&mut self, opts: &DhcpOptions) {
         self.t1 = opts.t1;
         self.t2 = opts.t2;
@@ -706,6 +720,8 @@ impl DhcpClient {
         self.ntp = opts.ntp;
         self.ntp_count = opts.ntp_count;
         self.mtu = opts.mtu;
+        self.hostname = opts.hostname;
+        self.hostname_len = opts.hostname_len;
     }
 
 
@@ -768,6 +784,7 @@ fn discover_lease(
     reconnect(sock_fd, 0xFFFF_FFFF);
     let mut client = DhcpClient::new(xid, sock_fd, mac);
     let ip = client.run();
+    apply_hostname(&client.hostname[..client.hostname_len], &mac);
     *lease = NicLease::empty();
     lease.active = true;
     lease.nic_id = nic_id;
@@ -983,6 +1000,52 @@ fn publish_apipa_iface(ifidx: u32) {
     cfg.ntp = [0; 3];
     cfg.mtu = 0;
     let _ = config::publish_lease(ifidx, &cfg);
+}
+
+// ── Hostname discovery (#487) ──
+
+/// The current hostname is "unset" when empty or still the registry placeholder.
+fn hostname_unset() -> bool {
+    let mut buf = [0u8; MAX_HOSTNAME];
+    match syscall::sys_get_hostname(&mut buf) {
+        Ok(n) if n > 0 => {
+            let end = buf.iter().position(|&b| b == 0).unwrap_or(n);
+            let name = &buf[..end];
+            name.is_empty() || name.eq_ignore_ascii_case(libnet::DEFAULT_HOSTNAME.as_bytes())
+        }
+        _ => true,
+    }
+}
+
+/// Publish the DHCP-discovered hostname (option 12) or a MAC-derived fallback
+/// (#487), persisted via `SetHostname` and visible through `hostname` /
+/// `sys_get_hostname`. Never overrides a hostname already set by the user.
+/// The pure sanitize/derive logic lives in `libnet-config` (host-tested).
+fn apply_hostname(dhcp_name: &[u8], mac: &[u8; 6]) {
+    if !hostname_unset() {
+        return;
+    }
+    let mut buf = [0u8; MAX_HOSTNAME];
+    let len = match config::sanitize_hostname_into(dhcp_name, &mut buf) {
+        Some(n) => n,
+        None => config::derived_hostname_into(mac, &mut buf),
+    };
+    let name = match core::str::from_utf8(&buf[..len]) {
+        Ok(s) if !s.is_empty() => s,
+        _ => return,
+    };
+    match syscall::sys_set_hostname(name) {
+        Ok(()) => {
+            write_str(b"[dhcpd] hostname set to ");
+            write_str(name.as_bytes());
+            write_str(b"\r\n");
+        }
+        Err(e) => {
+            write_str(b"[dhcpd] hostname set failed err=");
+            write_hex(e as u32);
+            write_str(b"\r\n");
+        }
+    }
 }
 
 #[no_mangle]

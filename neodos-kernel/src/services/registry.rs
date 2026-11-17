@@ -21,7 +21,7 @@ fn register_default_services() {
         max_failures: 5,
     };
     let _ = sm.register("NeoInit", "NeoDOS Init Process",
-        "C:\\Programs\\neoinit.nxe", neoinit_cfg, &[]);
+        "C:\\NeoDOS\\System\\neoinit.nxe", neoinit_cfg, &[]);
 }
 
 /// Initialize the Service Manager. Called during Phase 3.882 (after Registry init).

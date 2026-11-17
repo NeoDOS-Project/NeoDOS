@@ -13,7 +13,10 @@ test = false
 [dependencies]
 libneodos = { path = "../libneodos" }
 libdns = { path = "../libdns" }
+libhttp = { path = "../libhttp" }
 libnet-config = { path = "../libnet-config" }
+libclock = { path = "../libclock", features = ["sys"] }
+libtls = { path = "../libtls" }
 libntp = { path = "../libntp" }
 
 [profile.release]

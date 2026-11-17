@@ -308,4 +308,13 @@ pub fn register_mount_tests() {
         crate::test_false!(r2);
     });
 
+    crate::test_case!("vfs_mount_manager_consistent", {
+        // NEODOS-07 (#637): a fresh mount manager is empty and drive-letter
+        // lookup is exact, so the volume registry never reports a mount that is
+        // not present. Lives here (not in `drivers/`) so drivers do not depend
+        // on `fs::vfs` — see rule 12 / `neodev check-deps`.
+        let mgr = MountManager::new();
+        crate::test_eq!(mgr.count(), 0);
+        crate::test_true!(mgr.find_by_letter('C').is_none());
+    });
 }

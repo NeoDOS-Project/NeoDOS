@@ -299,7 +299,7 @@ fn build_default_system_hive(enable_tests: bool, enable_network_test: bool) -> H
     // subkey; it never writes configuration (single source of truth: Registry).
     b.add_value(_V_NTP_TO, "Timeout", REG_DWORD, &3000u32.to_le_bytes(), NULL_CELL, _NTPPARAM);
     b.add_value(_V_NTP_INT, "Interval", REG_DWORD, &3600u32.to_le_bytes(), _V_NTP_TO, _NTPPARAM);
-    b.add_value(_V_NTP_SRV, "Servers", REG_SZ, b"pool.ntp.org\0", _V_NTP_INT, _NTPPARAM);
+    b.add_value(_V_NTP_SRV, "Servers", REG_SZ, b"pool.ntp.org;time.cloudflare.com;time.google.com\0", _V_NTP_INT, _NTPPARAM);
     b.add_value(_V_NTP_EN, "Enabled", REG_DWORD, &1u32.to_le_bytes(), _V_NTP_SRV, _NTPPARAM);
 
     // Interfaces\0: DHCPEnabled + DNS servers (default 0.0.0.0 = unset/automatic;

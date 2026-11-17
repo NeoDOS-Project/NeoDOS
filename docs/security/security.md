@@ -19,8 +19,16 @@ pub struct Sid {
 
 | Name | SID String | Usage |
 |------|------------|-------|
-| `sid_builtin_admin()` | `S-1-5-18` | NT AUTHORITY\SYSTEM (kernel/Idle/NeoInit) |
+| `sid_builtin_system()` / `sid_builtin_admin()` | `S-1-5-18` | NT AUTHORITY\SYSTEM (kernel/Idle/NeoInit) |
+| `sid_builtin_administrator()` | `S-1-5-21-0-0-0-500` | Built-in Administrator account |
+| `sid_builtin_guest()` | `S-1-5-21-0-0-0-501` | Built-in Guest account |
 | `sid_builtin_user()` | `S-1-5-21-0-0-0-1000` | Default domain user |
+
+`WELL_KNOWN_SIDS` (the `SeWellKnownSids` table) maps the canonical names
+(`SYSTEM`, `Administrator`, `Guest`, `Users`) to SIDs; look them up with
+`well_known_sid(name)` (case-insensitive). Domain RIDs are exposed as
+`RID_ADMINISTRATOR(500)`, `RID_GUEST(501)`, `RID_USER(1000)`, with
+`sid_builtin_domain()` = `S-1-5-21-0-0-0`.
 
 `format_string()` produces the human-readable `S-R-I-S*` format. `from_parts()` constructs a Sid from raw components.
 
@@ -35,19 +43,36 @@ pub struct Token {
     pub groups: Vec<Sid>,        // group memberships
     pub privileges: u64,         // 12-bit privilege bitmap
     pub session_id: u32,         // terminal session identifier
+    pub integrity_level: IntegrityLevel, // Mandatory Integrity Control
+    pub creation_time: u64,      // TSC ticks at creation
 }
 ```
 
+### Integrity levels (`IntegrityLevel`, `#[repr(u8)]`)
+
+| Level | Value | Typical |
+| ------- | ------- | --------- |
+| `Untrusted` | 0 | untrusted |
+| `Low` | 1 | sandboxed |
+| `Medium` | 2 | standard user |
+| `High` | 3 | elevated |
+| `System` | 4 | admin / kernel |
+
+Admin tokens default to `System`, user tokens to `Medium`; `inherit_from` keeps
+the parent's level, and each token gets a fresh `creation_time`. (Enforcement in
+`SeAccessCheck` is USR-P5a.)
+
 ### Factory Methods
 
-| Method | Privileges | Description |
-| -------- | ----------- | ------------- |
-| `new_admin()` | `SE_ADMIN_PRIVILEGES` (0xFFFF) | Full-privilege token for SYSTEM |
-| `new_user()` | `SE_CHANGE_NOTIFY` only | Restricted user token |
-| `new_full(sid, is_admin, groups, privs, session_id)` | Custom | Complete construction |
-| `inherit_from(parent)` | Inherited | Copies sid, is_admin, groups, privileges, session_id |
+| Method | Privileges | Integrity | Description |
+| -------- | ----------- | ----------- | ------------- |
+| `new_admin()` | `SE_ADMIN_PRIVILEGES` (0xFFFF) | System | Full-privilege token for SYSTEM |
+| `new_user()` | `SE_CHANGE_NOTIFY` only | Medium | Restricted user token |
+| `new(sid, is_admin)` | by flag | System/Medium | Simple construction |
+| `new_full(sid, is_admin, groups, privs, session_id)` | Custom | System/Medium | Complete construction |
+| `inherit_from(parent)` | Inherited | Inherited | Copies identity; fresh `creation_time` |
 
-`is_admin_token()` returns true when `is_admin` is set or SID equals `sid_builtin_admin()`.
+`is_admin_token()` returns `is_admin`.
 
 ## SAM (Security Account Manager)
 
@@ -91,13 +116,27 @@ Entry (repeated count times):
 
 `parse_sam(data)` deserializes from bytes. `serialize_sam(db)` produces bytes for disk persistence.
 
+### Built-in accounts
+
+`SamDatabase::with_builtins()` seeds the NT built-in accounts:
+
+| Account | SID | Flags |
+| --------- | ----- | ------- |
+| `Administrator` | `S-1-5-21-0-0-0-500` | admin, enabled |
+| `Guest` | `S-1-5-21-0-0-0-501` | disabled |
+| `SYSTEM` | `S-1-5-18` | admin |
+
+At boot, `init_security()` (Phase 2.77) creates the global `SAM_DB`
+(`spin::Mutex<SamDatabase>`) with these built-ins. Persistence to
+`\Registry\Machine\SAM` is USR-P1c.
+
 ## ACL (Access Control List)
 
 File: `src/security/acl.rs`.
 
 ```rust
 pub struct Ace {
-    pub ace_type: u8,         // 0=ALLOW, 1=DENY
+    pub ace_type: u8,         // 0=ALLOW, 1=DENY, 2=SYSTEM_AUDIT
     pub flags: u8,            // inheritance flags
     pub access_mask: u32,     // rights bitmap
     pub sid: Sid,             // trustee
@@ -110,9 +149,10 @@ pub struct Acl {
 
 pub struct SecurityDescriptor {
     pub revision: u8,
-    pub owner: Sid,
-    pub group: Sid,
-    pub dacl: Acl,            // discretionary ACL
+    pub owner: Option<Sid>,
+    pub group: Option<Sid>,
+    pub dacl: Option<Acl>,    // discretionary ACL (None = NULL DACL = full access)
+    pub sacl: Option<Acl>,    // system ACL (audit ACEs only; None = no auditing)
 }
 ```
 
@@ -134,21 +174,43 @@ File: `src/security/access.rs`. Access validation logic.
 
 ### Algorithm
 
-1. **Admin bypass**: if `token.is_admin` and the requested access includes admin-only rights, grant access immediately.
-2. **Deny-by-default**: an empty DACL (or one with no matching Allow ACE) returns denied.
-3. **Iteration order**: evaluate all Deny ACEs first. If any Deny ACE matches the token's SID or any group SID and covers the requested access, deny.
-4. **Allow ACEs**: if a matching Allow ACE covers all requested access bits, grant.
-5. **Fallback**: if no Allow ACE matches, deny.
+`se_access_check(token, sd, desired_access) -> bool`:
 
-Signature:
+1. **Admin bypass**: if `token.is_admin_token()`, grant immediately.
+2. **Absent descriptor** (`sd == None`): unprotected → grant.
+3. **NULL DACL** (`sd.dacl == None`): full access → grant.
+4. **Empty DACL** (`Some` with zero ACEs): **deny all**.
+5. **Deny-first**: evaluate all Deny ACEs first. An ACE matches when its trustee
+   SID equals `token.sid` **or any SID in `token.groups`**; a matching Deny that
+   covers the requested access → deny.
+6. **Allow**: a matching Allow ACE covering all requested bits → grant.
+7. **Fallback**: no matching Allow → deny.
+
+Signatures:
 
 ```rust
 pub fn se_access_check(
     token: &Token,
-    sd: &SecurityDescriptor,
+    sd: Option<&SecurityDescriptor>,
     desired_access: u32,
-) -> Result<(), ()>
+) -> bool
+
+pub fn se_access_check_sid(        // single SID, no group membership
+    token_sid: &Sid,
+    is_admin: bool,
+    dacl: Option<&Acl>,
+    desired_access: u32,
+) -> bool
 ```
+
+### SACL and auditing (`ACE_TYPE_SYSTEM_AUDIT = 2`)
+
+A descriptor may carry a **SACL** (`SecurityDescriptor::sacl`) whose entries are
+audit ACEs. `se_audit(token, sd, desired_access, granted)` emits a record when
+auditing is enabled (`set_auditing(true)` / `auditing_enabled()`) and a
+`SYSTEM_AUDIT` ACE matches the trustee and requested access. Auditing is a
+logging hook only — it never changes the access decision, and an absent SACL is a
+no-op.
 
 ## Token Lifecycle
 
@@ -191,10 +253,16 @@ Combined: `SE_ADMIN_PRIVILEGES = 0xFFFF` (all 12 bits set). `SE_USER_PRIVILEGES 
 
 ## Tests
 
-23 tests covering:
+36 tests covering:
 
-- SID format/parse, builtin construction, equality
-- Token: new_admin, new_user, inherit, group membership
+- SID format/parse, builtin construction, equality, **well-known SIDs**
+  (`SYSTEM`, `Administrator`, `Guest`, `Users`)
+- Token: new_admin, new_user, inherit, group membership, **integrity level**
+  (admin = System, user = Medium) and **creation_time**
 - ACL: insert canonical order, allow/deny evaluation
-- SeAccessCheck: admin bypass, empty DACL, specific ACE matching, group-based access
-- SAM database: 12 tests including create, add user, find by username, find by SID, remove user, flag manipulation, parse roundtrip, magic number validation, truncation detection, max entries enforcement
+- SeAccessCheck: admin bypass, empty DACL (deny), NULL DACL / absent SD (grant),
+  specific ACE matching, deny-first ordering, **group-SID** allow and deny
+- SACL: audit hook is a no-op without a SACL and does not affect the decision
+- SAM database: create, add/remove user, find by username/SID, flags, parse
+  roundtrip, magic/truncation validation, max entries, **built-in accounts**
+  (`Administrator`/`Guest`/`SYSTEM`) and the global `SAM_DB`

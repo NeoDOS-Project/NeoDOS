@@ -95,6 +95,28 @@ where
     res
 }
 
+/// Non-blocking, best-effort VFS access for IRQ / terminal paths
+/// (INV-3, Rule 3.5.1). Returns `Err(())` immediately when the lock is held
+/// elsewhere, instead of spinning forever on the interrupted CPU.
+pub fn try_with_vfs<F, R>(f: F) -> Result<R, ()>
+where
+    F: FnOnce(&mut crate::fs::vfs::Vfs) -> R,
+{
+    crate::scheduler::preempt_disable();
+    let _order = crate::lock_order::Guard::new(crate::lock_order::VFS);
+    let res = match VFS.try_lock() {
+        Some(mut lock) => {
+            crate::scheduler::diag::vfs_owner_acquired(crate::scheduler::diag::VFS_SITE_OTHER);
+            let r = f(&mut lock);
+            crate::scheduler::diag::vfs_owner_released();
+            Ok(r)
+        }
+        None => Err(()),
+    };
+    crate::scheduler::preempt_enable();
+    res
+}
+
 pub fn with_page_cache<F, R>(f: F) -> R
 where
     F: FnOnce(&mut PageCache) -> R

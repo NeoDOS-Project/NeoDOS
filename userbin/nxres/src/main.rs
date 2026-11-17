@@ -37,16 +37,7 @@ fn print_help() {
     write_str(b"  NXRES <app> --locales  shows available locales\r\n\r\n");
 }
 
-fn to_ob_path<'a>(vfs: &'a str, buf: &'a mut [u8; 512]) -> &'a str {
-    let prefix = b"\\Global\\FileSystem\\";
-    let vfs_bytes = vfs.as_bytes();
-    let total = prefix.len() + vfs_bytes.len();
-    if total > 510 { return vfs; }
-    buf[..prefix.len()].copy_from_slice(prefix);
-    buf[prefix.len()..total].copy_from_slice(vfs_bytes);
-    buf[total] = 0;
-    unsafe { core::str::from_utf8_unchecked(&buf[..total]) }
-}
+use libneoutil::to_ob_path;
 
 #[no_mangle]
 pub extern "C" fn _start() -> ! {

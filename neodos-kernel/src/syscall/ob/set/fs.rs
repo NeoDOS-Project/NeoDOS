@@ -1,7 +1,7 @@
 //! Ob set — VFS rename/write/cwd/volume-label, file create/delete, FSCK.
 
 use crate::object::types::ObSetInfoClass;
-use crate::syscall::{err_to_u64, SyscallError};
+use crate::syscall::{err_to_u64, SyscallError, copy_from_user, copy_to_user};
 use crate::scheduler;
 use crate::syscall::resolve_chdir_target;
 use crate::syscall::util::copy_user_string;
@@ -45,8 +45,8 @@ pub(super) fn dispatch(
             let new_path = {
                 let mut tmp = [0u8; 256];
                 let copy_len = buf_size.min(255);
-                unsafe {
-                    core::ptr::copy_nonoverlapping(buf_ptr as *const u8, tmp.as_mut_ptr(), copy_len);
+                if copy_from_user(&mut tmp[..copy_len], buf_ptr).is_err() {
+                    return err_to_u64(SyscallError::Fault);
                 }
                 match core::str::from_utf8(&tmp[..copy_len]) {
                     Ok(s) => s.to_string(),
@@ -95,8 +95,8 @@ pub(super) fn dispatch(
                 return err_to_u64(SyscallError::Inval);
             }
             let mut temp_buf = alloc::vec![0u8; buf_size];
-            unsafe {
-                core::ptr::copy_nonoverlapping(buf_ptr as *const u8, temp_buf.as_mut_ptr(), buf_size);
+            if copy_from_user(&mut temp_buf, buf_ptr).is_err() {
+                return err_to_u64(SyscallError::Fault);
             }
             let result = crate::globals::with_vfs(|vfs| {
                 vfs.write(drive_idx, inode_num, handle_offset, &temp_buf)
@@ -201,7 +201,9 @@ pub(super) fn dispatch(
             match fd {
                 Some(fd_val) => {
                     if buf_size >= 1 {
-                        unsafe { core::ptr::write_volatile(buf_ptr as *mut u8, fd_val); }
+                        if copy_to_user(buf_ptr, &[fd_val]).is_err() {
+                            return err_to_u64(SyscallError::Fault);
+                        }
                     }
                     fd_val as u64
                 }
@@ -248,7 +250,13 @@ pub(super) fn dispatch(
                 return err_to_u64(SyscallError::Inval);
             }
             let drive_char = (b'A' + drive_byte) as char;
-            let repair = if buf_size >= 1 { unsafe { core::ptr::read_volatile::<u8>(buf_ptr as *const u8) != 0 } } else { false };
+            let repair = if buf_size >= 1 {
+                let mut b = [0u8; 1];
+                if copy_from_user(&mut b, buf_ptr).is_err() {
+                    return err_to_u64(SyscallError::Fault);
+                }
+                b[0] != 0
+            } else { false };
             crate::globals::with_vfs(|vfs| {
                 let mut result = crate::fs::fsck::FsckStatsRaw {
                     total_blocks: 0, used_blocks: 0, free_blocks: 0,

@@ -8,7 +8,7 @@ pub struct File {
 }
 
 impl File {
-    /// Open a file by VFS path (e.g. `C:\\System\\Locale\\en-US\\app.nlt`).
+    /// Open a file by VFS path (e.g. `C:\\NeoDOS\\System\\Globalization\\en-US\\app.nlt`).
     /// Internally converts to an Ob namespace path `\Global\FileSystem\...`.
     pub fn open(path: &str) -> Result<File, i64> {
         let bytes = path.as_bytes();

@@ -10,11 +10,17 @@ pub const TCP_DEFAULT_WINDOW: u16 = 65535;
 pub const TCP_MSS: usize = 1460;
 pub const TCP_SEND_BUF: usize = 16384;
 pub const TCP_RECV_BUF: usize = 16384;
+/// Largest receive window this stack can advertise: there is no window
+/// scaling, so it is capped by the receive buffer.
+pub const TCP_WINDOW_MAX: u16 =
+    if TCP_RECV_BUF < TCP_DEFAULT_WINDOW as usize { TCP_RECV_BUF as u16 } else { TCP_DEFAULT_WINDOW };
 pub const TCP_MAX_CONNECTIONS: usize = 32;
 /// Retransmission timeout for data/SYN/FIN (#486).
 pub const TCP_RTO_US: u64 = 200_000;
 /// Give up (Closed) after this many unanswered retransmits.
 pub const TCP_MAX_RETRIES: u32 = 8;
+/// Retry interval for an ACK that could not be transmitted (no next-hop MAC).
+pub const TCP_ACK_RETRY_US: u64 = 100_000;
 
 #[repr(C, packed)]
 #[derive(Debug, Clone, Copy)]
@@ -144,6 +150,20 @@ pub struct TcpConnection {
     pub window: u16,
     pub retransmit_count: u32,
     pub ob_id: u64,
+    /// Owner socket destroyed while data was still draining: `tcp_tick` may
+    /// free this connection once it reaches `Closed`. Never set for a
+    /// connection that is merely unreferenced during allocation.
+    pub reap_pending: bool,
+    /// Receive window advertised in the last ACK we sent. Used to detect that
+    /// the peer still believes the window is (nearly) closed (#721).
+    pub last_adv_window: u16,
+    /// A pure ACK (data/EOF/window update) could not be transmitted yet —
+    /// no next-hop MAC or no NIC. `tcp_tick` keeps retrying it: an ACK must
+    /// never be dropped silently, or the peer stalls until its own retransmit
+    /// timer and the download dies (#721).
+    pub ack_pending: bool,
+    /// TSC of the last pending-ACK attempt (retry rate limit).
+    pub ack_retry_tsc: u64,
 }
 
 pub struct TcpControlBlock {
@@ -178,7 +198,9 @@ impl TcpControlBlock {
                     recv_buf: VecDeque::new(),
                     window: TCP_DEFAULT_WINDOW,
                     retransmit_count: 0,
-                    ob_id: 0,
+                    ob_id: 0, reap_pending: false,
+                    last_adv_window: TCP_WINDOW_MAX,
+                    ack_pending: false, ack_retry_tsc: 0,
                 });
                 return Some(id);
             }
@@ -194,7 +216,9 @@ impl TcpControlBlock {
                 recv_buf: VecDeque::new(),
                 window: TCP_DEFAULT_WINDOW,
                 retransmit_count: 0,
-                ob_id: 0,
+                ob_id: 0, reap_pending: false,
+                last_adv_window: TCP_WINDOW_MAX,
+                ack_pending: false, ack_retry_tsc: 0,
             }));
             Some(id)
         } else {
@@ -259,33 +283,82 @@ fn tsc_per_us() -> u64 {
     (crate::boot_benchmark::get_tsc_khz() / 1000).max(1)
 }
 
+/// Current TSC, for modules that are not allowed to depend on
+/// `boot_benchmark` directly (dependency-graph isolation).
+pub fn tcp_now_tsc() -> u64 {
+    crate::boot_benchmark::rdtsc()
+}
+
+/// Convert a millisecond timeout into absolute TSC ticks (`ms * 1000µs *
+/// cycles/µs`), saturating on overflow. Pure helper so the scale is testable.
+pub fn tsc_ticks_from_ms(ms: u64, tsc_per_us: u64) -> u64 {
+    ms.saturating_mul(1000).saturating_mul(tsc_per_us)
+}
+
+/// High-resolution monotonic time `(tsc, tsc_khz)` (#467).
+///
+/// Routed through this (baselined) module because `boot_benchmark` may not be
+/// imported by `hal`/`syscall` directly (dependency-graph isolation), same
+/// precedent as `tcp_deadline_from_ms`. Derive sub-millisecond deltas as
+/// `(tsc2 - tsc1) / tsc_khz` ms.
+pub fn tcp_high_res_time() -> (u64, u32) {
+    let khz = crate::boot_benchmark::get_tsc_khz();
+    (crate::boot_benchmark::rdtsc(), khz.min(u32::MAX as u64) as u32)
+}
+
+/// TSC ticks in `ms`, for net modules that must not import `boot_benchmark`.
+pub fn tcp_ticks_from_ms(ms: u64) -> u64 {
+    tsc_ticks_from_ms(ms, tsc_per_us())
+}
+
+/// Absolute TSC deadline for a millisecond timeout.
+pub fn tcp_deadline_from_ms(ms: u64) -> u64 {
+    crate::boot_benchmark::rdtsc().wrapping_add(tsc_ticks_from_ms(ms, tsc_per_us()))
+}
+
 /// Resolve the source IP for an outgoing segment.
-fn resolve_src_ip(remote: Ipv4Addr, local: Ipv4Addr) -> Ipv4Addr {
+/// The NIC a TCP connection should send on: its owning socket's bound NIC,
+/// else the default NIC (#317).
+fn tcp_nic_for(tcp_id: u32) -> Option<u32> {
+    let bound = {
+        let mgr = crate::net::socket::SOCKET_MANAGER.lock();
+        mgr.sockets
+            .iter()
+            .flatten()
+            .find(|s| s.tcp_conn_id == Some(tcp_id))
+            .and_then(|s| s.nic_id)
+    };
+    bound.or_else(crate::net::nic::nic_default_id)
+}
+
+fn resolve_src_ip(remote: Ipv4Addr, local: Ipv4Addr, nic: Option<u32>) -> Ipv4Addr {
     if !local.is_unspecified() {
         return local;
     }
     if remote.is_loopback() {
         return Ipv4Addr::localhost();
     }
-    match crate::net::nic::nic_default_id() {
+    match nic {
         Some(id) => crate::net::nic::nic_get_ip(id).unwrap_or(Ipv4Addr::unspecified()),
         None => Ipv4Addr::unspecified(),
     }
 }
 
-/// MAC for a TCP reply/send: loopback is synthetic, otherwise the ARP entry
-/// for the next hop (gateway-aware, same rule as ICMP).
-fn tcp_mac_for(dst: Ipv4Addr) -> Option<[u8; 6]> {
+/// MAC for a TCP reply/send on `nic`: loopback is synthetic, otherwise the ARP
+/// entry for the next hop (gateway-aware, same rule as ICMP), resolved on the
+/// same interface (#317).
+fn tcp_mac_for(dst: Ipv4Addr, nic: Option<u32>) -> Option<[u8; 6]> {
     if dst.is_loopback() {
         return Some(crate::net::types::MacAddr::loopback().0);
     }
-    let target = crate::net::nic::nic_next_hop(dst)?;
-    crate::net::arp::arp_resolve(target).map(|m| m.0)
+    let id = nic?;
+    let target = crate::net::nic::nic_next_hop_for(id, dst)?;
+    crate::net::arp::arp_resolve_on(id, target).map(|m| m.0)
 }
 
 /// Advertised window from free receive space.
 fn adv_window(used: usize) -> u16 {
-    TCP_RECV_BUF.saturating_sub(used).min(TCP_DEFAULT_WINDOW as usize) as u16
+    TCP_WINDOW_MAX.saturating_sub(used.min(TCP_WINDOW_MAX as usize) as u16)
 }
 
 pub fn tcp_alloc_connection() -> Option<u32> {
@@ -294,6 +367,60 @@ pub fn tcp_alloc_connection() -> Option<u32> {
 
 pub fn tcp_free_connection(id: u32) {
     TCP.lock().free_connection(id);
+}
+
+/// Called when the owning socket is destroyed. Free the connection immediately
+/// only when it has fully drained (Closed with no buffered/unacked data);
+/// otherwise leave it for `tcp_tick` so the still-buffered payload and the FIN
+/// are transmitted. Freeing unconditionally silently dropped the last write
+/// when an application closed right after `send`.
+pub fn tcp_release_connection(id: u32) {
+    let mut tcp = TCP.lock();
+    let done = match tcp.get_connection(id) {
+        Some(c) => {
+            c.state == TcpState::Closed
+                && c.send_buf.is_empty()
+                && c.send_seq == c.send_base
+        }
+        None => return,
+    };
+    if done {
+        tcp.free_connection(id);
+    } else if let Some(c) = tcp.get_connection_mut(id) {
+        // Still draining: let tcp_tick finish transmitting the payload/FIN and
+        // reap the connection once it reaches Closed.
+        c.reap_pending = true;
+    }
+}
+
+/// Reap connections whose owner socket is gone and that have finished closing.
+/// Only connections explicitly released with pending data are candidates, so a
+/// connection between `tcp_alloc_connection` and `socket_set_tcp_conn` (still
+/// unowned, but active) is never touched.
+fn reap_orphans() {
+    let mut orphans: alloc::vec::Vec<u32> = alloc::vec::Vec::new();
+    {
+        let tcp = TCP.lock();
+        for c in tcp.connections.iter().flatten() {
+            if c.reap_pending && c.state == TcpState::Closed && c.send_buf.is_empty() {
+                orphans.push(c.id);
+            }
+        }
+    }
+    if orphans.is_empty() {
+        return;
+    }
+    let mgr = crate::net::socket::SOCKET_MANAGER.lock();
+    for id in orphans {
+        let owned = mgr
+            .sockets
+            .iter()
+            .flatten()
+            .any(|s| s.tcp_conn_id == Some(id));
+        if !owned {
+            TCP.lock().free_connection(id);
+        }
+    }
 }
 
 pub fn tcp_bind(id: u32, local: SocketAddrV4) -> bool {
@@ -356,11 +483,12 @@ pub fn tcp_connect(id: u32, remote: SocketAddrV4) -> bool {
 /// Transmit a SYN for `id` (initial or retransmit). Returns false when there
 /// is no route/MAC yet; the tick retries.
 fn send_syn_segment(id: u32, local: SocketAddrV4, remote: SocketAddrV4, seq: u32) -> bool {
-    let src_ip = resolve_src_ip(remote.ip, local.ip);
+    let nic = tcp_nic_for(id);
+    let src_ip = resolve_src_ip(remote.ip, local.ip, nic);
     if src_ip.is_unspecified() {
         return false;
     }
-    let dst_mac = match tcp_mac_for(remote.ip) {
+    let dst_mac = match tcp_mac_for(remote.ip, nic) {
         Some(m) => m,
         None => return false,
     };
@@ -375,7 +503,25 @@ fn send_syn_segment(id: u32, local: SocketAddrV4, remote: SocketAddrV4, seq: u32
     send_tcp_segment(
         dst_mac, src_ip.0, remote.ip.0,
         local.port, remote.port, seq, 0,
-        TCP_FLAG_SYN, TCP_DEFAULT_WINDOW, &[],
+        TCP_FLAG_SYN, adv_window(0), &[], nic,
+    )
+}
+
+/// Retransmit a SYN-ACK for a server-side connection in `SynReceived`.
+/// `seq` is the SYN's sequence (send_base), `ack` the expected client next seq.
+pub fn send_synack_segment(local: SocketAddrV4, remote: SocketAddrV4, seq: u32, ack: u32, nic: Option<u32>) -> bool {
+    let src_ip = resolve_src_ip(remote.ip, local.ip, nic);
+    if src_ip.is_unspecified() {
+        return false;
+    }
+    let dst_mac = match tcp_mac_for(remote.ip, nic) {
+        Some(m) => m,
+        None => return false,
+    };
+    send_tcp_segment(
+        dst_mac, src_ip.0, remote.ip.0,
+        local.port, remote.port, seq, ack,
+        TCP_FLAG_SYN | TCP_FLAG_ACK, adv_window(0), &[], nic,
     )
 }
 
@@ -399,10 +545,22 @@ pub fn tcp_recv(id: u32, buf: &mut [u8]) -> Result<usize, ()> {
     let conn = tcp.get_connection_mut(id).ok_or(())?;
     let available = conn.recv_buf.len().min(buf.len());
     if available == 0 {
-        return Err(());
+        // No buffered data: either the peer closed the read side (EOF, `Ok(0)`)
+        // or nothing has arrived yet (`EAGAIN`).
+        return if read_side_closed(conn.state) { Ok(0) } else { Err(()) };
     }
     for item in buf.iter_mut().take(available) {
         *item = conn.recv_buf.pop_front().unwrap_or(0);
+    }
+    // Window update: the peer was told the window was (nearly) closed and the
+    // application just made room for another full segment. Queue the ACK for
+    // `tcp_tick`, which sends it and retries if address resolution is not
+    // ready — otherwise the peer only learns from its zero-window probe timer
+    // and a bulk download stalls (#721).
+    if adv_window(conn.recv_buf.len()) >= TCP_MSS as u16
+        && conn.last_adv_window < TCP_MSS as u16
+    {
+        conn.ack_pending = true;
     }
     Ok(available)
 }
@@ -411,11 +569,37 @@ pub fn tcp_get_state(id: u32) -> Option<TcpState> {
     TCP.lock().get_connection(id).map(|c| c.state)
 }
 
+/// True once no more payload can arrive for the application: the peer's FIN
+/// was consumed, or the connection is gone. Buffered data is read first.
+fn read_side_closed(state: TcpState) -> bool {
+    // Only the peer's FIN (CloseWait) or a dead connection ends the read side.
+    // FinWait1/FinWait2 mean *we* sent FIN; the peer may still send data, and a
+    // closed socket reports EOF at the socket layer anyway.
+    matches!(state, TcpState::CloseWait | TcpState::Closed | TcpState::LastAck)
+}
+
+/// Free space in the send buffer for `id` (0 when the connection is unknown).
+pub fn tcp_send_space(id: u32) -> usize {
+    TCP.lock()
+        .get_connection(id)
+        .map(|c| TCP_SEND_BUF.saturating_sub(c.send_buf.len()))
+        .unwrap_or(0)
+}
+
+/// True when `id` has application data buffered for reading. Used by the
+/// socket wait primitive to avoid blocking on data that already arrived.
+pub fn tcp_recv_pending(id: u32) -> bool {
+    TCP.lock()
+        .get_connection(id)
+        .map(|c| !c.recv_buf.is_empty())
+        .unwrap_or(false)
+}
+
 pub fn tcp_close(id: u32) {
     // Decide under lock, transmit without holding TCP (lock order).
     enum CloseOp {
         None,
-        FinNow(SocketAddrV4, SocketAddrV4, u32, u32, TcpState),
+        FinNow(SocketAddrV4, SocketAddrV4, u32, u32, u16, TcpState),
         FinLater,
     }
     let op = {
@@ -434,7 +618,8 @@ pub fn tcp_close(id: u32) {
                     if unsent == 0 {
                         let op = CloseOp::FinNow(
                             conn.local, conn.remote,
-                            conn.send_seq, conn.recv_seq, next,
+                            conn.send_seq, conn.recv_seq,
+                            adv_window(conn.recv_buf.len()), next,
                         );
                         conn.send_seq = conn.send_seq.wrapping_add(1);
                         conn.state = next;
@@ -453,25 +638,25 @@ pub fn tcp_close(id: u32) {
             None => CloseOp::None,
         }
     };
-    if let CloseOp::FinNow(local, remote, seq, ack, _next) = op {
-        send_fin_segment(local, remote, seq, ack);
+    if let CloseOp::FinNow(local, remote, seq, ack, window, _next) = op {
+        send_fin_segment(local, remote, seq, ack, window, tcp_nic_for(id));
     }
 }
 
 /// Transmit a FIN for an established/closing connection.
-fn send_fin_segment(local: SocketAddrV4, remote: SocketAddrV4, seq: u32, ack: u32) -> bool {
-    let src_ip = resolve_src_ip(remote.ip, local.ip);
+fn send_fin_segment(local: SocketAddrV4, remote: SocketAddrV4, seq: u32, ack: u32, window: u16, nic: Option<u32>) -> bool {
+    let src_ip = resolve_src_ip(remote.ip, local.ip, nic);
     if src_ip.is_unspecified() {
         return false;
     }
-    let dst_mac = match tcp_mac_for(remote.ip) {
+    let dst_mac = match tcp_mac_for(remote.ip, nic) {
         Some(m) => m,
         None => return false,
     };
     send_tcp_segment(
         dst_mac, src_ip.0, remote.ip.0,
         local.port, remote.port, seq, ack,
-        TCP_FLAG_FIN | TCP_FLAG_ACK, TCP_DEFAULT_WINDOW, &[],
+        TCP_FLAG_FIN | TCP_FLAG_ACK, window, &[], nic,
     )
 }
 
@@ -499,6 +684,8 @@ pub fn tcp_tick() {
         retries: u32,
         last_tx: u64,
         fin_pending: bool,
+        ack_pending: bool,
+        ack_retry: u64,
     }
     // Snapshot (TCP lock held briefly, never across sends).
     let mut jobs: alloc::vec::Vec<Work> = alloc::vec::Vec::new();
@@ -509,6 +696,7 @@ pub fn tcp_tick() {
             match conn.state {
                 TcpState::Established
                 | TcpState::SynSent
+                | TcpState::SynReceived
                 | TcpState::FinWait1
                 | TcpState::LastAck => {
                     let in_flight =
@@ -552,6 +740,8 @@ pub fn tcp_tick() {
                         retries: conn.retries,
                         last_tx: conn.last_tx_tsc,
                         fin_pending: conn.fin_pending,
+                        ack_pending: conn.ack_pending,
+                        ack_retry: conn.ack_retry_tsc,
                     });
                     payloads.push(chunk);
                 }
@@ -562,6 +752,8 @@ pub fn tcp_tick() {
     let rto_ticks = TCP_RTO_US.saturating_mul(per_us);
     for (job, chunk) in jobs.iter().zip(payloads.iter()) {
         let expired = now.wrapping_sub(job.last_tx) >= rto_ticks;
+        // Bound interface for this connection (#317).
+        let nic = tcp_nic_for(job.id);
         // SYN (re)transmit while unanswered.
         if job.state == TcpState::SynSent {
             if job.unacked_span > 0 && expired {
@@ -575,18 +767,33 @@ pub fn tcp_tick() {
             }
             continue;
         }
+        // SYN-ACK (re)transmit while the final ACK is missing. Without this a
+        // server whose SYN-ACK was lost parks in SynReceived forever and any
+        // accept/read waiter never wakes.
+        if job.state == TcpState::SynReceived {
+            if job.unacked_span > 0 && expired {
+                if job.retries >= TCP_MAX_RETRIES {
+                    close_dead(job.id);
+                    continue;
+                }
+                if send_synack_segment(job.local, job.remote, job.base, job.rack, nic) {
+                    touch_tx(job.id, now, job.retries + 1);
+                }
+            }
+            continue;
+        }
         // Fresh data flush.
         if !chunk.is_empty() {
-            let src_ip = resolve_src_ip(job.remote.ip, job.local.ip);
+            let src_ip = resolve_src_ip(job.remote.ip, job.local.ip, nic);
             if !src_ip.is_unspecified() {
-                if let Some(dst_mac) = tcp_mac_for(job.remote.ip) {
+                if let Some(dst_mac) = tcp_mac_for(job.remote.ip, nic) {
                     let win = adv_window(job.rused);
                     if send_tcp_segment(
                         dst_mac, src_ip.0, job.remote.ip.0,
                         job.local.port, job.remote.port,
                         job.next, job.rack,
                         TCP_FLAG_PSH | TCP_FLAG_ACK, win,
-                        chunk,
+                        chunk, nic,
                     ) {
                         commit_sent(job.id, job.next, chunk.len() as u32, now);
                     }
@@ -605,7 +812,10 @@ pub fn tcp_tick() {
             // CloseWait is not in the snapshot set; Established only here,
             // but keep the shape for the shared helper.
             if let Some(next_state) = next_state {
-                if send_fin_segment(job.local, job.remote, job.next, job.rack) {
+                if send_fin_segment(
+                    job.local, job.remote, job.next, job.rack,
+                    adv_window(job.rused), nic,
+                ) {
                     commit_fin(job.id, next_state, now);
                 }
             }
@@ -621,7 +831,19 @@ pub fn tcp_tick() {
                 job.rack, job.rused, job.state, job.retries, now,
             );
         }
+        // Pending ACK / window update: keep retrying until it is on the wire.
+        // Losing it silently stalled bulk downloads (#721).
+        if job.ack_pending
+            && matches!(job.state, TcpState::Established | TcpState::FinWait1)
+            && now.wrapping_sub(job.ack_retry) >= TCP_ACK_RETRY_US.saturating_mul(per_us)
+        {
+            if !send_window_ack(job.id) {
+                touch_ack_retry(job.id, now);
+            }
+        }
     }
+    // Free connections that drained after their socket was destroyed.
+    reap_orphans();
 }
 
 /// Snapshot helpers: brief TCP critical sections (FLUSH_LOCK already held).
@@ -647,6 +869,71 @@ fn commit_fin(id: u32, next_state: TcpState, now: u64) {
     }
 }
 
+/// Record the receive window carried by an ACK we just transmitted.
+fn commit_adv_window(id: u32, window: u16) {
+    if let Some(conn) = TCP.lock().get_connection_mut(id) {
+        conn.last_adv_window = window;
+        conn.ack_pending = false;
+    }
+}
+
+/// Queue a pure ACK (data ACK or window update) that could not be sent yet.
+fn mark_ack_pending(id: u32) {
+    if let Some(conn) = TCP.lock().get_connection_mut(id) {
+        conn.ack_pending = true;
+        conn.ack_retry_tsc = 0;
+    }
+}
+
+fn touch_ack_retry(id: u32, now: u64) {
+    if let Some(conn) = TCP.lock().get_connection_mut(id) {
+        conn.ack_retry_tsc = now;
+    }
+}
+
+/// Transmit a pure ACK advertising the current receive window. Returns false
+/// when it cannot be sent yet (no MAC/NIC); the caller keeps it pending.
+fn send_window_ack(id: u32) -> bool {
+    let (local, remote, seq, ack, window, state) = {
+        let tcp = TCP.lock();
+        let Some(conn) = tcp.get_connection(id) else { return true };
+        (
+            conn.local,
+            conn.remote,
+            conn.send_seq,
+            conn.recv_seq,
+            adv_window(conn.recv_buf.len()),
+            conn.state,
+        )
+    };
+    // Nothing to advertise once the connection is gone or fully closed.
+    if !matches!(
+        state,
+        TcpState::Established | TcpState::CloseWait | TcpState::FinWait1 | TcpState::FinWait2
+    ) {
+        if let Some(conn) = TCP.lock().get_connection_mut(id) {
+            conn.ack_pending = false;
+        }
+        return true;
+    }
+    let nic = tcp_nic_for(id);
+    let Some(dst_mac) = tcp_mac_for(remote.ip, nic) else { return false };
+    let src_ip = resolve_src_ip(remote.ip, local.ip, nic);
+    if src_ip.is_unspecified() {
+        return false;
+    }
+    if send_tcp_segment(
+        dst_mac, src_ip.0, remote.ip.0,
+        local.port, remote.port, seq, ack,
+        TCP_FLAG_ACK, window, &[], nic,
+    ) {
+        commit_adv_window(id, window);
+        true
+    } else {
+        false
+    }
+}
+
 fn touch_tx(id: u32, now: u64, retries: u32) {
     let mut tcp = TCP.lock();
     if let Some(conn) = tcp.get_connection_mut(id) {
@@ -664,10 +951,19 @@ fn close_dead(id: u32) {
         }
     }
     let mut mgr = crate::net::socket::SOCKET_MANAGER.lock();
+    let mut wake = alloc::vec::Vec::new();
     for slot in mgr.sockets.iter_mut().flatten() {
         if slot.tcp_conn_id == Some(id) {
             slot.direction = crate::net::types::SocketDirection::Closed;
+            wake.push(slot.id);
         }
+    }
+    // A failed connection must surface (not hang) to any waiter.
+    for sid in wake {
+        mgr.wake_socket_connect_waiters(sid);
+        mgr.wake_socket_accept_waiters(sid);
+        mgr.wake_socket_readers(sid);
+        mgr.wake_socket_writers(sid);
     }
 }
 
@@ -721,11 +1017,12 @@ fn retransmit_oldest(
     if payload.is_empty() && !fin_here {
         return;
     }
-    let src_ip = resolve_src_ip(remote.ip, local.ip);
+    let nic = tcp_nic_for(id);
+    let src_ip = resolve_src_ip(remote.ip, local.ip, nic);
     if src_ip.is_unspecified() {
         return;
     }
-    let dst_mac = match tcp_mac_for(remote.ip) {
+    let dst_mac = match tcp_mac_for(remote.ip, nic) {
         Some(m) => m,
         None => return,
     };
@@ -733,7 +1030,7 @@ fn retransmit_oldest(
         dst_mac, src_ip.0, remote.ip.0,
         local.port, remote.port, base, rack,
         flags, adv_window(rused),
-        &payload,
+        &payload, nic,
     ) {
         touch_tx(id, now, retries + 1);
     }
@@ -753,7 +1050,7 @@ pub struct TcpPacket {
     pub urgent_ptr: u16,
 }
 
-fn compute_tcp_checksum_raw(src: [u8; 4], dst: [u8; 4], segment: &[u8]) -> u16 {
+pub fn compute_tcp_checksum_raw(src: [u8; 4], dst: [u8; 4], segment: &[u8]) -> u16 {
     let mut sum = 0u32;
     sum = sum.wrapping_add((src[0] as u32) << 8 | src[1] as u32);
     sum = sum.wrapping_add((src[2] as u32) << 8 | src[3] as u32);
@@ -775,6 +1072,30 @@ fn compute_tcp_checksum_raw(src: [u8; 4], dst: [u8; 4], segment: &[u8]) -> u16 {
     }
     let cs = !(sum as u16);
     if cs == 0 { 0xFFFF } else { cs }
+}
+
+/// Verify a received TCP segment's checksum (pseudo-header + header + payload).
+/// `segment` is the TCP header and payload, bounded by the IPv4 total length.
+pub fn tcp_checksum_valid(src_ip: [u8; 4], dst_ip: [u8; 4], segment: &[u8]) -> bool {
+    let mut sum = 0u32;
+    sum = sum.wrapping_add((src_ip[0] as u32) << 8 | src_ip[1] as u32);
+    sum = sum.wrapping_add((src_ip[2] as u32) << 8 | src_ip[3] as u32);
+    sum = sum.wrapping_add((dst_ip[0] as u32) << 8 | dst_ip[1] as u32);
+    sum = sum.wrapping_add((dst_ip[2] as u32) << 8 | dst_ip[3] as u32);
+    sum = sum.wrapping_add(IPV4_PROTO_TCP as u32);
+    sum = sum.wrapping_add(segment.len() as u32);
+    let mut i = 0;
+    while i + 1 < segment.len() {
+        sum = sum.wrapping_add(u16::from_be_bytes([segment[i], segment[i + 1]]) as u32);
+        i += 2;
+    }
+    if i < segment.len() {
+        sum = sum.wrapping_add((segment[i] as u32) << 8);
+    }
+    while sum >> 16 != 0 {
+        sum = (sum & 0xFFFF) + (sum >> 16);
+    }
+    (sum as u16) == 0xFFFF
 }
 
 pub fn build_tcp_segment(src_ip: [u8; 4], dst_ip: [u8; 4], src_port: u16, dst_port: u16,
@@ -808,7 +1129,8 @@ pub fn build_tcp_segment(src_ip: [u8; 4], dst_ip: [u8; 4], src_port: u16, dst_po
 }
 
 pub fn send_tcp_segment(dst_mac: [u8; 6], src_ip: [u8; 4], dst_ip: [u8; 4],
-    src_port: u16, dst_port: u16, seq: u32, ack: u32, flags: u8, win: u16, payload: &[u8]) -> bool
+    src_port: u16, dst_port: u16, seq: u32, ack: u32, flags: u8, win: u16, payload: &[u8],
+    nic: Option<u32>) -> bool
 {
     let segment = build_tcp_segment(src_ip, dst_ip, src_port, dst_port, seq, ack, flags, win, payload);
     let ip_payload_len = segment.len();
@@ -844,7 +1166,10 @@ pub fn send_tcp_segment(dst_mac: [u8; 6], src_ip: [u8; 4], dst_ip: [u8; 4],
         return true;
     }
 
-    let nic_id = match crate::net::nic::nic_default_id() { Some(id) => id, None => return false };
+    let nic_id = match nic.or_else(crate::net::nic::nic_default_id) {
+        Some(id) => id,
+        None => return false,
+    };
     let mut registry = crate::net::nic::NIC_REGISTRY.lock();
     let nic = match registry.get_mut(nic_id) { Some(n) => n, None => return false };
     let src_mac = nic.mac_address();
@@ -922,12 +1247,16 @@ pub fn tcp_send_syn_ack(socket_id: usize, src_port: u16, dst_port: u16, their_se
             conn.last_tx_tsc = crate::boot_benchmark::rdtsc();
         }
     }
-    let dst_mac = match tcp_mac_for(crate::net::types::Ipv4Addr(dst_ip)) {
+    // The reply must travel us -> peer. `dst_ip` is our address (the SYN's
+    // destination) and `src_ip` is the peer's; resolving the MAC of `dst_ip`
+    // (us) would ARP our own address and silently drop the SYN-ACK. Loopback
+    // masked this because both addresses are 127.0.0.1.
+    let dst_mac = match tcp_mac_for(crate::net::types::Ipv4Addr(src_ip), None) {
         Some(m) => m,
         None => return,
     };
-    send_tcp_segment(dst_mac, src_ip, dst_ip, src_port, dst_port,
-        my_seq, their_seq.wrapping_add(1), TCP_FLAG_SYN | TCP_FLAG_ACK, TCP_DEFAULT_WINDOW, &[]);
+    send_tcp_segment(dst_mac, dst_ip, src_ip, src_port, dst_port,
+        my_seq, their_seq.wrapping_add(1), TCP_FLAG_SYN | TCP_FLAG_ACK, adv_window(0), &[], None);
 }
 
 /// Handle an incoming ACK (#486). Caller must NOT hold SOCKET_MANAGER.
@@ -947,6 +1276,8 @@ pub fn tcp_handle_ack(socket_id: usize, their_seq: u32, their_ack: u32, window: 
     };
     let now = crate::boot_benchmark::rdtsc();
     let mut became_established = false;
+    // ACK drained unacknowledged bytes: send-buffer space opened up.
+    let mut space_freed = false;
     let mut hs_ack: Option<(SocketAddrV4, SocketAddrV4, u32, u32)> = None;
     {
         let mut tcp = TCP.lock();
@@ -982,13 +1313,18 @@ pub fn tcp_handle_ack(socket_id: usize, their_seq: u32, their_ack: u32, window: 
             | TcpState::FinWait2
             | TcpState::CloseWait
             | TcpState::LastAck => {
-                if their_ack > conn.send_base && their_ack <= conn.send_seq {
-                    let acked = their_ack.wrapping_sub(conn.send_base) as usize;
+                // Wraparound-safe window check: `acked` must be in (0, in_flight].
+                // Plain `>`/`<=` break once sequence numbers wrap past u32::MAX.
+                let acked = their_ack.wrapping_sub(conn.send_base);
+                let in_flight = conn.send_seq.wrapping_sub(conn.send_base);
+                if acked != 0 && acked <= in_flight {
+                    let acked = acked as usize;
                     let drop_n = acked.min(conn.send_buf.len());
                     conn.send_buf.drain(..drop_n);
                     conn.send_base = their_ack;
                     conn.last_tx_tsc = now;
                     conn.retries = 0;
+                    space_freed = true;
                 }
                 conn.window = window;
                 if conn.state == TcpState::FinWait1 && their_ack == conn.send_seq {
@@ -1017,16 +1353,30 @@ pub fn tcp_handle_ack(socket_id: usize, their_seq: u32, their_ack: u32, window: 
     if became_established {
         let mut mgr = crate::net::socket::SOCKET_MANAGER.lock();
         mgr.wake_socket_connect_waiters(sid);
+        mgr.wake_socket_accept_waiters(sid);
+        mgr.wake_socket_readers(sid);
+        // Accepted connections wake their listener's accept waiters so a
+        // blocked `accept` can pick the now-established connection.
+        if let Some(listener_id) = mgr.get_socket(sid).and_then(|s| s.listener_id) {
+            mgr.wake_socket_accept_waiters(listener_id);
+        }
+    }
+    // A blocked writer can proceed now that the peer acknowledged data.
+    if space_freed {
+        crate::net::socket::SOCKET_MANAGER
+            .lock()
+            .wake_socket_writers(sid);
     }
     // Completing handshake ACK (no locks held).
     if let Some((local, remote, seq, ack)) = hs_ack {
-        let src_ip = resolve_src_ip(remote.ip, local.ip);
+        let nic = tcp_nic_for(tcp_id);
+        let src_ip = resolve_src_ip(remote.ip, local.ip, nic);
         if !src_ip.is_unspecified() {
-            if let Some(dst_mac) = tcp_mac_for(remote.ip) {
+            if let Some(dst_mac) = tcp_mac_for(remote.ip, nic) {
                 send_tcp_segment(
                     dst_mac, src_ip.0, remote.ip.0,
                     local.port, remote.port, seq, ack,
-                    TCP_FLAG_ACK, TCP_DEFAULT_WINDOW, &[],
+                    TCP_FLAG_ACK, adv_window(0), &[], nic,
                 );
             }
         }
@@ -1071,9 +1421,10 @@ pub fn tcp_handle_data(
             conn.recv_seq = conn.recv_seq.wrapping_add(take as u32);
             accepted = take > 0;
         }
+        let window = adv_window(conn.recv_buf.len());
         Reply {
             ack: conn.recv_seq,
-            window: adv_window(conn.recv_buf.len()),
+            window,
             accepted,
         }
     };
@@ -1086,15 +1437,23 @@ pub fn tcp_handle_data(
             .map(|s| s.id)
             .unwrap_or(0)
     };
-    let dst_mac = match tcp_mac_for(src_ip) {
-        Some(m) => m,
-        None => return reply.accepted,
-    };
-    send_tcp_segment(
-        dst_mac, dst_ip.0, src_ip.0,
-        dst_port, src_port, conn_seq_for(tcp_id), reply.ack,
-        TCP_FLAG_ACK, reply.window, &[],
-    );
+    let nic = tcp_nic_for(tcp_id);
+    match tcp_mac_for(src_ip, nic) {
+        Some(dst_mac) => {
+            if send_tcp_segment(
+                dst_mac, dst_ip.0, src_ip.0,
+                dst_port, src_port, conn_seq_for(tcp_id), reply.ack,
+                TCP_FLAG_ACK, reply.window, &[], nic,
+            ) {
+                commit_adv_window(tcp_id, reply.window);
+            } else {
+                mark_ack_pending(tcp_id);
+            }
+        }
+        // No next-hop MAC yet: keep the ACK pending and let `tcp_tick` retry.
+        // Dropping it here used to lose the segment until the peer's own RTO.
+        None => mark_ack_pending(tcp_id),
+    }
     if reply.accepted && sid != 0 {
         let mut mgr = crate::net::socket::SOCKET_MANAGER.lock();
         mgr.wake_socket_readers(sid);
@@ -1115,40 +1474,97 @@ fn conn_seq_for(tcp_id: u32) -> u32 {
 /// hold SOCKET_MANAGER.
 pub fn tcp_handle_fin(tcp_id: u32, seq: u32, src_ip: Ipv4Addr, dst_ip: Ipv4Addr, src_port: u16, dst_port: u16) {
     use crate::net::types::TcpState;
-    let (ack, send_seq, do_ack) = {
+    let (ack, send_seq, window) = {
         let mut tcp = TCP.lock();
         let conn = match tcp.get_connection_mut(tcp_id) {
             Some(c) => c,
             None => return,
         };
+        let window = adv_window(conn.recv_buf.len());
         match conn.state {
             TcpState::Established | TcpState::FinWait1 | TcpState::FinWait2 => {
-                // Consume the FIN byte.
+                // Only an in-order FIN ends the read side. A FIN beyond a gap
+                // (or a retransmitted one) must be ACKed but must not close the
+                // connection: doing so discarded the retransmitted tail (#721).
                 if seq == conn.recv_seq {
                     conn.recv_seq = conn.recv_seq.wrapping_add(1);
+                    conn.state = if conn.state == TcpState::FinWait1
+                        || conn.state == TcpState::FinWait2
+                    {
+                        TcpState::Closed
+                    } else {
+                        TcpState::CloseWait
+                    };
                 }
-                let next = if conn.state == TcpState::FinWait1
-                    || conn.state == TcpState::FinWait2
-                {
-                    TcpState::Closed
-                } else {
-                    TcpState::CloseWait
-                };
-                conn.state = next;
-                (conn.recv_seq, conn.send_seq, true)
+                (conn.recv_seq, conn.send_seq, window)
+            }
+            // Duplicate FIN after we already consumed it: re-ACK so the peer
+            // stops retransmitting.
+            TcpState::CloseWait | TcpState::LastAck | TcpState::Closed => {
+                (conn.recv_seq, conn.send_seq, window)
             }
             _ => return,
         }
     };
-    if do_ack {
-        if let Some(dst_mac) = tcp_mac_for(src_ip) {
-            send_tcp_segment(
+    let nic = tcp_nic_for(tcp_id);
+    match tcp_mac_for(src_ip, nic) {
+        Some(dst_mac) => {
+            if send_tcp_segment(
                 dst_mac, dst_ip.0, src_ip.0,
                 dst_port, src_port, send_seq, ack,
-                TCP_FLAG_ACK, TCP_DEFAULT_WINDOW, &[],
-            );
+                TCP_FLAG_ACK, window, &[], nic,
+            ) {
+                commit_adv_window(tcp_id, window);
+            } else {
+                mark_ack_pending(tcp_id);
+            }
+        }
+        None => mark_ack_pending(tcp_id),
+    }
+    // The peer's FIN is EOF for readers and a failure for pending writers; wake
+    // both so nobody stays parked on a connection that can no longer progress.
+    if let Some(socket_id) = socket_id_for_tcp(tcp_id) {
+        let mut mgr = crate::net::socket::SOCKET_MANAGER.lock();
+        mgr.wake_socket_readers(socket_id);
+        mgr.wake_socket_writers(socket_id);
+    }
+}
+
+/// Peer reset: the connection is dead. Buffered state is dropped and every
+/// waiter is woken so `connect`/`read`/`write` fail instead of hanging until
+/// their timeout.
+pub fn tcp_handle_reset(tcp_id: u32) {
+    let socket_id = socket_id_for_tcp(tcp_id);
+    {
+        let mut tcp = TCP.lock();
+        if let Some(conn) = tcp.get_connection_mut(tcp_id) {
+            conn.state = TcpState::Closed;
+            conn.send_buf.clear();
+            conn.recv_buf.clear();
+            conn.fin_pending = false;
+            conn.ack_pending = false;
         }
     }
+    let Some(socket_id) = socket_id else { return };
+    let mut mgr = crate::net::socket::SOCKET_MANAGER.lock();
+    if let Some(s) = mgr.get_socket_mut(socket_id) {
+        s.direction = crate::net::types::SocketDirection::Closed;
+    }
+    mgr.wake_socket_connect_waiters(socket_id);
+    mgr.wake_socket_readers(socket_id);
+    mgr.wake_socket_writers(socket_id);
+    mgr.wake_socket_accept_waiters(socket_id);
+}
+
+/// Socket that owns `tcp_id`, if any.
+fn socket_id_for_tcp(tcp_id: u32) -> Option<u32> {
+    crate::net::socket::SOCKET_MANAGER
+        .lock()
+        .sockets
+        .iter()
+        .flatten()
+        .find(|s| s.tcp_conn_id == Some(tcp_id))
+        .map(|s| s.id)
 }
 
 /// Get the TCP connection state for a socket (by TCP connection id).

@@ -107,27 +107,24 @@ fn write_pad(n: usize) {
 }
 
 fn write_field_left(s: &[u8], width: usize) {
-    write_str(s);
-    write_pad(logic::pad_width(s.len(), width));
+    let mut buf = [0u8; 64];
+    let n = libneodiag::pad_left(&mut buf, s, width);
+    write_str(&buf[..n]);
 }
 
 fn write_field_right(s: &[u8], width: usize) {
-    write_pad(logic::pad_width(s.len(), width));
-    write_str(s);
+    let mut buf = [0u8; 64];
+    let n = libneodiag::pad_right(&mut buf, s, width);
+    write_str(&buf[..n]);
 }
 
-fn u64_bytes(mut v: u64, buf: &mut [u8; 20]) -> &[u8] {
-    if v == 0 {
-        buf[0] = b'0';
-        return &buf[..1];
-    }
-    let mut i = 20;
-    while v > 0 {
-        i -= 1;
-        buf[i] = b'0' + (v % 10) as u8;
-        v /= 10;
-    }
-    &buf[i..]
+fn u64_bytes(v: u64, buf: &mut [u8; 20]) -> &[u8] {
+    // Decimal formatting comes from the shared service in math.nxl (libmath).
+    let mut tmp = [0u8; 20];
+    let n = libmath::format_u64(v, &mut tmp).min(buf.len());
+    let pad = buf.len() - n;
+    buf[pad..].copy_from_slice(&tmp[..n]);
+    &buf[pad..]
 }
 
 fn write_u32_field(v: u32, width: usize) {
@@ -147,15 +144,10 @@ fn write_percent_x10(pct: Option<u64>) {
     match pct {
         None => write_field_right(tr_id!(IDS_NA).as_bytes(), 8),
         Some(v) => {
-            let whole = v / 10;
-            let frac = v % 10;
-            let mut buf = [0u8; 20];
-            let wb = u64_bytes(whole, &mut buf);
-            write_pad(logic::pad_width(wb.len() + 2, 8));
-            write_str(wb);
-            write_str(b".");
-            let d = [b'0' + frac as u8];
-            write_str(&d);
+            let mut tmp = [0u8; 24];
+            let n = libmath::format_percent_x10(v, &mut tmp);
+            write_pad(libneodiag::pad_width(n, 8));
+            write_str(&tmp[..n]);
         }
     }
 }

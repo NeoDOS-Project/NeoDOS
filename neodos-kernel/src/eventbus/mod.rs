@@ -36,6 +36,10 @@ pub const EVENT_DRIVER_UNLOAD_ACK: EventType = 14;// FROZEN v0.42
 pub const EVENT_NMI_WATCHDOG: EventType = 15;     // FROZEN v0.42
 pub const EVENT_MOUSE_INPUT: EventType = 16;      // PS/2 mouse raw bytes
 pub const EVENT_NETWORK_PACKET: EventType = 17;   // NIC received a packet (data0=nic_id, data1=len)
+/// Network interface configuration changed (a writer applied an IP/gateway).
+/// Waiters (the Ring 3 network applier) block on this via an Event object
+/// instead of polling (#364).
+pub const EVENT_NET_CONFIG_CHANGED: EventType = 18;
 /// Kernel → rtc.nem: set the hardware clock. data0 = packed date/time
 /// (second | minute<<8 | hour<<16 | day<<24 | month<<32 | year<<40).
 /// Value 32 is the next free slot after the reserved 0–31 range.

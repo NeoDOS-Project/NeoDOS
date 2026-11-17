@@ -9,125 +9,96 @@ fn noop_test_runner(_tests: &[&dyn Fn()]) {
     loop {}
 }
 
+mod commands;
+mod output;
+mod parse;
+
 use libneodos::i18n;
-use libneodos::keyboard;
 use libneodos::syscall;
-use libneodos::tr_id;
 
 const APP_NAME: &str = "neokey";
+
+// ── Locale IDs (keep in sync with data/locale/*/neokey.toml) ──
+// NOTE: kept in `main.rs` because `scripts/check-i18n.sh` verifies the
+// code<->catalog bindings against this file only.
+const IDS_USAGE: u32 = 1001;
+const IDS_USAGE_LINE2: u32 = 1002;
+const IDS_USAGE_LINE3: u32 = 1003;
+const IDS_USAGE_LINE4: u32 = 1004;
 const IDS_KBD_STATE: u32 = 1005;
 const IDS_MODIFIERS: u32 = 1006;
 const IDS_LEDS: u32 = 1007;
 const IDS_ACTIVE_LAYOUT: u32 = 1008;
 const IDS_AVAIL_LAYOUTS: u32 = 1009;
 const IDS_UNKNOWN_CMD: u32 = 1010;
-
-fn write_str(s: &[u8]) {
-    let _ = syscall::sys_write(1, s);
-}
-
-fn write_err(s: &[u8]) {
-    let _ = syscall::sys_write(2, s);
-}
-
-fn print_help() {
-    write_str(b"\r\nNEOKEY [option]\r\n  Display keyboard state and available layouts.\r\n  NEOKEY              shows keyboard state\r\n  NEOKEY --list       lists available layouts\r\n\r\n");
-}
-
-fn format_bits(val: u8, names: &[(&[u8], u8)]) {
-    let mut first = true;
-    for (name, bit) in names {
-        if val & bit != 0 {
-            if !first { write_str(b" "); }
-            write_str(name);
-            first = false;
-        }
-    }
-    if first { write_str(b"(none)"); }
-}
+const IDS_LAYOUT_SET: u32 = 1011;
+const IDS_ERR_SET_LAYOUT: u32 = 1012;
+const IDS_MISSING_LAYOUT: u32 = 1013;
+const IDS_USAGE_LINE5: u32 = 1014;
+const IDS_USAGE_LINE6: u32 = 1015;
+const IDS_USAGE_LINE7: u32 = 1016;
+const IDS_USAGE_LINE8: u32 = 1017;
+const IDS_REPEAT: u32 = 1018;
+const IDS_DELAY: u32 = 1019;
+const IDS_REPEAT_SET: u32 = 1020;
+const IDS_DELAY_SET: u32 = 1021;
+const IDS_LEDS_SET: u32 = 1022;
+const IDS_ERR_SET: u32 = 1023;
+const IDS_INVALID_VALUE: u32 = 1024;
+const IDS_CPS: u32 = 1025;
+const IDS_MS: u32 = 1026;
 
 #[no_mangle]
 pub extern "C" fn _start() -> ! {
     i18n::i18n_init();
     let _ = i18n::i18n_load(APP_NAME);
+
     let raw = libneodos::args::read_args();
     if libneodos::args::is_help_flag(&raw) {
-        print_help();
+        commands::print_help();
         syscall::sys_exit(0);
     }
 
     let args = libneodos::args::trim_ascii(&raw);
-
-    if !args.is_empty() {
-        let arg_str = core::str::from_utf8(args).unwrap_or("");
-        if arg_str.eq_ignore_ascii_case("--list") || arg_str.eq_ignore_ascii_case("-l") {
-            match keyboard::kbd_list_layouts() {
-                Ok(list) => {
-                    write_str(b"\r\n");
-                    write_str(tr_id!(IDS_AVAIL_LAYOUTS).as_bytes());
-                    write_str(b"\r\n");
-                    for info in &list {
-                        write_str(b"  ");
-                        write_str(info.name_str().as_bytes());
-                        write_str(b" (");
-                        write_str(info.lang_tag_str().as_bytes());
-                        write_str(b")\r\n");
-                    }
-                    write_str(b"\r\n");
-                }
-                Err(_) => {
-                    write_err(b"\r\nError reading layout list\r\n");
-                }
-            }
-            syscall::sys_exit(0);
-        }
-
-        write_err(b"\r\n");
-        write_err(tr_id!(IDS_UNKNOWN_CMD).as_bytes());
-        write_err(b"\r\n");
-        syscall::sys_exit(1);
+    if args.is_empty() {
+        syscall::sys_exit(commands::show_state());
     }
 
-    match keyboard::kbd_get_state() {
-        Ok(state) => {
-            write_str(b"\r\n");
-            write_str(tr_id!(IDS_KBD_STATE).as_bytes());
-            write_str(b"\r\n");
-            write_str(b"  ");
-            write_str(tr_id!(IDS_MODIFIERS).as_bytes());
-            write_str(b" ");
-            format_bits(state.modifiers, &[
-                (b"LCTRL", 1), (b"LSHIFT", 2), (b"LALT", 4), (b"LGUI", 8),
-                (b"RCTRL", 16), (b"RSHIFT", 32), (b"RALT", 64), (b"RGUI", 128),
-            ]);
-            write_str(b"\r\n");
+    let arg_str = core::str::from_utf8(args).unwrap_or("");
+    let mut words = arg_str.split_whitespace();
+    let cmd = words.next().unwrap_or("");
+    let value = words.next();
 
-            write_str(b"  ");
-            write_str(tr_id!(IDS_LEDS).as_bytes());
-            write_str(b" ");
-            format_bits(state.leds, &[
-                (b"NumLock", 1), (b"CapsLock", 2), (b"ScrollLock", 4),
-            ]);
-            write_str(b"\r\n");
+    let code = if cmd.eq_ignore_ascii_case("show") {
+        commands::show_state()
+    } else if cmd.eq_ignore_ascii_case("layouts")
+        || cmd.eq_ignore_ascii_case("--list")
+        || cmd.eq_ignore_ascii_case("-l")
+    {
+        commands::list_layouts()
+    } else if cmd.eq_ignore_ascii_case("layout") {
+        match value {
+            Some(name) if !name.is_empty() => commands::set_layout(name),
+            _ => commands::missing_layout(),
         }
-        Err(_) => {
-            write_err(b"\r\nCannot read keyboard state\r\n");
+    } else if cmd.eq_ignore_ascii_case("repeat") {
+        match value.and_then(parse::u32) {
+            Some(cps) => commands::set_repeat_rate(cps),
+            None => commands::invalid_value(),
         }
-    }
+    } else if cmd.eq_ignore_ascii_case("delay") {
+        match value.and_then(parse::u32) {
+            Some(ms) => commands::set_repeat_delay(ms),
+            None => commands::invalid_value(),
+        }
+    } else if cmd.eq_ignore_ascii_case("leds") {
+        match value.and_then(parse::led_mask) {
+            Some(bits) => commands::set_leds(bits),
+            None => commands::invalid_value(),
+        }
+    } else {
+        commands::unknown_command()
+    };
 
-    match keyboard::kbd_get_layout() {
-        Ok(layout) => {
-            let end = layout.iter().position(|&b| b == 0).unwrap_or(32);
-            write_str(b"  ");
-            write_str(tr_id!(IDS_ACTIVE_LAYOUT).as_bytes());
-            write_str(&layout[..end]);
-            write_str(b"\r\n");
-        }
-        Err(_) => {
-            write_err(b"\r\nError: cannot retrieve keyboard layout\r\n");
-        }
-    }
-
-    write_str(b"\r\n");
-    syscall::sys_exit(0)
+    syscall::sys_exit(code)
 }

@@ -36,7 +36,7 @@ const STRESS_ITERS: u64 = 64;
 const STRESS_THREADS: u32 = 2;
 
 /// A NXE that runs briefly and exits (no interactive input).
-const STRESS_PATH: &str = "\\Global\\FileSystem\\C:\\System\\Tools\\stresscmd.nxe";
+const STRESS_PATH: &str = "\\Global\\FileSystem\\C:\\NeoDOS\\System\\Tools\\stresscmd.nxe";
 
 static ACTIVATED: AtomicU64 = AtomicU64::new(0);
 

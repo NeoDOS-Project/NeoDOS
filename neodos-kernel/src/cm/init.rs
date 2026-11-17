@@ -7,10 +7,15 @@ use self::super::hive::Hive;
 use self::super::manager::{CM_MANAGER, encode_cell};
 
 pub fn init_cm() {
+    // #398: hives live in `\NeoDOS\System\config`. Create the tree when the
+    // image does not provide it (a fresh volume, or an older image).
     let _ = crate::globals::with_vfs(|vfs| -> Result<(), ()> {
-        if vfs.resolve_path("C:\\System\\Registry").is_err() {
-            let _ = vfs.resolve_path("C:\\System").map_err(|_| ())?;
-            vfs.mkdir("C:\\System\\Registry").map_err(|_| ())?;
+        if vfs.resolve_path(crate::paths::CONFIG_DIR).is_err() {
+            for dir in ["C:\\NeoDOS", crate::paths::SYSTEM_ROOT, crate::paths::CONFIG_DIR] {
+                if vfs.resolve_path(dir).is_err() {
+                    let _ = vfs.mkdir(dir);
+                }
+            }
         }
         Ok(())
     });
@@ -47,7 +52,7 @@ fn mount_system_hive() {
 }
 
 fn load_hive_from_vfs(name: &str) -> Option<Hive> {
-    let file_path = alloc::format!("C:\\System\\Registry\\{}.hiv", name);
+    let file_path = alloc::format!("{}\\{}.hiv", crate::paths::CONFIG_DIR, name);
     crate::globals::with_vfs(|vfs| {
         let (drive_idx, node) = vfs.resolve_path(&file_path).ok()?;
         let size = node.size as usize;
@@ -69,7 +74,7 @@ pub fn flush_hive_to_vfs(hive: &Hive) -> Result<(), ()> {
     }
     ktrace!(crate::log::LogSubsys::Power, "flush_hive_to_vfs: '{}' begin", hive.name);
     let data = hive.serialize();
-    let file_path = alloc::format!("C:\\System\\Registry\\{}.hiv", hive.name);
+    let file_path = alloc::format!("{}\\{}.hiv", crate::paths::CONFIG_DIR, hive.name);
     let res = crate::globals::with_vfs(|vfs| {
         // Write in place. Never delete the existing hive first: if create/write
         // failed, the system would be left with no hive and the next boot would
@@ -122,6 +127,25 @@ pub fn ensure_boot_defaults() {
         Ok(k) => k,
         Err(_) => return,
     };
+
+    // ── CurrentControlSet\Control\Library — NXL paths (KnownDlls-style) ──
+    // Userland clients (libmath / libnet / console) resolve these; the kernel
+    // does not read them (it boot-loads only the fs.nxl syscall gateway).
+    let library = crate::cm::cm_open_key(ctrl, "Library")
+        .or_else(|_| crate::cm::cm_create_key(ctrl, "Library"));
+    if let Ok(library) = library {
+        let defaults: [(&str, &[u8]); 3] = [
+            ("math", &b"C:\\NeoDOS\\Libraries\\math.nxl"[..]),
+            ("net", &b"C:\\NeoDOS\\Libraries\\net.nxl"[..]),
+            ("console", &b"C:\\NeoDOS\\Libraries\\console.nxl"[..]),
+        ];
+        for (name, path) in defaults {
+            if crate::cm::cm_query_value(library, name).is_err() {
+                let _ = crate::cm::cm_set_value(library, name, hive::REG_SZ, path);
+            }
+        }
+    }
+
     let locale = crate::cm::cm_open_key(ctrl, "Locale")
         .or_else(|_| crate::cm::cm_create_key(ctrl, "Locale"));
     if let Ok(locale) = locale {
@@ -161,7 +185,7 @@ pub fn ensure_boot_defaults() {
     };
     if crate::cm::cm_query_value(svc, "DefaultShell").is_err() {
         let _ = crate::cm::cm_set_value(svc, "DefaultShell", hive::REG_SZ,
-            b"C:\\Programs\\neoshell.nxe");
+            b"C:\\NeoDOS\\System\\neoshell.nxe");
     }
     if crate::cm::cm_query_value(svc, "EnableVT").is_err() {
         let _ = crate::cm::cm_set_value(svc, "EnableVT", hive::REG_DWORD,

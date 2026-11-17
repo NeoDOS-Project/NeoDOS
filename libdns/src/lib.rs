@@ -18,6 +18,7 @@ mod types;
 mod wire;
 mod host;
 mod resolve;
+mod cache;
 #[cfg(test)]
 mod tests;
 
@@ -25,3 +26,4 @@ pub use types::*;
 pub use wire::*;
 pub use host::*;
 pub use resolve::*;
+pub use cache::*;

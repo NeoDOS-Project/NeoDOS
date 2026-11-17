@@ -274,6 +274,9 @@ There is currently no userland driver-diagnostics CLI: the interim tools
 (`ndreg.nxe`, `loadnem.nxe`) were removed pending a redesigned interface.
 Driver state is observable through the Object Manager
 (`ob_open("\Global\Info\Drivers")` + `ob_query_info(Drivers)`).
+
+| Operation | Description |
+| ----------- | ------------- |
 | HEALTH  | Health check (state, errors, caps)     |
 | DEBUG   | Debug-level info (isolation, memory)   |
 | LOAD    | Load a .nem file                      |

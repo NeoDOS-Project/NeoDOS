@@ -24,7 +24,12 @@ with `free_counts[11]` tracking the number of entries. MAX_FREE_SLOTS = 512 per 
 
 A bitmap tracks the used/free status of every 4 KB frame, providing O(1) buddy
 lookup. The legacy fallback uses 16384 u64 words covering 1,048,576 frames (4 GB).
-In practice the bitmap is dynamically sized from UEFI memory descriptors.
+In practice the bitmap is dynamically sized from the highest **usable** address
+in the UEFI memory map, never from the raw physical maximum: reserved MMIO such
+as the multi-TiB PCIe ECAM window would otherwise inflate the bitmap (a 512 MB
+guest used to allocate 32 MB; it now uses ~16 KB). The bitmap is placed in the
+highest segment that the active page tables map writable, above the first MiB
+and outside the Ring 3 identity-mapped user window.
 
 ```rust
 // Round a physical address to the containing 2 MB-aligned buddy block
@@ -56,7 +61,15 @@ memory map, not hard-coded. Initialization sequence:
    - Conventional memory (type 7)
    - Boot services code/data (types 3, 4)
 3. Reserves low 1 MiB, kernel image, framebuffer, and page table structures
-4. Supports physical RAM above 4 GiB natively
+4. Reserves every frame backing the **live firmware page tables** and every RAM
+   range mapped **read-only** by firmware W^X. The kernel still runs on the UEFI
+   tables until `init_custom_page_tables()`, so reusing those frames would fault
+   on write or corrupt paging (#714)
+5. Supports physical RAM above 4 GiB natively
+
+Reservations made after `init_from_regions` (firmware page tables, kernel heap,
+crash-dump area) flip bitmap bits and then rebuild the order free lists, so the
+allocator cannot hand out a frame that was reserved later.
 
 ## Memory Layout Manager
 
@@ -108,7 +121,7 @@ Source: `src/memory/slab.rs`. 9 power-of-2 size classes (`CACHE_SIZES = [8, 16, 
 Each slab page is 4 KB with a 32-byte header at offset 0:
 
 ```rust
-pub struct SlabHeader {
+pub struct SlabPage {
     magic: u32,        // "SLAB" (0x534C_4142)
     slot_size: u16,
     capacity: u16,
@@ -135,8 +148,9 @@ Objects larger than 2048 bytes fall through to `linked_list_allocator::LockedHea
 `SlabAllocator` implements `GlobalAlloc` so all `#[global_allocator]` requests
 use slabs for small allocations and the linked-list heap for large ones.
 
-14 tests: per-size alloc/free, multi-page slab expansion, mixed-size stress,
-large-object fallback, and a 100k-iteration stress test.
+Tests: per-size alloc/free, multi-page slab expansion, mixed-size stress,
+large-object fallback, and a 100k-iteration stress test (see
+`memory/mod.rs` and `testing.rs`).
 
 ## Demand Paging
 
@@ -164,7 +178,7 @@ On first write to any 4 KB-aligned heap address, the page fault handler allocate
 a physical frame and maps it as USER_ACCESSIBLE.
 
 ```rust
-pub fn heap_alloc_page(virt: u64) -> bool;
+pub fn heap_alloc_page(virt: u64) -> Option<u64>;
 pub fn heap_free_page(virt: u64);
 pub fn heap_free_range(start: u64, end: u64);
 ```

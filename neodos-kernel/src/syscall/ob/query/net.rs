@@ -1,13 +1,14 @@
 //! Ob query — sockets, TCP status and NIC info.
 
 use crate::object::types::ObInfoClass;
-use crate::syscall::{err_to_u64, SyscallError};
+use crate::syscall::{err_to_u64, SyscallError, copy_to_user};
 
 pub(super) fn handles(info_class: u32) -> bool {
     info_class == ObInfoClass::SocketInfo as u32
         || info_class == ObInfoClass::SocketAddr as u32
         || info_class == ObInfoClass::TcpStatus as u32
         || info_class == ObInfoClass::SocketRecv as u32
+        || info_class == ObInfoClass::SocketAccept as u32
         || info_class == ObInfoClass::NicInfo as u32
         || info_class == ObInfoClass::NetStats as u32
         || info_class == ObInfoClass::Hostname as u32
@@ -57,11 +58,11 @@ pub(super) fn dispatch(
             drop(mgr);
             let sz = core::mem::size_of::<NetSocketInfo>();
             if buf_size < sz { return err_to_u64(SyscallError::Inval); }
-            unsafe {
-                core::ptr::copy_nonoverlapping(
-                    &info as *const NetSocketInfo as *const u8,
-                    buf_ptr as *mut u8, sz,
-                );
+            let bytes = unsafe {
+                core::slice::from_raw_parts(&info as *const NetSocketInfo as *const u8, sz)
+            };
+            if copy_to_user(buf_ptr, bytes).is_err() {
+                return err_to_u64(SyscallError::Fault);
             }
             sz as u64
         }
@@ -96,11 +97,11 @@ pub(super) fn dispatch(
             drop(mgr);
             let sz = core::mem::size_of::<NetSocketAddr>();
             if buf_size < sz { return err_to_u64(SyscallError::Inval); }
-            unsafe {
-                core::ptr::copy_nonoverlapping(
-                    &addr as *const NetSocketAddr as *const u8,
-                    buf_ptr as *mut u8, sz,
-                );
+            let bytes = unsafe {
+                core::slice::from_raw_parts(&addr as *const NetSocketAddr as *const u8, sz)
+            };
+            if copy_to_user(buf_ptr, bytes).is_err() {
+                return err_to_u64(SyscallError::Fault);
             }
             sz as u64
         }
@@ -125,7 +126,10 @@ pub(super) fn dispatch(
                 } else { 0 }
             } else { 0 };
             if buf_size < 4 { return err_to_u64(SyscallError::Inval); }
-            unsafe { core::ptr::write_volatile(buf_ptr as *mut u32, tcp_state); }
+            drop(mgr);
+            if copy_to_user(buf_ptr, &tcp_state.to_ne_bytes()).is_err() {
+                return err_to_u64(SyscallError::Fault);
+            }
             4u64
         }
         // ── SocketRecv (23): read data from socket receive buffer ──
@@ -142,11 +146,69 @@ pub(super) fn dispatch(
             if buf_size == 0 || buf_ptr == 0 {
                 return err_to_u64(SyscallError::Inval);
             }
-            let user_buf = unsafe { core::slice::from_raw_parts_mut(buf_ptr as *mut u8, buf_size) };
-            match crate::net::socket::socket_recv(socket_id, user_buf) {
-                Ok(n) => n as u64,
+            let mut kbuf = alloc::vec::Vec::with_capacity(buf_size);
+            kbuf.resize(buf_size, 0u8);
+            match crate::net::socket::socket_recv(socket_id, &mut kbuf) {
+                Ok(n) => {
+                    if copy_to_user(buf_ptr, &kbuf[..n]).is_err() {
+                        return err_to_u64(SyscallError::Fault);
+                    }
+                    n as u64
+                }
                 Err(_) => err_to_u64(SyscallError::Again),
             }
+        }
+        // ── SocketAccept (43): accept an incoming connection from a listener ──
+        _ if info_class == ObInfoClass::SocketAccept as u32 => {
+            if entry.object_id == 0 { return err_to_u64(SyscallError::BadF); }
+            if buf_size < 4 { return err_to_u64(SyscallError::Inval); }
+            let obj = match crate::object::ob_lookup(entry.object_id) {
+                Some(o) => o,
+                None => return err_to_u64(SyscallError::BadF),
+            };
+            if obj.obj_type != crate::object::ObType::Socket {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let listener_id = obj.native_id as u32;
+            let conn_socket_id = match crate::net::socket::socket_accept_take(listener_id) {
+                Some(id) => id,
+                None => return err_to_u64(SyscallError::Again),
+            };
+            // Wrap the accepted socket in a fresh Ob object + handle for the
+            // caller. The listener keeps listening for further connections.
+            let path = alloc::format!("\\TcpAccept-{}", conn_socket_id);
+            let ob_id = match crate::object::ob_create_object_path(
+                &path, crate::object::ObType::Socket, conn_socket_id, None,
+            ) {
+                Ok(id) => id,
+                Err(e) => {
+                    crate::net::socket::socket_free(conn_socket_id);
+                    return err_to_u64(crate::syscall::ob_err_to_syscall(e));
+                }
+            };
+            let h = crate::handle::HandleEntry::ob_object(ob_id, conn_socket_id);
+            let fd = crate::hal::without_interrupts(|| {
+                let s = crate::scheduler::current_scheduler();
+                let mut lock = s.lock();
+                if let Some(ep) = lock.current_eprocess_mut() {
+                    crate::handle::alloc_handle(&mut ep.handle_table, h)
+                } else {
+                    None
+                }
+            });
+            let fd = match fd {
+                Some(fd) => fd,
+                None => {
+                    let _ = crate::object::ob_close_object(ob_id);
+                    crate::net::socket::socket_free(conn_socket_id);
+                    return err_to_u64(SyscallError::NoMem);
+                }
+            };
+            if copy_to_user(buf_ptr, &(fd as u32).to_ne_bytes()).is_err() {
+                rollback_accept(fd, ob_id, conn_socket_id);
+                return err_to_u64(SyscallError::Fault);
+            }
+            4u64
         }
         _ if info_class == ObInfoClass::NicInfo as u32 => {
             #[repr(C)]
@@ -164,6 +226,7 @@ pub(super) fn dispatch(
             let max_entries = buf_size / entry_size;
             if max_entries == 0 { return 0u64; }
             let count = crate::net::nic::nic_count().min(max_entries);
+            let mut out = alloc::vec::Vec::new();
             for i in 0..count {
                 let nic_id = i as u32;
                 let mac = crate::net::nic::NIC_REGISTRY.lock().get(nic_id).map(|n| n.mac_address().0).unwrap_or([0; 6]);
@@ -183,13 +246,10 @@ pub(super) fn dispatch(
                     name,
                     description,
                 };
-                unsafe {
-                    core::ptr::copy_nonoverlapping(
-                        &raw as *const NicInfoRaw as *const u8,
-                        (buf_ptr as *mut u8).add(i * entry_size),
-                        entry_size,
-                    );
-                }
+                let bytes = unsafe {
+                    core::slice::from_raw_parts(&raw as *const NicInfoRaw as *const u8, entry_size)
+                };
+                out.extend_from_slice(bytes);
             }
             // Loopback (#484): appended after the physical NICs when the
             // caller buffer has room. The sentinel nic_id keeps it read-only.
@@ -207,14 +267,14 @@ pub(super) fn dispatch(
                     name: lb_name,
                     description: lb_desc,
                 };
-                unsafe {
-                    core::ptr::copy_nonoverlapping(
-                        &raw as *const NicInfoRaw as *const u8,
-                        (buf_ptr as *mut u8).add(total * entry_size),
-                        entry_size,
-                    );
-                }
+                let bytes = unsafe {
+                    core::slice::from_raw_parts(&raw as *const NicInfoRaw as *const u8, entry_size)
+                };
+                out.extend_from_slice(bytes);
                 total += 1;
+            }
+            if copy_to_user(buf_ptr, &out).is_err() {
+                return err_to_u64(SyscallError::Fault);
             }
             (total * entry_size) as u64
         }
@@ -237,6 +297,7 @@ pub(super) fn dispatch(
             // Same order as NicInfo: physical NIC slots, then loopback.
             let phys = crate::net::nic::nic_count().min(max_entries);
             let mut total = 0usize;
+            let mut out = alloc::vec::Vec::new();
             for i in 0..phys {
                 let (rxp, txp, rxb, txb, rxe, txe) =
                     crate::net::counters::snapshot(i);
@@ -246,13 +307,10 @@ pub(super) fn dispatch(
                     rx_errors: rxe.min(u32::MAX as u64) as u32,
                     tx_errors: txe.min(u32::MAX as u64) as u32,
                 };
-                unsafe {
-                    core::ptr::copy_nonoverlapping(
-                        &raw as *const NetStatsRaw as *const u8,
-                        (buf_ptr as *mut u8).add(total * entry_size),
-                        entry_size,
-                    );
-                }
+                let bytes = unsafe {
+                    core::slice::from_raw_parts(&raw as *const NetStatsRaw as *const u8, entry_size)
+                };
+                out.extend_from_slice(bytes);
                 total += 1;
             }
             if total < max_entries {
@@ -265,14 +323,14 @@ pub(super) fn dispatch(
                     rx_errors: rxe.min(u32::MAX as u64) as u32,
                     tx_errors: txe.min(u32::MAX as u64) as u32,
                 };
-                unsafe {
-                    core::ptr::copy_nonoverlapping(
-                        &raw as *const NetStatsRaw as *const u8,
-                        (buf_ptr as *mut u8).add(total * entry_size),
-                        entry_size,
-                    );
-                }
+                let bytes = unsafe {
+                    core::slice::from_raw_parts(&raw as *const NetStatsRaw as *const u8, entry_size)
+                };
+                out.extend_from_slice(bytes);
                 total += 1;
+            }
+            if copy_to_user(buf_ptr, &out).is_err() {
+                return err_to_u64(SyscallError::Fault);
             }
             (total * entry_size) as u64
         }
@@ -285,9 +343,11 @@ pub(super) fn dispatch(
                     let default = b"NeoDOS-PC";
                     if buf_size > 0 {
                         let len = default.len().min(buf_size - 1);
-                        unsafe {
-                            core::ptr::copy_nonoverlapping(default.as_ptr(), buf_ptr as *mut u8, len);
-                            core::ptr::write((buf_ptr + len as u64) as *mut u8, 0u8);
+                        let mut out = alloc::vec::Vec::with_capacity(len + 1);
+                        out.extend_from_slice(&default[..len]);
+                        out.push(0);
+                        if copy_to_user(buf_ptr, &out).is_err() {
+                            return err_to_u64(SyscallError::Fault);
                         }
                         return (len + 1) as u64;
                     }
@@ -300,11 +360,14 @@ pub(super) fn dispatch(
                     let len = data.len().min(buf_size);
                     let copy_len = if len > 0 && data[len - 1] == 0 { len - 1 } else { len };
                     if buf_size > 0 {
-                        unsafe {
-                            core::ptr::copy_nonoverlapping(data.as_ptr(), buf_ptr as *mut u8, copy_len.min(buf_size - 1));
-                            core::ptr::write((buf_ptr + copy_len.min(buf_size - 1) as u64) as *mut u8, 0u8);
+                        let n = copy_len.min(buf_size - 1);
+                        let mut out = alloc::vec::Vec::with_capacity(n + 1);
+                        out.extend_from_slice(&data[..n]);
+                        out.push(0);
+                        if copy_to_user(buf_ptr, &out).is_err() {
+                            return err_to_u64(SyscallError::Fault);
                         }
-                        (copy_len.min(buf_size - 1) + 1) as u64
+                        (n + 1) as u64
                     } else {
                         0
                     }
@@ -313,9 +376,11 @@ pub(super) fn dispatch(
                     let default = b"NeoDOS-PC";
                     if buf_size > 0 {
                         let len = default.len().min(buf_size - 1);
-                        unsafe {
-                            core::ptr::copy_nonoverlapping(default.as_ptr(), buf_ptr as *mut u8, len);
-                            core::ptr::write((buf_ptr + len as u64) as *mut u8, 0u8);
+                        let mut out = alloc::vec::Vec::with_capacity(len + 1);
+                        out.extend_from_slice(&default[..len]);
+                        out.push(0);
+                        if copy_to_user(buf_ptr, &out).is_err() {
+                            return err_to_u64(SyscallError::Fault);
                         }
                         (len + 1) as u64
                     } else {
@@ -326,4 +391,16 @@ pub(super) fn dispatch(
         }
         _ => err_to_u64(SyscallError::Inval),
     }
+}
+
+/// Undo a partially-completed `SocketAccept`.
+///
+/// Called when the accepted fd could not be transferred to the caller. Frees
+/// the handle slot, closes the Ob object and releases the socket (which drops
+/// the TCP connection and detaches it from the listener backlog). The order
+/// mirrors `handler_close`: close the object once, then clear the handle.
+fn rollback_accept(fd: u8, ob_id: crate::object::ObId, socket_id: u32) {
+    crate::syscall::set_current_handle(fd, crate::handle::HandleEntry::closed());
+    let _ = crate::object::ob_close_object(ob_id);
+    crate::net::socket::socket_free(socket_id);
 }

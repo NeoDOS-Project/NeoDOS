@@ -72,6 +72,35 @@ impl SamDatabase {
         SamDatabase { entries: Vec::new() }
     }
 
+    /// Create the built-in account database: `Administrator` (enabled, admin),
+    /// `Guest` (disabled), and `SYSTEM` (admin). Mirrors the NT built-in SAM
+    /// accounts; entries that do not fit are ignored.
+    pub fn with_builtins() -> Self {
+        use crate::security::sid::{
+            sid_builtin_administrator, sid_builtin_guest, sid_builtin_system,
+        };
+
+        let mut db = SamDatabase::new();
+
+        let mut admin = SamEntry::new("Administrator", sid_builtin_administrator(), true);
+        admin.full_name = String::from("Administrator");
+        admin.comment = String::from("Built-in administrative account");
+        let _ = db.add_user(admin);
+
+        let mut guest = SamEntry::new("Guest", sid_builtin_guest(), false);
+        guest.flags |= SAM_FLAG_DISABLED;
+        guest.full_name = String::from("Guest");
+        guest.comment = String::from("Built-in guest account (disabled)");
+        let _ = db.add_user(guest);
+
+        let mut system = SamEntry::new("SYSTEM", sid_builtin_system(), true);
+        system.full_name = String::from("Local System");
+        system.comment = String::from("Operating system account");
+        let _ = db.add_user(system);
+
+        db
+    }
+
     pub fn add_user(&mut self, entry: SamEntry) -> Result<(), SamError> {
         if self.entries.len() >= MAX_SAM_ENTRIES as usize {
             return Err(SamError::TooManyEntries);
@@ -383,5 +412,27 @@ pub fn register_sam_tests() {
         test_true!(db.find_by_username("ADMINISTRATOR").is_some());
         test_true!(db.find_by_username("administrator").is_some());
         test_true!(db.find_by_username("Administrator").is_some());
+    });
+
+    test_case!("sam_builtin_accounts", {
+        use crate::security::sid::{
+            sid_builtin_administrator, sid_builtin_guest, sid_builtin_system,
+        };
+        let db = SamDatabase::with_builtins();
+        test_eq!(db.entry_count(), 3);
+
+        let admin = db.find_by_username("administrator").unwrap();
+        test_true!(admin.is_admin());
+        test_true!(!admin.is_disabled());
+        test_eq!(admin.sid, sid_builtin_administrator());
+
+        let guest = db.find_by_username("GUEST").unwrap();
+        test_true!(guest.is_disabled());
+        test_true!(!guest.is_admin());
+        test_eq!(guest.sid, sid_builtin_guest());
+
+        let system = db.find_by_username("system").unwrap();
+        test_true!(system.is_admin());
+        test_eq!(system.sid, sid_builtin_system());
     });
 }

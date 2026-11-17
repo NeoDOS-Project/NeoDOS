@@ -1,3 +1,20 @@
+/// Write raw bytes to stdout (fd 1). Supersedes the per-tool `write_str`
+/// one-liners; prefer this in new code.
+#[macro_export]
+macro_rules! write_str {
+    ($s:expr) => {{
+        let _ = $crate::syscall::sys_write(1, $s);
+    }};
+}
+
+/// Write raw bytes to stderr (fd 2). Supersedes the per-tool `write_err`.
+#[macro_export]
+macro_rules! write_err {
+    ($s:expr) => {{
+        let _ = $crate::syscall::sys_write(2, $s);
+    }};
+}
+
 #[macro_export]
 macro_rules! print {
     ($($arg:tt)*) => {

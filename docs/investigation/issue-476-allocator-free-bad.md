@@ -133,6 +133,13 @@ or a 2 MB heap; the shared slot is then freed twice (detected as `[FREE_BAD]
 paging_*_slot ALREADY_FREE`). This is a distinct resource-lifetime bug from the
 global allocator free-list issue of #383.
 
+> **Update (#669):** F2 is **FIXED / superseded**. `alloc_user_slot` and
+> `alloc_heap_slot` now claim a slot with an atomic `compare_exchange` plus
+> ownership tags (`SLOT_ALLOCATED`/`SLOT_OWNER`, `HEAP_SLOT_ALLOCATED`/
+> `HEAP_SLOT_OWNER`, #477) in `arch/x64/paging.rs`, and a double free is
+> reported as `[FREE_BAD] paging_*_slot ALREADY_FREE`. The historical text below
+> is retained as the investigation record.
+
 Evidence: see campaign table (§6) and source: `paging.rs::alloc_user_slot`
 (`SLOT_USED[i].load/.store`), `alloc_heap_slot`, call sites
 `usermode.rs:187,257`.
@@ -176,9 +183,10 @@ RESOURCE-SLOT OWNERSHIP (paging tables)   = VIOLATION (code-level, not observed)
 #476 FRAME/CONTEXT CORRUPTION             = NOT the allocator
 ```
 
-No fix applied (no demonstrated allocator cause). F2 is documented and should be
-tracked as its own issue (recommend an atomic `compare_exchange` claim in
-`alloc_user_slot`/`alloc_heap_slot`). The remaining `#476` family points at the
+No fix applied to the allocator (no demonstrated allocator cause). F2 was
+tracked as its own work and is now **fixed by #477** (atomic `compare_exchange`
+claim in `alloc_user_slot`/`alloc_heap_slot`); see the update note in §5. The
+remaining `#476` family points at the
 context-switch/`iretq` path (e.g. the `[K355]` idle hand-off), not at allocation.
 
 ## 9. Next hypothesis (highest diagnostic value)

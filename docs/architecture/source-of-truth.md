@@ -52,8 +52,26 @@ IRQ handlers MUST NOT call `alloc`, `Box::new`, `Vec::push`, or any heap-allocat
 Ring buffers and lock-free queues used in IRQ context MUST be pre-allocated at boot.
 
 **INV-3. NO BLOCKING IN IRQ CONTEXT.**
-IRQ handlers MUST NOT acquire spinlocks that can contend with non-IRQ context (use
-`spin::Mutex` with IRQ-safe guard or `without_interrupts`). IRQ handlers MUST NOT call `schedule()`.
+An IRQ handler runs with interrupts disabled on the CPU it interrupted. It MUST NOT
+block waiting for a lock that interruptible (interrupts-enabled) code could be holding
+on that same CPU: a blocking acquire would spin forever, because the interrupted code
+cannot run to release it, and the CPU is wedged. Concretely:
+
+- **Rule 3.5.1 (IRQ lock safety).** Every lock reachable from an IRQ handler MUST be
+  either (a) acquired IRQ-safe at *all* sites — wrapped in
+  `crate::hal::without_interrupts`, held via `IrqMutex` / IRQL >= `DISPATCH_LEVEL`, or
+  taken from another IRQ handler — or (b) acquired in the handler with `try_lock()` and
+  skipped when contended.
+- A lock that non-IRQ code takes with interrupts *enabled* MUST NOT be taken with a
+  blocking acquire from an IRQ handler. If such a lock is needed in IRQ context, either
+  make all non-IRQ acquisitions IRQ-safe or use `try_lock()` in the handler.
+- IRQ handlers MUST NOT call `schedule()` and MUST NOT allocate (see INV-2).
+
+> Worked example: the graphical-console cursor is drawn from the BSP timer IRQ
+> (`console::cursor_timer_tick -> draw_cursor`). When `draw_cursor` used a blocking
+> `graphics::RENDERER.lock()` while thread code held `RENDERER` with interrupts enabled
+> (e.g. `console::scroll()`), the timer handler spun forever and froze the system. Fixed
+> by `try_lock()` in the handler; see `docs/investigation/console-irq-lock-freeze-2026-10-11.md`.
 
 **INV-4. NO SCHEDULER INVOCATION FROM RING 0 (KERNEL) EXCEPT EXPLICIT SITES.**
 The scheduler is invoked at exactly these points:
@@ -62,7 +80,7 @@ The scheduler is invoked at exactly these points:
 - Timer tick preempting Ring 3 (CS=0x1B)
 - `sys_yield` from Ring 3
 - `sys_exit` (final reschedule)
-The shell (Ring 0) MUST NOT invoke `schedule()`.
+No Ring 0 code path MAY invoke `schedule()` outside the explicit sites above (there is no Ring 0 shell).
 
 **INV-5. EVERY PHYSICAL FRAME HAS EXACTLY ONE OWNER AT ALL TIMES.**
 Frame allocator hands out frames. A frame MUST NOT be mapped in two different page tables with
@@ -71,13 +89,13 @@ device). `free_frame()` MUST only be called by the owner.
 
 **INV-6. EVERY PROCESS SLOT IS EITHER FREE OR VALID.**
 No half-initialized slots. The scheduler recycles a slot only after `cleanup_terminated_process`
-completes all resource freeing. After recycle, the slot's PID generation counter is incremented.
+completes all resource freeing.
 
 **INV-7. NO INTERRUPT-STACK EXECUTION OF SCHEDULER CODE.**
 The scheduler, frame allocator, and slab allocator must never execute on the interrupt stack.
 Only interrupt dispatch and IRQ handler bodies run on the interrupt stack.
 
-**INV-8. KERNEL HEAP (0x01000000..0x02000000) MUST NOT BE IDENTITY-MAPPED AS USER-ACCESSIBLE.**
+**INV-8. KERNEL HEAP (0x02400000..0x03400000) MUST NOT BE IDENTITY-MAPPED AS USER-ACCESSIBLE.**
 User processes must never be able to read or write kernel heap pages.
 
 **INV-9. THE SYSCALL HANDLER IS THE ONLY GATE FROM RING 3 TO RING 0.**
@@ -88,7 +106,7 @@ register state. The INT 0x80 handler is the sole entry point.
 `sched::kill_pid(1)` is refused (returns `false`); `pid == 0` is likewise refused. `sys_exit` from PID 1 is equivalent to kernel panic.
 
 **INV-11. NO USER-FACING COMMANDS IN RING 0.**
-The legacy Ring 0 shell exists only as bootstrap glue. It MUST NOT expose or execute user-facing commands.
+There is no Ring 0 shell. All operator-facing commands MUST run in Ring 3.
 All commands intended for operator interaction MUST be implemented as Ring 3 `.NXE`/`.BAT` binaries under `userbin/`
 and launched via NeoInit / neoshell.
 
@@ -122,7 +140,7 @@ PHASE 3.875 Keyboard Manager (NeoKBD) init: `kbd::kbd_init()` — loads layouts,
 PHASE 3.882 Service Manager init: load service definitions from Registry,
            create `\Service\` namespace, resolve dependencies
 PHASE 3.883 Power Manager object init: creates `\System\PowerManager` Ob object
-PHASE 4     NeoInit loader: `cmd_run` starts PID 1 from `C:\Programs\neoinit.nxe`
+PHASE 4     NeoInit loader: the kernel ELF loader starts PID 1 from `C:\Programs\neoinit.nxe`
 ```
 
 **Rule 3.1.1**: Phases MUST execute in order. No phase may run before its predecessor completes.
@@ -137,7 +155,7 @@ and boot continues.
 | -------- | ------ | ------ | ------- |
 | Kernel image | 0x4000000 | ~1.2 MB | Kernel (read-only exec) |
 | Kernel .rodata | 0x00100000 | ~1 MB | Kernel (read-only) |
-| Kernel heap | 0x01000000 | 16 MB | Slab allocator (global) |
+| Kernel heap | 0x02400000 | 16 MB | Slab allocator (global) |
 | User window | 0x400000 | 36 MB | User processes (code+stack) |
 | User heap | 0x10000000 | 32 MB | Per-process (demand paged) |
 | NXL region | 0x1E000000 | 2 MB | Shared libraries |
@@ -219,7 +237,7 @@ subsystem. Cross-subsystem ownership transfer requires explicit documentation.
 An IRP is live from `irp_alloc` through `irp_complete` and callback dispatch. After callback,
 the IRP is freed and MUST NOT be accessed.
 
-**Rule 5.6**: The kernel heap (`0x01000000..0x02000000`) is exclusively managed by
+**Rule 5.6**: The kernel heap (`0x02400000..0x03400000`) is exclusively managed by
 `SlabAllocator` (small objects) and `linked_list_allocator::LockedHeap` (large objects).
 No other code may allocate from this region.
 
@@ -241,7 +259,7 @@ Each slot's memory is freed ONLY by `free_driver_slot` / `free_isolated_range`.
 
 **Rule 6.1.1**: `schedule()` scans HIGH → IDLE, round-robin within the same level.
 **Rule 6.1.2**: A RUNNING process at a higher priority starves all lower levels.
-**Rule 6.1.3**: Aging MUST boost priority of any Ready process not scheduled in ≥ 1000 ticks.
+**Rule 6.1.3**: Aging MUST boost priority of any Ready process not scheduled in ≥ 5000 ticks (`MAX_STARVATION_TICKS`).
 **Rule 6.1.4 (Dispatch commit point)**: `schedule()` MUST NOT commit a candidate to
 `Running`, nor update `Scheduler.current_tid` / KPRCB, until the candidate's saved
 context has been validated as dispatchable for the caller's context. Callers that
@@ -277,9 +295,12 @@ was the wild-`iretq` `INVALID_OPCODE` on SMP2.
 
 ### 6.3 Process Slot Management
 
-**Rule 6.3.1**: The scheduler has a fixed maximum number of process slots (`MAX_PROCESSES`).
-**Rule 6.3.2**: Each slot has a `pid_gen: u32` counter incremented on recycle. This prevents
-use-after-free of stale PIDs.
+**Rule 6.3.1**: Process and thread slots are allocated dynamically (there is no fixed `MAX_PROCESSES`); slot indices are reused and MUST NOT be treated as stable identity.
+**Rule 6.3.2**: PIDs and TIDs are monotonically increasing and NEVER reused (`next_pid`/`next_tid`
+only ever increment), which is what prevents stale-PID use-after-free. A per-slot `pid_gen` counter
+is therefore NOT required today and is not implemented; if PID reuse is ever introduced, the slot
+MUST gain a generation counter and the zombie queue / KPRCB identity checks MUST become
+generation-tagged (#665, audit F-02-D).
 **Rule 6.3.3**: `cleanup_terminated_process` is called exactly once per process lifecycle:
 after `sys_exit` and before slot recycle.
 
@@ -344,7 +365,7 @@ Matches `NemHeaderV3` in `neodos-kernel/src/drivers/nem/format.rs` (80-byte head
 | 16 | 2 | abi_min | 1..=ABI_MAX_VALID |
 | 18 | 2 | abi_target | ABI_MIN_VALID..=ABI_MAX_VALID |
 | 20 | 2 | abi_max | ABI_MIN_VALID..=ABI_MAX_VALID |
-| 22 | 2 | driver_type | [0, 3] |
+| 22 | 2 | driver_type | [0, 5] |
 | 24 | 2 | category | 0 (Boot), 1 (System), 2 (Demand) |
 | 26 | 2 | reserved | zero (struct alignment) |
 | 28 | 4 | text_size | |
@@ -399,7 +420,7 @@ issues `CompatibleWithWarnings("Driver ABI predates kernel target...")`.
 executing. If denied, return error sentinel (0, -1, or no-op).
 **Rule 8.4.2**: Category defaults:
 
-- BOOT → `CAP_ALL` (all 11 flags)
+- BOOT → `CAP_ALL` (all 13 flags)
 - SYSTEM → `CAP_PORTIO | CAP_IRQ | CAP_MMIO | CAP_DMA | CAP_EVENT_BUS | CAP_INPUT | CAP_LOG | CAP_TIMING`
 - DEMAND → `CAP_EVENT_BUS | CAP_LOG | CAP_TIMING`
 
@@ -496,7 +517,7 @@ pointing to the kernel console.
 **Rule 10.2.1**: NeoInit MAY:
 
 - Create pipes (`ob_create(Pipe)`)
-- Spawn child processes via `cmd_run` or equivalent
+- Spawn child processes via `sys_ob_create(PROCESS)` (RAX 41)
 - Redirect child fds via `sys_dup2` before spawn
 - Wait for any process (`sys_waitpid`)
 - Receive SIGCHLD equivalent when children exit
@@ -607,7 +628,7 @@ layout translation. NeoKBD handles scancode → Unicode conversion, dead key com
 modifier tracking, and hotkey dispatch (Ctrl+Alt+Del → poweroff, Alt+F1-F8 → VT switch).
 
 **Rule 11.6.3**: Layout switching is via `ob_set_info(KeyboardSetLayout=43)` on
-`\Device\Keyboard` with a layout name string (e.g., "Spanish", "US"). The `neokey.nxe`
+`\Device\Keyboard` with a layout name string (e.g., "es-ES", "en-US"). The `neokey.nxe`
 binary provides the user interface: `NEOKEY layout <name>`, `NEOKEY layouts`, `NEOKEY show`.
 
 **Rule 11.6.4**: Keyboard configuration (active layout, repeat delay/rate, NumLock/CapsLock
@@ -669,7 +690,7 @@ and panic on any mismatch.
 | ----------- | -------------- | ------ |
 | Event types 0–15 | 16 named constants | MUST NOT reassign |
 | Event struct layout | 56-byte `#[repr(C)]` | MUST NOT change |
-| Capability flags (bits 0–11) | 12 named constants | MUST NOT reassign |
+| Capability flags (bits 0–11 frozen at v0.42; 13 defined, bit 12 = `CAP_NS_WRITE`) | 13 named constants | MUST NOT reassign bits 0–11 |
 | IOAPIC public API | init, is_active, mask/unmask, route_pci_vector, eoi_irq | MUST NOT change signatures |
 | KWait WaitReason variants | 7 variants (tag 0x0001–0x0007) | MUST NOT reorder/remove |
 
@@ -871,25 +892,27 @@ The following changes are ALWAYS breaking (MAJOR bump):
 header.
 **Rule 16.2.2**: New syscalls at the next available RAX are NOT breaking.
 **Rule 16.2.3**: New event types are NOT breaking.
-**Rule 16.2.4**: Increasing `MAX_PROCESSES`, pool sizes, or queue depths are NOT breaking.
+**Rule 16.2.4**: Increasing pool sizes or queue depths are NOT breaking.
 
 ---
 
 ## 17. Testable Invariants (MANDATORY TESTS)
 
-Every invariant below MUST have a corresponding automated test in `testing.rs`.
-The test suite MUST be run before every release.
+Every invariant below SHOULD have a corresponding automated test in `testing.rs`.
+Coverage is currently partial: where no dedicated test exists yet, the invariant is
+verified by source inspection and tracked as a gap (see
+`docs/reference/system-audit-2026-10-07.md`). The test suite MUST be run before every release.
 
 | # | Invariant | Test type | What to assert |
 | --- | ----------- | ----------- | ---------------- |
 | T1 | INV-1: No circular dep | Static analysis | `neodev check-deps` exits 0 |
 | T2 | INV-2: No alloc in IRQ | Code review + test | IRQ handlers never call heap alloc. Test IRQ handler list. |
-| T3 | INV-4: Scheduler not invoked from Ring 0 shell | Functional | Shell process priority stays unchanged across timer ticks |
+| T3 | INV-4: Scheduler not invoked from Ring 0 outside explicit sites | Functional | Ring 0 code other than syscall return / timer preemption does not reschedule; process priority unchanged across timer ticks |
 | T4 | INV-5: Frame has one owner | Unit | Allocate frame, read bitmap, free, confirm bitmap cleared |
 | T5 | INV-6: Process slots valid | Unit | Create process, read slot state, terminate, confirm recycled |
 | T6 | INV-8: Kernel heap not user-accessible | Functional | Try reading kernel heap from user mode → page fault |
 | T7 | INV-10: Kill PID 1 refused | Unit | Call `kill_pid(1)` → expect `false` (never killed) |
-| T8 | Scheduler aging | Unit | Ready process with 1000+ ticks unscheduled → priority boosted |
+| T8 | Scheduler aging | Unit | Ready process with 5000+ ticks unscheduled → priority boosted |
 | T9 | Scheduler priority | Unit | Higher-priority process always scheduled before lower |
 | T10 | IRP lifecycle | Unit | Alloc → complete → callback → freed. Double-complete fails. |
 | T11 | IRP pool exhaustion | Unit | Alloc 65 IRPs → 65th returns None |
@@ -920,7 +943,7 @@ The test suite MUST be run before every release.
 Before any commit, verify:
 
 - [ ] `neodev check-deps` passes (T1)
-- [ ] `neodev test` passes (all 320+ kernel tests + user-mode tests)
+- [ ] `neodev test` passes (all 890 kernel tests + user-mode tests)
 - [ ] `cargo build` in `neodos-kernel/` compiles without warnings
 - [ ] No new `use` statements that create forbidden dependencies (INV-1)
 - [ ] No new heap allocation in IRQ handlers (INV-2)

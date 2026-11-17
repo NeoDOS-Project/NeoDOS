@@ -1,0 +1,19 @@
+[package]
+name = "libarith-nxl"
+version = "0.1.0"
+edition = "2021"
+description = "NeoDOS arith library (NXL) — PIE, imports math_add from math.nxl (B2 spike)"
+
+[[bin]]
+name = "libarith-nxl"
+path = "src/main.rs"
+test = false
+
+[profile.release]
+panic = "abort"
+opt-level = 3
+lto = true
+debug = false
+
+[profile.dev]
+panic = "abort"

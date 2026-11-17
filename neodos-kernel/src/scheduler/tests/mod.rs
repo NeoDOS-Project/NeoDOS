@@ -19,6 +19,7 @@ pub(crate) fn add_test_thread(sched: &mut Scheduler, tid: u32, pid: u32, entry: 
     let mut k = Kthread::new_ring3(tid, pid, entry, 0x800000);
     k.state = state;
     k.priority = priority;
+    k.base_priority = priority;
     k.time_slice_remaining = TIME_SLICES[priority as usize];
     sched.kthreads[slot] = Some(Box::new(k));
     if sched.find_eprocess(pid).is_none() {

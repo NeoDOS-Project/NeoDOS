@@ -17,6 +17,20 @@ pub fn register_syscall_table_tests() {
         test_true!(SYSCALL_TABLE[255].is_none());
     });
 
+    test_case!("ob_create_type_map", {
+        use crate::object::ObType;
+        use crate::syscall::ob::create::create_obj_type;
+
+        test_eq!(create_obj_type(1), Some(ObType::Process));
+        test_eq!(create_obj_type(18), Some(ObType::Socket));
+        test_eq!(create_obj_type(19), Some(ObType::Session)); // USR-P1a
+        test_eq!(create_obj_type(20), Some(ObType::Service));
+        // Unknown and kernel-only types are rejected.
+        test_true!(create_obj_type(0).is_none());
+        test_true!(create_obj_type(3).is_none()); // Device (kernel only)
+        test_true!(create_obj_type(99).is_none());
+    });
+
     test_case!("syscall_permission_admin_check", {
         let result = check_syscall_permission(58, false);
         test_true!(result.is_err());
@@ -625,6 +639,23 @@ pub fn register_syscall_table_tests() {
             Ok(())
         });
         test_true!(result.is_ok());
+    });
+
+    test_case!("sys_uptime_monotonic", {
+        // #467: the monotonic uptime is non-decreasing and reports a sane rate.
+        let (m0, hz) = crate::hal::uptime_ms();
+        test_true!(hz >= 18); // at least the PIT fallback rate
+        let (m1, hz1) = crate::hal::uptime_ms();
+        test_true!(m1 >= m0);
+        test_eq!(hz1, hz);
+    });
+
+    test_case!("sys_highres_time_advances", {
+        // #467: TSC-based high-resolution time is non-zero with a sane kHz.
+        let (t0, khz) = crate::net::tcp::tcp_high_res_time();
+        test_true!(khz > 0);
+        let (t1, _) = crate::net::tcp::tcp_high_res_time();
+        test_true!(t1 >= t0);
     });
 }
 

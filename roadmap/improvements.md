@@ -648,12 +648,12 @@ v0.56–v0.60 y se publica como v0.51.3. Formato compartido en `libnlt`.
 
 - **USR-P1a**: ObType::Session + SAM built-in users `priority/high` `area/security` `type/feature` `v0.51 — NeoFS v2 + Shell Phase 2 + SAM`
   Session=19 en ObType, built-in Administrator/Guest, SAM entries.
-  state: open
+  state: closed
 
 - **USR-P1b**: Token: add integrity_level + creation_time `priority/high` `area/security` `type/feature` `v0.51 — NeoFS v2 + Shell Phase 2 + SAM`
   IntegrityLevel enum, Token fields, admin=System IL, user=Medium IL.
   Dependencies: USR-P1a
-  state: open
+  state: closed
 
 - **USR-P1c**: SAM persistence to Registry hive `priority/medium` `area/security` `type/feature` `v0.51 — NeoFS v2 + Shell Phase 2 + SAM`
   sam_save/sam_load via VFS, wire on user create/delete/password change.
@@ -663,7 +663,7 @@ v0.56–v0.60 y se publica como v0.51.3. Formato compartido en `libnlt`.
 - **USR-P1d**: SeAccessCheck: fix empty DACL + group SIDs `priority/high` `area/security` `type/bug` `v0.51 — NeoFS v2 + Shell Phase 2 + SAM`
   Empty ACL=deny all, iterate token.groups in ACL evaluation.
   Dependencies: USR-P1b
-  state: open
+  state: closed
 
 - **USR-P1e**: ObSetInfoClass::ChangePassword `priority/medium` `area/security` `type/feature` `v0.51 — NeoFS v2 + Shell Phase 2 + SAM`
   ChangePassword=31, validates old password, updates SAM hash.

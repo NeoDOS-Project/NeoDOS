@@ -60,11 +60,14 @@ mod object;
 mod kwait;
 mod net;
 mod cm;
+mod paths;
+mod random;
 mod services;
 // Keyboard now lives under `input/kbd`; keep the historical `crate::kbd`.
 pub use input::kbd;
 mod stress_spawn; // #345 Phase 2 diagnostic spawn-storm harness
 mod i18n_tests;
+mod id_index; // NEODOS-05 (#635): O(1) id index (Obj table + scheduler)
 // Cross-cutting infrastructure now lives under `infra/`.
 mod infra;
 pub use infra::{
@@ -83,7 +86,7 @@ pub const KERNEL_VERSION: &str = concat!(
 );
 
 const BOOTINFO_MAGIC: u32 = 0x4E444F53; // "NDOS" in ASCII
-const KERNEL_VERSION_CODE: u32 = (10) << 8 | 5; // v0.10.5
+const KERNEL_VERSION_CODE: u32 = (52) << 8 | 0; // v0.52.0
 
 #[repr(C)]
 pub struct BootInfo {

@@ -96,6 +96,7 @@ offset for SeAccessCheck re-verification.
 | 16 | Thread | Thread object (waitable on join) |
 | 17 | Section | Shared memory section (maps to VMA) |
 | 18 | Socket | Network socket (Tcp/Udp) |
+| 19 | Session | Login session (USR-P1a; lifecycle/tokens in USR-P2) |
 | 20 | Service | Managed service process (Sm) |
 | 21 | PowerManager | Power management (kernel-created, `\System\PowerManager`) |
 | 22 | KeyboardDevice | Keyboard device — NeoKBD (kernel-created, `\Device\Keyboard`) |
@@ -125,6 +126,7 @@ offset for SeAccessCheck re-verification.
 │   ├── NeoDosVolume0              — NeoDOS FS volume
 │   ├── EspVolume0                 — ESP FAT32 volume
 │   ├── Keyboard                   — keyboard device (NeoKBD, ObType::KeyboardDevice)
+│   ├── Random                     — kernel CSPRNG (query classes 48/49, #712/M8)
 │   └── ...
 ├── \Driver\                       — NEM driver objects
 │   ├── Ahci                       — AHCI NEM driver
@@ -219,6 +221,8 @@ Supports the following info classes:
 | 41 | LocalDateTime | `SysDateTime` (7 bytes) with the RTC UTC time converted to local using the configured timezone — `\Global\Info\DateTime` (#357) |
 | 42 | ProcessShutdownState | 1 byte: `0` = normal execution, `1` = graceful shutdown requested. Any valid handle; answers for the *calling* process. Set by the Service Manager `stop_service()` and cleared on process exit — #358 |
 | 32 | PowerState | PowerSystemState u32 (Active/ShuttingDown/Rebooting/Suspending/Hibernating/Off) — `\System\PowerManager`. Class declared; handler not yet implemented. |
+| 48 | Random | Fill the buffer from `\Device\Random` (kernel ChaCha20 DRBG). Returns the byte count; at most 4096 bytes per call (#712/M8). |
+| 49 | RandomCaps | `SysRandomCaps` (4 bytes: `hw_rdrand`, `hw_rdseed`, `pool_ready`, pad) — `\Device\Random`. Consumers that need a CSPRNG (TLS) fail closed unless a hardware source is reported (#712/M8). |
 
 ### SMP observability (CpuStats = 24, ThreadStats = 25)
 
@@ -474,7 +478,8 @@ pub struct ObEnumEntry {
 
 ### ob_wait (RAX=45)
 
-Wait on up to N handles, with wait type (0=ANY, 1=ALL) and timeout in ms.
+Wait on up to N handles, with wait type (`0`=ANY, `1`=ALL, `2`=writable) and
+timeout in ms.
 
 - **Process**: signaled when child exits (exit code in native_id)
 - **Pipe**: signaled when data is available (pipe read end)
@@ -482,6 +487,8 @@ Wait on up to N handles, with wait type (0=ANY, 1=ALL) and timeout in ms.
 - **Timer**: signaled on expiry
 - **Thread**: signaled on termination (join)
 - **Semaphore**: signaled when count > 0
+- **Socket**: Connect/Accept/Read by default; with type `2`, Write (TCP send
+  buffer has space). A timeout returns `0` without a distinct status.
 
 Non-blocking check: Pipe, Semaphore, and Timer perform an immediate check
 before entering the KWait block path. This prevents unnecessary context

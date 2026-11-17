@@ -2,6 +2,7 @@ use crate::security::sid::Sid;
 
 pub const ACE_TYPE_ACCESS_ALLOWED: u8 = 0;
 pub const ACE_TYPE_ACCESS_DENIED: u8 = 1;
+pub const ACE_TYPE_SYSTEM_AUDIT: u8 = 2;
 
 pub const ACCESS_READ: u32 = 1;
 pub const ACCESS_WRITE: u32 = 2;
@@ -66,7 +67,11 @@ pub struct SecurityDescriptor {
     pub revision: u8,
     pub owner: Option<Sid>,
     pub group: Option<Sid>,
+    /// Discretionary ACL. `None` is a NULL DACL (full access); an empty ACL
+    /// denies all access (NT semantics).
     pub dacl: Option<Acl>,
+    /// System ACL — audit ACEs only. `None` means no auditing configured.
+    pub sacl: Option<Acl>,
 }
 
 impl SecurityDescriptor {
@@ -76,11 +81,17 @@ impl SecurityDescriptor {
             owner: None,
             group: None,
             dacl: None,
+            sacl: None,
         }
     }
 
     pub fn with_dacl(mut self, dacl: Acl) -> Self {
         self.dacl = Some(dacl);
+        self
+    }
+
+    pub fn with_sacl(mut self, sacl: Acl) -> Self {
+        self.sacl = Some(sacl);
         self
     }
 
@@ -94,5 +105,9 @@ impl SecurityDescriptor {
 
     pub fn set_dacl(&mut self, dacl: Acl) {
         self.dacl = Some(dacl);
+    }
+
+    pub fn set_sacl(&mut self, sacl: Acl) {
+        self.sacl = Some(sacl);
     }
 }

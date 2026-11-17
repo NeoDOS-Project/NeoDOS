@@ -5,7 +5,21 @@ language = "ca-ES"
 [ids]
 IDS_USAGE = 1001
 IDS_ERR_READ = 1002
+IDS_USAGE_LINE2 = 1003
+IDS_USAGE_LINE3 = 1004
+IDS_USAGE_LINE4 = 1005
+IDS_SET_OK = 1006
+IDS_ERR_SET = 1007
+IDS_ERR_INVALID = 1008
+IDS_ERR_PERM = 1009
 
 [strings]
-IDS_USAGE = "Mostra o estableix el nom de l'equip."
+IDS_USAGE = "HOSTNAME [nom]"
 IDS_ERR_READ = "hostname: no s'ha pogut llegir el nom de l'equip del sistema."
+IDS_USAGE_LINE2 = "  Mostra o estableix el nom de l'equip."
+IDS_USAGE_LINE3 = "  HOSTNAME            mostra el nom actual"
+IDS_USAGE_LINE4 = "  HOSTNAME el-meu-equip  estableix el nom a el-meu-equip"
+IDS_SET_OK = "Nom de l'equip establert: "
+IDS_ERR_SET = "hostname: no s'ha pogut establir el nom de l'equip."
+IDS_ERR_INVALID = "hostname: nom no vàlid (lletres, dígits, '.', '-', '_'; màx. 63)."
+IDS_ERR_PERM = "hostname: permís denegat (cal administrador)."

@@ -10,6 +10,7 @@ impl Scheduler {
             if k.pid == pid {
                 let old_prio = k.priority;
                 k.priority = priority;
+                k.base_priority = priority;
                 let idx = priority as usize;
                 k.time_slice_remaining = TIME_SLICES[idx];
                 k.ticks_since_scheduled = 0;
@@ -38,6 +39,12 @@ impl Scheduler {
             if !k.is_idle && k.state == ThreadState::Ready {
                 k.ticks_since_scheduled = k.ticks_since_scheduled.saturating_add(AGING_INTERVAL_TICKS);
                 if k.ticks_since_scheduled >= MAX_STARVATION_TICKS && k.priority > PRIORITY_HIGH {
+                    // Boost a thread that has been Ready (not running) for a
+                    // full starvation window. The boost persists while the
+                    // thread stays Ready; it is ended by the dispatch that
+                    // actually runs the thread (`account_dispatch` restores
+                    // `base_priority`). Resetting the counter here must not by
+                    // itself cancel the boost.
                     Self::remove_from_run_queue(k);
                     k.priority -= 1;
                     k.ticks_since_scheduled = 0;

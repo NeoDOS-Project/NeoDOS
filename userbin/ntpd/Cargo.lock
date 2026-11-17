@@ -20,6 +20,7 @@ dependencies = [
  "libdns",
  "libneodos",
  "libnet-config",
+ "libntp",
 ]
 
 [[package]]

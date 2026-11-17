@@ -10,6 +10,7 @@ target/
 *.efi
 *.img
 *.vdi
+*.vdi.stamp
 *.log
 *.fs
 *.nxl

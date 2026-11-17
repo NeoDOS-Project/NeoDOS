@@ -38,7 +38,7 @@ pub use snapshot::{
 // `with_vfs`/`with_page_cache`/`with_block_devices` bracket their critical
 // sections with `preempt_disable()`/`preempt_enable()`; `on_timer_tick` does
 // not deschedule a thread while the counter is non-zero.
-use core::sync::atomic::{AtomicU32, Ordering};
+use core::sync::atomic::{AtomicU8, AtomicU32, AtomicU64, Ordering};
 pub static PREEMPT_COUNT: [AtomicU32; crate::arch::x64::cpu_local::MAX_CPUS] =
     [const { AtomicU32::new(0) }; crate::arch::x64::cpu_local::MAX_CPUS];
 
@@ -50,6 +50,80 @@ static PREEMPT_TRACKING: core::sync::atomic::AtomicBool =
 #[inline]
 pub fn preempt_tracking_enable() {
     PREEMPT_TRACKING.store(true, Ordering::Release);
+    // NEODOS-08 (#638): per-CPU identity + preempt tracking are now valid.
+    set_phase(BootPhase::SmpReady);
+}
+
+// ── Boot-phase readiness (NEODOS-08 / #638) ─────────────────────────────────
+/// Explicit boot ordering. Subsystems that depend on a later phase must gate on
+/// it via [`require_phase`] instead of silently no-op-ing (the class of
+/// timing/partial-init bug behind #474/#482/#488).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[repr(u8)]
+pub enum BootPhase {
+    /// Before per-CPU `%gs`/KPRCB exists (preempt tracking is a no-op).
+    Early = 0,
+    /// Per-CPU identity valid and preempt tracking enabled.
+    SmpReady = 1,
+    /// APs are allowed to run the scheduler.
+    ApScheduling = 2,
+    /// First Ring-3 hand-off performed.
+    Userland = 3,
+    /// Steady-state interactive.
+    Ready = 4,
+}
+
+static BOOT_PHASE: AtomicU8 = AtomicU8::new(BootPhase::Early as u8);
+/// Monotonic-transition violations (attempts to go backwards). Must stay 0.
+pub static BOOT_PHASE_REGRESSION: AtomicU64 = AtomicU64::new(0);
+/// `preempt_disable` used while tracking is off *past* bring-up. Must stay 0.
+pub static PREEMPT_USE_TOO_EARLY: AtomicU64 = AtomicU64::new(0);
+/// Subsystems used before their required phase. Must stay 0.
+pub static READINESS_VIOLATIONS: AtomicU64 = AtomicU64::new(0);
+
+#[inline]
+pub fn phase() -> BootPhase {
+    match BOOT_PHASE.load(Ordering::Acquire) {
+        0 => BootPhase::Early,
+        1 => BootPhase::SmpReady,
+        2 => BootPhase::ApScheduling,
+        3 => BootPhase::Userland,
+        _ => BootPhase::Ready,
+    }
+}
+
+#[inline]
+pub fn phase_at_least(p: BootPhase) -> bool {
+    (phase() as u8) >= (p as u8)
+}
+
+/// Advance the boot phase. Monotonic: going backwards is a bug and is reported
+/// (never silently accepted).
+pub fn set_phase(p: BootPhase) {
+    let cur = BOOT_PHASE.load(Ordering::Acquire);
+    if (p as u8) < cur {
+        BOOT_PHASE_REGRESSION.fetch_add(1, Ordering::Relaxed);
+        kerror!(LogSubsys::Boot,
+            "boot phase regression: {} -> {}", cur, p as u8);
+        return;
+    }
+    if (p as u8) != cur {
+        BOOT_PHASE.store(p as u8, Ordering::Release);
+        crate::serial_println!("[BOOT_PHASE] -> {:?}", p);
+    }
+}
+
+/// Require a minimum phase. Records a violation and returns `false` (never
+/// silent) when a subsystem is used too early.
+pub fn require_phase(p: BootPhase, what: &'static str) -> bool {
+    if phase_at_least(p) {
+        true
+    } else {
+        READINESS_VIOLATIONS.fetch_add(1, Ordering::Relaxed);
+        kerror!(LogSubsys::Boot,
+            "subsystem used before ready: {} requires {:?}, phase={:?}", what, p, phase());
+        false
+    }
 }
 
 #[inline]
@@ -60,6 +134,11 @@ fn preempt_tracking_on() -> bool {
 #[inline]
 pub fn preempt_disable() {
     if !preempt_tracking_on() {
+        // A no-op preempt_disable past bring-up would silently let the timer
+        // deschedule a lock holder (#376). Record the misuse (NEODOS-08 / #638).
+        if phase_at_least(BootPhase::SmpReady) {
+            PREEMPT_USE_TOO_EARLY.fetch_add(1, Ordering::Relaxed);
+        }
         return;
     }
     let cpu = unsafe { crate::arch::x64::cpu_local::this_cpu_id() } as usize;
@@ -91,6 +170,7 @@ pub fn preempt_disabled() -> bool {
 
 use alloc::boxed::Box;
 use alloc::collections::VecDeque;
+use crate::id_index::IdIndex;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use spin::Mutex;
@@ -109,6 +189,12 @@ pub struct Scheduler {
     /// TID 0 always gets CPU even when higher-priority threads dominate
     /// the Ready queue.
     schedule_count: u64,
+    /// NEODOS-05 (#635): `pid -> slot` / `tid -> slot` indexes so
+    /// `find_eprocess`/`find_kthread` are O(log n), not O(n). Maintained by the
+    /// `put_*`/`clear_*` helpers; `find_*` falls back to a linear scan on an
+    /// index miss (e.g. a test or legacy direct write).
+    pid_index: IdIndex,
+    tid_index: IdIndex,
 }
 
 #[allow(unused_macros)]
@@ -127,24 +213,44 @@ macro_rules! with_current {
 #[allow(clippy::new_without_default)]
 impl Scheduler {
     pub fn find_eprocess_mut(&mut self, pid: u32) -> Option<&mut Eprocess> {
+        if let Some(idx) = self.pid_index.get(pid as u64) {
+            if self.eprocesses.get(idx).and_then(|e| e.as_ref()).is_some_and(|ep| ep.pid == pid) {
+                return self.eprocesses.get_mut(idx).and_then(|e| e.as_mut());
+            }
+        }
         self.eprocesses.iter_mut()
             .find(|e| e.as_ref().is_some_and(|ep| ep.pid == pid))
             .and_then(|e| e.as_mut())
     }
 
     pub fn find_eprocess(&self, pid: u32) -> Option<&Eprocess> {
+        if let Some(idx) = self.pid_index.get(pid as u64) {
+            if let Some(ep) = self.eprocesses.get(idx).and_then(|e| e.as_ref()) {
+                if ep.pid == pid { return Some(ep); }
+            }
+        }
         self.eprocesses.iter()
             .find(|e| e.as_ref().is_some_and(|ep| ep.pid == pid))
             .and_then(|e| e.as_ref())
     }
 
     pub fn find_kthread_mut(&mut self, tid: u32) -> Option<&mut Kthread> {
+        if let Some(idx) = self.tid_index.get(tid as u64) {
+            if self.kthreads.get(idx).and_then(|t| t.as_ref()).is_some_and(|k| k.tid == tid) {
+                return self.kthreads.get_mut(idx).and_then(|t| t.as_mut().map(|k| &mut **k));
+            }
+        }
         self.kthreads.iter_mut()
             .find(|t| t.as_ref().is_some_and(|k| k.tid == tid))
             .and_then(|t| t.as_mut().map(|k| &mut **k))
     }
 
     pub fn find_kthread(&self, tid: u32) -> Option<&Kthread> {
+        if let Some(idx) = self.tid_index.get(tid as u64) {
+            if let Some(k) = self.kthreads.get(idx).and_then(|t| t.as_ref()) {
+                if k.tid == tid { return Some(k); }
+            }
+        }
         self.kthreads.iter()
             .find(|t| t.as_ref().is_some_and(|k| k.tid == tid))
             .and_then(|t| t.as_ref().map(|k| &**k))
@@ -174,72 +280,94 @@ impl Scheduler {
         })
     }
 
-    /// F-01: per-CPU view of current PID. If KPRCB is initialized (SMP) AND
-    /// the KPRCB thread belongs to this Scheduler, returns per-CPU PID.
-    /// Falls back to global current_tid for tests/local schedulers.
-    pub fn current_pid(&self) -> u32 {
-        if self.kprcb_thread_in_self() {
-            if let Some(pid) = crate::arch::x64::cpu_local::try_per_cpu_pid() {
-                return pid;
-            }
+    /// NEODOS-02 (#632): record a KPRCB identity fallback. Called when the
+    /// per-CPU identity is unavailable while the global scheduler is active
+    /// (`ap_sched_active()`), i.e. a production SMP path would otherwise
+    /// silently use the shared global `current_tid`. Site-tagged and counted by
+    /// `diag::kprcb_fallback_count` so it is never silent.
+    #[inline]
+    fn note_kprcb_fallback(&self, site: &'static str) {
+        let gs = crate::hal::safe::GsBase::read();
+        if gs == 0 {
+            // Early boot before GS is programmed: no per-CPU identity exists yet.
+            return;
         }
-        self.find_kthread(self.current_tid).map(|t| t.pid).unwrap_or(0)
+        let ptr = unsafe { crate::arch::x64::cpu_local::this_cpu_current_thread() };
+        crate::scheduler::diag::kprcb_fallback_ev(site, gs, ptr, self.current_tid);
+        // NEODOS-02 (#632): in production (AP scheduling active, GS set) the
+        // per-CPU KPRCB identity MUST be available. Falling back to the shared
+        // global `current_tid` would let two CPUs operate on the same KTHREAD /
+        // kernel stack. Fail explicitly (project BUGCHECK convention) instead of
+        // corrupting state silently.
+        let cpu = unsafe { crate::arch::x64::cpu_local::this_cpu_id() };
+        panic!(
+            "BUGCHECK: KPRCB identity unavailable in production (site={} cpu={} gs=0x{:x} cur=0x{:x} global_current_tid={})",
+            site, cpu, gs, ptr as u64, self.current_tid
+        );
     }
 
-    /// F-01: per-CPU helper to get current TID for THIS CPU if this is the
-    /// global scheduler (KPRCB thread in self). Otherwise fallback.
-    pub fn current_tid_for_this_cpu(&self) -> u32 {
+    /// NEODOS-02 (#632): the single source of "current TID on this CPU".
+    ///
+    /// Prefers the per-CPU KPRCB identity. If it is unavailable while the
+    /// global scheduler is active, records the fallback via
+    /// [`Self::note_kprcb_fallback`] instead of falling back silently. Local
+    /// test schedulers (KPRCB thread not in `self`) intentionally use
+    /// `self.current_tid`.
+    fn current_tid_checked(&self, site: &'static str) -> u32 {
         if self.kprcb_thread_in_self() {
             if let Some(tid) = crate::arch::x64::cpu_local::try_per_cpu_tid() {
                 return tid;
             }
-        } else if crate::scheduler::ap_sched_active() {
-            // #345 diagnostic: the per-CPU KPRCB identity is unavailable, so the
-            // shared global `current_tid` is used. Record the reason.
-            let gs = crate::hal::safe::GsBase::read();
-            if gs != 0 {
-                let ptr = unsafe { crate::arch::x64::cpu_local::this_cpu_current_thread() };
-                crate::scheduler::diag::kprcb_fallback_ev(
-                    "current_tid_for_this_cpu", gs, ptr, self.current_tid);
+            // If this scheduler claims the KPRCB current-thread identity but the
+            // KPRCB read still fails, treat it as a production safety violation:
+            // the fallback path is never silent.
+            if crate::scheduler::ap_sched_active() {
+                self.note_kprcb_fallback(site);
             }
+        } else if crate::scheduler::ap_sched_active() {
+            self.note_kprcb_fallback(site);
         }
         self.current_tid
     }
 
+    /// NEODOS-02 (#632): per-CPU PID, checked like [`Self::current_tid_checked`].
+    fn current_pid_checked(&self, site: &'static str) -> u32 {
+        if self.kprcb_thread_in_self() {
+            if let Some(pid) = crate::arch::x64::cpu_local::try_per_cpu_pid() {
+                return pid;
+            }
+            if crate::scheduler::ap_sched_active() {
+                self.note_kprcb_fallback(site);
+            }
+        } else if crate::scheduler::ap_sched_active() {
+            self.note_kprcb_fallback(site);
+        }
+        self.find_kthread(self.current_tid).map(|t| t.pid).unwrap_or(0)
+    }
+
+    /// F-01: per-CPU view of current PID.
+    pub fn current_pid(&self) -> u32 {
+        self.current_pid_checked("current_pid")
+    }
+
+    /// F-01: per-CPU helper to get current TID for THIS CPU.
+    pub fn current_tid_for_this_cpu(&self) -> u32 {
+        self.current_tid_checked("current_tid_for_this_cpu")
+    }
+
     pub fn current_eprocess_mut(&mut self) -> Option<&mut Eprocess> {
-        // Use per-CPU only for global scheduler; local test schedulers use self.current_tid
-        let tid = if self.kprcb_thread_in_self() {
-            crate::arch::x64::cpu_local::try_per_cpu_tid().unwrap_or(self.current_tid)
-        } else {
-            self.current_tid
-        };
+        let tid = self.current_tid_checked("current_eprocess_mut");
         let pid = self.find_kthread(tid).map(|t| t.pid)?;
         self.find_eprocess_mut(pid)
     }
 
     pub fn current_kthread_mut(&mut self) -> Option<&mut Kthread> {
-        let tid = if self.kprcb_thread_in_self() {
-            crate::arch::x64::cpu_local::try_per_cpu_tid().unwrap_or(self.current_tid)
-        } else {
-            if crate::scheduler::ap_sched_active() {
-                let gs = crate::hal::safe::GsBase::read();
-                if gs != 0 {
-                    let ptr = unsafe { crate::arch::x64::cpu_local::this_cpu_current_thread() };
-                    crate::scheduler::diag::kprcb_fallback_ev(
-                        "current_kthread_mut", gs, ptr, self.current_tid);
-                }
-            }
-            self.current_tid
-        };
+        let tid = self.current_tid_checked("current_kthread_mut");
         self.find_kthread_mut(tid)
     }
 
     pub fn current_eprocess(&self) -> Option<&Eprocess> {
-        let tid = if self.kprcb_thread_in_self() {
-            crate::arch::x64::cpu_local::try_per_cpu_tid().unwrap_or(self.current_tid)
-        } else {
-            self.current_tid
-        };
+        let tid = self.current_tid_checked("current_eprocess");
         let pid = self.find_kthread(tid).map(|t| t.pid)?;
         self.find_eprocess(pid)
     }
@@ -286,6 +414,7 @@ impl Scheduler {
             cpu_time_base: Kthread::CPU_TIME_UNSET,
             waiting_for: None,
             priority: PRIORITY_NORMAL,
+            base_priority: PRIORITY_NORMAL,
             time_slice_remaining: TIME_SLICES[PRIORITY_NORMAL as usize],
             ticks_since_scheduled: 0,
             kernel_stack_top: boot_ks_top,
@@ -301,6 +430,7 @@ impl Scheduler {
             user_apc_queue: VecDeque::new(),
             apc_pending: false,
             is_idle: false,
+            is_kernel: true,
             yield_requested: false,
             name: KernelName::from_str("boot"),
         };
@@ -342,6 +472,30 @@ impl Scheduler {
             next_tid: 2,
             timer_ticks: 0,
             schedule_count: 0,
+            pid_index: IdIndex::new(),
+            tid_index: IdIndex::new(),
+        }
+    }
+
+    /// NEODOS-05 (#635): slot writers that keep the id indexes consistent.
+    pub(crate) fn put_kthread(&mut self, slot: usize, k: Box<Kthread>) {
+        let tid = k.tid;
+        self.kthreads[slot] = Some(k);
+        self.tid_index.insert(tid as u64, slot);
+    }
+    pub(crate) fn clear_kthread_slot(&mut self, slot: usize) {
+        if let Some(k) = self.kthreads[slot].take() {
+            self.tid_index.remove(k.tid as u64);
+        }
+    }
+    pub(crate) fn put_eprocess(&mut self, slot: usize, ep: Eprocess) {
+        let pid = ep.pid;
+        self.eprocesses[slot] = Some(ep);
+        self.pid_index.insert(pid as u64, slot);
+    }
+    pub(crate) fn clear_eprocess_slot(&mut self, slot: usize) {
+        if let Some(ep) = self.eprocesses[slot].take() {
+            self.pid_index.remove(ep.pid as u64);
         }
     }
     pub fn has_non_idle_processes(&self) -> bool {
@@ -389,7 +543,14 @@ pub fn ap_sched_active() -> bool {
 
 /// Enable/disable AP scheduling. Must only be toggled by the BSP.
 pub fn set_ap_sched_active(v: bool) {
+    if v {
+        // NEODOS-08 (#638): AP scheduling requires per-CPU bring-up done.
+        require_phase(BootPhase::SmpReady, "ap_sched_active");
+    }
     AP_SCHED_ACTIVE.store(v, core::sync::atomic::Ordering::Release);
+    if v {
+        set_phase(BootPhase::ApScheduling);
+    }
 }
 
 /// Establish the BSP's per-CPU identity (KPRCB.current_thread = boot thread)
@@ -510,7 +671,7 @@ pub fn cleanup_terminated_process(pid: u32) {
         if crate::arch::x64::cpu_local::is_pid_running_on_any_cpu(pid) {
             // F-02-B: the pid still has a thread executing on some CPU (SMP).
             // Do not drop its kernel stack now; defer reclaim to the reaper.
-            crate::scheduler::lifecycle::defer_reap(pid);
+            crate::scheduler::lifecycle::defer_reap_with_scheduler(&mut *sched, pid);
         } else {
             sched.recycle_terminated(pid);
         }
