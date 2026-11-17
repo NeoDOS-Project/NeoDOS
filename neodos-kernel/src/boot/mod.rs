@@ -492,6 +492,14 @@ pub unsafe fn init(boot_info: &BootInfo) -> ! {
     // Creates \Device\Tcp and \Device\Udp namespace objects.
     // NICs are registered by NEM drivers (e.g. e1000.nem).
     // ============================================
+    // ============================================
+    // PHASE 3.9: User profiles (#400)
+    // Creates C:\Users\<usuario>\{Desktop,Documents,Downloads,AppData\...}
+    // for every SAM account and records the SID binding in the registry.
+    // ============================================
+    let profiles = cm::profile::ensure_all();
+    println!("[+] User profiles ready: {}", profiles);
+
     println!("[+] Initializing networking subsystem...");
     net::init_networking();
 

@@ -1,3 +1,4 @@
+pub mod profile;
 pub mod hive;
 pub mod cache;
 pub mod manager;

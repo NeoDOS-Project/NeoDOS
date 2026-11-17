@@ -437,6 +437,30 @@ Store per-user configuration under a dedicated hive:
   \Software\{app}      ← per-user application settings
 ```
 
+### 6.1.1 On-disk profile tree (implemented, #400)
+
+`security::profile` creates one tree per SAM account on the system volume and
+records the owner binding:
+
+```text
+C:\Users\<usuario>\Desktop
+                 \Documents
+                 \Downloads
+                 \AppData\Local
+                 \AppData\Roaming
+```
+
+- Created idempotently at boot (`ensure_all`, every account except `SYSTEM`,
+  which has no interactive profile) and on demand (`ensure_profile`).
+- Names follow NT rules: 1–20 characters, none of `\ / : * ? " < > |`, no
+  trailing dot or space, not a reserved device name (`CON`, `NUL`, `COM1`…).
+- The binding lives in memory (`security::profile::{lookup, lookup_sid}`) and in
+  the registry under `\Registry\Machine\Software\NeoDOS\Profiles\<usuario>`
+  (`ProfilePath`, `OwnerSid`, `Username`).
+- **Not enforced yet**: `DirEntryV2` has no owner SID, so ACL checks wait for
+  Phase 3 (§5) — the recorded SID is what that phase will consume. NT-style
+  partitioning moved to #499.
+
 ### 6.2 SAM Persistence
 
 The SAM database is serialized to `\Registry\Machine\SAM` (binary format with magic `SAM\0`, version 2). Loaded at boot by NeoInit, flushed on user creation/deletion/password change.

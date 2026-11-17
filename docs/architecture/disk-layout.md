@@ -208,8 +208,11 @@ ejecutable**, no en una ruta global.
 
 ### Fase 5 — Opcional
 
-- `\Users\<usuario>` + `AppData` ligado a SAM/SID/ACL.
-- GPT estilo NT: `ESP → MSR(16 MB) → NeoDOS → Recovery`.
+- `\Users\<usuario>` + `AppData` ligado a SAM/SID/ACL — **perfiles creados**
+  (`security::profile`, #400): árbol estándar por cuenta y SID anotado en el
+  registro. La *aplicación* de ACL espera a la Fase 3 de
+  `users-security-design.md`.
+- GPT estilo NT: `ESP → MSR(16 MB) → NeoDOS → Recovery` (#499).
 
 ### Orden recomendado
 
