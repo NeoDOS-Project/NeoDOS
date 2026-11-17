@@ -24,24 +24,110 @@
 extern crate alloc;
 
 use core::alloc::{GlobalAlloc, Layout};
+use core::sync::atomic::{AtomicPtr, Ordering};
 
 use libhttp::{execute, BodySink, Deadline, HttpError, Limits, ResponseHead, Scheme, Url};
 use libneodos::{args, mem, syscall};
 use libnet::http_transport::{HttpsTransport, TcpTransport};
 
+/// Size-class recycling allocator over `sbrk`.
+///
+/// `sbrk` only grows, so a pure bump allocator permanently loses every freed
+/// block. Crypto verification allocates heavily per operation (the ECDSA
+/// scalar multiplication makes tens of thousands of small big-integer
+/// buffers), which exhausted the 2 MiB userland heap mid-handshake. Freed
+/// blocks are therefore kept in per-class free lists and reused, so peak usage
+/// — not total churn — is what matters.
+///
+/// Layout: `sbrk` returns `size + 24` bytes; the payload starts at the next
+/// 16-byte boundary after an 8-byte slot that stores the original base, so
+/// `dealloc` can push the payload back without knowing the padding.
 struct SbrkAlloc;
+
+/// Free lists: 16, 32, … 32 KiB classes.
+const CLASSES: usize = 12;
+const CLASS_MIN: usize = 16;
+/// Bytes added around a payload: 8 for the base pointer, 15 for alignment,
+/// 1 to stay inside the block.
+const SLACK: usize = 24;
+
+static FREE: [AtomicPtr<u8>; CLASSES] =
+    [const { AtomicPtr::new(core::ptr::null_mut()) }; CLASSES];
+
+fn class_of(size: usize) -> Option<usize> {
+    let mut class = CLASS_MIN;
+    let mut index = 0;
+    while index < CLASSES {
+        if size <= class {
+            return Some(index);
+        }
+        class *= 2;
+        index += 1;
+    }
+    None
+}
+
+/// Capacity of every block in `index`, so a block freed for one request can
+/// serve any later request of the same class.
+fn class_size(index: usize) -> usize {
+    CLASS_MIN << index
+}
+
+impl SbrkAlloc {
+    /// Bump-allocate `size` bytes without recycling (large or over-aligned).
+    unsafe fn bump(size: usize, align: usize) -> *mut u8 {
+        let total = size + align.max(1) + 8;
+        let base = mem::sbrk(total as i64).ok().unwrap_or(0) as *mut u8;
+        if base.is_null() {
+            return core::ptr::null_mut();
+        }
+        let payload = ((base as usize + 8 + align - 1) & !(align - 1)) as *mut u8;
+        (payload as *mut usize).sub(1).write(base as usize);
+        payload
+    }
+}
 
 unsafe impl GlobalAlloc for SbrkAlloc {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        let size = layout.size().max(8) as i64;
-        let ptr = mem::sbrk(size).ok().unwrap_or(0) as *mut u8;
-        if ptr.is_null() {
-            core::ptr::null_mut()
-        } else {
-            ptr
+        let size = layout.size().max(1);
+        if layout.align() > 16 {
+            return Self::bump(size, layout.align());
         }
+        let Some(index) = class_of(size) else {
+            return Self::bump(size, 16);
+        };
+        let head = FREE[index].load(Ordering::Relaxed);
+        if !head.is_null() {
+            let next = (head as *mut *mut u8).read() as *mut u8;
+            FREE[index].store(next, Ordering::Relaxed);
+            return head;
+        }
+        // Allocate the whole class: a block freed by a 20-byte request must
+        // still hold 32 bytes when it serves the next 32-byte one, otherwise
+        // the reuse silently overflows the block.
+        let total = class_size(index) + SLACK;
+        let base = mem::sbrk(total as i64).ok().unwrap_or(0) as *mut u8;
+        if base.is_null() {
+            return core::ptr::null_mut();
+        }
+        let payload = ((base as usize + 8 + 15) & !15) as *mut u8;
+        (payload as *mut usize).sub(1).write(base as usize);
+        payload
     }
-    unsafe fn dealloc(&self, _ptr: *mut u8, _layout: Layout) {}
+
+    /// Kept for over-aligned/large allocations, which are not recycled.
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        let size = layout.size().max(1);
+        if layout.align() > 16 {
+            return;
+        }
+        let Some(index) = class_of(size) else {
+            return;
+        };
+        let head = FREE[index].load(Ordering::Relaxed);
+        (ptr as *mut *mut u8).write(head);
+        FREE[index].store(ptr, Ordering::Relaxed);
+    }
 }
 
 #[global_allocator]
