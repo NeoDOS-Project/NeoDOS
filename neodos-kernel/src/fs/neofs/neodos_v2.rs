@@ -332,6 +332,12 @@ impl NeoDosFsV2 {
             // no se reintroducen en la free list.
             if lba >= 2 && len > 0 {
                 self.freelist.free(lba, len);
+                // Una página *sucia* cacheada para un bloque que acaba de
+                // liberarse puede volcarse más tarde —después de que la free
+                // list lo entregue a otro fichero— y sobrescribir sus datos.
+                // Al liberar, el contenido del bloque ya no importa: se
+                // descarta la entrada de caché (#753).
+                invalidate_cache(&self.io_stack, lba * 8, len as u64 * 8);
             }
         }
     }
@@ -1087,6 +1093,85 @@ pub fn register_neodos_v2_tests() {
         crate::test_true!(buf2[..1024].iter().all(|b| *b == 0xAA));
         crate::test_true!(buf2[1024..1391].iter().all(|b| *b == 0xBB));
         crate::test_true!(buf2[1391..].iter().all(|b| *b == 0xCC));
+
+        let _ = crate::globals::BLOCK_DEVICES.lock().force_remove(dev_id);
+    });
+
+    crate::test_case!("neofs_v2_chunked_writes_many_files", {
+        // #753: the 1391-byte case is intermittent in the guest. Keep the exact
+        // shape (1024 + 367, offset 0 then 1024) but repeat it over several files
+        // so block reuse and the page cache are exercised, not just the first
+        // allocation.
+        let sectors = alloc::vec![[0u8; 512]; 4096];
+        let dev_id = crate::fs::fsck::register_test_device(sectors);
+        let io = IoStack::new(dev_id);
+        mkfs_ne2(&io, 512, "TEST").unwrap();
+
+        let mut fs = NeoDosFsV2::new(io).unwrap();
+        let mut names = alloc::vec::Vec::new();
+        for i in 0..8u8 {
+            let name = alloc::format!("F{}.BIN", i);
+            fs.create(0, &name).unwrap();
+            names.push(name);
+        }
+        for (i, name) in names.iter().enumerate() {
+            let ino = fs.lookup(0, name).unwrap().inode;
+            let head = [0xA0u8 + i as u8; 1024];
+            let tail = [0x10u8 + i as u8; 367];
+            crate::test_eq!(fs.write(ino, 0, &head).unwrap(), 1024);
+            crate::test_eq!(fs.write(ino, 1024, &tail).unwrap(), 367);
+        }
+        for (i, name) in names.iter().enumerate() {
+            let ino = fs.lookup(0, name).unwrap().inode;
+            let mut buf = [0u8; 1391];
+            let n = fs.read(ino, 0, &mut buf).unwrap();
+            crate::test_eq!(n, 1391);
+            crate::test_true!(buf[..1024].iter().all(|b| *b == 0xA0u8 + i as u8));
+            crate::test_true!(buf[1024..].iter().all(|b| *b == 0x10u8 + i as u8));
+        }
+
+        let _ = crate::globals::BLOCK_DEVICES.lock().force_remove(dev_id);
+    });
+
+    crate::test_case!("neofs_v2_reused_blocks_do_not_leak_old_data", {
+        // #753: freeing a COW extent used to leave its cached pages around; a
+        // dirty one could be written back after the block had been handed to
+        // another file. Delete -> recreate -> flush -> read must return only the
+        // new file's bytes.
+        let sectors = alloc::vec![[0u8; 512]; 4096];
+        let dev_id = crate::fs::fsck::register_test_device(sectors);
+        let io = IoStack::new(dev_id);
+        mkfs_ne2(&io, 512, "TEST").unwrap();
+
+        let mut fs = NeoDosFsV2::new(io).unwrap();
+        for round in 0..4u8 {
+            let name = alloc::format!("R{}.BIN", round);
+            fs.create(0, &name).unwrap();
+            let ino = fs.lookup(0, &name).unwrap().inode;
+            let head = [0xEEu8; 1024];
+            let tail = [0xEEu8; 367];
+            fs.write(ino, 0, &head).unwrap();
+            fs.write(ino, 1024, &tail).unwrap();
+            let mut buf = [0u8; 1391];
+            let n = fs.read(ino, 0, &mut buf).unwrap();
+            crate::test_eq!(n, 1391);
+            crate::test_true!(buf.iter().all(|b| *b == 0xEE));
+
+            // Drop it so its blocks go back to the free list.
+            fs.remove_file(0, &name).unwrap();
+        }
+
+        // After the churn, a brand-new file must still read back cleanly.
+        fs.create(0, "LAST.BIN").unwrap();
+        let ino = fs.lookup(0, "LAST.BIN").unwrap().inode;
+        let head = [0x77u8; 1024];
+        let tail = [0x77u8; 367];
+        fs.write(ino, 0, &head).unwrap();
+        fs.write(ino, 1024, &tail).unwrap();
+        let mut buf = [0u8; 1391];
+        let n = fs.read(ino, 0, &mut buf).unwrap();
+        crate::test_eq!(n, 1391);
+        crate::test_true!(buf.iter().all(|b| *b == 0x77));
 
         let _ = crate::globals::BLOCK_DEVICES.lock().force_remove(dev_id);
     });
