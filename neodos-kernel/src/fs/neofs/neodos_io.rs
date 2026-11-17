@@ -112,7 +112,14 @@ pub fn file_write(
         && (offset > 0 || (offset as usize + data.len()) < new_size);
     let old = if need_preserve {
         let mut buf = alloc::vec![0u8; new_entry.size as usize];
-        let _ = file_read(entry, 0, &mut buf, cache, dev_tag, dev);
+        // `file_read` takes the extent start in **sectors**; `extent_lba` is in
+        // 4096-byte blocks (`neodos_v2::read_entry_bytes` translates it the
+        // same way). Passing the raw block LBA read unrelated data, so a write
+        // split across several `sys_write` calls preserved garbage instead of
+        // the untouched prefix (#748).
+        let mut src = entry.clone();
+        src.extent_lba = partition_base_sector + src.extent_lba * 8;
+        let _ = file_read(&src, 0, &mut buf, cache, dev_tag, dev);
         Some(buf)
     } else {
         None
