@@ -2,7 +2,7 @@
 
 <!-- markdownlint-disable MD013 MD024 MD056 -->
 
-## Unreleased
+## v0.52 — 2026-11-17
 
 ### Added
 
