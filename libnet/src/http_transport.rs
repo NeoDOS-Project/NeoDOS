@@ -11,6 +11,8 @@
 //!
 //! DNS uses `libnet::dns` (A records, IPv4 literals bypass the resolver).
 
+use core::sync::atomic::{AtomicUsize, Ordering};
+
 use libhttp::{Close, Deadline, HttpError, Limits, Read, Transport, Write};
 use libneodos::syscall;
 
@@ -228,6 +230,30 @@ impl TlsTransportTrait for TlsTcp {
     }
 }
 
+// ── TLS failure detail ──
+
+/// `HttpError::Tls` carries no payload (the HTTP core does not depend on
+/// `libtls`), so the transport records the reason here for CLIs to print.
+static LAST_TLS_PTR: AtomicUsize = AtomicUsize::new(0);
+static LAST_TLS_LEN: AtomicUsize = AtomicUsize::new(0);
+
+fn record_tls_error(err: TlsError) {
+    let text = err.as_str();
+    LAST_TLS_LEN.store(text.len(), Ordering::Relaxed);
+    LAST_TLS_PTR.store(text.as_ptr() as usize, Ordering::Relaxed);
+}
+
+/// Reason for the most recent `HttpError::Tls` in this process, or `""`.
+pub fn last_tls_error() -> &'static str {
+    let ptr = LAST_TLS_PTR.load(Ordering::Relaxed) as *const u8;
+    let len = LAST_TLS_LEN.load(Ordering::Relaxed);
+    if ptr.is_null() || len == 0 {
+        return "";
+    }
+    // SAFETY: `record_tls_error` only stores `&'static str` literals.
+    unsafe { core::str::from_utf8_unchecked(core::slice::from_raw_parts(ptr, len)) }
+}
+
 /// HTTPS transport: TCP + TLS 1.3 with a caller-provided trust anchor list.
 pub struct HttpsTransport {
     limits: Limits,
@@ -263,7 +289,10 @@ impl Transport for HttpsTransport {
             server_name: sni,
             host: host_kind,
         };
-        let stream = libtls::connect(TlsTcp { conn: Some(tcp), dl }, cfg).map_err(|_| HttpError::Tls)?;
+        let stream = libtls::connect(TlsTcp { conn: Some(tcp), dl }, cfg).map_err(|e| {
+            record_tls_error(e);
+            HttpError::Tls
+        })?;
         Ok(HttpsConn { stream })
     }
 }
