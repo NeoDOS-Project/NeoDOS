@@ -96,10 +96,33 @@ impl Transport for TcpTransport {
     }
 }
 
+/// Fault the pages backing `buf` into the process before handing it to the
+/// kernel.
+///
+/// Heap pages are demand-paged: a buffer that crosses into a page the process
+/// has not touched yet is genuinely unmapped, and the kernel refuses to copy
+/// into non-resident user memory (it returns `EFAULT` rather than faulting in
+/// Ring 0). Reading the first byte of every page in user mode maps them first.
+fn touch_pages(buf: &mut [u8]) {
+    if buf.is_empty() {
+        return;
+    }
+    let start = buf.as_ptr() as usize;
+    let end = start + buf.len();
+    let mut page = start & !0xfff;
+    while page < end {
+        let offset = page - start;
+        // A user-mode read demand-faults the page in; volatile so it is kept.
+        unsafe { core::ptr::read_volatile(&buf[offset]) };
+        page += 4096;
+    }
+}
+
 impl Read for TcpConn {
     fn read(&mut self, buf: &mut [u8], dl: Deadline) -> Result<usize, HttpError> {
         let now = now_ms()?;
         let idle = Deadline::after(now, self.limits.read_timeout_ms);
+        touch_pages(buf);
 
         loop {
             let n = crate::socket_recv(self.fd, buf);
