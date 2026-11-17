@@ -29,12 +29,9 @@ fn is_page_present(virt: u64) -> bool {
 }
 
 pub(crate) fn is_user_ptr_valid(ptr: u64, len: u64) -> bool {
-    if ptr >= crate::arch::x64::paging::USER_BASE && ptr.saturating_add(len) <= crate::arch::x64::paging::USER_LIMIT {
-        return true;
-    }
-    if ptr >= 0x1E000000 && ptr.saturating_add(len) <= 0x1E200000 {
-        return true;
-    }
+    // Heap/mmap first: they are carved out of the USER window (see
+    // `is_valid_user_byte_locked`), so the window shortcut must not shadow the
+    // per-process break. Presence is still checked per byte afterwards.
     let (heap_base, heap_break) = crate::scheduler::current_process_heap_range();
     if heap_base != 0 && ptr >= heap_base && ptr.saturating_add(len) <= heap_break {
         return true;
@@ -45,6 +42,12 @@ pub(crate) fn is_user_ptr_valid(ptr: u64, len: u64) -> bool {
             return true;
         }
     }
+    if ptr >= 0x1E000000 && ptr.saturating_add(len) <= 0x1E200000 {
+        return true;
+    }
+    if ptr >= crate::arch::x64::paging::USER_BASE && ptr.saturating_add(len) <= crate::arch::x64::paging::USER_LIMIT {
+        return true;
+    }
     false
 }
 
@@ -52,14 +55,13 @@ pub(crate) fn is_user_ptr_valid(ptr: u64, len: u64) -> bool {
 /// called with SCHEDULER + USER_MEMORY_LOCK held (F-DEV-01: heap/mmap require
 /// the PTE to be PRESENT so we never fault at DISPATCH, INV-14).
 fn is_valid_user_byte_locked(sched: &Scheduler, p: u64) -> bool {
-    if p >= crate::arch::x64::paging::USER_BASE && p < crate::arch::x64::paging::USER_LIMIT {
-        // USER window is identity-mapped huge pages PRESENT|USER — always present.
-        return true;
-    }
-    if p >= 0x1E000000 && p < 0x1E200000 {
-        // NXL region is split at init_nxl_region, check PRESENT.
-        return is_page_present(p);
-    }
+    // Heap and mmap slots live *inside* the USER window, where they replace
+    // the identity-mapped huge pages with 4 KB demand-paged ones. They must be
+    // checked first: the "always present" shortcut below is only valid for the
+    // huge pages no slot overrides. Getting this order wrong made the kernel
+    // write into an absent heap page (Ring 0 #PF → panic) whenever a syscall
+    // filled a user buffer that crossed into a page the process had not
+    // touched yet.
     let pid = sched.current_pid();
     if let Some(ep) = sched.find_eprocess(pid) {
         if ep.heap_base != 0 && p >= ep.heap_base && p < ep.heap_break {
@@ -72,6 +74,14 @@ fn is_valid_user_byte_locked(sched: &Scheduler, p: u64) -> bool {
                 return is_page_present(p);
             }
         }
+    }
+    if p >= 0x1E000000 && p < 0x1E200000 {
+        // NXL region is split at init_nxl_region, check PRESENT.
+        return is_page_present(p);
+    }
+    if p >= crate::arch::x64::paging::USER_BASE && p < crate::arch::x64::paging::USER_LIMIT {
+        // USER window is identity-mapped huge pages PRESENT|USER — always present.
+        return true;
     }
     false
 }
