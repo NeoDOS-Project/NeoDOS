@@ -1,6 +1,7 @@
 //! Extent read/write + inline data para NeoFS v2.
 //! Cada archivo tiene extents (start_lba, length) almacenados en un B-tree
-//! de tipo extent_list (node_type=2), o datos inline si caben en 208 bytes.
+//! de tipo extent_list (node_type=2), o datos inline si caben en
+//! `INLINE_MAX` bytes (16; ver `neodos_dir.rs`).
 
 use crate::drivers::block::BlockDevice;
 use crate::buffer::page_cache::PageCache;
@@ -73,20 +74,37 @@ pub fn file_write(
 ) -> Result<DirEntryV2, ()> {
     let mut new_entry = entry.clone();
 
-    let new_size = (offset as usize + data.len()).max(new_entry.size as usize);
+    // A caller-supplied offset near `u64::MAX` used to wrap in `usize` and
+    // resize the file to a bogus (small) value. Reject it instead of writing at
+    // the wrong place.
+    let write_end_abs = offset.checked_add(data.len() as u64).ok_or(())?;
+    let new_size = core::cmp::max(write_end_abs, new_entry.size) as usize;
 
     // Si cabe inline
     if new_size <= INLINE_MAX {
         let mut inline_data = [0u8; INLINE_MAX];
-        inline_data[..new_size].copy_from_slice(&data[..data.len().min(INLINE_MAX)]);
-        if offset as usize + data.len() > entry.inline_len as usize {
-            let copy_start = offset as usize;
-            for i in 0..data.len() {
-                if copy_start + i < INLINE_MAX {
-                    inline_data[copy_start + i] = data[i];
-                }
-            }
+
+        // Seed with the previous content: a write that does not cover the
+        // whole file keeps the prefix (and any byte it does not overwrite).
+        // Extent-backed files never shrink back to inline here, because
+        // `new_size` is the maximum of the old size and the write end.
+        let old_len = (entry.inline_len as usize).min(INLINE_MAX);
+        if old_len > 0 {
+            inline_data[..old_len].copy_from_slice(&entry.inline_data[..old_len]);
         }
+
+        // Apply the new bytes at `offset`. The array starts zeroed, so a hole
+        // between the old EOF and `offset` reads back as zeros, matching the
+        // extent path. `new_size <= INLINE_MAX` guarantees the range fits, so
+        // source and destination always have the same length (#755 used to
+        // slice `new_size` against `data.len()` and panicked in Ring 0).
+        let write_end = (write_end_abs as usize).min(INLINE_MAX);
+        let write_start = (offset as usize).min(write_end);
+        let n = write_end - write_start;
+        if n > 0 {
+            inline_data[write_start..write_end].copy_from_slice(&data[..n]);
+        }
+
         new_entry.inline_len = new_size as u32;
         new_entry.inline_data = inline_data;
         new_entry.extent_lba = 0;
@@ -109,7 +127,7 @@ pub fn file_write(
     // size made the destination slice longer than the source and panicked in
     // `copy_from_slice` (#461).
     let need_preserve = new_entry.size > 0
-        && (offset > 0 || (offset as usize + data.len()) < new_size);
+        && (offset > 0 || (write_end_abs as usize) < new_size);
     let old = if need_preserve {
         let mut buf = alloc::vec![0u8; new_entry.size as usize];
         // `file_read` takes the extent start in **sectors**; `extent_lba` is in

@@ -1097,6 +1097,143 @@ pub fn register_neodos_v2_tests() {
         let _ = crate::globals::BLOCK_DEVICES.lock().force_remove(dev_id);
     });
 
+    crate::test_case!("neofs_v2_inline_append_preserves_prefix", {
+        // #755: appending to an inline file (<= 16 B) panicked in Ring 0
+        // because `copy_from_slice` sliced `new_size` bytes from `data.len()`.
+        let sectors = alloc::vec![[0u8; 512]; 2048];
+        let dev_id = crate::fs::fsck::register_test_device(sectors);
+        let io = IoStack::new(dev_id);
+        mkfs_ne2(&io, 256, "TEST").unwrap();
+
+        let mut fs = NeoDosFsV2::new(io).unwrap();
+        fs.create(0, "I.TXT").unwrap();
+        let ino = fs.lookup(0, "I.TXT").unwrap().inode;
+
+        crate::test_eq!(fs.write(ino, 0, b"ab").unwrap(), 2);
+        crate::test_eq!(fs.write(ino, 2, b"cd").unwrap(), 2);
+
+        let mut buf = [0u8; 16];
+        let n = fs.read(ino, 0, &mut buf).unwrap();
+        crate::test_eq!(n, 4);
+        crate::test_eq!(&buf[..n], &b"abcd"[..]);
+
+        let _ = crate::globals::BLOCK_DEVICES.lock().force_remove(dev_id);
+    });
+
+    crate::test_case!("neofs_v2_inline_partial_overwrite_keeps_rest", {
+        // Overwriting the middle of an inline file must keep both sides.
+        let sectors = alloc::vec![[0u8; 512]; 2048];
+        let dev_id = crate::fs::fsck::register_test_device(sectors);
+        let io = IoStack::new(dev_id);
+        mkfs_ne2(&io, 256, "TEST").unwrap();
+
+        let mut fs = NeoDosFsV2::new(io).unwrap();
+        fs.create(0, "I.TXT").unwrap();
+        let ino = fs.lookup(0, "I.TXT").unwrap().inode;
+
+        crate::test_eq!(fs.write(ino, 0, b"abcdef").unwrap(), 6);
+        crate::test_eq!(fs.write(ino, 2, b"XY").unwrap(), 2);
+
+        let mut buf = [0u8; 16];
+        let n = fs.read(ino, 0, &mut buf).unwrap();
+        crate::test_eq!(n, 6);
+        crate::test_eq!(&buf[..n], &b"abXYef"[..]);
+
+        let _ = crate::globals::BLOCK_DEVICES.lock().force_remove(dev_id);
+    });
+
+    crate::test_case!("neofs_v2_inline_shorter_write_at_zero_keeps_rest", {
+        // A write shorter than the file, at offset 0: the exact shape that used
+        // to panic (`new_size == size`, `data.len() < new_size`).
+        let sectors = alloc::vec![[0u8; 512]; 2048];
+        let dev_id = crate::fs::fsck::register_test_device(sectors);
+        let io = IoStack::new(dev_id);
+        mkfs_ne2(&io, 256, "TEST").unwrap();
+
+        let mut fs = NeoDosFsV2::new(io).unwrap();
+        fs.create(0, "I.TXT").unwrap();
+        let ino = fs.lookup(0, "I.TXT").unwrap().inode;
+
+        crate::test_eq!(fs.write(ino, 0, b"abcdefgh").unwrap(), 8);
+        crate::test_eq!(fs.write(ino, 0, b"XY").unwrap(), 2);
+
+        let mut buf = [0u8; 16];
+        let n = fs.read(ino, 0, &mut buf).unwrap();
+        crate::test_eq!(n, 8);
+        crate::test_eq!(&buf[..n], &b"XYcdefgh"[..]);
+
+        let _ = crate::globals::BLOCK_DEVICES.lock().force_remove(dev_id);
+    });
+
+    crate::test_case!("neofs_v2_inline_hole_reads_as_zero", {
+        // Writing past the current EOF leaves a zero-filled hole.
+        let sectors = alloc::vec![[0u8; 512]; 2048];
+        let dev_id = crate::fs::fsck::register_test_device(sectors);
+        let io = IoStack::new(dev_id);
+        mkfs_ne2(&io, 256, "TEST").unwrap();
+
+        let mut fs = NeoDosFsV2::new(io).unwrap();
+        fs.create(0, "I.TXT").unwrap();
+        let ino = fs.lookup(0, "I.TXT").unwrap().inode;
+
+        crate::test_eq!(fs.write(ino, 0, b"ab").unwrap(), 2);
+        crate::test_eq!(fs.write(ino, 6, b"gh").unwrap(), 2);
+
+        let mut buf = [0xFFu8; 16];
+        let n = fs.read(ino, 0, &mut buf).unwrap();
+        crate::test_eq!(n, 8);
+        crate::test_eq!(&buf[..n], &[b'a', b'b', 0, 0, 0, 0, b'g', b'h'][..]);
+
+        let _ = crate::globals::BLOCK_DEVICES.lock().force_remove(dev_id);
+    });
+
+    crate::test_case!("neofs_v2_inline_to_extents_preserves_content", {
+        // Crossing INLINE_MAX switches to extents; the inline prefix and the
+        // new bytes must both survive.
+        let sectors = alloc::vec![[0u8; 512]; 2048];
+        let dev_id = crate::fs::fsck::register_test_device(sectors);
+        let io = IoStack::new(dev_id);
+        mkfs_ne2(&io, 256, "TEST").unwrap();
+
+        let mut fs = NeoDosFsV2::new(io).unwrap();
+        fs.create(0, "G.BIN").unwrap();
+        let ino = fs.lookup(0, "G.BIN").unwrap().inode;
+
+        crate::test_eq!(fs.write(ino, 0, b"0123456789").unwrap(), 10);
+        let tail = [0xEEu8; 20];
+        crate::test_eq!(fs.write(ino, 10, &tail).unwrap(), tail.len());
+
+        let mut buf = [0u8; 30];
+        let n = fs.read(ino, 0, &mut buf).unwrap();
+        crate::test_eq!(n, 30);
+        crate::test_eq!(&buf[..10], &b"0123456789"[..]);
+        crate::test_true!(buf[10..].iter().all(|b| *b == 0xEE));
+
+        let _ = crate::globals::BLOCK_DEVICES.lock().force_remove(dev_id);
+    });
+
+    crate::test_case!("neofs_v2_write_rejects_offset_overflow", {
+        // A write offset near u64::MAX must fail, not wrap and resize the file.
+        let sectors = alloc::vec![[0u8; 512]; 2048];
+        let dev_id = crate::fs::fsck::register_test_device(sectors);
+        let io = IoStack::new(dev_id);
+        mkfs_ne2(&io, 256, "TEST").unwrap();
+
+        let mut fs = NeoDosFsV2::new(io).unwrap();
+        fs.create(0, "O.TXT").unwrap();
+        let ino = fs.lookup(0, "O.TXT").unwrap().inode;
+
+        crate::test_eq!(fs.write(ino, 0, b"ab").unwrap(), 2);
+        crate::test_true!(fs.write(ino, u64::MAX, b"abcdefghij").is_err());
+
+        let mut buf = [0u8; 16];
+        let n = fs.read(ino, 0, &mut buf).unwrap();
+        crate::test_eq!(n, 2);
+        crate::test_eq!(&buf[..n], &b"ab"[..]);
+
+        let _ = crate::globals::BLOCK_DEVICES.lock().force_remove(dev_id);
+    });
+
     crate::test_case!("neofs_v2_chunked_writes_many_files", {
         // #753: the 1391-byte case is intermittent in the guest. Keep the exact
         // shape (1024 + 367, offset 0 then 1024) but repeat it over several files
