@@ -413,10 +413,13 @@ pub fn verify_chain(
         Ok(())
     };
 
-    let anchors: Vec<Certificate<'_>> = roots
-        .iter()
-        .filter_map(|der| parse_certificate(der).ok())
-        .collect();
+    // A trust anchor that does not parse is a broken trust store, not an
+    // untrusted server: report it instead of silently ignoring the anchor and
+    // failing the connection with "not anchored".
+    let mut anchors: Vec<Certificate<'_>> = Vec::with_capacity(roots.len());
+    for der in roots {
+        anchors.push(parse_certificate(der)?);
+    }
 
     // Walk from the leaf towards a trust anchor. The server may send the
     // anchor itself and extra cross-signing certs, so stop as soon as the

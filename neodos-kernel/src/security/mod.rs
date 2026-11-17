@@ -3,6 +3,7 @@ pub mod token;
 pub mod acl;
 pub mod access;
 pub mod sam;
+pub mod profile;
 
 use lazy_static::lazy_static;
 use crate::log::LogSubsys;
@@ -29,6 +30,7 @@ pub fn init_security() {
 
 pub fn register_security_tests() {
     sam::register_sam_tests();
+    profile::register_profile_tests();
     use crate::test_case;
     use crate::test_eq;
     use crate::test_ne;

@@ -6,6 +6,14 @@
 
 ### Added
 
+- **Per-user profiles (#400).** `security::profile` creates
+  `C:\Users\<usuario>\{Desktop,Documents,Downloads,AppData\{Local,Roaming}}`
+  for every SAM account at boot (idempotent, NT name rules, `SYSTEM` excluded)
+  and records `ProfilePath`/`OwnerSid`/`Username` under
+  `\Registry\Machine\Software\NeoDOS\Profiles\<usuario>` so the filesystem
+  ACL work (Phase 3) has the owner binding it needs. Enforcement itself is
+  still pending: `DirEntryV2` carries no owner SID yet.
+
 - **TLS failures say why.** `TlsError::as_str()` and
   `TlsError::Certificate(X509Error)` keep the exact reason (bad signature,
   issuer is not a CA, path length, unsupported algorithm) instead of

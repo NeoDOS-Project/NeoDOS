@@ -267,3 +267,30 @@ fn tls13_accepts_ip_san_without_sni() {
     );
     assert!(result.is_ok(), "IP SAN handshake failed");
 }
+
+#[test]
+fn tls13_rejects_a_malformed_trust_anchor() {
+    let Some(fixture) = start_server() else { return };
+    let stream = TcpStream::connect(("127.0.0.1", fixture.port)).expect("connect");
+    stream.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+    let mut rng = OsRng;
+    let clock = FixedClock(now());
+    // A truncated anchor must be reported as such, not as "untrusted".
+    let mut broken = fixture.roots[0].clone();
+    broken.truncate(broken.len() / 2);
+    let roots = vec![broken];
+    let result = libtls::connect(
+        StdTransport(stream),
+        ClientConfig {
+            roots: &roots,
+            clock: &clock,
+            rng: &mut rng,
+            server_name: Some("localhost"),
+            host: Host::Dns("localhost"),
+        },
+    );
+    match result {
+        Err(TlsError::Certificate(libtls::X509Error::Der(_))) => {}
+        other => panic!("expected a DER error, got {:?}", other.err()),
+    }
+}
