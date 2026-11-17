@@ -464,6 +464,64 @@ pub fn register_service_tests() {
         }
     });
 
+    test_case!("process_create_malicious_elf_rejects_and_frees_slot", {
+        // #762: a PT_LOAD that leaves the process slot must be rejected and the
+        // reserved user slot released — no Ring 0 write, no slot leak.
+        if crate::globals::VFS.try_lock().is_none() { return Ok(()); }
+        let test_file = "C:\\Temp\\_BADELF.NXE";
+        let vaddr = crate::arch::x64::paging::USER_BASE
+            + crate::arch::x64::paging::MAX_BIN_SIZE - 8;  // ends in the stack
+        let elf = crate::elf::build_valid_elf(vaddr, vaddr, &[0x90u8; 16]);
+        let written = crate::globals::with_vfs(|vfs| -> Result<(), crate::fs::vfs::VfsError> {
+            let (drive, _) = vfs.resolve_path("C:\\")?;
+            let _ = vfs.remove_file(test_file);  // leftover from an aborted run
+            let node = vfs.create(test_file)?;
+            vfs.write(drive, node.inode, 0, &elf)?;
+            Ok(())
+        });
+        test_true!(written.is_ok());
+
+        let before = crate::arch::x64::paging::used_user_slots();
+        let r = crate::usermode::create_process_from_ob_path(
+            "\\Global\\FileSystem\\C:\\Temp\\_BADELF.NXE", 2, "\\", 0, "badelf",
+        );
+        let after = crate::arch::x64::paging::used_user_slots();
+
+        let _ = crate::globals::with_vfs(|vfs| vfs.remove_file(test_file));
+
+        test_true!(matches!(r, Err(crate::usermode::CreateProcessError::InvalidElf)));
+        test_eq!(after, before);
+    });
+
+    test_case!("process_create_loads_real_userbin_image", {
+        // #762 regression: a real Ring 3 image still loads into its process
+        // slot with the region-bounded loader (copy only, no Ring 3 execution).
+        if crate::globals::VFS.try_lock().is_none() { return Ok(()); }
+        let bytes = crate::globals::with_vfs(|vfs| -> Option<alloc::vec::Vec<u8>> {
+            let (drive, node) = vfs.resolve_path("C:\\Programs\\coredir.nxe").ok()?;
+            if node.size == 0 { return None; }
+            let mut buf = alloc::vec![0u8; node.size as usize];
+            let n = vfs.read(drive, node.inode, 0, &mut buf).ok()?;
+            buf.truncate(n);
+            Some(buf)
+        });
+        let bytes = match bytes {
+            Some(b) => b,
+            None => return Ok(()),  // image without userbin: nothing to check
+        };
+
+        let slot = match crate::arch::x64::paging::alloc_user_slot() {
+            Some(s) => s,
+            None => return Ok(()),
+        };
+        let region = crate::elf::LoadRegion::new(
+            slot.code_base, crate::usermode::MAX_PROCESS_BIN as u64,
+        );
+        let result = crate::elf::load_elf(&bytes, region, None, slot.code_base);
+        crate::arch::x64::paging::free_user_slot(slot.slot_idx);
+        test_true!(result.is_ok());
+    });
+
     test_case!("sm_start_missing_binary_failed", {
         // ServiceManager::spawn_process uses the shared path; a missing image
         // must mark the service Failed, not leak or panic.

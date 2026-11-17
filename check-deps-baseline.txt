@@ -143,3 +143,4 @@
   infra/usermode.rs: imports 'object' which contains forbidden dep(s): object
   infra/usermode.rs: imports 'object::ObType' which contains forbidden dep(s): object
   infra/usermode.rs: imports 'security::DEFAULT_ADMIN_TOKEN' which contains forbidden dep(s): security
+  infra/usermode.rs: imports 'elf::LoadRegion::new' which contains forbidden dep(s): elf

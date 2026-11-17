@@ -111,8 +111,8 @@ pub const USER_LIMIT: u64 = 0x0240_0000; // 36 MB (32 MB window, v0.40)
 /// crossed it and the loader silently truncated the image (#755).
 pub const MAX_BIN_SIZE: u64 = 512 * 1024;   // 512 KB per user binary
 pub const USER_STACK_SIZE: u64 = 64 * 1024; // 64 KB
-pub const USER_SLOT_SIZE: u64 = MAX_BIN_SIZE + USER_STACK_SIZE; // 256 KB
-pub const USER_SLOT_COUNT: u64 = (USER_LIMIT - USER_BASE) / USER_SLOT_SIZE; // 128
+pub const USER_SLOT_SIZE: u64 = MAX_BIN_SIZE + USER_STACK_SIZE; // 576 KB
+pub const USER_SLOT_COUNT: u64 = (USER_LIMIT - USER_BASE) / USER_SLOT_SIZE; // 58
 
 pub struct UserSlot {
     pub code_base: u64,
@@ -248,6 +248,13 @@ pub fn free_heap_slot(index: u8) {
 pub fn used_heap_slots() -> usize {
     use core::sync::atomic::Ordering;
     HEAP_SLOT_USED[..MAX_HEAP_SLOTS].iter().filter(|s| s.load(Ordering::Relaxed)).count()
+}
+
+/// Number of user slots currently claimed (`alloc_user_slot` minus
+/// `free_user_slot`). Diagnostic and regression surface for slot leaks.
+pub fn used_user_slots() -> usize {
+    use core::sync::atomic::Ordering;
+    SLOT_USED[..USER_SLOT_COUNT as usize].iter().filter(|s| s.load(Ordering::Relaxed)).count()
 }
 
 /// Code base (load address) of user slot `slot_idx`.

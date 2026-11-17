@@ -140,7 +140,7 @@ PHASE 3.875 Keyboard Manager (NeoKBD) init: `kbd::kbd_init()` — loads layouts,
 PHASE 3.882 Service Manager init: load service definitions from Registry,
            create `\Service\` namespace, resolve dependencies
 PHASE 3.883 Power Manager object init: creates `\System\PowerManager` Ob object
-PHASE 4     NeoInit loader: the kernel ELF loader starts PID 1 from `C:\Programs\neoinit.nxe`
+PHASE 4     NeoInit loader: the kernel ELF loader starts PID 1 from `C:\NeoDOS\System\neoinit.nxe`
 ```
 
 **Rule 3.1.1**: Phases MUST execute in order. No phase may run before its predecessor completes.
@@ -210,8 +210,15 @@ decrement refcount, files closed, devices detached).
 
 ### 4.3 User Process Memory
 
-**Rule 4.3.1**: Code/stack is loaded at `0x400000` (flat binary) or at ELF-specified `p_vaddr`
-(ELF binary). Max size: 36 MB (entire user window, `USER_BASE..USER_LIMIT` = `0x400000..0x2400000`).
+**Rule 4.3.1**: Code/stack is loaded at the process slot (`USER_BASE + n * USER_SLOT_SIZE`) or
+at ELF-specified `p_vaddr` shifted by the slot base (PIE/ET_DYN). Each slot is
+`MAX_BIN_SIZE` (512 KB) of code plus `USER_STACK_SIZE` (64 KB) of stack; the whole
+window `USER_BASE..USER_LIMIT` is `0x400000..0x2400000`.
+**Rule 4.3.1a**: `elf::load_elf` MUST receive a `LoadRegion` and MUST reject the image before
+copying a byte when a `PT_LOAD` leaves the region, overlaps another segment, has
+`vaddr == 0`/overflows, or declares `filesz > memsz`. `R_X86_64_RELATIVE` targets MUST fall
+inside an already-validated segment. `addr_space` is optional extra validation, never the
+reason a copy is safe.
 **Rule 4.3.2**: Heap grows from `PROCESS_HEAP_BASE` via demand paging. `sys_brk` adjusts the
 break but pages are allocated on first access (page fault).
 **Rule 4.3.3**: `heap_free_range` MUST be called on `sys_exit` to free all heap frames.

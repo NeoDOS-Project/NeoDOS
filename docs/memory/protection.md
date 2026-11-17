@@ -58,6 +58,11 @@ Detection and enablement live in `arch/x64/features.rs`; the raw asm stays in
   non-resident user page therefore yields `EFAULT`. Userland must fault its
   buffers in (touching one byte per page) before handing them to a syscall that
   fills them.
+- **Image load bounded by the slot (#762)**: `elf::load_elf` takes a mandatory
+  `LoadRegion` and validates every `PT_LOAD` (`vaddr` inside the region, no
+  overlap, `filesz <= memsz`) *before* copying, so the process and NXL paths no
+  longer depend on `addr_space` being supplied. `R_X86_64_RELATIVE` targets must
+  also land inside an already-validated segment.
 - **NX / W^X**: `EFER.NXE` is enabled when supported; user **heap and mmap** data
   pages are mapped `NO_EXECUTE` (`paging.rs heap_alloc_page`/`mmap_alloc_page` via
   `hal::map_page` bit 63). User code lives in the executable user window, so this

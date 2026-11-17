@@ -14,6 +14,14 @@
 
 ### Fixed
 
+- **Carga de imágenes ELF fuera del slot (#762).** `elf::load_elf` ahora recibe
+  una `LoadRegion` obligatoria y valida todos los `PT_LOAD` (dirección dentro de
+  la región, sin solapes, `filesz <= memsz`) **antes** de copiar nada. La ruta de
+  producción de procesos y la de NXL pasaban `addr_space = None`, así que un
+  `.NXE`/`.nxl` con un `p_vaddr` arbitrario escribía en memoria del kernel; las
+  relocalizaciones `R_X86_64_RELATIVE` también comprueban que su destino cae en
+  un segmento de la propia imagen. Nuevos tests cubren el rechazo, que el slot
+  se libera y que los binarios reales de `userbin/` siguen cargando.
 - **Escrituras de fichero en varios trozos (#748, #751).** `file_write` leía el
   prefijo no sobrescrito con el LBA de bloques en vez de sectores: cualquier
   fichero escrito en más de un `sys_write` guardaba basura con el tamaño

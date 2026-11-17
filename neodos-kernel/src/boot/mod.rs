@@ -737,7 +737,12 @@ pub unsafe fn init(boot_info: &BootInfo) -> ! {
                     let data = &bin_buf[..size];
                     crate::serial_println!("[BOOT_PROGRESS] NEOINIT_ELF_OK");
                     crate::serial_println!("[INIT_DEBUG] before ELF parse");
-                    if let Ok(r) = elf::load_elf(data, Some(addr), slot.code_base) {
+                    if let Ok(r) = elf::load_elf(
+                        data,
+                        elf::LoadRegion::new(slot.code_base, arch::x64::paging::MAX_BIN_SIZE),
+                        Some(addr),
+                        slot.code_base,
+                    ) {
                         crate::serial_println!("[INIT_DEBUG] after ELF parse: entry=0x{:x}", r.entry);
                         kinfo!(LogSubsys::Init, "ELF load OK: entry=0x{:x}", r.entry);
                         result = Some(r.entry);
