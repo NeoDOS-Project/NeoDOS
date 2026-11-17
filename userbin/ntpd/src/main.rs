@@ -372,11 +372,17 @@ struct SyncResult {
     server: [u8; 4],
     /// Corrected absolute UTC time (Unix seconds).
     unix_secs: i64,
+    /// The local RTC was unset, so this is a cold step from the server time.
+    cold: bool,
 }
 
 fn ntp_sync(ip: [u8; 4], timeout_ms: u32, key_id: u32, key: &[u8]) -> Result<SyncResult, &'static str> {
     let authed = !key.is_empty();
-    let t1 = rtc_now_ns().unwrap_or(0);
+    // A transient RTC read failure used to become `t1 = 0` and, paired with a
+    // successful read at `t4`, produced a ~56-year "delay" and a bogus step to
+    // 2055. `clock_step` decides how to use the two readings.
+    let local_before = rtc_now_ns();
+    let t1 = local_before.unwrap_or(0);
     let t1_secs = (t1 / 1_000_000_000) as i64;
     let ntp_ts = libntp::unix_secs_to_ntp(t1_secs);
 
@@ -420,16 +426,19 @@ fn ntp_sync(ip: [u8; 4], timeout_ms: u32, key_id: u32, key: &[u8]) -> Result<Syn
     };
     let t2 = libntp::ntp_to_unix_ns(reply.receive_ts);
     let t3 = libntp::ntp_to_unix_ns(reply.transmit_ts);
-    let t4 = rtc_now_ns().unwrap_or(t1);
-    let (offset_ns, delay_ns) = libntp::offset_and_delay(t1, t2, t3, t4);
-    let unix_secs = (t4 + offset_ns).div_euclid(1_000_000_000) as i64;
+    let local_after = rtc_now_ns();
+    let step = libntp::clock_step(local_before, t2, t3, local_after).map_err(|e| match e {
+        libntp::StepError::ImplausibleDelay => "unusable round-trip delay",
+        libntp::StepError::ImplausibleTime => "implausible server time",
+    })?;
 
     Ok(SyncResult {
-        offset_ns,
-        delay_ns,
+        offset_ns: step.offset_ns,
+        delay_ns: step.delay_ns,
         stratum: reply.stratum,
         server: ip,
-        unix_secs,
+        unix_secs: step.unix_secs,
+        cold: step.cold,
     })
 }
 
@@ -540,11 +549,18 @@ pub extern "C" fn _start() -> ! {
                     match apply_time(r.unix_secs) {
                         Ok(()) => {
                             sync_count += 1;
-                            write_str(b"[ntpd] synced: offset=");
-                            write_i64(offset_ms);
-                            write_str(b"ms delay=");
-                            write_i64(delay_ms);
-                            write_str(b"ms stratum=");
+                            if r.cold {
+                                // No offset is measurable against an unset RTC.
+                                write_str(b"[ntpd] cold start: stepped clock to ");
+                                write_u32(r.unix_secs.max(0) as u32);
+                                write_str(b" stratum=");
+                            } else {
+                                write_str(b"[ntpd] synced: offset=");
+                                write_i64(offset_ms);
+                                write_str(b"ms delay=");
+                                write_i64(delay_ms);
+                                write_str(b"ms stratum=");
+                            }
                             write_u32(r.stratum as u32);
                             write_str(b"\r\n");
                             publish("Synced", server, offset_ms, delay_ms, r.stratum,
