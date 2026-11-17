@@ -463,8 +463,12 @@ bea55afe0a8ebb664a9f7d09720351421984e58beac0bb043440788333bab4815ce590a9faf1fb1b
 75c9ef3fd40a12bc3ed5ae9bf70089";
 
     fn unhex(s: &str) -> alloc::vec::Vec<u8> {
-        let mut out = vec![0u8; s.len() / 2];
-        let b = s.as_bytes();
+        // Test vectors are written as indented string continuations, so the
+        // first segment keeps its leading spaces.
+        let digits: alloc::vec::Vec<u8> =
+            s.bytes().filter(|c| !c.is_ascii_whitespace()).collect();
+        let mut out = vec![0u8; digits.len() / 2];
+        let b = &digits[..];
         for i in 0..out.len() {
             let hi = (b[i * 2] as char).to_digit(16).unwrap() as u8;
             let lo = (b[i * 2 + 1] as char).to_digit(16).unwrap() as u8;
@@ -491,6 +495,47 @@ bea55afe0a8ebb664a9f7d09720351421984e58beac0bb043440788333bab4815ce590a9faf1fb1b
         bad[10] ^= 0x01;
         assert_eq!(
             key().verify_pkcs1_sha256(MSG, &bad),
+            Err(RsaError::VerificationFailed)
+        );
+    }
+
+    const N4096: &str = "    ad5468aa730ea1c87de75324252834a8bb88800da21417741ee95589d530e7ca1834ba3e929c\
+    bb6c3ab4700441d667f53c32f2995e897431905b78b02bc22fc1b3f4b8ed4cc533237ab70cca\
+    80f0d0bbf352a862a1d6542598a46c70b1426e26237d746f6ca257dd20808ef624f5501b5bb8\
+    410739800cc53d0ed9071a7c32595f7b04f4624d6dfe4fc742704b9724d7cfaedab1af86a9fc\
+    77b2e55013078f9eaa1a705ae71577e08a33c510ba332aa384463a500dabcff88e4ed4e58f6a\
+    ef82c1f3e20d72ab63cfedf93e6251f4785c35fb53fb2a8e710963812051c5afc179eebffd28\
+    3da65de472b2a5bb82c0010bb9c2fc51c10bdf0814e642ce9bb19d01f350851335a085175a76\
+    f59d43c7fd404c8529e1332c5ea2b87d6a369b6097baea0579c79919ebc1fafe067bc37573c6\
+    8117a64e961d3b526f54f88c06ba1fd074c41c65a3a0798baa7ff7df68d09c10f134f016ff60\
+    06cd1dfcd71a77fd02abf3917f3061d41d1245706f8f341d84c9c12538171324a47dc125a929\
+    88f1158d9b273a7210ecbf794d967fa71346c6add7784ca9ae7405dff61ff4b8942f9d049b77\
+    4990637d76c7caa5d46aff2ef56f1beedeb26a6a5f29d0c089c7e7ca0203a5927b514128c5a5\
+    a2732a14b27ff20cab5f4b2caaab8eb983b6aab0755a9c0057bba519f189f464c0e31625b83f\
+    0fd352738f3e6305178fbb26ebb23300ce95";
+    const SIG4096: &str = "    8c8f64243fdbc4f8fe8a22071171b78db90a724e4b3fc3ad7b01f0bf77dd640f743c9420f892\
+    3816106a9c122243c89246480fee588bd3e4a23a64db71033f98577a2b11a986561c96d6a79c\
+    fe8ebc025785aafe548e969d64e8e32b706a38a11d27483fd2800722ea942e247df1e18f3e62\
+    712acacb3b0510c4fc71d0a2f3d8367a768f46737695898c827bc4f9064d36cfd87abafe5aeb\
+    4af0c03c14ec030ca14efae173e75718f9e5c28f3eb1653e71de248e7b58564c46d928bd0cdb\
+    26cd38bbd32f12ff903d076756ee245afbd9186723cb5f6342d88a4b99c994c21a8ce0179841\
+    63b6f05ffdd31fe5cb713138c811815d39bf29301f733efd6b0cfc8902457598a6131fa6a572\
+    f19b68dab0ff69d2dcbf97a2391a247dfc7429d3b54f0a665ea4f4d6a62d99de40d8b82d8e1c\
+    acfbec72611b97e6f7fca09f1f579645ca303851bc9bed598c77ab910f997d2ec2cb36fede85\
+    9dc5e41deb458e675d2ea9a9bcb9331ae7955c4edeadfc1ba63bd954109f8eb69727b652496c\
+    e6e0e58a757c1c2e7228973724b514f3ae8bfd8347109f5042970de152bb99e5c09b7c1fb502\
+    81241a38c289aa7fa026ee5cfb4e05a483d3b0aaec787a48606acaa3ae8c4ab9bcc1f18ee033\
+    07cb64887d66fd56376b67867fb5bb33f194e6d70adea777c43f41564b1b9100661bbdebdb94\
+    b04c2bc51d03e5794c69369725e59528ab6a";
+
+    #[test]
+    fn rsa_4096_pkcs1_verifies() {
+        // Real chains use 4096-bit roots (ISRG Root X1, GTS Root R4), so the
+        // Montgomery context has to work with 128 limbs.
+        let key = RsaPublicKey::new(unhex(N4096), vec![0x01, 0x00, 0x01]);
+        assert_eq!(key.verify_pkcs1_sha256(MSG, &unhex(SIG4096)), Ok(()));
+        assert_eq!(
+            key.verify_pkcs1_sha256(b"other", &unhex(SIG4096)),
             Err(RsaError::VerificationFailed)
         );
     }
