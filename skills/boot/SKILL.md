@@ -47,7 +47,7 @@ pub struct BootInfo {
 | Constant | Value | Description |
 | ---------- | ------- | ------------- |
 | `BOOTINFO_MAGIC` | `0x4E444F53` | "NDOS" magic |
-| `KERNEL_VERSION_CODE` | `(10 << 8) \| 5` = `0x0A05` | Stale comment (v0.10.5); project version is v0.51.5 (tracked as `CH-11`) |
+| `KERNEL_VERSION_CODE` | `(52 << 8) \| 0` = `0x3400` | v0.52.0, synced with `AGENTS.md` on release (CH-11 closed) |
 | `BOOT_VERSION` | `(10 << 8) \| 5` | Must match `KERNEL_VERSION_CODE` (currently identical → no warning) |
 
 The bootloader writes `boot_info.version`; the kernel compares it to
