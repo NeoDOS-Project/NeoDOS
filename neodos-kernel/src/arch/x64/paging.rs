@@ -107,8 +107,9 @@ pub const USER_LIMIT: u64 = 0x0240_0000; // 36 MB (32 MB window, v0.40)
 /// `MAX_BIN_SIZE` is the per-binary read cap (see `usermode::MAX_PROCESS_BIN`).
 /// The user window (`USER_BASE..USER_LIMIT`) tiles into `USER_SLOT_COUNT` slots
 /// of `USER_SLOT_SIZE` each. Raised from 64 KB once `neoshell.nxe` grew past it
-/// (#458).
-pub const MAX_BIN_SIZE: u64 = 192 * 1024;   // 192 KB per user binary
+/// (#458) and from 192 KB when `neocurl.nxe` (crypto + TLS + trust store)
+/// crossed it and the loader silently truncated the image (#755).
+pub const MAX_BIN_SIZE: u64 = 512 * 1024;   // 512 KB per user binary
 pub const USER_STACK_SIZE: u64 = 64 * 1024; // 64 KB
 pub const USER_SLOT_SIZE: u64 = MAX_BIN_SIZE + USER_STACK_SIZE; // 256 KB
 pub const USER_SLOT_COUNT: u64 = (USER_LIMIT - USER_BASE) / USER_SLOT_SIZE; // 128

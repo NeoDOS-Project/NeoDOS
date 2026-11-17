@@ -151,15 +151,27 @@ pub fn create_process_from_ob_path(
                 if (node.mode & crate::fs::vfs::MODE_FILE) == 0 {
                     return 0;
                 }
+                // Silently truncating produced an `InvalidElf` far from the
+                // cause: flag a binary that does not fit the slot instead.
+                if node.size as usize > MAX_PROCESS_BIN {
+                    crate::serial_println!(
+                        "[INIT] binary '{}' is {} bytes, over the {}-byte slot limit",
+                        vfs_path,
+                        node.size,
+                        MAX_PROCESS_BIN
+                    );
+                    return usize::MAX;
+                }
                 match vfs.read(drive_idx, node.inode, 0, &mut buf) {
-                    Ok(n) => {
-                        if n > MAX_PROCESS_BIN { 0 } else { n }
-                    }
+                    Ok(n) => n,
                     Err(_) => 0,
                 }
             }
             Err(_) => 0,
         });
+        if bin_size == usize::MAX {
+            return Err(CreateProcessError::NoMemory);
+        }
         if bin_size < 4 {
             return Err(CreateProcessError::NotFound);
         }

@@ -2,6 +2,28 @@
 
 <!-- markdownlint-disable MD013 MD024 MD056 -->
 
+## Unreleased
+
+### Added
+
+- **System trust store (D8).** La imagen incluye un bundle DER concatenado en
+  `\NeoDOS\System\config\roots.der`, empaquetado por NeoDev desde el store de
+  la máquina anfitriona (`NEODOS_TRUST_BUNDLE` lo sustituye). `libnet` lo lee
+  y lo trocea con `libtls::der::split_certificates`; `neocurl https://…`
+  funciona sin `--ca` y falla cerrado si no hay anclas.
+
+### Fixed
+
+- **Escrituras de fichero en varios trozos (#748, #751).** `file_write` leía el
+  prefijo no sobrescrito con el LBA de bloques en vez de sectores: cualquier
+  fichero escrito en más de un `sys_write` guardaba basura con el tamaño
+  correcto (era el `--ca` con `malformed DER`).
+- **Caché de páginas al liberar bloques COW (#753, #754).** Un bloque liberado
+  conservaba su página cacheada; una entrada sucia podía volcarse después,
+  encima de los datos del fichero que lo reutilizara.
+- **Rutas legacy con doble separador (#750)** y **test del heap-break desde
+  hilos de kernel (#752).**
+
 ## v0.52 — 2026-11-17
 
 ### Added

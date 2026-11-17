@@ -27,6 +27,11 @@ pub const USER_SLOT_SIZE: u64 = MAX_BIN_SIZE + USER_STACK_SIZE; // 256 KB
 pub const USER_SLOT_COUNT: u64 = (USER_LIMIT - USER_BASE) / USER_SLOT_SIZE; // 128
 ```
 
+> **Actualizado (v0.52.x, #755):** el límite subió a **512 KB** (slot de
+> 576 KB, 56 slots) cuando `neocurl.nxe` (cripto + TLS + trust store) pasó de
+> 192 KB y el loader lo truncaba en silencio. El resto de este documento sigue
+> siendo el plan a largo plazo.
+
 `usermode::MAX_PROCESS_BIN` mirrors the cap. Any `.NXE` larger than 192 KB is
 rejected. The per-process heap is also small (`PROCESS_HEAP_SIZE = 2 MB`,
 `MAX_HEAP_SLOTS = 16`), with the mmap region (32 MB) as the overflow path.
