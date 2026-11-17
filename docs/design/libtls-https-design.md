@@ -43,10 +43,10 @@ wall clock.
 HTTPS requires, at minimum:
 
 1. **A byte-stream transport** (provided by `libhttp`/`libnet`).
-2. **Cryptographic primitives**: SHA-256, HMAC/HKDF, an AEAD (AES-GCM or
-   ChaCha20-Poly1305), key agreement (X25519), and signature verification for
-   the certificate chain and `CertificateVerify` (RSA-PSS/PKCS#1, ECDSA P-256,
-   optionally Ed25519).
+2. **Cryptographic primitives**: SHA-256/SHA-384, HMAC/HKDF, an AEAD (AES-GCM
+   or ChaCha20-Poly1305), key agreement (X25519), and signature verification for
+   the certificate chain and `CertificateVerify` (RSA-PSS/PKCS#1, ECDSA
+   P-256/P-384).
 3. **A CSPRNG** for nonces and ephemeral keys.
 4. **X.509 parsing**, chain building, hostname (SAN) validation and a
    read-only trust store.
@@ -276,12 +276,12 @@ encrypted; on any error the transport is closed and no plaintext is returned.
 
 | Test | Expected |
 | --- | --- |
-| `sha256_vectors` | NIST/FIPS vectors |
+| `sha256_vectors` / `sha384_fips_vectors` | NIST/FIPS vectors |
 | `hmac_sha256_vectors` | RFC 4231 vectors |
 | `hkdf_vectors` | RFC 5869 vectors |
 | `aead_roundtrip_and_tamper` | round-trip; bit flip → `AuthFailed` |
 | `x25519_rfc7748` | RFC 7748 vectors |
-| `rsa_pss_verify` / `ecdsa_p256_verify` | known-certificate vectors |
+| `rsa_pss_verify` / `ecdsa_p256_verify` / `ecdsa_p384_verify` | OpenSSL-generated vectors |
 | `ed25519_rfc8032` | existing NLT vectors |
 
 **INV-2 — Server authentication is enforced.**
@@ -329,9 +329,11 @@ invalid/expired/mismatch cases return the documented error and exit code.
    policy; tests. Blocks M10.
 2. **M8 — Ring-3 CSPRNG:** `\Device\Random`, classes 48/49, DRBG, wrapper;
    tests. Blocks M10 (and gates everything).
-3. **M9 — `libcrypto`: DONE.** SHA-256, HMAC-SHA256, HKDF (RFC 5869),
-   ChaCha20-Poly1305 (RFC 8439), X25519 (RFC 7748), RSA PKCS#1 v1.5/PSS and
-   ECDSA P-256 verification; 18 host tests against RFC/NIST/OpenSSL vectors.
+3. **M9 — `libcrypto`: DONE.** SHA-256 and SHA-384, HMAC-SHA256, HKDF
+   (RFC 5869), ChaCha20-Poly1305 (RFC 8439), X25519 (RFC 7748), RSA PKCS#1
+   v1.5/PSS and ECDSA P-256/P-384 verification; 21 host tests against
+   RFC/NIST/OpenSSL vectors. P-384/SHA-384 were added after the first real
+   chains (`ecdsa-with-SHA384` intermediates) exposed the gap.
 4. **D1 spike: DONE.** `rustls` rejected (see §3.5); own TLS 1.3 client over
    `libcrypto`.
 5. **M10 — `libtls`: DONE.** TLS 1.3 client (ChaCha20-Poly1305, X25519),

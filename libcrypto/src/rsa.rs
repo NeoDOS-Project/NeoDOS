@@ -73,7 +73,7 @@ impl RsaPublicKey {
         let key_len = self.n.len();
         // emBits = modBits - 1; emLen = ceil(emBits / 8).
         let em_bits = key_len * 8 - 1;
-        let em_len = (em_bits + 7) / 8;
+        let em_len = em_bits.div_ceil(8);
         let m = self.modexp(signature, key_len)?;
         // The integer must fit emLen bytes.
         if m.len() > em_len {
@@ -174,7 +174,7 @@ pub(crate) struct Big {
 
 impl Big {
     pub(crate) fn from_be(bytes: &[u8]) -> Self {
-        let mut limbs = alloc::vec::Vec::with_capacity((bytes.len() + 3) / 4);
+        let mut limbs = alloc::vec::Vec::with_capacity(bytes.len().div_ceil(4));
         let mut i = bytes.len();
         while i > 0 {
             let start = i.saturating_sub(4);
@@ -263,6 +263,8 @@ impl Big {
         core::cmp::Ordering::Equal
     }
 
+    // The three slices are indexed in lockstep and have different lengths.
+    #[allow(clippy::needless_range_loop)]
     pub(crate) fn sub(&self, other: &Big) -> Big {
         let mut out = alloc::vec![0u32; self.len().max(other.len())];
         let mut borrow = 0i64;
@@ -285,6 +287,8 @@ impl Big {
         big
     }
 
+    // The three slices are indexed in lockstep and have different lengths.
+    #[allow(clippy::needless_range_loop)]
     pub(crate) fn add(&self, other: &Big) -> Big {
         let mut out = alloc::vec![0u32; self.len().max(other.len())];
         let mut carry = 0u64;
@@ -392,6 +396,8 @@ impl Mont {
         self.mont_mul(a, &self.rr)
     }
 
+    // `from_mont` reads as a conversion, not a method on `a`.
+    #[allow(clippy::wrong_self_convention)]
     pub(crate) fn from_mont(&self, a: &Big) -> Big {
         self.mont_mul(a, &Big { limbs: alloc::vec![1] })
     }

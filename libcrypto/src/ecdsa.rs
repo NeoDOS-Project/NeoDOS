@@ -1,16 +1,19 @@
-//! ECDSA P-256 (prime256v1) signature verification with SHA-256.
+//! ECDSA signature verification over the NIST P-256 and P-384 curves.
 //!
 //! Verification only, as a TLS client needs. The curve arithmetic is Jacobian
 //! coordinates over a Montgomery field (`crate::rsa::{Big, Mont}`), with the
-//! scalar operations done modulo the group order `n`.
+//! scalar operations done modulo the group order `n`. Both curves have
+//! `a = -3`, so the same addition/doubling formulas apply; only the domain
+//! parameters change.
 
 use crate::rsa::{Big, Mont};
 use crate::sha256::Sha256;
+use crate::sha384::Sha384;
 
 /// ECDSA verification failure.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EcdsaError {
-    /// The public key is not a valid P-256 point.
+    /// The public key is not a valid point on the curve.
     BadPublicKey,
     /// `r` or `s` is zero or not reduced modulo the group order.
     BadSignature,
@@ -20,11 +23,35 @@ pub enum EcdsaError {
     InvalidPoint,
 }
 
-const P_HEX: &str = "ffffffff00000001000000000000000000000000ffffffffffffffffffffffff";
-const N_HEX: &str = "ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551";
-const GX_HEX: &str = "6b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c296";
-const GY_HEX: &str = "4fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5";
-const B_HEX: &str = "5ac635d8aa3a93e7b3ebbd55769886bc651d06b0cc53b0f63bce3c3e27d2604b";
+/// Domain parameters (hex, big-endian) shared by every operation.
+struct CurveParams {
+    p: &'static str,
+    n: &'static str,
+    gx: &'static str,
+    gy: &'static str,
+    b: &'static str,
+}
+
+const P256: CurveParams = CurveParams {
+    p: "ffffffff00000001000000000000000000000000ffffffffffffffffffffffff",
+    n: "ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551",
+    gx: "6b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c296",
+    gy: "4fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5",
+    b: "5ac635d8aa3a93e7b3ebbd55769886bc651d06b0cc53b0f63bce3c3e27d2604b",
+};
+
+const P384: CurveParams = CurveParams {
+    p: "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe\
+        ffffffff0000000000000000ffffffff",
+    n: "ffffffffffffffffffffffffffffffffffffffffffffffffc7634d81f4372ddf\
+        581a0db248b0a77aecec196accc52973",
+    gx: "aa87ca22be8b05378eb1c71ef320ad746e1d3b628ba79b9859f741e082542a38\
+         5502f25dbf55296c3a545e3872760ab7",
+    gy: "3617de4a96262c6f5d9e98bf9292dc29f8f41dbd289a147ce9da3113b5f0b8c0\
+         0a60b1ce1d7e819d7a431d7c90ea0e5f",
+    b: "b3312fa7e23ee7e4988e056be3f82d19181d9c6efe8141120314088f5013875a\
+        c656398d8a2ed19d2a85c8edd3ec2aef",
+};
 
 struct Curve {
     p: Mont,
@@ -44,16 +71,16 @@ struct Point {
 }
 
 impl Curve {
-    fn new() -> Self {
-        let p_big = Big::from_hex(P_HEX);
-        let n_big = Big::from_hex(N_HEX);
+    fn new(params: &CurveParams) -> Self {
+        let p_big = Big::from_hex(params.p);
+        let n_big = Big::from_hex(params.n);
         let p = Mont::new(&p_big);
         let n = Mont::new(&n_big);
         let one = Big::from_u32(1);
-        let b = p.to_mont(&Big::from_hex(B_HEX));
+        let b = p.to_mont(&Big::from_hex(params.b));
         let g = Point {
-            x: p.to_mont(&Big::from_hex(GX_HEX)),
-            y: p.to_mont(&Big::from_hex(GY_HEX)),
+            x: p.to_mont(&Big::from_hex(params.gx)),
+            y: p.to_mont(&Big::from_hex(params.gy)),
             z: p.to_mont(&one),
         };
         Curve {
@@ -215,7 +242,31 @@ pub fn verify_p256_sha256(
     r: &[u8],
     s: &[u8],
 ) -> Result<(), EcdsaError> {
-    let c = Curve::new();
+    let digest = Sha256::digest(message);
+    verify(&Curve::new(&P256), &digest, qx, qy, r, s)
+}
+
+/// Verify an ECDSA P-384 / SHA-384 signature (`ecdsa-with-SHA384`), as used by
+/// several public CAs to sign their intermediates.
+pub fn verify_p384_sha384(
+    qx: &[u8],
+    qy: &[u8],
+    message: &[u8],
+    r: &[u8],
+    s: &[u8],
+) -> Result<(), EcdsaError> {
+    let digest = Sha384::digest(message);
+    verify(&Curve::new(&P384), &digest, qx, qy, r, s)
+}
+
+fn verify(
+    c: &Curve,
+    digest: &[u8],
+    qx: &[u8],
+    qy: &[u8],
+    r: &[u8],
+    s: &[u8],
+) -> Result<(), EcdsaError> {
     let x = Big::from_be(qx);
     let y = Big::from_be(qy);
     if x.is_zero() || y.is_zero() || x.cmp(&c.p_big) != core::cmp::Ordering::Less
@@ -236,13 +287,13 @@ pub fn verify_p256_sha256(
         return Err(EcdsaError::BadSignature);
     }
 
-    // e = SHA-256(message) as an integer mod n (the digest is 256 bits).
-    let digest = Big::from_be(&Sha256::digest(message));
-    let e = if digest.cmp(&c.n_big) == core::cmp::Ordering::Less {
-        digest
-    } else {
-        digest.sub(&c.n_big)
-    };
+    // e = Hash(message) as an integer mod n. For P-256 the digest is exactly
+    // 256 bits and for P-384 exactly 384, so a single conditional subtraction
+    // reduces it (n > 2^(bits-1)).
+    let mut e = Big::from_be(digest);
+    while e.cmp(&c.n_big) != core::cmp::Ordering::Less {
+        e = e.sub(&c.n_big);
+    }
 
     // w = s^-1 mod n; u1 = e*w; u2 = r*w.
     let s_m = c.n.to_mont(&s_big);
@@ -295,7 +346,7 @@ mod tests {
 
     #[test]
     fn field_arithmetic_smoke() {
-        let c = Curve::new();
+        let c = Curve::new(&P256);
         let two = c.p.to_mont(&Big::from_u32(2));
         let three = c.p.to_mont(&Big::from_u32(3));
         let six = c.fmul(&two, &three);
@@ -372,6 +423,58 @@ mod tests {
         );
     }
 
+    // Generated with OpenSSL 4.0.3 (secp384r1, SHA-384).
+    const Q384X: &str = "632a813c1255294b8bf3218634a94f918cf976e3412a5157c59a6ebfa309d0b\
+                         339278dd6d90fa7533cc689ba5291a724";
+    const Q384Y: &str = "326dc4b9293f711d71a6aef9707a2078045ebfbac5b9c98ca2ab7b59c74dacee\
+                         87398e9e39ee72af25537cab2116e6f9";
+    const R384: &str = "78fb3bce7f4a2d298619de1b9cb72fec389cf9449795fce2e167483a594ec698\
+                         6d88b62ed14250dce0bc6bff1c5822f7";
+    const S384: &str = "058c0b1eaa1659ccfd1a7356105794488cb0a09d9ea3feb08a80b3212da423dc\
+                         d11811be9069ed54adfb7ea13422c56c";
+
+    #[test]
+    fn ecdsa_p384_sha384_verifies() {
+        assert_eq!(
+            verify_p384_sha384(
+                &unhex(Q384X),
+                &unhex(Q384Y),
+                MSG,
+                &unhex(R384),
+                &unhex(S384)
+            ),
+            Ok(())
+        );
+        // A different message must fail.
+        assert_eq!(
+            verify_p384_sha384(
+                &unhex(Q384X),
+                &unhex(Q384Y),
+                b"other",
+                &unhex(R384),
+                &unhex(S384)
+            ),
+            Err(EcdsaError::VerificationFailed)
+        );
+        // Tampered signature.
+        let mut s = unhex(S384);
+        s[47] ^= 0x01;
+        assert_eq!(
+            verify_p384_sha384(&unhex(Q384X), &unhex(Q384Y), MSG, &unhex(R384), &s),
+            Err(EcdsaError::VerificationFailed)
+        );
+        // A P-384 signature must not verify with the P-256 curve (misconfigured
+        // algorithm selection).
+        assert!(verify_p256_sha256(
+            &unhex(Q384X),
+            &unhex(Q384Y),
+            MSG,
+            &unhex(R384),
+            &unhex(S384)
+        )
+        .is_err());
+    }
+
     #[test]
     fn ecdsa_rejects_bad_inputs() {
         // Public key not on the curve.
@@ -387,7 +490,7 @@ mod tests {
             Err(EcdsaError::BadSignature)
         );
         // r >= n.
-        let n = unhex(N_HEX);
+        let n = unhex(P256.n);
         assert_eq!(
             verify_p256_sha256(&unhex(QX), &unhex(QY), MSG, &n, &unhex(S)),
             Err(EcdsaError::BadSignature)
