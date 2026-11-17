@@ -263,7 +263,7 @@ fn try_load_table(app: &str, locale: &str) -> Result<(), LoadError> {
 }
 
 fn build_nlt_path(app: &str, locale: &str) -> Result<([u8; 256], usize), ()> {
-    let prefix = b"C:\\System\\Locale\\";
+    let prefix = b"C:\\NeoDOS\\System\\Globalization\\";
     let sep = b"\\";
     let ext = b".nlt";
     let total = prefix.len() + locale.len() + sep.len() + app.len() + ext.len();
@@ -837,7 +837,7 @@ static mut LOCALE_SCANNED: bool = false;
 /// so a single pass with a large-enough buffer is the only correct usage.
 /// Looping over it expecting a continuation cursor hangs (this was the bug).
 fn scan_locales_once() {
-    const LOCALE_PATH: &str = "\\Global\\FileSystem\\C:\\System\\Locale";
+    const LOCALE_PATH: &str = "\\Global\\FileSystem\\C:\\NeoDOS\\System\\Globalization";
     unsafe {
         if LOCALE_SCANNED {
             return;

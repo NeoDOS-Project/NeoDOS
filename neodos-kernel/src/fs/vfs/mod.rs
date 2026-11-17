@@ -248,7 +248,20 @@ impl Vfs {
         Ok((drive_idx, inode))
     }
 
+    /// Resolve `path`, trying the canonical spelling of a legacy (#398) path
+    /// first. A miss on the canonical path falls back to the literal one, so an
+    /// image with the new tree and call sites still using the old spelling both
+    /// work during the migration.
     pub fn resolve_path(&mut self, path: &str) -> Result<(usize, VfsNode), VfsError> {
+        if let Some(canonical) = crate::paths::canonicalize(path) {
+            if let Ok(node) = self.resolve_path_exact(&canonical) {
+                return Ok(node);
+            }
+        }
+        self.resolve_path_exact(path)
+    }
+
+    fn resolve_path_exact(&mut self, path: &str) -> Result<(usize, VfsNode), VfsError> {
         let (drive_letter, rest) = Self::split_drive(path)?;
         let drive_idx = Self::drive_index(drive_letter).ok_or(VfsError::InvalidPath)?;
 

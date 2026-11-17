@@ -2,7 +2,7 @@ use core::str;
 use crate::syscall;
 use crate::syscall::ObInfoClass;
 
-const RES_PATH_PREFIX: &str = "\\Global\\FileSystem\\C:\\Programs\\";
+const RES_PATH_PREFIX: &str = "\\Global\\FileSystem\\C:\\NeoDOS\\System\\";
 
 fn build_res_path(app: &str, path: &str) -> Result<([u8; 256], usize), ()> {
     let prefix = RES_PATH_PREFIX.as_bytes();

@@ -13,7 +13,7 @@
 
 const LIBRARY_KEY: &str =
     "\\Registry\\Machine\\System\\CurrentControlSet\\Control\\Library";
-const FALLBACK_DIR: &str = "C:\\System\\Libraries\\";
+const FALLBACK_DIR: &str = "C:\\NeoDOS\\Libraries\\";
 
 /// Resolve NXL `name` (e.g. `"math"`) into `buf`, returning the byte length
 /// (no NUL terminator). The Registry value wins; otherwise the default path.
