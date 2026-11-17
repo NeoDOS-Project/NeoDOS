@@ -81,6 +81,8 @@ pub enum TlsError {
     Alert,
     /// The peer closed the connection.
     Closed,
+    /// The certificate chain was rejected; carries the exact X.509 reason.
+    Certificate(x509::X509Error),
 }
 
 impl TlsError {
@@ -102,6 +104,7 @@ impl TlsError {
             TlsError::RngUnavailable => "kernel CSPRNG unavailable",
             TlsError::Alert => "peer sent an alert",
             TlsError::Closed => "peer closed the connection",
+            TlsError::Certificate(e) => e.as_str(),
         }
     }
 }
@@ -295,7 +298,8 @@ pub fn connect<T: Transport>(
             x509::X509Error::HostnameMismatch => TlsError::HostnameMismatch,
             x509::X509Error::Expired => TlsError::Expired,
             x509::X509Error::NotYetValid => TlsError::NotYetValid,
-            _ => TlsError::NotTrusted,
+            x509::X509Error::NotTrusted => TlsError::NotTrusted,
+            other => TlsError::Certificate(other),
         };
         return Err(close_with(&mut transport, mapped));
     }

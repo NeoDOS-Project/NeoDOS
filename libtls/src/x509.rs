@@ -26,6 +26,25 @@ pub enum X509Error {
     PathLenExceeded,
 }
 
+impl X509Error {
+    /// Short description for diagnostics (CLI messages, logs).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            X509Error::Der(_) => "certificate chain: malformed DER",
+            X509Error::UnsupportedAlgorithm => "certificate chain: unsupported algorithm",
+            X509Error::BadCertificate => "certificate chain: invalid certificate",
+            X509Error::BadSignature => "certificate chain: bad signature",
+            X509Error::NotTrusted => "certificate chain: not anchored in the trust store",
+            X509Error::HostnameMismatch => "hostname mismatch",
+            X509Error::Expired => "certificate expired",
+            X509Error::NotYetValid => "certificate not yet valid",
+            X509Error::ChainTooLong => "certificate chain: too long",
+            X509Error::NotACa => "certificate chain: issuer is not a CA",
+            X509Error::PathLenExceeded => "certificate chain: path length exceeded",
+        }
+    }
+}
+
 impl From<DerError> for X509Error {
     fn from(e: DerError) -> Self {
         X509Error::Der(e)
@@ -405,23 +424,44 @@ pub fn verify_chain(
     let mut current = leaf;
     for depth in 0..8u8 {
         check_time(current)?;
+        // A signature failure from the certificate that *claims* to be the
+        // issuer is a real error (bad signature, unsupported algorithm), not a
+        // missing trust anchor: report it as such so the failure is actionable.
+        let mut anchor_err: Option<X509Error> = None;
+        let mut anchored = false;
         for root in &anchors {
             if root.subject == current.subject && root.spki == current.spki {
-                return Ok(());
+                anchored = true;
+                break;
             }
-            if root.subject == current.issuer && verify_issuer(current, root).is_ok() {
-                return Ok(());
+            if root.subject == current.issuer {
+                match verify_issuer(current, root) {
+                    Ok(()) => {
+                        anchored = true;
+                        break;
+                    }
+                    Err(e) => anchor_err = Some(e),
+                }
             }
         }
+        if anchored {
+            return Ok(());
+        }
+
         let mut next: Option<&Certificate<'_>> = None;
         for candidate in chain.iter().skip(1) {
-            if candidate.subject == current.issuer && verify_issuer(current, candidate).is_ok() {
-                next = Some(candidate);
-                break;
+            if candidate.subject == current.issuer {
+                match verify_issuer(current, candidate) {
+                    Ok(()) => {
+                        next = Some(candidate);
+                        break;
+                    }
+                    Err(e) => anchor_err = Some(e),
+                }
             }
         }
         let Some(candidate) = next else {
-            return Err(X509Error::NotTrusted);
+            return Err(anchor_err.unwrap_or(X509Error::NotTrusted));
         };
         if !candidate.is_ca {
             return Err(X509Error::NotACa);

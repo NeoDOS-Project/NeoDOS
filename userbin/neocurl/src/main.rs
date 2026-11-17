@@ -219,6 +219,12 @@ fn run(raw: &[u8]) -> Result<(), u32> {
                 let _ = syscall::sys_close(out_fd);
             }
             fail(err.as_str());
+            // The HTTP core does not depend on `libtls`, so the TLS reason
+            // (clock, trust, cipher, RNG) is reported by the transport.
+            let detail = libnet::http_transport::last_tls_error();
+            if !detail.is_empty() {
+                fail(detail);
+            }
             Err(1)
         }
     }
