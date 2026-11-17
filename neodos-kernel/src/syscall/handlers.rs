@@ -360,7 +360,12 @@ pub(super) fn handler_brk(regs: super::Registers) -> u64 {
 
     if new_break > current_break {
         let start_page = (current_break + 0xFFF) & !0xFFF;
-        let end_page = new_break & !0xFFF;
+        // Round *up*: the buffer is zeroed up to `new_break`, so the page that
+        // contains it must be mapped too. Rounding down mapped `[start, end)`
+        // but zeroed `[current, new_break)`, which wrote one page past the
+        // mapping whenever the new break was not page-aligned — the kernel
+        // then took a Ring 0 #PF on the last partial page (#745).
+        let end_page = (new_break + 0xFFF) & !0xFFF;
         if end_page > start_page {
             let mut page = start_page;
             while page < end_page {

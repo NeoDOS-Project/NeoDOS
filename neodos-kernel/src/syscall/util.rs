@@ -36,6 +36,14 @@ pub(crate) fn is_user_ptr_valid(ptr: u64, len: u64) -> bool {
     if heap_base != 0 && ptr >= heap_base && ptr.saturating_add(len) <= heap_break {
         return true;
     }
+    // A range that touches a heap slot but is not fully inside our break is
+    // not ours to touch (#745).
+    let last = ptr.saturating_add(len.saturating_sub(1));
+    if crate::arch::x64::paging::is_heap_virtual_addr(ptr)
+        || crate::arch::x64::paging::is_heap_virtual_addr(last)
+    {
+        return false;
+    }
     let regions = crate::scheduler::current_process_mmap_regions();
     for r in &regions {
         if ptr >= r.base && ptr.saturating_add(len) <= r.base + r.len {
@@ -74,6 +82,14 @@ fn is_valid_user_byte_locked(sched: &Scheduler, p: u64) -> bool {
                 return is_page_present(p);
             }
         }
+    }
+    // Any address inside the heap *region* that did not match the block above
+    // is either past the process's break or another process's slot. Both are
+    // unmapped in this address space, and the window shortcut below would
+    // otherwise report them as accessible (#745: `copy_to_user` then wrote a
+    // byte past the break and panicked).
+    if crate::arch::x64::paging::is_heap_virtual_addr(p) {
+        return false;
     }
     if p >= 0x1E000000 && p < 0x1E200000 {
         // NXL region is split at init_nxl_region, check PRESENT.

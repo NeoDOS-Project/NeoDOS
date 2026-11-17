@@ -130,6 +130,20 @@ pub fn validate_datetime(second: u8, minute: u8, hour: u8, day: u8, month: u8, y
 pub fn register_ob_set_tests() {
     use crate::{test_case, test_true};
 
+    // #745: a range that starts inside the heap region but is not fully inside
+    // this process's break must be rejected, not accepted through the USER
+    // window shortcut (that path wrote past the break and panicked).
+    test_case!("ob_user_ptr_past_heap_break_rejected", {
+        let (base, brk) = crate::scheduler::current_process_heap_range();
+        test_true!(base != 0);
+        test_true!(brk > base);
+        test_true!(crate::syscall::util::is_user_ptr_valid(base, 8));
+        test_true!(!crate::syscall::util::is_user_ptr_valid(brk, 8));
+        test_true!(!crate::syscall::util::is_user_ptr_valid(brk + 0x1000, 8));
+        // A range that starts before the break but ends past it is rejected too.
+        test_true!(!crate::syscall::util::is_user_ptr_valid(brk - 4, 8));
+    });
+
     test_case!("ob_set_empty_payload_classes", {
         use crate::object::types::ObSetInfoClass as C;
         // No-payload classes accept a null/empty buffer (Ring 3 calls these
