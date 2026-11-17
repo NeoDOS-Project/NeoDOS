@@ -1053,6 +1053,44 @@ pub fn register_neodos_v2_tests() {
         let _ = crate::globals::BLOCK_DEVICES.lock().force_remove(dev_id);
     });
 
+    crate::test_case!("neofs_v2_chunked_write_preserves_prefix", {
+        // #748: `libhttp` hands a body over in several `sys_write` calls (the
+        // syscall caps at 4 KiB). Every call after the first must preserve the
+        // bytes it does not overwrite; the preserve read used the raw block LBA
+        // instead of the sector LBA and kept garbage.
+        let sectors = alloc::vec![[0u8; 512]; 2048];
+        let dev_id = crate::fs::fsck::register_test_device(sectors);
+        let io = IoStack::new(dev_id);
+        mkfs_ne2(&io, 256, "TEST").unwrap();
+
+        let mut fs = NeoDosFsV2::new(io).unwrap();
+        fs.create(0, "C.BIN").unwrap();
+        let ino = fs.lookup(0, "C.BIN").unwrap().inode;
+
+        let head = [0xAAu8; 1024];
+        let tail = [0xBBu8; 367];
+        crate::test_eq!(fs.write(ino, 0, &head).unwrap(), head.len());
+        crate::test_eq!(fs.write(ino, 1024, &tail).unwrap(), tail.len());
+
+        let mut buf = [0u8; 1391];
+        let n = fs.read(ino, 0, &mut buf).unwrap();
+        crate::test_eq!(n, 1391);
+        crate::test_true!(buf[..1024].iter().all(|b| *b == 0xAA));
+        crate::test_true!(buf[1024..].iter().all(|b| *b == 0xBB));
+
+        // A third chunk at the end grows it again.
+        let extra = [0xCCu8; 100];
+        crate::test_eq!(fs.write(ino, 1391, &extra).unwrap(), extra.len());
+        let mut buf2 = [0u8; 1491];
+        let n2 = fs.read(ino, 0, &mut buf2).unwrap();
+        crate::test_eq!(n2, 1491);
+        crate::test_true!(buf2[..1024].iter().all(|b| *b == 0xAA));
+        crate::test_true!(buf2[1024..1391].iter().all(|b| *b == 0xBB));
+        crate::test_true!(buf2[1391..].iter().all(|b| *b == 0xCC));
+
+        let _ = crate::globals::BLOCK_DEVICES.lock().force_remove(dev_id);
+    });
+
     crate::test_case!("neofs_v2_cow_reclaims_garbage", {
         let sectors = alloc::vec![[0u8; 512]; 4096];
         let dev_id = crate::fs::fsck::register_test_device(sectors);
