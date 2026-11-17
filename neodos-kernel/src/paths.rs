@@ -90,14 +90,17 @@ pub fn canonicalize(path: &str) -> Option<String> {
 fn match_legacy(path: &str, table: &[(&str, &str)]) -> Option<String> {
     for (old, new) in table {
         let dir = &old[..old.len() - 1];
+        // Table entries keep their trailing separator; path constants do not.
+        // Joining blindly produced `C:\NeoDOS\System\Tools\\x.nxe`.
+        let base = new.trim_end_matches('\\');
         if let Some(rest) = strip_prefix_ci(path, old) {
-            let mut out = String::from(*new);
+            let mut out = String::from(base);
             out.push('\\');
             out.push_str(rest);
             return Some(out);
         }
         if path.eq_ignore_ascii_case(dir) {
-            return Some(String::from(*new));
+            return Some(String::from(base));
         }
     }
     None
