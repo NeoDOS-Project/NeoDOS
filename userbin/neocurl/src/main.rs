@@ -278,7 +278,7 @@ fn run(raw: &[u8]) -> Result<(), u32> {
         count: 0,
     };
     let result = if is_https {
-        let roots = alloc::vec![ca_der.unwrap_or_default()];
+        let roots = alloc::vec![ca_der.clone().unwrap_or_default()];
         let mut transport = HttpsTransport::new(limits, roots);
         execute(&mut transport, &request, &limits, deadline, &mut sink)
     } else {
@@ -300,16 +300,28 @@ fn run(raw: &[u8]) -> Result<(), u32> {
             }
             Ok(())
         }
-        Err(err) => {
+        Err(http_err) => {
             if out_fd != 1 {
                 let _ = syscall::sys_close(out_fd);
             }
-            fail(err.as_str());
+            fail(http_err.as_str());
             // The HTTP core does not depend on `libtls`, so the TLS reason
             // (clock, trust, cipher, RNG) is reported by the transport.
             let detail = libnet::http_transport::last_tls_error();
             if !detail.is_empty() {
                 fail(detail);
+            }
+            // `--ca` bytes actually handed to libtls: the first four say whether
+            // a DER (30 82 ..) reached the parser or the file came back
+            // truncated/shifted (#748, #753).
+            if let Some(ca) = ca_der.as_deref() {
+                err(b"neocurl: ca ");
+                write_u64(2, ca.len() as u64);
+                err(b" bytes [");
+                for b in ca.iter().take(4) {
+                    write_hex_byte(2, *b);
+                }
+                err(b"]\r\n");
             }
             Err(1)
         }
@@ -523,6 +535,12 @@ fn write_dec(fd: u8, value: u32) {
         value /= 10;
     }
     let _ = syscall::sys_write(fd, &buf[i..]);
+}
+
+fn write_hex_byte(fd: u8, value: u8) {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let _ = syscall::sys_write(fd, &[HEX[(value >> 4) as usize]]);
+    let _ = syscall::sys_write(fd, &[HEX[(value & 0xF) as usize]]);
 }
 
 fn write_u64(fd: u8, mut value: u64) {
