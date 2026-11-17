@@ -22,11 +22,13 @@ pub mod ecdsa;
 pub mod hmac;
 pub mod rsa;
 pub mod sha256;
+pub mod sha384;
 pub mod x25519;
 
 pub use aead::{AeadError, ChaCha20Poly1305, TAG_LEN};
-pub use ecdsa::{verify_p256_sha256, EcdsaError};
+pub use ecdsa::{verify_p256_sha256, verify_p384_sha384, EcdsaError};
 pub use rsa::{RsaError, RsaPublicKey};
 pub use hmac::{hkdf, hkdf_expand, hkdf_extract, hmac_sha256, HkdfError, HMAC_LEN};
 pub use sha256::{Sha256, SHA256_LEN};
+pub use sha384::{Sha384, SHA384_LEN};
 pub use x25519::{x25519, X25519_LEN};

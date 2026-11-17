@@ -8,7 +8,7 @@
 use alloc::vec::Vec;
 
 use crate::der::*;
-use libcrypto::{verify_p256_sha256, RsaError, RsaPublicKey};
+use libcrypto::{verify_p256_sha256, verify_p384_sha384, RsaError, RsaPublicKey};
 
 /// X.509 failure.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -38,14 +38,17 @@ pub enum SigAlg {
     RsaPkcs1Sha256,
     RsaPssSha256,
     EcdsaP256Sha256,
+    EcdsaP384Sha384,
 }
 
 const OID_SHA256_RSA: &[u8] = &[0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x0b];
 const OID_RSA_PSS: &[u8] = &[0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x0a];
 const OID_ECDSA_SHA256: &[u8] = &[0x2a, 0x86, 0x48, 0xce, 0x3d, 0x04, 0x03, 0x02];
+const OID_ECDSA_SHA384: &[u8] = &[0x2a, 0x86, 0x48, 0xce, 0x3d, 0x04, 0x03, 0x03];
 const OID_RSA_ENCRYPTION: &[u8] = &[0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01];
 const OID_EC_PUBLIC_KEY: &[u8] = &[0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01];
 const OID_PRIME256V1: &[u8] = &[0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07];
+const OID_SECP384R1: &[u8] = &[0x2b, 0x81, 0x04, 0x00, 0x22];
 const OID_BASIC_CONSTRAINTS: &[u8] = &[0x55, 0x1d, 0x13];
 const OID_SAN: &[u8] = &[0x55, 0x1d, 0x11];
 const OID_KEY_USAGE: &[u8] = &[0x55, 0x1d, 0x0f];
@@ -106,6 +109,7 @@ pub fn parse_certificate(der: &[u8]) -> core::result::Result<Certificate<'_>, X5
         OID_SHA256_RSA => Some(SigAlg::RsaPkcs1Sha256),
         OID_RSA_PSS => Some(SigAlg::RsaPssSha256),
         OID_ECDSA_SHA256 => Some(SigAlg::EcdsaP256Sha256),
+        OID_ECDSA_SHA384 => Some(SigAlg::EcdsaP384Sha384),
         _ => None,
     };
     let signature = bit_string_bytes(&cert.expect(TAG_BIT_STRING)?)?;
@@ -248,8 +252,15 @@ pub fn rsa_public_key(spki: &[u8]) -> core::result::Result<RsaPublicKey, X509Err
     Ok(RsaPublicKey::new(n, e))
 }
 
-/// SubjectPublicKeyInfo → P-256 affine coordinates.
-pub fn p256_public_key(spki: &[u8]) -> core::result::Result<(Vec<u8>, Vec<u8>), X509Error> {
+/// SubjectPublicKeyInfo → NIST curve affine coordinates.
+///
+/// `curve_oid` selects the expected curve (`OID_PRIME256V1` or
+/// `OID_SECP384R1`); the key encoding is `0x04 || X || Y` with 32- or 48-byte
+/// coordinates.
+fn ec_public_key(
+    spki: &[u8],
+    curve_oid: &[u8],
+) -> core::result::Result<(Vec<u8>, Vec<u8>), X509Error> {
     let mut s = Der::new(spki);
     let mut seq = s.expect_sequence()?;
     let mut alg = seq.expect_sequence()?;
@@ -258,14 +269,28 @@ pub fn p256_public_key(spki: &[u8]) -> core::result::Result<(Vec<u8>, Vec<u8>), 
         return Err(X509Error::UnsupportedAlgorithm);
     }
     let curve = oid_bytes(&alg.next_tlv()?)?;
-    if curve != OID_PRIME256V1 {
+    if curve != curve_oid {
         return Err(X509Error::UnsupportedAlgorithm);
     }
     let key = bit_string_bytes(&seq.expect(TAG_BIT_STRING)?)?;
-    if key.len() != 65 || key[0] != 0x04 {
+    if key.is_empty() {
         return Err(X509Error::BadCertificate);
     }
-    Ok((key[1..33].to_vec(), key[33..65].to_vec()))
+    let coord = (key.len() - 1) / 2;
+    if key[0] != 0x04 || !matches!(coord, 32 | 48) || key.len() != 1 + 2 * coord {
+        return Err(X509Error::BadCertificate);
+    }
+    Ok((key[1..1 + coord].to_vec(), key[1 + coord..].to_vec()))
+}
+
+/// SubjectPublicKeyInfo → P-256 affine coordinates.
+pub fn p256_public_key(spki: &[u8]) -> core::result::Result<(Vec<u8>, Vec<u8>), X509Error> {
+    ec_public_key(spki, OID_PRIME256V1)
+}
+
+/// SubjectPublicKeyInfo → P-384 affine coordinates.
+pub fn p384_public_key(spki: &[u8]) -> core::result::Result<(Vec<u8>, Vec<u8>), X509Error> {
+    ec_public_key(spki, OID_SECP384R1)
 }
 
 /// Verify that `child` was signed by `issuer`.
@@ -289,23 +314,27 @@ pub fn verify_issuer(child: &Certificate<'_>, issuer: &Certificate<'_>) -> core:
                 Err(_) => Err(X509Error::BadCertificate),
             }
         }
-        SigAlg::EcdsaP256Sha256 => {
-            let (x, y) = p256_public_key(issuer.spki)?;
+        SigAlg::EcdsaP256Sha256 | SigAlg::EcdsaP384Sha384 => {
+            let (x, y) = match alg {
+                SigAlg::EcdsaP384Sha384 => p384_public_key(issuer.spki)?,
+                _ => p256_public_key(issuer.spki)?,
+            };
             let mut der = Der::new(child.signature);
             let mut sig = der.expect_sequence()?;
             let r = integer_bytes(&sig.next_tlv()?)?;
             let s = integer_bytes(&sig.next_tlv()?)?;
-            match verify_p256_sha256(&x, &y, child.tbs, r, s) {
-                Ok(()) => Ok(()),
-                Err(_) => Err(X509Error::BadSignature),
-            }
+            let result = match alg {
+                SigAlg::EcdsaP384Sha384 => verify_p384_sha384(&x, &y, child.tbs, r, s),
+                _ => verify_p256_sha256(&x, &y, child.tbs, r, s),
+            };
+            result.map_err(|_| X509Error::BadSignature)
         }
     }
 }
 
 fn hostname_matches(leaf: &Certificate<'_>, host: Host<'_>) -> bool {
     match host {
-        Host::Ip(addr) => leaf.ip_addresses.iter().any(|a| *a == addr),
+        Host::Ip(addr) => leaf.ip_addresses.contains(&addr),
         Host::Dns(name) => {
             let name = name.trim_end_matches('.').to_ascii_lowercase();
             for san in &leaf.dns_names {

@@ -83,6 +83,29 @@ pub enum TlsError {
     Closed,
 }
 
+impl TlsError {
+    /// Short, stable description for diagnostics and CLI messages.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            TlsError::Io => "transport error",
+            TlsError::Protocol => "protocol error",
+            TlsError::UnsupportedVersion => "server is not TLS 1.3",
+            TlsError::NoSharedCipher => "no shared cipher/key share",
+            TlsError::UnsupportedSignature => "unsupported signature algorithm",
+            TlsError::BadRecord => "record authentication failed",
+            TlsError::RecordLimit => "record too large",
+            TlsError::NotTrusted => "untrusted certificate chain",
+            TlsError::HostnameMismatch => "hostname mismatch",
+            TlsError::Expired => "certificate expired",
+            TlsError::NotYetValid => "certificate not yet valid",
+            TlsError::ClockUnsynced => "system clock not trusted",
+            TlsError::RngUnavailable => "kernel CSPRNG unavailable",
+            TlsError::Alert => "peer sent an alert",
+            TlsError::Closed => "peer closed the connection",
+        }
+    }
+}
+
 /// Byte-stream transport used by the handshake and the record layer.
 pub trait Transport {
     fn read(&mut self, buf: &mut [u8]) -> Result<usize, TlsError>;
@@ -414,16 +437,25 @@ fn verify_certificate_verify(
             key.verify_pkcs1_sha256(&content, signature)
                 .map_err(|_| TlsError::NotTrusted)
         }
-        handshake::SIG_ECDSA_SECP256R1_SHA256 => {
-            let (x, y) = x509::p256_public_key(leaf.spki).map_err(|_| TlsError::UnsupportedSignature)?;
+        handshake::SIG_ECDSA_SECP256R1_SHA256 | handshake::SIG_ECDSA_SECP384R1_SHA384 => {
+            let (x, y) = if scheme == handshake::SIG_ECDSA_SECP384R1_SHA384 {
+                x509::p384_public_key(leaf.spki)
+            } else {
+                x509::p256_public_key(leaf.spki)
+            }
+            .map_err(|_| TlsError::UnsupportedSignature)?;
             let mut der = der::Der::new(signature);
             let mut seq = der.expect_sequence().map_err(|_| TlsError::BadRecord)?;
             let r = der::integer_bytes(&seq.next_tlv().map_err(|_| TlsError::BadRecord)?)
                 .map_err(|_| TlsError::BadRecord)?;
             let s = der::integer_bytes(&seq.next_tlv().map_err(|_| TlsError::BadRecord)?)
                 .map_err(|_| TlsError::BadRecord)?;
-            libcrypto::verify_p256_sha256(&x, &y, &content, r, s)
-                .map_err(|_| TlsError::NotTrusted)
+            let result = if scheme == handshake::SIG_ECDSA_SECP384R1_SHA384 {
+                libcrypto::verify_p384_sha384(&x, &y, &content, r, s)
+            } else {
+                libcrypto::verify_p256_sha256(&x, &y, &content, r, s)
+            };
+            result.map_err(|_| TlsError::NotTrusted)
         }
         _ => Err(TlsError::UnsupportedSignature),
     }
@@ -497,7 +529,8 @@ impl<T: Transport> TlsStream<T> {
 
 /// Re-exported for tests and callers that need the signature scheme names.
 pub use handshake::{
-    SIG_ECDSA_SECP256R1_SHA256, SIG_RSA_PKCS1_SHA256, SIG_RSA_PSS_RSAE_SHA256,
+    SIG_ECDSA_SECP256R1_SHA256, SIG_ECDSA_SECP384R1_SHA384, SIG_RSA_PKCS1_SHA256,
+    SIG_RSA_PSS_RSAE_SHA256,
 };
 /// Re-exported clock trait (the design's `Clock`).
 pub use libclock::Clock;

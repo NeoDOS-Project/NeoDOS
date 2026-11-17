@@ -24,6 +24,7 @@ pub const EXT_KEY_SHARE: u16 = 0x0033;
 
 pub const SIG_RSA_PSS_RSAE_SHA256: u16 = 0x0804;
 pub const SIG_ECDSA_SECP256R1_SHA256: u16 = 0x0403;
+pub const SIG_ECDSA_SECP384R1_SHA384: u16 = 0x0503;
 pub const SIG_RSA_PKCS1_SHA256: u16 = 0x0401;
 
 /// Reassembles handshake messages that may be split across records.
@@ -108,10 +109,11 @@ pub fn build_client_hello(
     push_ext(&mut ext, EXT_SUPPORTED_GROUPS, &groups);
 
     let mut sigs = Vec::new();
-    sigs.extend_from_slice(&6u16.to_be_bytes());
+    sigs.extend_from_slice(&8u16.to_be_bytes());
     for sig in [
         SIG_RSA_PSS_RSAE_SHA256,
         SIG_ECDSA_SECP256R1_SHA256,
+        SIG_ECDSA_SECP384R1_SHA384,
         SIG_RSA_PKCS1_SHA256,
     ] {
         sigs.extend_from_slice(&sig.to_be_bytes());
@@ -207,15 +209,15 @@ pub fn parse_server_hello(body: &[u8]) -> Result<ServerHello, TlsError> {
                 }
                 has_tls13 = true;
             }
-            EXT_KEY_SHARE => {
-                if data.len() >= 4 {
-                    let group = u16::from_be_bytes([data[0], data[1]]);
-                    let klen = u16::from_be_bytes([data[2], data[3]]) as usize;
-                    if group == GROUP_X25519 && klen == 32 && data.len() >= 4 + 32 {
-                        let mut key = [0u8; 32];
-                        key.copy_from_slice(&data[4..36]);
-                        server_key_share = Some(key);
-                    }
+            // key_share: (group, key_exchange<len>). The server picks exactly
+            // one group; anything we did not offer is a protocol violation.
+            EXT_KEY_SHARE if data.len() >= 4 => {
+                let group = u16::from_be_bytes([data[0], data[1]]);
+                let klen = u16::from_be_bytes([data[2], data[3]]) as usize;
+                if group == GROUP_X25519 && klen == 32 && data.len() >= 4 + 32 {
+                    let mut key = [0u8; 32];
+                    key.copy_from_slice(&data[4..36]);
+                    server_key_share = Some(key);
                 }
             }
             _ => {}
