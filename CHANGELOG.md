@@ -14,6 +14,11 @@
 
 ### Fixed
 
+- **Escritura inline parcial (#755).** `file_write` copiaba `new_size` bytes
+  desde un buffer de otra longitud y hacía panic en Ring 0 con cualquier append
+  o sobrescritura parcial de un fichero de hasta 16 B. Ahora preserva el prefijo
+  no sobrescrito, rellena los huecos con ceros y conserva el contenido al pasar
+  de inline a extents.
 - **Carga de imágenes ELF fuera del slot (#762).** `elf::load_elf` ahora recibe
   una `LoadRegion` obligatoria y valida todos los `PT_LOAD` (dirección dentro de
   la región, sin solapes, `filesz <= memsz`) **antes** de copiar nada. La ruta de
