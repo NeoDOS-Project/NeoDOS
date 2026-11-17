@@ -96,6 +96,8 @@ impl Transport for TcpTransport {
     }
 }
 
+const PAGE_SIZE: usize = 4096;
+
 /// Fault the pages backing `buf` into the process before handing it to the
 /// kernel.
 ///
@@ -109,12 +111,14 @@ fn touch_pages(buf: &mut [u8]) {
     }
     let start = buf.as_ptr() as usize;
     let end = start + buf.len();
-    let mut page = start & !0xfff;
+    // The buffer's first page starts at `start`, which is usually *inside* it:
+    // rounding down and subtracting would underflow and read out of bounds.
+    unsafe { core::ptr::read_volatile(&buf[0]) };
+    let mut page = (start | (PAGE_SIZE - 1)) + 1; // next page boundary
     while page < end {
-        let offset = page - start;
         // A user-mode read demand-faults the page in; volatile so it is kept.
-        unsafe { core::ptr::read_volatile(&buf[offset]) };
-        page += 4096;
+        unsafe { core::ptr::read_volatile(&buf[page - start]) };
+        page += PAGE_SIZE;
     }
 }
 
