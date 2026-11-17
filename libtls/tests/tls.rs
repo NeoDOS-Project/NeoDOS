@@ -6,6 +6,7 @@
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
 use libtls::{ClientConfig, Host, Rng, TlsError, Transport};
@@ -73,8 +74,16 @@ impl Drop for Fixture {
     }
 }
 
+/// Each test gets its own PKI: the tests run in parallel and used to share a
+/// directory keyed only by the process id, so they clobbered each other's CA.
+static FIXTURE_ID: AtomicU32 = AtomicU32::new(0);
+
 fn start_server() -> Option<Fixture> {
-    let dir = std::env::temp_dir().join(format!("neodos-libtls-{}", std::process::id()));
+    let id = FIXTURE_ID.fetch_add(1, Ordering::Relaxed);
+    let dir = std::env::temp_dir().join(format!(
+        "neodos-libtls-{}-{id}",
+        std::process::id()
+    ));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).ok()?;
     let p = |name: &str| dir.join(name).to_string_lossy().into_owned();
