@@ -128,6 +128,15 @@
 
 ### Changed
 
+- **Image tree moved to `\NeoDOS` (#398).** System binaries live in
+  `\NeoDOS\System` (`\Tools` for the rest, until multi-block directories
+  land), libraries in `\NeoDOS\Libraries`, hives in `\NeoDOS\System\config`,
+  keyboard/localization/drivers under `\NeoDOS\System\…`, and the image now
+  ships `\Program Files`, `\ProgramData` and `\Users`. Locations live in
+  `neodos-kernel/src/paths.rs` / `libneodos::paths`, and the VFS resolves the
+  canonical spelling of a legacy path first so old literals keep working
+  while they are migrated.
+
 - **AGENTS.md slimmed down; long agent policies moved to their homes.**
   The Mandatory Scheduler Change Validation Policy now lives in
   `skills/scheduler/SKILL.md` and the Proactive Capability Discovery workflow in
