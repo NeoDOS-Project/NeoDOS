@@ -350,8 +350,17 @@ must not start before the CSPRNG and the clock policy exist.
 
 ### 3.6 Trust store (D8 — resolved)
 
-The image ships one **concatenated DER bundle** at
+The image ships one **versioned DER bundle** at
 `\NeoDOS\System\config\roots.der`:
+
+```text
+"NDTB" | version u16 | reserved u16 | built u32 | cert_count u32 | certificate…
+```
+
+A bundle whose magic, version or certificate count does not check out is
+rejected (`libtls::der::parse_bundle`), so a truncated or hand-edited file
+cannot silently trust a subset. The build time comes from
+`SOURCE_DATE_EPOCH` when it is set (reproducible images).
 
 - NeoDev builds it at image time from the host's CA store
   (`/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem`, or `NEODOS_TRUST_BUNDLE`),
@@ -362,6 +371,11 @@ The image ships one **concatenated DER bundle** at
   each certificate, so no PEM parser is needed on the target).
 - `neocurl` uses the bundle when `--ca` is absent; `--ca` still overrides it.
   With no anchors at all the client refuses to connect ("no trust anchors").
+- **Freshness.** `libtls::der::bundle_freshness` compares the build time with
+  the trusted clock: a bundle dated in the future or older than two years is
+  reported (`neocurl: warning: trust bundle is N days old; rebuild the image`).
+  It is a warning, not a failure: the anchors are still verified normally and
+  an offline machine keeps working.
 
 Revocation (OCSP/CRL) remains out of scope; a compromised or removed root is
 handled by shipping a new image/bundle.

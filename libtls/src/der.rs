@@ -172,6 +172,81 @@ pub fn split_certificates(bundle: &[u8]) -> alloc::vec::Vec<&[u8]> {
     out
 }
 
+// ── Trust bundle (D8) ──
+
+/// Magic of the versioned trust bundle written by NeoDev.
+pub const BUNDLE_MAGIC: [u8; 4] = *b"NDTB";
+/// Bundle format version understood by this build.
+pub const BUNDLE_VERSION: u16 = 1;
+/// `magic | version u16 | reserved u16 | built u32 | cert_count u32`.
+pub const BUNDLE_HEADER_LEN: usize = 16;
+/// A bundle older than this is reported as stale (rebuild the image).
+pub const BUNDLE_MAX_AGE_SECS: i64 = 730 * 86_400;
+
+/// A parsed trust bundle.
+#[derive(Debug, Clone)]
+pub struct TrustBundle<'a> {
+    pub version: u16,
+    /// Build time (Unix seconds, `SOURCE_DATE_EPOCH` when set).
+    pub built_unix: i64,
+    pub certs: alloc::vec::Vec<&'a [u8]>,
+}
+
+/// Parse the versioned bundle header and its certificates.
+///
+/// Returns `None` when the magic is missing, the version is not understood, or
+/// the declared certificate count does not match the payload — a truncated or
+/// hand-edited bundle must not silently trust a subset.
+pub fn parse_bundle(bytes: &[u8]) -> Option<TrustBundle<'_>> {
+    if bytes.len() < BUNDLE_HEADER_LEN || bytes[..4] != BUNDLE_MAGIC {
+        return None;
+    }
+    let version = u16::from_le_bytes([bytes[4], bytes[5]]);
+    if version != BUNDLE_VERSION {
+        return None;
+    }
+    let built_unix = u32::from_le_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]) as i64;
+    let declared = u32::from_le_bytes([bytes[12], bytes[13], bytes[14], bytes[15]]) as usize;
+    let certs = split_certificates(&bytes[BUNDLE_HEADER_LEN..]);
+    if certs.len() != declared {
+        return None;
+    }
+    Some(TrustBundle {
+        version,
+        built_unix,
+        certs,
+    })
+}
+
+/// How old the trust bundle is relative to the trusted clock.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BundleFreshness {
+    /// Built at a believable time.
+    Ok,
+    /// Built "in the future": the clock or the bundle is wrong.
+    Future,
+    /// Older than [`BUNDLE_MAX_AGE_SECS`].
+    Stale { age_days: i64 },
+}
+
+/// Decide whether a bundle built at `built_unix` is fresh at `now`.
+pub fn bundle_freshness(built_unix: i64, now: i64) -> BundleFreshness {
+    if built_unix <= 0 {
+        return BundleFreshness::Ok; // unversioned bundle: no claim to check
+    }
+    if built_unix > now + 86_400 {
+        return BundleFreshness::Future;
+    }
+    let age = now.saturating_sub(built_unix);
+    if age > BUNDLE_MAX_AGE_SECS {
+        BundleFreshness::Stale {
+            age_days: age / 86_400,
+        }
+    } else {
+        BundleFreshness::Ok
+    }
+}
+
 /// Days from 1970-01-01 to `y-m-d` (Howard Hinnant's algorithm).
 pub fn days_from_civil(y: i64, m: u32, d: u32) -> i64 {
     let y = if m <= 2 { y - 1 } else { y };
@@ -292,5 +367,65 @@ mod bundle_tests {
     fn split_certificates_handles_empty_and_garbage() {
         assert!(split_certificates(&[]).is_empty());
         assert!(split_certificates(&[0xff, 0xff, 0xff]).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod bundle_header_tests {
+    use super::*;
+    use alloc::vec::Vec;
+
+    fn bundle(built: u32, certs: &[&[u8]]) -> Vec<u8> {
+        let mut out = Vec::new();
+        out.extend_from_slice(&BUNDLE_MAGIC);
+        out.extend_from_slice(&BUNDLE_VERSION.to_le_bytes());
+        out.extend_from_slice(&0u16.to_le_bytes());
+        out.extend_from_slice(&built.to_le_bytes());
+        out.extend_from_slice(&(certs.len() as u32).to_le_bytes());
+        for c in certs {
+            out.extend_from_slice(c);
+        }
+        out
+    }
+
+    #[test]
+    fn parse_bundle_reads_header_and_certs() {
+        let one: [u8; 4] = [0x30, 0x02, 0x05, 0x00];
+        let data = bundle(1_760_000_000, &[&one, &one]);
+        let parsed = parse_bundle(&data).expect("valid bundle");
+        assert_eq!(parsed.version, BUNDLE_VERSION);
+        assert_eq!(parsed.built_unix, 1_760_000_000);
+        assert_eq!(parsed.certs.len(), 2);
+        assert_eq!(parsed.certs[0], &one);
+    }
+
+    #[test]
+    fn parse_bundle_rejects_bad_magic_version_or_count() {
+        let one: [u8; 4] = [0x30, 0x02, 0x05, 0x00];
+        // No magic.
+        assert!(parse_bundle(&one).is_none());
+        // Unknown version.
+        let mut v2 = bundle(1, &[&one]);
+        v2[4] = 2;
+        assert!(parse_bundle(&v2).is_none());
+        // Declared one certificate but none present.
+        let mut short = bundle(1, &[]);
+        short[12] = 1;
+        assert!(parse_bundle(&short).is_none());
+    }
+
+    #[test]
+    fn freshness_classifies_bundles() {
+        let now = 1_760_000_000;
+        assert_eq!(bundle_freshness(0, now), BundleFreshness::Ok);
+        assert_eq!(bundle_freshness(now - 86_400, now), BundleFreshness::Ok);
+        assert_eq!(
+            bundle_freshness(now + 2 * 86_400, now),
+            BundleFreshness::Future
+        );
+        assert_eq!(
+            bundle_freshness(now - (BUNDLE_MAX_AGE_SECS + 86_400), now),
+            BundleFreshness::Stale { age_days: 731 }
+        );
     }
 }
