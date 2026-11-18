@@ -1,9 +1,11 @@
 //! Validation of an imported certificate as a trust anchor.
 //!
-//! Pure: no registry, no syscalls, so it is host-tested against real
-//! certificates. The rules mirror what makes a certificate usable as a CA:
+//! Pure: no registry, no syscalls, so it is host-tested against a PKI generated
+//! at test time with fixed dates (`tools/x509-fixtures`). The rules mirror what makes
+//! a certificate usable as a CA:
 //!
-//! * it parses as DER;
+//! * its DER is at most [`crate::MAX_CERTIFICATE_DER`] bytes;
+//! * it parses as DER (and consumes the whole input);
 //! * `basicConstraints.cA` is true;
 //! * `keyUsage` (when present) allows `keyCertSign` — a CA without a `keyUsage`
 //!   extension is commonly accepted by every OS and is accepted here too;
@@ -15,7 +17,9 @@
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use libtls::x509::{parse_certificate, Certificate};
+use libtls::x509::{parse_certificate, X509Error, Certificate};
+
+use crate::MAX_CERTIFICATE_DER;
 
 /// Why a certificate cannot be used as a trust anchor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -24,6 +28,8 @@ pub enum TrustError {
     Empty,
     /// DER/ASN.1 parse failure.
     Malformed,
+    /// Longer than the trust store can persist and read back.
+    TooLarge,
     /// `basicConstraints.cA` is false or missing: a server certificate.
     NotACa,
     /// `keyUsage` is present but does not allow `keyCertSign`.
@@ -42,6 +48,7 @@ impl TrustError {
         match self {
             TrustError::Empty => "no contiene ningún certificado",
             TrustError::Malformed => "el certificado está mal formado",
+            TrustError::TooLarge => "el certificado supera el límite de 8 KiB del almacén",
             TrustError::NotACa => "no es una CA: no tiene basicConstraints CA:TRUE \
                                    (confiar en un certificado de servidor es otra función)",
             TrustError::KeyUsageNotCertSign => "su keyUsage no permite firmar certificados",
@@ -120,9 +127,16 @@ pub fn validate(der: &[u8], now: i64) -> Result<Validated, TrustError> {
     if der.is_empty() {
         return Err(TrustError::Empty);
     }
-    // A parse error before the extensions are read means "not a certificate";
-    // an unsupported algorithm still lets us read the CA fields.
-    let cert = parse_certificate(der).map_err(|_| TrustError::Malformed)?;
+    // The store keeps one DER blob per key; a larger one could not be read
+    // back, so reject it before touching the Registry.
+    if der.len() > MAX_CERTIFICATE_DER {
+        return Err(TrustError::TooLarge);
+    }
+    let cert = match parse_certificate(der) {
+        Ok(cert) => cert,
+        Err(X509Error::UnsupportedAlgorithm) => return Err(TrustError::Unsupported),
+        Err(_) => return Err(TrustError::Malformed),
+    };
     judge(&cert, der, now)
 }
 
@@ -130,31 +144,33 @@ pub fn validate(der: &[u8], now: i64) -> Result<Validated, TrustError> {
 mod tests {
     use super::*;
 
-    /// Real test material (see the repository's E2E); skipped when absent.
-    fn read(path: &str) -> Option<Vec<u8>> {
-        std::fs::read(path).ok()
-    }
+    use x509_fixtures::{fixtures, NOW};
 
-    const CA_DER: &str = "/home/amartinper/cert_generator/myCA/ca.der";
-    const CA_PEM: &str = "/home/amartinper/cert_generator/myCA/ca.pem";
-    const LEAF_PEM: &str =
-        "/home/amartinper/cert_generator/certs/inventory.home.arpa/inventory.home.arpa.crt";
-    /// 2026-11-17: inside the fixture CA's window.
-    const NOW: i64 = 1_763_400_000;
+    macro_rules! ca_der { () => { fixtures().ca_rsa.as_slice() } }
+    macro_rules! ca_pem { () => { fixtures().ca_rsa_pem.as_slice() } }
+    macro_rules! ca_no_key_usage { () => { fixtures().ca_no_key_usage.as_slice() } }
+    macro_rules! ca_bad_key_usage { () => { fixtures().ca_bad_key_usage.as_slice() } }
+    macro_rules! ca_expired { () => { fixtures().ca_expired.as_slice() } }
+    macro_rules! ca_not_yet_valid { () => { fixtures().ca_not_yet_valid.as_slice() } }
+    macro_rules! ca_at_limit { () => { fixtures().ca_at_limit.as_slice() } }
+    macro_rules! ca_over_limit { () => { fixtures().ca_over_limit.as_slice() } }
+    macro_rules! leaf { () => { fixtures().leaf_rsa.as_slice() } }
 
     #[test]
-    fn accepts_a_real_ca_from_der() {
-        let Some(der) = read(CA_DER) else { return };
-        let v = validate(&der, NOW).expect("CA accepted");
-        assert_eq!(v.subject, "CN=MyHomeCA, O=MyHomeCA, L=Home, ST=Local, C=ES");
+    fn accepts_a_ca_from_der() {
+        let v = validate(ca_der!(), NOW).expect("CA accepted");
+        assert_eq!(v.subject, "C=ES, O=NeoDOS Tests, CN=NeoDOS Test RSA Root");
         assert_eq!(v.issuer, v.subject, "self-signed");
-        assert_eq!(v.der, der);
+        assert_eq!(v.der, ca_der!());
         assert_eq!(v.fingerprint_hex().len(), 64);
     }
 
     #[test]
     fn pem_with_a_private_key_imports_only_the_certificate() {
-        let Some(pem) = read(CA_PEM) else { return };
+        let mut pem = ca_pem!().to_vec();
+        pem.extend_from_slice(
+            b"\n-----BEGIN PRIVATE KEY-----\nMAIFAA==\n-----END PRIVATE KEY-----\n",
+        );
         let cands = candidates(&pem);
         assert_eq!(cands.len(), 1, "the PRIVATE KEY block must be ignored");
         assert!(validate(&cands[0].der, NOW).is_ok());
@@ -162,17 +178,39 @@ mod tests {
 
     #[test]
     fn rejects_a_server_certificate() {
-        let Some(pem) = read(LEAF_PEM) else { return };
-        let cands = candidates(&pem);
-        assert_eq!(cands.len(), 1);
-        assert_eq!(validate(&cands[0].der, NOW), Err(TrustError::NotACa));
+        assert_eq!(validate(leaf!(), NOW), Err(TrustError::NotACa));
+    }
+
+    #[test]
+    fn accepts_a_ca_without_key_usage() {
+        assert!(validate(ca_no_key_usage!(), NOW).is_ok());
+    }
+
+    #[test]
+    fn rejects_key_usage_without_key_cert_sign() {
+        assert_eq!(
+            validate(ca_bad_key_usage!(), NOW),
+            Err(TrustError::KeyUsageNotCertSign)
+        );
     }
 
     #[test]
     fn rejects_expired_and_not_yet_valid() {
-        let Some(der) = read(CA_DER) else { return };
-        assert_eq!(validate(&der, 0), Err(TrustError::NotYetValid));
-        assert_eq!(validate(&der, 4_000_000_000), Err(TrustError::Expired));
+        assert_eq!(validate(ca_expired!(), NOW), Err(TrustError::Expired));
+        assert_eq!(
+            validate(ca_not_yet_valid!(), NOW),
+            Err(TrustError::NotYetValid)
+        );
+        assert_eq!(validate(ca_der!(), 0), Err(TrustError::NotYetValid));
+        assert_eq!(validate(ca_der!(), 4_000_000_000), Err(TrustError::Expired));
+    }
+
+    #[test]
+    fn size_limit_is_enforced_before_storage() {
+        assert_eq!(ca_at_limit!().len(), MAX_CERTIFICATE_DER);
+        assert!(validate(ca_at_limit!(), NOW).is_ok());
+        assert!(ca_over_limit!().len() > MAX_CERTIFICATE_DER);
+        assert_eq!(validate(ca_over_limit!(), NOW), Err(TrustError::TooLarge));
     }
 
     #[test]

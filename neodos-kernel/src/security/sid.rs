@@ -90,6 +90,11 @@ pub fn sid_builtin_user() -> Sid {
     Sid::from_parts(1, &[0, 0, 0, 0, 0, 5], &[21, 0, 0, 0, RID_USER])
 }
 
+/// `Everyone` (`S-1-1-0`): the world trustee used by read-only DACLs.
+pub fn sid_world() -> Sid {
+    Sid::from_parts(1, &[0, 0, 0, 0, 0, 1], &[0])
+}
+
 lazy_static::lazy_static! {
     /// `SeWellKnownSids` — canonical name → SID table (NT well-known SIDs).
     pub static ref WELL_KNOWN_SIDS: alloc::vec::Vec<(&'static str, Sid)> = alloc::vec![
@@ -97,6 +102,7 @@ lazy_static::lazy_static! {
         ("Administrator", sid_builtin_administrator()),
         ("Guest", sid_builtin_guest()),
         ("Users", sid_builtin_user()),
+        ("Everyone", sid_world()),
     ];
 }
 

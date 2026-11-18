@@ -43,7 +43,10 @@ pub(super) fn dispatch(
             };
             match crate::cm::cm_create_key(native_id, &name) {
                 Ok(_) => 0,
-                Err(()) => err_to_u64(SyscallError::Exist),
+                Err(crate::cm::CmError::Denied) => err_to_u64(SyscallError::Perm),
+                Err(crate::cm::CmError::NotFound) => err_to_u64(SyscallError::NoEnt),
+                Err(crate::cm::CmError::NoMemory) => err_to_u64(SyscallError::NoMem),
+                Err(crate::cm::CmError::AlreadyExists) => err_to_u64(SyscallError::Exist),
             }
         }
         // ── RegistryDeleteKey (24): delete a subkey (name in buf) ──
@@ -70,7 +73,9 @@ pub(super) fn dispatch(
                         let _ = crate::object::ob_destroy_object(entry.object_id);
                         0
                     }
-                    Err(()) => err_to_u64(SyscallError::Inval),
+                    Err(crate::cm::CmError::Denied) => err_to_u64(SyscallError::Perm),
+                    Err(crate::cm::CmError::NotFound) => err_to_u64(SyscallError::NoEnt),
+                    Err(_) => err_to_u64(SyscallError::Inval),
                 }
             } else {
                 let name = {
@@ -89,7 +94,9 @@ pub(super) fn dispatch(
                     Ok(subkey_native_id) => {
                         match crate::cm::cm_delete_key(subkey_native_id) {
                             Ok(()) => 0,
-                            Err(()) => err_to_u64(SyscallError::Inval),
+                            Err(crate::cm::CmError::Denied) => err_to_u64(SyscallError::Perm),
+                            Err(crate::cm::CmError::NotFound) => err_to_u64(SyscallError::NoEnt),
+                            Err(_) => err_to_u64(SyscallError::Inval),
                         }
                     }
                     Err(()) => err_to_u64(SyscallError::NoEnt),
@@ -146,7 +153,9 @@ pub(super) fn dispatch(
             };
             match crate::cm::cm_set_value(native_id, name, value_type, data) {
                 Ok(()) => 0,
-                Err(()) => err_to_u64(SyscallError::NoMem),
+                Err(crate::cm::CmError::Denied) => err_to_u64(SyscallError::Perm),
+                Err(crate::cm::CmError::NotFound) => err_to_u64(SyscallError::NoEnt),
+                Err(_) => err_to_u64(SyscallError::NoMem),
             }
         }
         // ── RegistryDeleteValue (26): delete a value by name (name in buf) ──
@@ -174,7 +183,8 @@ pub(super) fn dispatch(
             };
             match crate::cm::cm_delete_value(native_id, &name) {
                 Ok(()) => 0,
-                Err(()) => err_to_u64(SyscallError::NoEnt),
+                Err(crate::cm::CmError::Denied) => err_to_u64(SyscallError::Perm),
+                Err(_) => err_to_u64(SyscallError::NoEnt),
             }
         }
         // ── SetNicIp (27): set NIC IP address and subnet mask ──

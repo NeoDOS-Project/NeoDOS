@@ -1,6 +1,6 @@
 [package]
 name = "neocurl"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "NeoDOS HTTP/1.1 client (neocurl)"
 
@@ -13,6 +13,7 @@ test = false
 libneodos = { path = "../../libneodos" }
 libnet = { path = "../../libnet" }
 libhttp = { path = "../../libhttp" }
+libclock = { path = "../../libclock", features = ["sys"] }
 
 [profile.release]
 panic = "abort"

@@ -86,6 +86,20 @@ jobs:
       - name: neodev check-deps
         run: neodev check-deps
 
+  host-tests:
+    name: Host tests (X.509 / trust store)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      # Deterministic fixtures under tests/fixtures/x509; no network, no
+      # openssl at test time, no VM or image build.
+      - name: libtrust host tests
+        run: cargo test --manifest-path libtrust/Cargo.toml --lib
+      - name: libtls host tests
+        run: cargo test --manifest-path libtls/Cargo.toml --lib
+
   guards:
     name: Static guards
     runs-on: ubuntu-latest

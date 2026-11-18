@@ -23,6 +23,7 @@ pub struct Sid {
 | `sid_builtin_administrator()` | `S-1-5-21-0-0-0-500` | Built-in Administrator account |
 | `sid_builtin_guest()` | `S-1-5-21-0-0-0-501` | Built-in Guest account |
 | `sid_builtin_user()` | `S-1-5-21-0-0-0-1000` | Default domain user |
+| `sid_world()` | `S-1-1-0` | `Everyone`: read-only trustee for public data |
 
 `WELL_KNOWN_SIDS` (the `SeWellKnownSids` table) maps the canonical names
 (`SYSTEM`, `Administrator`, `Guest`, `Users`) to SIDs; look them up with
@@ -202,6 +203,23 @@ pub fn se_access_check_sid(        // single SID, no group membership
     desired_access: u32,
 ) -> bool
 ```
+
+### Cm keys (Registry)
+
+Cm keys are persisted in hives, not held as long-lived Ob objects: every open
+creates a fresh `ObType::Key`, so `OB_SECURITY` cannot protect them. The
+authorization point is `cm/security.rs`:
+
+- `\Registry\Machine\Software\NeoDOS\Trust` has a DACL: `Everyone` reads,
+  Administrators/SYSTEM write.
+- `cm_create_key`, `cm_set_value`, `cm_delete_value` and `cm_delete_key` resolve
+  the full key path (`Hive::key_path`) and call `se_access_check`.
+- Deleting an ancestor of `Trust` is checked too, because `delete_key` is
+  recursive.
+- Denials map to `EPERM` and are logged with the path and SID.
+
+End-to-end enforcement still depends on #767 (non-admin identity) and #42/#43
+(VFS ACLs, so the hive file itself is not writable by unprivileged processes).
 
 ### SACL and auditing (`ACE_TYPE_SYSTEM_AUDIT = 2`)
 

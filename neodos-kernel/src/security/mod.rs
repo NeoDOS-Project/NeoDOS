@@ -18,8 +18,19 @@ lazy_static! {
         spin::Mutex::new(sam::SamDatabase::with_builtins());
 }
 
-pub fn init_security() {
-    kinfo!(LogSubsys::Security, "Security subsystem initialized");
+/// Token of the calling process, or the boot/system token when there is no
+/// process context (kernel threads, early boot).
+pub fn current_token() -> token::Token {
+    crate::hal::without_interrupts(|| {
+        let s = crate::scheduler::current_scheduler();
+        let lock = s.lock();
+        lock.current_eprocess()
+            .map(|ep| ep.token.clone())
+            .unwrap_or_else(|| DEFAULT_ADMIN_TOKEN.clone())
+    })
+}
+
+pub fn init_security() {    kinfo!(LogSubsys::Security, "Security subsystem initialized");
     kinfo!(LogSubsys::Security, "System SID: {}", sid::sid_builtin_system());
     kinfo!(LogSubsys::Security, "Administrator SID: {}", sid::sid_builtin_administrator());
     kinfo!(LogSubsys::Security, "Guest SID: {}", sid::sid_builtin_guest());
@@ -57,12 +68,14 @@ pub fn register_security_tests() {
         test_eq!(sid_builtin_administrator().format_string(), "S-1-5-21-0-0-0-500");
         test_eq!(sid_builtin_guest().format_string(), "S-1-5-21-0-0-0-501");
         test_eq!(sid_builtin_user().format_string(), "S-1-5-21-0-0-0-1000");
+        test_eq!(sid_world().format_string(), "S-1-1-0");
     });
 
     test_case!("sid_well_known_table", {
         test_eq!(well_known_sid("Administrator").unwrap(), sid_builtin_administrator());
         test_eq!(well_known_sid("guest").unwrap(), sid_builtin_guest());
         test_eq!(well_known_sid("SYSTEM").unwrap(), sid_builtin_system());
+        test_eq!(well_known_sid("Everyone").unwrap(), sid_world());
         test_true!(well_known_sid("Nobody").is_none());
     });
 
@@ -190,6 +203,20 @@ pub fn register_security_tests() {
         test_true!(se_access_check(&token, Some(&sd), ACCESS_READ));
         test_true!(se_access_check(&token, Some(&sd), ACCESS_WRITE));
         test_true!(!se_access_check(&token, Some(&sd), ACCESS_EXECUTE));
+    });
+
+    test_case!("se_access_check_everyone", {
+        let token = Token::new_user();
+        let mut acl = Acl::new();
+        acl.add_ace(Ace::allow(sid_world(), ACCESS_READ));
+        let sd = SecurityDescriptor::new().with_dacl(acl);
+        test_true!(se_access_check(&token, Some(&sd), ACCESS_READ));
+        test_true!(!se_access_check(&token, Some(&sd), ACCESS_WRITE));
+
+        let mut denied = Acl::new();
+        denied.add_ace(Ace::deny(sid_world(), ACCESS_READ));
+        let sd = SecurityDescriptor::new().with_dacl(denied);
+        test_true!(!se_access_check(&token, Some(&sd), ACCESS_READ));
     });
 
     test_case!("se_access_check_admin_override", {

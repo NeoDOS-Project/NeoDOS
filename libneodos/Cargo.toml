@@ -1,6 +1,6 @@
 [package]
 name = "libneodos"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2021"
 description = "NeoDOS standard library — syscall wrappers, I/O, FS, memory, safe macros"
 

@@ -17,12 +17,22 @@
 
 extern crate alloc;
 
+pub mod policy;
 pub mod validate;
 
 #[cfg(feature = "store")]
 pub mod store;
 
+pub use policy::{
+    collect_anchors, decode_stored_der, AnchorIssue, AnchorReport, RejectedAnchor, StoreValueError,
+};
 pub use validate::{validate, Candidate, TrustError, Validated};
+
+/// Maximum DER size for one trust certificate (imported or persisted).
+///
+/// This is the single policy value: the import path, the Registry reader and
+/// the anchor loader all use it. It is deliberately not repeated per function.
+pub const MAX_CERTIFICATE_DER: usize = 8 * 1024;
 
 /// Registry key holding one subkey per user-imported CA, named after its
 /// SHA-256 fingerprint in lowercase hex.

@@ -50,6 +50,38 @@ impl Hive {
         Some(curr)
     }
 
+    /// Full key path relative to the hive root, excluding the root itself.
+    ///
+    /// `cell == root_cell()` yields the empty string. The walk is bounded by
+    /// the cell count so a corrupted `parent_cell` chain returns `None`
+    /// instead of looping forever.
+    pub fn key_path(&self, cell: u32) -> Option<String> {
+        let root = self.root_cell();
+        if self.slot(cell).is_none() {
+            return None;
+        }
+        let mut parts: Vec<&str> = Vec::new();
+        let mut current = cell;
+        let mut steps = 0usize;
+        while current != root {
+            let key = match self.slot(current) {
+                Some(Cell::Key(key)) => key,
+                _ => return None,
+            };
+            if key.name.is_empty() {
+                return None;
+            }
+            parts.push(&key.name);
+            current = key.parent_cell;
+            steps += 1;
+            if steps > super::types::MAX_CELLS {
+                return None;
+            }
+        }
+        parts.reverse();
+        Some(parts.join("\\"))
+    }
+
     pub fn delete_key(&mut self, idx: u32) {
         if idx == 0 { return; }
         if self.slot(idx).is_none() { return; }

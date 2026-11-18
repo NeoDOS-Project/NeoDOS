@@ -343,6 +343,10 @@ Filesystem snapshot operations: CREATE(0), RESTORE(1), LIST(2), PURGE(3).
 | 58 | `sys_cm_load_hive` (admin) | Load a hive file |
 | 59 | `sys_cm_unload_hive` (admin) | Unload a hive |
 
+Mutating calls (51, 53, 56 and the `ob_set_info` registry classes) enforce the
+per-key DACL in `cm/security.rs`; a denial is returned as `EPERM`. Reads remain
+available to unprivileged callers. No ABI/SSDT change is involved.
+
 ### Debug (RAX 99)
 
 #### 99 — `sys_debug_dump`

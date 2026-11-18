@@ -73,6 +73,7 @@
 | Document | Description |
 |----------|-------------|
 | [Security](security/security.md) | SID, Token, ACL, SAM, SeAccessCheck |
+| [Trust store](security/trust-store.md) | System bundle, user CAs, authorization, revalidation |
 
 ## Registry
 

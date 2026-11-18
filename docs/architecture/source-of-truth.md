@@ -110,6 +110,14 @@ There is no Ring 0 shell. All operator-facing commands MUST run in Ring 3.
 All commands intended for operator interaction MUST be implemented as Ring 3 `.NXE`/`.BAT` binaries under `userbin/`
 and launched via NeoInit / neoshell.
 
+**INV-12. PROTECTED REGISTRY SUBTREES ARE ENFORCED AT Cm MUTATION POINTS.**
+Cm keys are hive cells, not long-lived Ob objects, so object DACLs cannot protect
+them. Every mutation API (`cm_create_key`, `cm_set_value`, `cm_delete_value`,
+`cm_delete_key`, including their `ob_set_info` entry points) MUST authorize the
+full key path through `cm/security.rs` before touching the hive. Deleting an
+ancestor of a protected subtree is itself a protected mutation (deletion is
+recursive).
+
 ---
 
 ## 3. Kernel Contract

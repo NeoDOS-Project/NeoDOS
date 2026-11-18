@@ -1,6 +1,6 @@
 [package]
 name = "libtrust"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 description = "Trust anchor store for NeoDOS (system bundle + user-imported CAs)"
 
@@ -19,6 +19,9 @@ store = ["libneodos"]
 libcrypto = { path = "../libcrypto" }
 libtls = { path = "../libtls" }
 libneodos = { path = "../libneodos", optional = true }
+
+[dev-dependencies]
+x509-fixtures = { path = "../tools/x509-fixtures" }
 
 [profile.release]
 panic = "abort"
