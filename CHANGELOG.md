@@ -6,6 +6,14 @@
 
 ### Added
 
+- **Importación de CAs de terceros.** `certctl import|list|show|remove|status|
+  repair` guarda CAs en `\Registry\Machine\Software\NeoDOS\Trust\UserCAs\<sha256>`
+  (una clave por certificado; el árbol vive en un hive `SOFTWARE` propio,
+  `C:\NeoDOS\System\config\SOFTWARE.hiv`) y TLS confía en la unión con el
+  bundle de la imagen. Acepta PEM (varios por fichero; ignora bloques de clave) y DER,
+  valida `basicConstraints.cA`/`keyUsage.keyCertSign`/validez, deduplica por
+  SHA-256 y **rechaza certificados de servidor**. Borrar una CA importada no
+  toca las raíces del sistema. Detalles en `docs/security/trust-store.md`.
 - **Trust store versionado y frescura (D8).** El bundle lleva cabecera
   (`NDTB` + versión + fecha de build + número de certificados); un bundle
   truncado o editado se rechaza en vez de confiar en un subconjunto. `neocurl`
@@ -36,7 +44,21 @@
   prefijo no sobrescrito con el LBA de bloques en vez de sectores: cualquier
   fichero escrito en más de un `sys_write` guardaba basura con el tamaño
   correcto (era el `--ca` con `malformed DER`).
-- **Caché de páginas al liberar bloques COW (#753, #754).** Un bloque liberado
+- **Corrupción de ficheros escritos en varios trozos (#753).** Dos causas
+  encadenadas: (1) un directorio sin árbol propio (`extent_lba == 0`, como
+  `\Users`, `\Program Files` o `\ProgramData` en las imágenes) heredaba la
+  raíz del directorio padre, así que crear una entrada dentro insertaba en el
+  árbol del padre y dejaba a ambos apuntando al mismo árbol: las entradas se
+  duplicaban, un bloque liberado por uno rompía al otro y, en cascada, los datos
+  de un fichero acababan siendo un nodo del B-tree; (2) los datos se quedaban
+  sucios en el page cache mientras el superbloque ya publicaba el nuevo extent,
+  de modo que si la página se descartaba el fichero conservaba el tamaño pero
+  apuntaba al contenido anterior del bloque. Un directorio vacío tiene ahora
+  raíz vacía y `file_write` escribe los bloques al dispositivo antes de
+  publicarlos. `FreeList::free` ignora un rango ya libre (ningún bloque se
+  entrega dos veces) y al montar se reconstruye la free list si la persistida
+  da por libre un bloque que el árbol referencia.
+- **Caché de páginas al liberar bloques COW (#754).** Un bloque liberado
   conservaba su página cacheada; una entrada sucia podía volcarse después,
   encima de los datos del fichero que lo reutilizara.
 - **Rutas legacy con doble separador (#750)** y **test del heap-break desde

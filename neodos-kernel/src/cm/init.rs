@@ -27,6 +27,24 @@ pub fn init_cm() {
     drop(cm);
 
     mount_system_hive();
+    // `\Registry\Machine\Software`: un hive propio para configuración de
+    // aplicaciones (el almacén de CAs de usuario vive aquí). El SYSTEM hive
+    // solo sirve rutas bajo su punto de montaje.
+    mount_software_hive();
+}
+
+fn mount_software_hive() {
+    let name = "SOFTWARE";
+    let mount_path = "\\Registry\\Machine\\Software";
+
+    let hive = load_hive_from_vfs(name).unwrap_or_else(|| Hive::new(name));
+    let encoded = encode_cell(0, 0);
+    if let Ok(ob_id) = object::ob_create_object(ObType::Key, "Software", encoded, 0, None) {
+        let _ = namespace::ob_create_directory(mount_path);
+        let _ = namespace::ob_insert_object(mount_path, ob_id);
+        let mut cm = CM_MANAGER.lock();
+        cm.mount(name, mount_path, hive, ob_id);
+    }
 }
 
 fn mount_system_hive() {

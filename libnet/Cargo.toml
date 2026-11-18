@@ -17,6 +17,7 @@ libhttp = { path = "../libhttp" }
 libnet-config = { path = "../libnet-config" }
 libclock = { path = "../libclock", features = ["sys"] }
 libtls = { path = "../libtls" }
+libtrust = { path = "../libtrust", features = ["store"] }
 libntp = { path = "../libntp" }
 
 [profile.release]

@@ -30,6 +30,7 @@ macro_rules! probe {
 
 pub mod der;
 pub mod handshake;
+pub mod pem;
 pub mod record;
 pub mod x509;
 

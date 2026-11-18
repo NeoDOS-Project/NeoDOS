@@ -371,6 +371,10 @@ cannot silently trust a subset. The build time comes from
   each certificate, so no PEM parser is needed on the target).
 - `neocurl` uses the bundle when `--ca` is absent; `--ca` still overrides it.
   With no anchors at all the client refuses to connect ("no trust anchors").
+- **User CAs.** `libtrust` adds a second store (registry, one key per imported
+  certificate) on top of the image bundle; `libnet` trusts the union. See
+  `docs/security/trust-store.md` for the validation rules and the
+  "CA vs server certificate" distinction.
 - **Freshness.** `libtls::der::bundle_freshness` compares the build time with
   the trusted clock: a bundle dated in the future or older than two years is
   reported (`neocurl: warning: trust bundle is N days old; rebuild the image`).

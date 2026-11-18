@@ -175,6 +175,19 @@ pub fn file_write(
                 page[overlap..overlap + n].copy_from_slice(&data[..n]);
             }
         }
+
+        // Write-through (#753): el superbloque se guarda de forma síncrona y
+        // publica el nuevo extent, así que los datos tienen que estar ya en el
+        // dispositivo. Dejarlos sucios en el page cache hacía que, si la
+        // página se descartaba (invalidación de un bloque liberado, reciclado
+        // del cache), el fichero quedase con su tamaño correcto pero apuntando
+        // al contenido anterior del bloque: datos de otro fichero o un nodo
+        // del árbol.
+        for s in 0..8usize {
+            let mut sector = [0u8; 512];
+            sector.copy_from_slice(&page[s * 512..(s + 1) * 512]);
+            dev.write_sector(sector_lba + s as u64, &sector)?;
+        }
     }
 
     new_entry.extent_lba = start_block;

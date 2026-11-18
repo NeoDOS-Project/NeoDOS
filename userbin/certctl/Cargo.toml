@@ -1,0 +1,22 @@
+[package]
+name = "certctl"
+version = "0.1.0"
+edition = "2021"
+description = "Trust store administration for NeoDOS (import/list/remove CAs)"
+
+[[bin]]
+name = "certctl"
+path = "src/main.rs"
+
+[dependencies]
+libneodos = { path = "../../libneodos" }
+libclock = { path = "../../libclock", features = ["sys"] }
+libtrust = { path = "../../libtrust", features = ["store"] }
+libcrypto = { path = "../../libcrypto" }
+libtls = { path = "../../libtls" }
+
+[profile.release]
+panic = "abort"
+opt-level = 3
+lto = true
+debug = false
