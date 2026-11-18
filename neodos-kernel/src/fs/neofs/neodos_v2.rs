@@ -38,6 +38,30 @@ pub(super) struct SuperblockNE2 {
     reserved: [u8; 403],
 }
 
+impl SuperblockNE2 {
+    /// Security-table root LBA, stored in the reserved area after the CRC.
+    fn security_lba(&self) -> u64 {
+        u64::from_le_bytes([
+            self.reserved[4], self.reserved[5], self.reserved[6], self.reserved[7],
+            self.reserved[8], self.reserved[9], self.reserved[10], self.reserved[11],
+        ])
+    }
+
+    fn set_security_lba(&mut self, lba: u64) {
+        self.reserved[4..12].copy_from_slice(&lba.to_le_bytes());
+    }
+
+    fn next_security_id(&self) -> u32 {
+        u32::from_le_bytes([
+            self.reserved[12], self.reserved[13], self.reserved[14], self.reserved[15],
+        ])
+    }
+
+    fn set_next_security_id(&mut self, id: u32) {
+        self.reserved[12..16].copy_from_slice(&id.to_le_bytes());
+    }
+}
+
 /// Entrada del inode cache: raíz del B-tree del directorio (o del directorio
 /// padre para un fichero), su `DirEntry` tal como vive en el padre, y el inode
 /// del directorio padre (para propagar cambios de raíz hacia arriba).
@@ -117,6 +141,100 @@ impl BTreeIO for NeoDosFsV2 {
 }
 
 impl NeoDosFsV2 {
+    /// Serialized security descriptor for an inode, if it has one.
+    pub fn security_bytes(&mut self, inode: u32) -> Option<Vec<u8>> {
+        let id = self
+            .inode_cache
+            .get(inode as usize)
+            .and_then(|x| x.as_ref())
+            .map(|c| c.entry.security_id)?;
+        if id == 0 {
+            return None;
+        }
+        let root = self.sb.security_lba();
+        if root == 0 || root >= self.sb.num_blocks {
+            return None;
+        }
+        BTree::lookup(self, root, &id.to_le_bytes())
+    }
+
+    /// Attach (or replace) the serialized security descriptor of an inode.
+    pub fn set_security_bytes(&mut self, inode: u32, bytes: &[u8]) -> Result<(), VfsError> {
+        if bytes.len() > crate::security::acl::MAX_SECURITY_DESCRIPTOR_BYTES {
+            return Err(VfsError::InvalidPath);
+        }
+        let (dir_root, mut entry, parent) = self
+            .inode_cache
+            .get(inode as usize)
+            .and_then(|x| x.as_ref())
+            .map(|c| (c.root, c.entry.clone(), c.parent))
+            .ok_or(VfsError::NotFound)?;
+
+        let mut id = entry.security_id;
+        if id == 0 {
+            id = self.sb.next_security_id().max(1);
+            self.sb.set_next_security_id(id.saturating_add(1));
+        }
+
+        let mut table_root = self.sb.security_lba();
+        if table_root == 0 {
+            let empty = BTreeNode::new(NodeType::Leaf);
+            table_root = self.write_node(&empty);
+            if table_root == 0 {
+                return Err(VfsError::IOError);
+            }
+            self.sb.set_security_lba(table_root);
+        }
+
+        let mut garbage = Vec::new();
+        let new_root = BTree::insert_tracked(
+            self,
+            table_root,
+            &id.to_le_bytes(),
+            bytes,
+            &mut garbage,
+        )
+        .ok_or(VfsError::IOError)?;
+        for lba in garbage {
+            self.cow_garbage.push((lba, 1));
+        }
+        self.sb.set_security_lba(new_root);
+
+        // Publish security_id in the parent directory entry.
+        let current_dir_root = match parent {
+            Some(p) => self
+                .inode_cache
+                .get(p as usize)
+                .and_then(|x| x.as_ref())
+                .map(|c| c.root)
+                .unwrap_or(dir_root),
+            None => dir_root,
+        };
+        entry.security_id = id;
+        let mut tmp = [0u8; DIRENTRY_SIZE];
+        entry.serialize(&mut tmp);
+        let mut garbage = Vec::new();
+        let new_dir_root = BTree::insert_tracked(
+            self,
+            current_dir_root,
+            &entry.name,
+            &tmp,
+            &mut garbage,
+        )
+        .ok_or(VfsError::IOError)?;
+        for lba in garbage {
+            self.cow_garbage.push((lba, 1));
+        }
+        if let Some(p) = parent {
+            self.propagate_dir_root(p, new_dir_root);
+        }
+        if let Some(c) = self.inode_cache.get_mut(inode as usize).and_then(|x| x.as_mut()) {
+            c.root = new_dir_root;
+            c.entry = entry;
+        }
+        self.save_sb().map_err(|_| VfsError::IOError)
+    }
+
     pub fn new(io_stack: IoStack) -> Result<Self, ()> {
         // Leer el superblock directamente del dispositivo (sin page cache):
         // un remontaje tras escrituras COW no debe observar sectores cacheados.
@@ -752,6 +870,14 @@ impl FileSystem for NeoDosFsV2 {
         let entry = self.inode_cache.get(inode as usize).and_then(|x| x.as_ref()).map(|c| c.entry.clone()).ok_or(VfsError::NotFound)?;
         let size = if entry.inline_len > 0 { entry.inline_len as u32 } else { entry.size as u32 };
         Ok(VfsNode { inode, mode: entry.mode, size })
+    }
+
+    fn security_bytes(&mut self, inode: u32) -> Option<Vec<u8>> {
+        NeoDosFsV2::security_bytes(self, inode)
+    }
+
+    fn set_security_bytes(&mut self, inode: u32, bytes: &[u8]) -> Result<(), VfsError> {
+        NeoDosFsV2::set_security_bytes(self, inode, bytes)
     }
 
     fn remove_file(&mut self, dir_inode: u32, name: &str) -> Result<(), VfsError> {
@@ -1755,6 +1881,35 @@ pub fn register_neodos_v2_tests() {
         let b_end2 = b_lba2 + b_len2;
         crate::test_true!(a_end2 <= b_lba2 || b_end2 <= a_lba2);
         crate::test_true!(fs2.freelist.is_valid(512));
+
+        let _ = crate::globals::BLOCK_DEVICES.lock().force_remove(dev_id);
+    });
+
+    crate::test_case!("neofs_v2_security_descriptor_persists", {
+        use crate::security::acl::serialize_security_descriptor;
+        use crate::security::access::descriptor_for_token;
+        use crate::security::token::Token;
+
+        let sectors = alloc::vec![[0u8; 512]; 2048];
+        let dev_id = crate::fs::fsck::register_test_device(sectors);
+        let io = IoStack::new(dev_id);
+        mkfs_ne2(&io, 256, "TEST").unwrap();
+
+        let mut fs = NeoDosFsV2::new(io).unwrap();
+        fs.create(0, "SEC.TXT").unwrap();
+        let ino = fs.lookup(0, "SEC.TXT").unwrap().inode;
+        crate::test_true!(fs.security_bytes(ino).is_none());
+
+        let sd = descriptor_for_token(&Token::new_admin());
+        let bytes = serialize_security_descriptor(&sd).unwrap();
+        fs.set_security_bytes(ino, &bytes).unwrap();
+        crate::test_eq!(fs.security_bytes(ino).unwrap(), bytes);
+        drop(fs);
+
+        // The security table and the entry's security_id must survive a remount.
+        let mut fs2 = NeoDosFsV2::new(IoStack::new(dev_id)).unwrap();
+        let ino2 = fs2.lookup(0, "SEC.TXT").unwrap().inode;
+        crate::test_eq!(fs2.security_bytes(ino2).unwrap(), bytes);
 
         let _ = crate::globals::BLOCK_DEVICES.lock().force_remove(dev_id);
     });

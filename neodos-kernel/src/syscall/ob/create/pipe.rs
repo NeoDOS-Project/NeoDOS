@@ -32,10 +32,12 @@ pub(super) fn dispatch(
             let read_entry = crate::handle::HandleEntry {
                 object_id: ob_id,
                 offset: 0,
+                access: 1,
             };
             let write_entry = crate::handle::HandleEntry {
                 object_id: ob_id,
                 offset: 1,
+                access: 2,
             };
             let (rfd, wfd) = crate::hal::without_interrupts(|| {
                 let s = scheduler::current_scheduler();

@@ -251,6 +251,16 @@ the full path with `Hive::key_path` and call `se_access_check`. A protected
 subtree's ancestors must be protected for `delete_key` (recursive). Tests live in
 `cm/tests.rs`; see `docs/security/trust-store.md` for the trust store.
 
+### 7c. VFS files (NT DACL)
+
+NeoFS stores `security_id` in `DirEntryV2` padding; the descriptor (owner/group/
+DACL) is persisted in a security B-tree. `security_id = 0` uses the default:
+Everyone read/execute, SYSTEM/Administrators full. Checks happen in
+`ObOpen`, read/write, create, delete, rename and directory destroy; directory
+traversal requires `EXECUTE`. `HandleEntry.access` stores the granted mask.
+Descriptors are encoded by `security/acl.rs` (`NDSD` v1, max 1 KiB / 32 ACEs).
+No UNIX rwx mode bits. Descriptor GC/snapshot versioning are still pending.
+
 ### 8. Work with the SAM database
 
 ```rust

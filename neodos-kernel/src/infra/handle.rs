@@ -18,23 +18,25 @@ pub struct HandleEntry {
     pub object_id: ObId,
     /// Per-handle offset for file-like objects (read/write position).
     pub offset: u64,
+    /// Access mask granted by `ObOpen` (NT READ/WRITE/EXECUTE/DELETE bits).
+    pub access: u32,
 }
 
 impl HandleEntry {
     pub const fn closed() -> Self {
-        HandleEntry { object_id: HANDLE_CLOSED, offset: 0 }
+        HandleEntry { object_id: HANDLE_CLOSED, offset: 0, access: 0 }
     }
 
     pub const fn stdin() -> Self {
-        HandleEntry { object_id: HANDLE_STDIN, offset: 0 }
+        HandleEntry { object_id: HANDLE_STDIN, offset: 0, access: u32::MAX }
     }
 
     pub const fn stdout() -> Self {
-        HandleEntry { object_id: HANDLE_STDOUT, offset: 0 }
+        HandleEntry { object_id: HANDLE_STDOUT, offset: 0, access: u32::MAX }
     }
 
     pub const fn stderr() -> Self {
-        HandleEntry { object_id: HANDLE_STDERR, offset: 0 }
+        HandleEntry { object_id: HANDLE_STDERR, offset: 0, access: u32::MAX }
     }
 
     /// Create a pipe read handle, registered in the Object Manager.
@@ -45,7 +47,7 @@ impl HandleEntry {
             core::str::from_utf8(&[b'P', b'I', b'P', b'E', b'_', b'R', pipe_id + b'0']).unwrap_or("PIPE_R"),
             pipe_id as u64, 0, None,
         ).unwrap_or(0);
-        HandleEntry { object_id: ob_id, offset: 0 }
+        HandleEntry { object_id: ob_id, offset: 0, access: 1 }
     }
 
     /// Create a pipe write handle, registered in the Object Manager.
@@ -56,7 +58,7 @@ impl HandleEntry {
             core::str::from_utf8(&[b'P', b'I', b'P', b'E', b'_', b'W', pipe_id + b'0']).unwrap_or("PIPE_W"),
             pipe_id as u64, 0, None,
         ).unwrap_or(0);
-        HandleEntry { object_id: ob_id, offset: 1 }
+        HandleEntry { object_id: ob_id, offset: 1, access: 2 }
     }
 
     /// Create a file handle, registered in the Object Manager.
@@ -65,7 +67,7 @@ impl HandleEntry {
         let ob_id = ob_create_object(
             ObType::Filesystem, "FILE", inode as u64, drive as u32, None,
         ).unwrap_or(0);
-        HandleEntry { object_id: ob_id, offset: 0 }
+        HandleEntry { object_id: ob_id, offset: 0, access: u32::MAX }
     }
 
     /// Create a device handle.
@@ -73,7 +75,7 @@ impl HandleEntry {
         let ob_id = ob_create_object(
             ObType::Device, "DEVICE", device_id as u64, 0, None,
         ).unwrap_or(0);
-        HandleEntry { object_id: ob_id, offset: 0 }
+        HandleEntry { object_id: ob_id, offset: 0, access: u32::MAX }
     }
 
     /// Create an event handle.
@@ -81,7 +83,7 @@ impl HandleEntry {
         let ob_id = ob_create_object(
             ObType::Event, "EVENT", event_type as u64, 0, None,
         ).unwrap_or(0);
-        HandleEntry { object_id: ob_id, offset: 0 }
+        HandleEntry { object_id: ob_id, offset: 0, access: u32::MAX }
     }
 
     /// Create a directory handle.
@@ -90,13 +92,13 @@ impl HandleEntry {
         let ob_id = ob_create_object(
             ObType::Directory, "DIR", inode as u64, drive as u32, None,
         ).unwrap_or(0);
-        HandleEntry { object_id: ob_id, offset: 0 }
+        HandleEntry { object_id: ob_id, offset: 0, access: u32::MAX }
     }
 
     /// Create an Object Manager handle (backed by an existing ObObject).
     /// Used by ObOpen (RAX=60) to reference kernel objects via the namespace.
     pub fn ob_object(object_id: ObId, _access_mask: u32) -> Self {
-        HandleEntry { object_id, offset: 0 }
+        HandleEntry { object_id, offset: 0, access: _access_mask }
     }
 
     /// Close this handle: release the Ob reference.

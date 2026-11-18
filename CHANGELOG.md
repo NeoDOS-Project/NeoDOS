@@ -6,6 +6,21 @@
 
 ### Security
 
+- **Atomicidad de autorización y mutación en Cm (#787).** La ruta, la DACL y la
+  mutación se ejecutan bajo el mismo `CM_MANAGER`; se elimina la ventana en la
+  que una celda podía borrarse y reutilizarse entre autorizar y escribir. Las
+  variantes internas `cm_*_as(token, ...)` permiten probar SYSTEM,
+  Administrators y usuario. Tests de mutación permitida/denegada, reutilización
+  de celda y `native_id` obsoleto; el harness es secuencial y no reproduce SMP.
+- **DACL NT por fichero en NeoFS (#42/#43).** `DirEntryV2` guarda un
+  `security_id` en el padding (sin cambiar el tamaño de 128 bytes) que referencia
+  una tabla persistente de `SecurityDescriptor` (owner, group y DACL con ACEs).
+  `SeAccessCheck` se aplica en `ObOpen`, lectura/escritura, creación, borrado,
+  renombrado y recorrido de directorios; los handles conservan el acceso
+  concedido. Las entradas antiguas (`security_id = 0`) usan un descriptor por
+  defecto: Everyone lee/ejecuta y solo SYSTEM/Administrators escriben. No se
+  usan bits rwx de estilo UNIX. Sigue bloqueada la prueba Ring 3 real por #767
+  (todo el userland hereda token admin).
 - **Autorización real del almacén de confianza.** Las mutaciones del Registry
   sobre `\Registry\Machine\Software\NeoDOS\Trust` pasan por una DACL en Cm
   (`cm/security.rs`): `Everyone` puede leer las CAs públicas; crear, escribir o

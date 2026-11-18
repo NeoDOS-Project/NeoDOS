@@ -331,6 +331,25 @@ pub fn register_object_tests() {
         let _ = crate::object::namespace::ob_remove_object("\\Driver\\secure_drv");
     });
 
+    test_case!("ob_open_path_vfs_default_dacl", {
+        // Image entries have security_id = 0, i.e. the safe default:
+        // Everyone read/execute, SYSTEM/Administrators write. A user can read
+        // the system bundle but cannot open it for writing.
+        let path = "\\Global\\FileSystem\\C:\\NeoDOS\\System\\config\\roots.der";
+        let user = crate::security::token::Token::new_user();
+        let id = ob_open_path(path, &user, crate::security::acl::ACCESS_READ)
+            .expect("user can read roots.der");
+        ob_close_object(id).unwrap();
+
+        let denied = ob_open_path(path, &user, crate::security::acl::ACCESS_WRITE);
+        test_eq!(denied, Err(ObError::AccessDenied));
+
+        let admin = crate::security::token::Token::new_admin();
+        let id = ob_open_path(path, &admin, crate::security::acl::ACCESS_WRITE)
+            .expect("admin can open roots.der for writing");
+        ob_close_object(id).unwrap();
+    });
+
     test_case!("ob_open_path_non_existent_object_in_namespace", {
         // Path exists in namespace but ObId doesn't match any ObObject
         let admin_token = crate::security::token::Token::new_admin();

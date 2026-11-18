@@ -55,7 +55,7 @@ Offset  Size  Campo            Descripción
 89      4     flags            bit0=dirty, bit1=needs_fsck
 93      8     freelist_lba     LBA de la cabeza de la free list persistida (0 = recuperar al montar)
 101     8     snapshot_table_lba  LBA del nodo de tabla de snapshots (0 = vacía)
-109     403   reserved         checksum CRC32 del superblock en los primeros 4 bytes
+109     403   reserved         CRC32 en [0..4]; security_lba en [4..12]; next_security_id en [12..16]
 ```
 
 Total: 512 bytes.
@@ -363,19 +363,27 @@ Errors: -Inval, -NoEnt, -Io, -NoSys (si no es NeoFS)
 
 ---
 
-## 5. Permisos (mode bits)
+## 5. Permisos (NT DACL)
 
-```text
-bit 0 = R (read)
-bit 1 = W (write)
-bit 2 = X (execute)
-bit 3 = S (system)
-bit 4 = D (delete)
-bit 6 = directory flag
-bit 7 = file flag
-```
+NeoFS no usa bits rwx de UNIX. `DirEntryV2` conserva su tamaño de 128 bytes y
+guarda un `security_id: u32` en el padding (offset 112). El id referencia una
+tabla persistente de `SecurityDescriptor`:
 
-Sin DOS attributes. Sin owner/group (futuro: SID). Sin ACLs (futuro).
+- owner SID, group SID y DACL con ACEs (`allow`/`deny`, máscara, SID);
+- `security_id = 0` → descriptor por defecto (Everyone read/execute;
+  SYSTEM/Administrators full);
+- codec `NDSD` v1 en `security/acl.rs`, máximo 1 KiB y 32 ACEs;
+- tabla en un B-tree propio; su raíz se guarda en `reserved[4..12]` del
+  superblock (después del CRC) y el siguiente id en `reserved[12..16]`;
+- `ObOpen`, read/write, create, delete, rename y destroy comprueban
+  `SeAccessCheck`; el handle conserva la máscara concedida;
+- el recorrido de directorios exige `EXECUTE` por componente.
+
+Las imágenes antiguas tienen `security_id = 0` y usan el descriptor por defecto;
+no hay cambio de tamaño ni necesidad de cambiar el image builder. Limitaciones:
+los descriptores aún no se recolectan al borrar el inodo, los snapshots no
+versionan la tabla de seguridad y la prueba Ring 3 depende de #767 (todo el
+userland es admin).
 
 ---
 

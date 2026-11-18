@@ -6,26 +6,26 @@ use crate::syscall::{current_handle_entry, err_to_u64, SyscallError};
 pub fn handler_ob_destroy(regs: crate::syscall::Registers) -> u64 {
     let fd = regs.rbx as u8;
 
-    let (object_id, obj_type, name) = crate::hal::without_interrupts(|| {
+    let (object_id, obj_type, name, access) = crate::hal::without_interrupts(|| {
         let s = scheduler::current_scheduler();
         let mut lock = s.lock();
         if let Some(ep) = lock.current_eprocess_mut() {
             let entry = ep.handle_table[fd as usize];
             if !entry.is_open() {
-                return (0, crate::object::ObType::Unknown, alloc::string::String::new());
+                return (0, crate::object::ObType::Unknown, alloc::string::String::new(), 0);
             }
             let oid = entry.object_id;
             let ot = entry.obj_type().unwrap_or(crate::object::ObType::Unknown);
             if oid == 0 {
-                return (0, crate::object::ObType::Unknown, alloc::string::String::new());
+                return (0, crate::object::ObType::Unknown, alloc::string::String::new(), 0);
             }
             let obj_name = match crate::object::ob_lookup(oid) {
                 Some(o) => o.name_str().to_string(),
                 None => alloc::string::String::new(),
             };
-            (oid, ot, obj_name)
+            (oid, ot, obj_name, entry.access)
         } else {
-            (0, crate::object::ObType::Unknown, alloc::string::String::new())
+            (0, crate::object::ObType::Unknown, alloc::string::String::new(), 0)
         }
     });
 
@@ -34,6 +34,9 @@ pub fn handler_ob_destroy(regs: crate::syscall::Registers) -> u64 {
     }
 
     if obj_type == crate::object::ObType::Directory && name.starts_with("\\Global\\FileSystem\\") {
+        if access & crate::security::acl::ACCESS_DELETE == 0 {
+            return err_to_u64(SyscallError::Perm);
+        }
         let vfs_path = &name["\\Global\\FileSystem\\".len()..];
         if !vfs_path.is_empty() {
             let _ = crate::globals::with_vfs(|vfs| vfs.remove_dir(vfs_path));

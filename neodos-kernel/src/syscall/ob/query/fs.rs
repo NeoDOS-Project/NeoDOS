@@ -48,6 +48,11 @@ pub(super) fn dispatch(
             sz as u64
         }
         _ if info_class == ObInfoClass::ReadContent as u32 => {
+            if entry.obj_type() == Some(crate::object::ObType::Filesystem)
+                && entry.access & crate::security::acl::ACCESS_READ == 0
+            {
+                return err_to_u64(SyscallError::Perm);
+            }
             let (drive_idx, inode_num, handle_offset) = crate::hal::without_interrupts(|| {
                 let s = scheduler::current_scheduler();
                 let mut lock = s.lock();

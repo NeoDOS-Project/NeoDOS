@@ -9,7 +9,7 @@ kernel_target = "x86_64-unknown-none"
 bootloader_target = "x86_64-unknown-uefi"
 
 [vm]
-backend = "qemu"
+backend = "virtualbox"
 memory = 512
 cpus = 2
 network = "user"
@@ -19,3 +19,11 @@ kvm = false
 bdm = false
 ovmf_code = "/usr/share/OVMF/OVMF_CODE.fd"
 ovmf_vars_template = "/usr/share/OVMF/OVMF_VARS.fd"
+
+[virtualbox]
+headless = true
+vrde = true
+vrde_port = 5000
+vrde_address = "0.0.0.0"
+vrde_certificate = "/home/amartinper/.config/neodev/vrde/neodos2.crt"
+vrde_private_key = "/home/amartinper/.config/neodev/vrde/neodos2.key"

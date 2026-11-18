@@ -112,7 +112,7 @@ pub extern "C" fn _start() -> ! {
     {
         let mut ob_buf2 = [0u8; 512];
         let ob_dst = to_ob_path(dst_path, &mut ob_buf2);
-        if let Ok(old_fd) = syscall::sys_ob_open(ob_dst, libneodos::syscall::ob_access::READ) {
+        if let Ok(old_fd) = syscall::sys_ob_open(ob_dst, libneodos::syscall::ob_access::READ | libneodos::syscall::ob_access::DELETE) {
             let _ = syscall::ob_file_delete(old_fd);
             let _ = syscall::sys_close(old_fd);
         }

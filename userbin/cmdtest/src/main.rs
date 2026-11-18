@@ -111,7 +111,7 @@ fn test_del() -> bool {
             }
         }
         Err(_) => {
-            match syscall::sys_ob_open(ob_path, libneodos::syscall::ob_access::READ) {
+            match syscall::sys_ob_open(ob_path, libneodos::syscall::ob_access::READ | libneodos::syscall::ob_access::DELETE) {
                 Ok(fd) => {
                     match syscall::ob_file_delete(fd) {
                         Ok(_) => true,

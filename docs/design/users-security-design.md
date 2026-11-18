@@ -347,6 +347,12 @@ ob_query_info(process_fd, TokenInfo, &buf)
 
 ### 5.1 DirEntryV2 Extension
 
+> **Implementation note (v0.53):** the final NT design does **not** grow
+> `DirEntryV2` or store an 8-byte `owner_sid`. The 128-byte entry keeps a
+> `security_id: u32` in its padding; the owner, group and DACL live in a
+> persistent NeoFS security table (see `docs/filesystem/neofs-v2.md`). This is
+> NT-style DACL storage, not UNIX mode bits.
+
 Add an 8-byte owner SID field to DirEntryV2. The on-disk format grows from 128 to 136 bytes.
 
 ```rust

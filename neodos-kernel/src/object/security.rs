@@ -3,6 +3,12 @@ use alloc::vec::Vec;
 use crate::object::types::{ObError, ObId, ObType};
 use crate::object::table::{OB_TABLE, OB_SECURITY, ob_lookup, ob_create_object, ob_reference, ob_destroy_object, ob_close_object, FILE_HANDLE_OPS};
 
+#[derive(Clone, Copy)]
+enum VfsOpenError {
+    NotFound,
+    Denied,
+}
+
 /// Open an object by Ob namespace path.
 /// 1. Resolves `path_str` through the Ob namespace
 /// 2. Verifies the object exists in the Object Manager
@@ -67,13 +73,61 @@ pub fn ob_open_path(
     // Every open() creates a fresh handle instance — no orphaned namespace entries.
     if let Some(vfs_path) = path_str.strip_prefix("\\Global\\FileSystem\\") {
         if !vfs_path.is_empty() && vfs_path.contains(':') {
-            let result = crate::globals::with_vfs(|vfs| vfs.resolve_path(vfs_path));
-            if let Ok((drive_idx, node)) = result {
-                let is_dir = (node.mode & crate::fs::vfs::MODE_DIR) != 0;
-                let obj_type = if is_dir { ObType::Directory } else { ObType::Filesystem };
-                let obj_id = ob_create_object(obj_type, path_str, node.inode as u64, drive_idx as u32, Some(&FILE_HANDLE_OPS))?;
-                ob_reference(obj_id)?;
-                return Ok(obj_id);
+            let result = crate::globals::with_vfs(|vfs| {
+                let bytes = vfs_path.as_bytes();
+                if bytes.len() < 2 || bytes[1] != b':' {
+                    return Err(VfsOpenError::NotFound);
+                }
+                let rest = &vfs_path[2..];
+                let mut prefix = alloc::string::String::from(&vfs_path[..2]);
+                let parts: alloc::vec::Vec<&str> = rest
+                    .split('\\')
+                    .filter(|p| !p.is_empty())
+                    .collect();
+                for part in parts.iter().take(parts.len().saturating_sub(1)) {
+                    if !prefix.ends_with('\\') {
+                        prefix.push('\\');
+                    }
+                    prefix.push_str(part);
+                    let Ok((drive, node)) = vfs.resolve_path(&prefix) else {
+                        return Err(VfsOpenError::NotFound);
+                    };
+                    if node.mode & crate::fs::vfs::MODE_DIR == 0 {
+                        return Err(VfsOpenError::NotFound);
+                    }
+                    let descriptor = vfs.security_bytes(drive, node.inode);
+                    if !crate::security::access::vfs_access_check(
+                        token,
+                        descriptor.as_deref(),
+                        crate::security::acl::ACCESS_EXECUTE,
+                    ) {
+                        return Err(VfsOpenError::Denied);
+                    }
+                }
+                let (drive_idx, node) = vfs
+                    .resolve_path(vfs_path)
+                    .map_err(|_| VfsOpenError::NotFound)?;
+                let descriptor = vfs.security_bytes(drive_idx, node.inode);
+                Ok((drive_idx, node, descriptor))
+            });
+            match result {
+                Ok((drive_idx, node, descriptor)) => {
+                    // NT DACL check at the access point, before creating a handle.
+                    if !crate::security::access::vfs_access_check(
+                        token,
+                        descriptor.as_deref(),
+                        desired_access,
+                    ) {
+                        return Err(ObError::AccessDenied);
+                    }
+                    let is_dir = (node.mode & crate::fs::vfs::MODE_DIR) != 0;
+                    let obj_type = if is_dir { ObType::Directory } else { ObType::Filesystem };
+                    let obj_id = ob_create_object(obj_type, path_str, node.inode as u64, drive_idx as u32, Some(&FILE_HANDLE_OPS))?;
+                    ob_reference(obj_id)?;
+                    return Ok(obj_id);
+                }
+                Err(VfsOpenError::Denied) => return Err(ObError::AccessDenied),
+                Err(VfsOpenError::NotFound) => {}
             }
         }
     }

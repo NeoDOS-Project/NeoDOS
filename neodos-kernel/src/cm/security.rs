@@ -17,7 +17,7 @@ use crate::security::access::se_access_check;
 use crate::security::acl::{
     Acl, Ace, SecurityDescriptor, ACCESS_ALL, ACCESS_DELETE, ACCESS_READ, ACCESS_WRITE,
 };
-use crate::security::sid::{sid_builtin_admin, sid_world};
+use crate::security::sid::{sid_builtin_administrators, sid_builtin_system, sid_world};
 use crate::security::token::Token;
 
 use super::hive::Hive;
@@ -33,7 +33,8 @@ lazy_static! {
     static ref TRUST_SD: SecurityDescriptor = {
         let mut dacl = Acl::new();
         dacl.insert_ace_canonical(Ace::allow(sid_world(), ACCESS_READ));
-        dacl.insert_ace_canonical(Ace::allow(sid_builtin_admin(), ACCESS_ALL));
+        dacl.insert_ace_canonical(Ace::allow(sid_builtin_system(), ACCESS_ALL));
+        dacl.insert_ace_canonical(Ace::allow(sid_builtin_administrators(), ACCESS_ALL));
         SecurityDescriptor::new().with_dacl(dacl)
     };
 }
