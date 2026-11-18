@@ -40,6 +40,7 @@ dependencies = [
  "libnet-config",
  "libntp",
  "libtls",
+ "libtrust",
 ]
 
 [[package]]
@@ -60,6 +61,15 @@ version = "0.1.0"
 dependencies = [
  "libclock",
  "libcrypto",
+]
+
+[[package]]
+name = "libtrust"
+version = "0.1.0"
+dependencies = [
+ "libcrypto",
+ "libneodos",
+ "libtls",
 ]
 
 [[package]]

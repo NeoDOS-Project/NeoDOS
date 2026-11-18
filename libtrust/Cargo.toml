@@ -1,0 +1,27 @@
+[package]
+name = "libtrust"
+version = "0.1.0"
+edition = "2021"
+description = "Trust anchor store for NeoDOS (system bundle + user-imported CAs)"
+
+[lib]
+name = "libtrust"
+path = "src/lib.rs"
+crate-type = ["lib"]
+test = true
+
+[features]
+default = []
+# Registry and syscall glue; disabled for host tests.
+store = ["libneodos"]
+
+[dependencies]
+libcrypto = { path = "../libcrypto" }
+libtls = { path = "../libtls" }
+libneodos = { path = "../libneodos", optional = true }
+
+[profile.release]
+panic = "abort"
+opt-level = 3
+lto = true
+debug = false

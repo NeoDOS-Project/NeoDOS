@@ -214,23 +214,21 @@ fn resolve(host: &str) -> Result<[u8; 4], HttpError> {
 
 use libtls::{ClientConfig, Host, Rng, TlsError, Transport as TlsTransportTrait};
 
-// ── System trust store (D8) ──
+// ── Trust store (D8) ──
 
-/// Largest trust bundle we will load (a full public root store is ~150 KiB).
-const MAX_TRUST_BUNDLE: usize = 256 * 1024;
-
-/// The system trust store as loaded from disk.
+/// The trust store as loaded for a connection: the image's system bundle plus
+/// the CAs the user imported (`libtrust` keeps both in sync).
 #[derive(Debug, Clone, Default)]
 pub struct SystemTrust {
-    /// Bundle format version (`0` for an unversioned, raw DER bundle).
+    /// System bundle format version (`0` for an unversioned bundle).
     pub version: u16,
-    /// Build time in Unix seconds (`0` when unknown).
+    /// System bundle build time in Unix seconds (`0` when unknown).
     pub built_unix: i64,
-    /// DER-encoded anchors.
+    /// Every anchor (system + user).
     pub roots: alloc::vec::Vec<alloc::vec::Vec<u8>>,
 }
 
-/// Freshness of the on-disk bundle, judged with the trusted clock (M7).
+/// Freshness of the system bundle, judged with the trusted clock (M7).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TrustStatus {
     /// No bundle, or nothing usable in it.
@@ -243,65 +241,34 @@ pub enum TrustStatus {
     Stale { days: i64 },
 }
 
-/// Read and parse the system trust bundle.
-///
-/// Accepts both the versioned format written by NeoDev (magic `NDTB`, header
-/// with build time and certificate count) and a raw concatenation of DER
-/// certificates. An absent or unreadable bundle yields an empty list, which
-/// makes TLS fail closed (untrusted chain) instead of silently trusting
-/// anything.
+/// Read the trust store (system bundle + user CAs).
 pub fn system_trust() -> SystemTrust {
-    let mut buf = alloc::vec![0u8; MAX_TRUST_BUNDLE];
-    // Filesystem objects are opened through the volume mount point, like every
-    // other userland path (`Ob` resolves the prefix, not the drive letter).
-    let path = alloc::format!(
-        "\\Global\\FileSystem\\{}",
-        libneodos::paths::TRUST_BUNDLE
-    );
-    let empty = SystemTrust::default();
-    let Ok(fd) = syscall::sys_ob_open(&path, syscall::ob_access::READ) else {
-        return empty;
-    };
-    let n = syscall::sys_ob_query_info(fd, syscall::ObInfoClass::ReadContent, &mut buf);
-    let _ = syscall::sys_close(fd);
-    let Ok(n) = n else {
-        return empty;
-    };
-    let n = n as usize;
-    if n == 0 {
-        return empty;
-    }
-    let bytes = &buf[..n];
-    // Versioned bundle first; fall back to a raw DER concatenation.
-    let (version, built_unix, certs) = match libtls::der::parse_bundle(bytes) {
-        Some(bundle) => (bundle.version, bundle.built_unix, bundle.certs),
-        None => (0, 0, libtls::der::split_certificates(bytes)),
-    };
+    let (info, _) = libtrust::store::system_bundle();
     SystemTrust {
-        version,
-        built_unix,
-        roots: certs.into_iter().map(|c| c.to_vec()).collect(),
+        version: info.version,
+        built_unix: info.built_unix,
+        roots: libtrust::store::anchors(),
     }
 }
 
 /// Anchors only (the common case).
 pub fn system_roots() -> alloc::vec::Vec<alloc::vec::Vec<u8>> {
-    system_trust().roots
+    libtrust::store::anchors()
 }
 
-/// Judge the on-disk bundle against the trusted clock.
+/// Judge the system bundle against the trusted clock.
 pub fn trust_status() -> TrustStatus {
-    let trust = system_trust();
-    if trust.roots.is_empty() {
+    let (info, _) = libtrust::store::system_bundle();
+    if info.count == 0 {
         return TrustStatus::Missing;
     }
     let now = match libclock::system::unix_seconds() {
         Ok(now) => now,
         // Without a trusted clock the bundle's age cannot be judged; the TLS
-        // handshake will still refuse to run on an untrusted clock.
+        // handshake still refuses to run on an untrusted clock.
         Err(_) => return TrustStatus::Ok,
     };
-    match libtls::der::bundle_freshness(trust.built_unix, now) {
+    match libtls::der::bundle_freshness(info.built_unix, now) {
         libtls::der::BundleFreshness::Ok => TrustStatus::Ok,
         libtls::der::BundleFreshness::Future => TrustStatus::Future,
         libtls::der::BundleFreshness::Stale { age_days } => TrustStatus::Stale { days: age_days },

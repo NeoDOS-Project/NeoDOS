@@ -79,6 +79,19 @@ impl FreeList {
     /// Liberar un rango de bloques. Mergea con regiones adyacentes.
     pub fn free(&mut self, start_lba: u64, length: u32) {
         self.dirty = true;
+        // Un doble free (mismo bloque devuelto dos veces, p. ej. desde
+        // `cow_garbage`) crearía regiones solapadas y `alloc` podría entregar
+        // el mismo bloque a dos ficheros: uno de ellos leería los datos del
+        // otro. Si el rango ya está libre, se ignora (#753).
+        // Silent on purpose: this runs inside the VFS/page-cache paths, and
+        // logging there can take the serial lock in the wrong context.
+        let end = start_lba.saturating_add(length as u64);
+        for r in &self.regions {
+            let r_end = r.start_lba.saturating_add(r.length as u64);
+            if start_lba < r_end && r.start_lba < end {
+                return;
+            }
+        }
         let new = FreeRegion { start_lba, length };
 
         // Buscar posición de inserción ordenada por start_lba
@@ -117,6 +130,24 @@ impl FreeList {
         }
         // Si llegamos aquí, merged va al final
         self.regions.push(merged);
+    }
+
+    /// ¿El bloque `lba` está en alguna región libre? (regiones ordenadas)
+    pub fn contains(&self, lba: u64) -> bool {
+        let mut lo = 0usize;
+        let mut hi = self.regions.len();
+        while lo < hi {
+            let mid = (lo + hi) / 2;
+            let r = self.regions[mid];
+            if lba < r.start_lba {
+                hi = mid;
+            } else if lba >= r.start_lba.saturating_add(r.length as u64) {
+                lo = mid + 1;
+            } else {
+                return true;
+            }
+        }
+        false
     }
 
     /// Número total de bloques libres.
@@ -290,6 +321,21 @@ pub fn register_freelist_tests() {
         crate::test_eq!(fl.regions[0].length, 100);
     });
 
+    crate::test_case!("freelist_double_free_ignored", {
+        // #753: a block returned twice must not produce overlapping regions,
+        // otherwise `alloc` hands the same block to two files.
+        let mut fl = FreeList::with_range(10, 20);
+        let _ = fl.alloc(2);
+        fl.free(10, 2);
+        let regions = fl.regions.len();
+        fl.free(10, 2);
+        crate::test_eq!(fl.regions.len(), regions);
+        crate::test_eq!(fl.total_free(), 20);
+        let a = fl.alloc_blocks(1).unwrap();
+        let b = fl.alloc_blocks(1).unwrap();
+        crate::test_ne!(a, b);
+    });
+
     crate::test_case!("freelist_serialize_roundtrip", {
         let mut fl = FreeList::new();
         fl.free(1000, 500);
@@ -371,3 +417,4 @@ pub fn register_freelist_tests() {
         crate::test_true!(fl.is_valid(10));
     });
 }
+

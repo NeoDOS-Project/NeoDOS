@@ -184,7 +184,23 @@ impl NeoDosFsV2 {
         // persistida y es válida, se carga; en caso contrario se reconstruye
         // recorriendo el árbol de directorios.
         let head = fs.sb.freelist_lba;
-        if head == 0 || !fs.load_freelist(head) {
+        let mut loaded = head != 0 && fs.load_freelist(head);
+        if loaded {
+            // La lista persistida puede ser de un volumen que se quedó a medias
+            // (o de una versión anterior con corrupción): si da por libre un
+            // bloque que el árbol referencia, el siguiente `alloc` lo
+            // reasignaría y rompería un fichero. Reconstruir es barato y deja
+            // el volumen en un estado seguro (#753).
+            if let Some(b) = fs.first_inconsistent_free_block() {
+                kwarn!(
+                    crate::log::LogSubsys::Fs,
+                    "ne2: bloque {} vivo y marcado libre; reconstruyendo la free list",
+                    b
+                );
+                loaded = false;
+            }
+        }
+        if !loaded {
             fs.recover_freelist();
         }
 
@@ -327,29 +343,36 @@ impl NeoDosFsV2 {
             return;
         }
         let garbage = core::mem::take(&mut self.cow_garbage);
+        // Never hand the same range to the free list twice: duplicate entries
+        // in `cow_garbage` would create overlapping free regions and `alloc`
+        // could return one block to two files (#753). `FreeList::free` also
+        // ignores a range that is already free.
+        let mut seen: alloc::vec::Vec<(u64, u32)> = alloc::vec::Vec::new();
         for (lba, len) in garbage {
             // Los bloques 0 (superblock) y 1 (raíz inicial) están reservados:
             // no se reintroducen en la free list.
-            if lba >= 2 && len > 0 {
-                self.freelist.free(lba, len);
-                // Una página *sucia* cacheada para un bloque que acaba de
-                // liberarse puede volcarse más tarde —después de que la free
-                // list lo entregue a otro fichero— y sobrescribir sus datos.
-                // Al liberar, el contenido del bloque ya no importa: se
-                // descarta la entrada de caché (#753).
-                invalidate_cache(&self.io_stack, lba * 8, len as u64 * 8);
+            if lba < 2 || len == 0 || seen.contains(&(lba, len)) {
+                continue;
             }
+            seen.push((lba, len));
+            self.freelist.free(lba, len);
+            // Una página *sucia* cacheada para un bloque que acaba de
+            // liberarse puede volcarse más tarde —después de que la free list
+            // lo entregue a otro fichero— y sobrescribir sus datos. Al liberar,
+            // el contenido del bloque ya no importa: se descarta.
+            invalidate_cache(&self.io_stack, lba * 8, len as u64 * 8);
         }
     }
 
-    /// Reconstruir la free list recorriendo el árbol de directorios actual y los
-    /// de **todos los snapshots**, marcando como usados los nodos B-tree, los
-    /// extents de datos, los bloques 0/1 y el nodo de la tabla de snapshots.
-    /// Necesario porque la free list no se persiste en cada guardado (lazy).
-    fn recover_freelist(&mut self) {
-        let total = self.sb.num_blocks;
+    /// Todos los bloques alcanzables desde las raíces vivas (directorios,
+    /// extents de datos y árboles de snapshots), ordenados y sin duplicados.
+    fn live_blocks(&self) -> Vec<u64> {
         let mut used: Vec<u64> = alloc::vec![0, 1];
         let mut pending: Vec<u64> = Vec::new();
+        // Un árbol corrupto puede encadenar directorios en ciclo (`.`/`..` o
+        // una entrada que apunta a su propia raíz): sin este conjunto el
+        // recorrido no termina.
+        let mut visited: Vec<u64> = Vec::new();
         if self.sb.root_btree_lba != 0 {
             pending.push(self.sb.root_btree_lba);
         }
@@ -360,6 +383,13 @@ impl NeoDosFsV2 {
             }
         }
         while let Some(dir_root) = pending.pop() {
+            if dir_root == 0 || visited.contains(&dir_root) {
+                continue;
+            }
+            if visited.len() >= 65536 {
+                break;
+            }
+            visited.push(dir_root);
             self.collect_directory_blocks(dir_root, &mut used, &mut pending);
         }
         // El nodo de la tabla de snapshots también está en uso.
@@ -368,6 +398,28 @@ impl NeoDosFsV2 {
         }
         used.sort_unstable();
         used.dedup();
+        used
+    }
+
+    /// Primer bloque que el árbol referencia y la free list da por libre.
+    fn first_inconsistent_free_block(&self) -> Option<u64> {
+        for lba in self.live_blocks() {
+            if lba >= 2 && self.freelist.contains(lba) {
+                return Some(lba);
+            }
+        }
+        None
+    }
+
+    /// Reconstruir la free list como complemento de los bloques vivos.
+    ///
+    /// Marca como usados los nodos B-tree de **todos** los directorios, sus
+    /// extents de datos, los bloques 0/1, el nodo de la tabla de snapshots y
+    /// los árboles de los snapshots. Necesario porque la free list no se
+    /// persiste en cada guardado (lazy).
+    fn recover_freelist(&mut self) {
+        let total = self.sb.num_blocks;
+        let used = self.live_blocks();
         self.freelist = FreeList::from_used(&used, total);
         self.freelist_chain.clear();
         // Reconstruida: no hace falta persistirla (se reconstruirá al montar).
@@ -400,12 +452,32 @@ impl NeoDosFsV2 {
     /// (`entry.extent_lba`); para ficheros, `fallback_root` (raíz del directorio
     /// padre). `parent` es el inode del directorio que la contiene.
     fn cache(&mut self, parent: u32, entry: DirEntryV2, fallback_root: u64) -> u32 {
-        let root = if entry.is_dir() && entry.extent_lba > 0 { entry.extent_lba } else { fallback_root };
+        // Un directorio sin árbol propio (`extent_lba == 0`, habitual en las
+        // imágenes para directorios vacíos como `\Users` o `\Program Files`)
+        // tiene una raíz **vacía**, no la del padre. Heredar `fallback_root`
+        // hacía que crear `\Users\algo` insertase la entrada en el árbol de
+        // la raíz del volumen y dejase `\Users` apuntando a una copia de ese
+        // árbol: dos directorios compartían raíz, cualquier liberación de un
+        // bloque rompía al otro y, en cascada, los datos de un fichero podían
+        // acabar siendo un nodo del árbol (#753).
+        let root = if entry.is_dir() { entry.extent_lba } else { fallback_root };
         if entry.is_dir() && entry.extent_lba > 0 {
+            // La identidad de un directorio es (padre, nombre), no su raíz: el
+            // LBA de la raíz cambia en cada COW y, además, los LBAs se
+            // reutilizan tras liberar un bloque. Comparar por raíz fusionaba
+            // dos directorios distintos (p. ej. C:\NeoDOS y C:\Users\NeoDOS)
+            // en un único inode: la propagación del COW actualizaba la entrada
+            // equivocada y dejaba la otra apuntando a un bloque ya liberado,
+            // que luego se reasignaba a los datos de un fichero (#753).
             for i in 0..self.inode_cache.len() {
                 if let Some(c) = &self.inode_cache[i] {
-                    if c.root == root && c.entry.name == entry.name {
-                        return i as u32;
+                    if c.parent == Some(parent) && c.entry.is_dir() && c.entry.name == entry.name {
+                        let i = i as u32;
+                        if let Some(c) = self.inode_cache[i as usize].as_mut() {
+                            c.root = root;
+                            c.entry = entry;
+                        }
+                        return i;
                     }
                 }
             }

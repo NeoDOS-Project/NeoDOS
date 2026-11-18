@@ -60,6 +60,23 @@ pub fn sys_cm_set_value(fd: u8, name: &str, value_type: u32, data: &[u8]) -> Res
     if r < 0 { Err(r) } else { Ok(()) }
 }
 
+/// sys_cm_enum_key (RAX=54): enumerate subkeys of an open key.
+/// Returns the NUL-terminated name in `buf` (length including the NUL), or
+/// `Ok(0)` when `index` is past the last subkey.
+pub fn sys_cm_enum_key(fd: u8, index: u32, buf: &mut [u8]) -> Result<usize, i64> {
+    let ptr = buf.as_mut_ptr() as u64;
+    let r = unsafe { ob_syscall_3!(54, fd as u64, index as u64, ptr) };
+    ret(r).map(|v| v as usize)
+}
+
+/// sys_cm_enum_value (RAX=55): enumerate values of an open key (same shape as
+/// [`sys_cm_enum_key`]).
+pub fn sys_cm_enum_value(fd: u8, index: u32, buf: &mut [u8]) -> Result<usize, i64> {
+    let ptr = buf.as_mut_ptr() as u64;
+    let r = unsafe { ob_syscall_3!(55, fd as u64, index as u64, ptr) };
+    ret(r).map(|v| v as usize)
+}
+
 /// sys_cm_flush_key (RAX=57): persist a registry key's hive to disk.
 /// Serializes the hive containing `fd` to `C:\System\Registry\<name>.hiv` if it
 /// has pending changes, so values set via `sys_cm_set_value` survive a reboot.

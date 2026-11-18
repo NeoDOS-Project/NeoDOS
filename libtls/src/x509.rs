@@ -89,6 +89,8 @@ const KNOWN_CRITICAL: &[&[u8]] = &[
 /// A parsed certificate. All slices point into the input DER.
 #[derive(Debug, Clone)]
 pub struct Certificate<'a> {
+    /// Complete DER encoding, as handed to the parser.
+    pub der: &'a [u8],
     /// TBSCertificate encoding (signed bytes).
     pub tbs: &'a [u8],
     pub issuer: &'a [u8],
@@ -103,6 +105,9 @@ pub struct Certificate<'a> {
     pub path_len: Option<u8>,
     /// `keyUsage.digitalSignature` (true when the extension is absent).
     pub digital_signature: bool,
+    /// `keyUsage.keyCertSign`: the certificate may sign other certificates.
+    /// True when the extension is absent (a CA without `keyUsage` is common).
+    pub key_cert_sign: bool,
     /// `extKeyUsage` contains `serverAuth` (true when the extension is absent).
     pub server_auth: bool,
     /// Signature algorithm; `None` when unsupported (usable as a trust anchor,
@@ -156,6 +161,7 @@ pub fn parse_certificate(der: &[u8]) -> core::result::Result<Certificate<'_>, X5
     let mut is_ca = false;
     let mut path_len = None;
     let mut digital_signature = true;
+    let mut key_cert_sign = true;
     let mut server_auth = true;
 
     // Optional issuerUniqueID [1], subjectUniqueID [2], extensions [3].
@@ -189,11 +195,12 @@ pub fn parse_certificate(der: &[u8]) -> core::result::Result<Certificate<'_>, X5
                         }
                     }
                     OID_KEY_USAGE => {
-                        // BIT STRING: bit 0 is digitalSignature.
+                        // BIT STRING, bit 0 = digitalSignature, bit 5 =
+                        // keyCertSign (both in the first content byte).
                         let mut ku = Der::new(value.value);
                         let bits = bit_string_bytes(&ku.next_tlv()?)?;
-                        digital_signature =
-                            bits.first().map(|b| b & 0x80 != 0).unwrap_or(true);
+                        digital_signature = bits.first().map(|b| b & 0x80 != 0).unwrap_or(true);
+                        key_cert_sign = bits.first().map(|b| b & 0x04 != 0).unwrap_or(true);
                     }
                     OID_EXT_KEY_USAGE => {
                         let mut eku = Der::new(value.value);
@@ -237,6 +244,7 @@ pub fn parse_certificate(der: &[u8]) -> core::result::Result<Certificate<'_>, X5
     }
 
     Ok(Certificate {
+        der,
         tbs: tbs_full.full,
         issuer,
         subject,
@@ -248,6 +256,7 @@ pub fn parse_certificate(der: &[u8]) -> core::result::Result<Certificate<'_>, X5
         is_ca,
         path_len,
         digital_signature,
+        key_cert_sign,
         server_auth,
         sig_alg,
         signature,
@@ -269,6 +278,65 @@ pub fn rsa_public_key(spki: &[u8]) -> core::result::Result<RsaPublicKey, X509Err
     let n = integer_bytes(&rs.next_tlv()?)?.to_vec();
     let e = integer_bytes(&rs.next_tlv()?)?.to_vec();
     Ok(RsaPublicKey::new(n, e))
+}
+
+/// Human-readable form of a DER-encoded `Name` (RDNSequence).
+///
+/// Produces the OpenSSL order (`C=…, O=…, CN=…`), one `ATTR=value` per RDN,
+/// with the attribute names a certificate viewer shows. Unknown OIDs and
+/// unsupported string types fall back to the dotted OID and are skipped.
+pub fn name_to_string(name_der: &[u8]) -> alloc::string::String {
+    use alloc::string::String;
+
+    fn label(oid: &[u8]) -> &'static str {
+        match oid {
+            [0x55, 0x04, 0x03] => "CN",
+            [0x55, 0x04, 0x06] => "C",
+            [0x55, 0x04, 0x07] => "L",
+            [0x55, 0x04, 0x08] => "ST",
+            [0x55, 0x04, 0x0a] => "O",
+            [0x55, 0x04, 0x0b] => "OU",
+            [0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x09, 0x01] => "emailAddress",
+            _ => "OID",
+        }
+    }
+
+    let mut parts: alloc::vec::Vec<String> = alloc::vec::Vec::new();
+    let Ok(mut seq) = Der::new(name_der).expect_sequence() else {
+        return String::new();
+    };
+    while !seq.is_empty() {
+        // Each RDN is a SET OF AttributeTypeAndValue.
+        let Ok(rdn_tlv) = seq.expect(TAG_SET) else { break };
+        let mut rdn = Der::new(rdn_tlv.value);
+        while !rdn.is_empty() {
+            let Ok(mut attr) = rdn.expect_sequence() else { break };
+            let Ok(first) = attr.next_tlv() else { continue };
+            let Ok(oid) = oid_bytes(&first) else { continue };
+            let Ok(value) = attr.next_tlv() else { continue };
+            // UTF8String, PrintableString, IA5String and T61String share the
+            // byte representation we care about.
+            let text = core::str::from_utf8(value.value).unwrap_or("");
+            let tag = label(oid);
+            if text.is_empty() || tag == "OID" {
+                continue;
+            }
+            let mut part = String::new();
+            part.push_str(tag);
+            part.push('=');
+            part.push_str(text);
+            parts.push(part);
+        }
+    }
+    // DER holds RDNs root-first; viewers show them leaf-first.
+    let mut out = String::new();
+    for part in parts.iter().rev() {
+        if !out.is_empty() {
+            out.push_str(", ");
+        }
+        out.push_str(part);
+    }
+    out
 }
 
 /// SubjectPublicKeyInfo → NIST curve affine coordinates.

@@ -107,6 +107,36 @@ impl RegistryKey {
         syscall::sys_cm_set_value(self.fd, name, REG_SZ, value)
     }
 
+    /// Set a `REG_BINARY` value (e.g. a DER certificate).
+    pub fn set_binary(&self, name: &str, data: &[u8]) -> Result<(), i64> {
+        syscall::sys_cm_set_value(self.fd, name, syscall::REG_BINARY, data)
+    }
+
+    /// Query a value of any type into `buf` (`[type u32][len u32][data]`).
+    /// Returns the number of data bytes copied.
+    pub fn query_binary(&self, name: &str, buf: &mut [u8]) -> usize {
+        match syscall::sys_cm_query_value(self.fd, name, buf) {
+            Ok(total) if total >= 8 => (total - 8).min(buf.len().saturating_sub(8)),
+            _ => 0,
+        }
+    }
+
+    /// Name of subkey `index` (NUL-terminated in `buf`), or `None` at the end.
+    pub fn enum_key(&self, index: u32, buf: &mut [u8]) -> Option<usize> {
+        match syscall::sys_cm_enum_key(self.fd, index, buf) {
+            Ok(n) if n > 0 => Some(n - 1),
+            _ => None,
+        }
+    }
+
+    /// Name of value `index` (NUL-terminated in `buf`), or `None` at the end.
+    pub fn enum_value(&self, index: u32, buf: &mut [u8]) -> Option<usize> {
+        match syscall::sys_cm_enum_value(self.fd, index, buf) {
+            Ok(n) if n > 0 => Some(n - 1),
+            _ => None,
+        }
+    }
+
     /// Delete a subkey `name` under this key.
     pub fn delete_key(&self, name: &str) -> Result<(), RegistryError> {
         syscall::sys_ob_set_info(
