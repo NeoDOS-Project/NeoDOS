@@ -49,6 +49,7 @@ Dependen de `libneodos`, target `x86_64-unknown-none`, linker script `user.ld`, 
 | Power | — | Power Manager: `ob_set_info(PowerShutdown=37)`, `ob_set_info(PowerReboot=38)`, `ob_set_info(PowerSetPlan=41)`, `ob_query_info(PowerPlanInfo=32)`, `ob_query_info(PowerStatus=33)` |
 | Locale | — | i18n runtime: `i18n_init()`, `i18n_load()`, `i18n_get()`, `i18n_available_locales()` |
 | Keyboard | `ob_set_info(fd, KeyboardLayout=5, &[layout])`, `ob_query_info(fd, KeyboardLayout=14, &mut buf)` | Ninguna |
+| Certificates | `libtrust::store::{system_entries, user_entries, import_all, remove}` (almacén de usuario en `\Registry\Machine\Software\NeoDOS\Trust`), `ob_query_info(ReadContent=15)` para leer el fichero a importar | Ninguna |
 | About | `ob_query_info(Version=8)` (vía `\Global\Info\Version`) | Ninguna |
 
 ---

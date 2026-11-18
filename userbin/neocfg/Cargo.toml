@@ -13,6 +13,8 @@ test = false
 libneodos = { path = "../../libneodos" }
 libneocfg = { path = "../../libneocfg" }
 libneotui = { path = "../../libneotui" }
+libtrust = { path = "../../libtrust", features = ["store"] }
+libclock = { path = "../../libclock", features = ["sys"] }
 
 [profile.release]
 panic = "abort"

@@ -1,12 +1,14 @@
 //! Module registry and the shared scaffold stub session.
 
 mod about;
+mod certificates;
 mod keyboard;
 mod locale;
 mod power;
 mod system;
 
 pub use about::AboutModule;
+pub use certificates::CertificatesModule;
 pub use keyboard::KeyboardModule;
 pub use locale::LocaleModule;
 pub use power::PowerModule;

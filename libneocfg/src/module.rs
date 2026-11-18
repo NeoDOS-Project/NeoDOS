@@ -16,6 +16,7 @@ pub enum ModuleId {
     Power,
     Locale,
     Keyboard,
+    Certificates,
     About,
 }
 
