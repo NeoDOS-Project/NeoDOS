@@ -87,31 +87,50 @@ incorrecto, truncado, sobredimensionado o huella que no cuadra). **No** borra
 automáticamente una CA caducada, no-CA o con `keyUsage` inválido: eso lo decide
 el administrador (puede eliminarla por huella completa).
 
-## Permisos
+## Permisos (NT: Cm + VFS)
 
-Las mutaciones del Registry pasan por una comprobación real en Cm
-(`neodos-kernel/src/cm/security.rs`), no por ocultar comandos en `certctl`:
+La protección es **NT**, no bits rwx de UNIX.
+
+### Registry (Cm)
+
+Las mutaciones pasan por `neodos-kernel/src/cm/security.rs`:
 
 - `\Registry\Machine\Software\NeoDOS\Trust` tiene una DACL: `Everyone`
-  (`S-1-1-0`) puede **leer**; solo administradores/SYSTEM pueden crear, escribir
-  o borrar.
-- La comprobación usa `SeAccessCheck` con la ruta completa de la clave
-  (`Hive::key_path`) y se aplica en `cm_create_key`, `cm_set_value`,
-  `cm_delete_value` y `cm_delete_key`, incluidas las variantes `ob_set_info`.
-- Borrar un **ancestro** del almacén (por ejemplo `Software\NeoDOS`) también
-  exige autorización, porque arrastraría `Trust` en el borrado recursivo.
+  (`S-1-1-0`) puede leer; SYSTEM (`S-1-5-18`) y Administrators
+  (`S-1-5-32-544`) pueden crear, escribir o borrar.
+- Se evalúa con `SeAccessCheck` sobre la ruta completa (`Hive::key_path`) en
+  `cm_create_key`, `cm_set_value`, `cm_delete_value` y `cm_delete_key`.
+- Borrar un ancestro (`Software\NeoDOS`) exige autorización por el borrado
+  recursivo.
 
-**Bloqueos conocidos:** hoy todo el userland hereda un token de administrador
-(#767), así que la política aún no se puede ejercitar end-to-end; y VFS no tiene
-ACLs (#42/#43), por lo que un proceso podría escribir `SOFTWARE.hiv` directamente.
-La comprobación de Cm es real y quedará efectiva en cuanto existan identidades no
-privilegiadas y permisos de fichero. No se simula seguridad en userland.
+### Ficheros (VFS)
 
-**Empaquetado de `certctl`:** el listado fijo de binarios del image builder de
-NeoDev 0.3.0 todavía no incluye `certctl` (#586); el `.NXE` se compila pero no
-aparece en la imagen. `neocfg` (módulo *Certificados*) sí está y usa el mismo
-`libtrust::store`. Mientras #586 no se resuelva, la vía CLI no está disponible
-en el huésped. El seguimiento de la verificación end-to-end está en #786.
+`SOFTWARE.hiv` y `roots.der` se protegen con una DACL NT persistente:
+
+- `DirEntryV2` lleva un `security_id` en el padding (sigue midiendo 128 bytes).
+- La tabla de seguridad de NeoFS guarda `SecurityDescriptor` (owner, group,
+  DACL con ACEs); `security_id = 0` usa el descriptor por defecto.
+- `ObOpen`, `ReadContent`/`WriteContent`, `FileCreate`, `FileDelete`,
+  `VfsRename` y `ObDestroy` de directorios comprueban `SeAccessCheck`.
+- El recorrido de directorios exige `EXECUTE` en cada padre.
+- Descriptor por defecto de una entrada antigua: Everyone lee/ejecuta; solo
+  SYSTEM/Administrators escriben. Por tanto, un usuario ordinario no puede
+  abrir `roots.der`/`SOFTWARE.hiv` para escritura, borrarlos ni renombrarlos.
+- Un fichero nuevo recibe un descriptor con el token creador como owner.
+
+**Limitación actual:** #767 sigue abierto (todo el userland hereda token admin),
+así que el rechazo Ring 3 real no se puede ejercitar todavía. Los tests usan
+tokens SYSTEM/Administrators/usuario. Los directorios de perfil de imagen usan
+el descriptor por defecto (SYSTEM); para que un usuario cree ficheros en su
+perfil hará falta asignarles owner en el alta de perfil (#743/#767).
+
+**Atomicidad Cm:** la ruta, `SeAccessCheck` y la mutación se ejecutan bajo el
+mismo `CM_MANAGER`; no hay ventana entre autorizar una celda y modificarla. El
+token se obtiene antes del bloqueo (SCHEDULER → CM_MANAGER).
+
+**Empaquetado de `certctl`:** #586 está **cerrada** y cubría NXL, no el listado
+NXE. El NeoDev 0.3.0 instalado mantiene una lista fija de NXE que no incluye
+`certctl`; el HEAD actual de NeoDev ya lo incluye. Hay que actualizar NeoDev.
 
 ## Integración
 

@@ -66,6 +66,11 @@ pub(super) fn handler_write(regs: super::Registers) -> u64 {
     let slice = &kbuf[..n];
 
     let entry = current_handle_entry(fd);
+    if entry.obj_type() == Some(crate::object::ObType::Filesystem)
+        && entry.access & crate::security::acl::ACCESS_WRITE == 0
+    {
+        return err_to_u64(SyscallError::Perm);
+    }
 
     // NEODOS-06 (#636): if the Ob object implements `write`, it handles it;
     // otherwise fall through to the legacy per-type path below.
@@ -139,6 +144,11 @@ pub(super) fn handler_read(regs: super::Registers) -> u64 {
     }
 
     let entry = current_handle_entry(fd);
+    if entry.obj_type() == Some(crate::object::ObType::Filesystem)
+        && entry.access & crate::security::acl::ACCESS_READ == 0
+    {
+        return err_to_u64(SyscallError::Perm);
+    }
 
     // NEODOS-06 (#636): if the Ob object implements `read`, it handles it;
     // otherwise fall through to the legacy per-type path below.

@@ -115,12 +115,21 @@ Hives persist to `C:\System\Registry\<name>.hiv`. On boot (Phase 3.881) a hive i
 loaded if the file exists; otherwise defaults are created. `cm_unload_hive`
 flushes a dirty hive before unmounting.
 
-### 5. Registry security (planned)
+### 5. Registry security
 
-`KeyCell.sec_desc_cell` exists in the format but is always `NULL`; there is no
-enforcement code yet. Planned work: a `src/cm/security.rs` with
-`ensure_security` / `check_access` / `inherit_security`, hooks in the `cm_*`
-handlers, and `SeAccessCheck` integration from `src/security/access.rs`.
+`src/cm/security.rs` enforces the trust-store DACL. The critical rule is
+atomicity: resolve the full path, run `se_access_check` and mutate the same cell
+**while `CM_MANAGER` is held**. Obtain the caller token before locking Cm
+(SCHEDULER → CM_MANAGER).
+
+- `full_path` / `new_key_path` are pure helpers for the caller holding the lock.
+- `cm_*_as(token, ...)` are the internal entry points; public `cm_*` pass the
+  current token.
+- ACEs: SYSTEM (`S-1-5-18`) and Administrators (`S-1-5-32-544`) write;
+  Everyone (`S-1-1-0`) reads.
+- Tests in `src/cm/tests.rs` cover allowed/denied mutations, cell reuse and stale
+  native ids. The kernel harness is sequential; real SMP interleaving is not
+  reproducible there.
 
 ### 6. Offline hive
 

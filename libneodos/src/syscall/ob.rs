@@ -85,6 +85,8 @@ pub enum ObInfoClass {
     Random = 48,
     /// Random source capabilities (`SysRandomCaps`, 4 bytes) (#712/M8).
     RandomCaps = 49,
+    /// NT security descriptor metadata for a file/directory.
+    FileSecurity = 50,
 }
 
 pub mod ob_type {
@@ -227,6 +229,19 @@ impl ObBasicInfo {
     }
 }
 
+/// NT security metadata for one file/directory (RAX=62, class=50).
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct ObFileSecurity {
+    pub security_id: u32,
+    pub owner_len: u8,
+    pub group_len: u8,
+    /// bit0: default descriptor; bit1: DACL present.
+    pub flags: u16,
+    pub owner: [u8; 40],
+    pub group: [u8; 40],
+}
+
 /// ObEnumEntry — ABI-compatible with kernel's ObEnumEntry (RAX=64).
 /// Backward compatible: first 44 bytes same as v0.44, new fields mode+size at end.
 #[repr(C)]
@@ -358,6 +373,25 @@ pub fn sys_ob_set_info(fd: u8, info_class: ObSetInfoClass, buf: &[u8]) -> Result
     let len = buf.len() as u64;
     let r = unsafe { ob_syscall_4!(43, fd as u64, info_class as u32 as u64, ptr, len) };
     if r < 0 { Err(r) } else { Ok(()) }
+}
+
+/// Query NT security metadata (owner/group/security_id) for a file or
+/// directory handle. Returns `FileSecurity` (class 50).
+pub fn ob_query_file_security(fd: u8) -> Result<ObFileSecurity, i64> {
+    let mut info = ObFileSecurity {
+        security_id: 0,
+        owner_len: 0,
+        group_len: 0,
+        flags: 0,
+        owner: [0u8; 40],
+        group: [0u8; 40],
+    };
+    let len = core::mem::size_of::<ObFileSecurity>();
+    let buf = unsafe {
+        core::slice::from_raw_parts_mut(&mut info as *mut ObFileSecurity as *mut u8, len)
+    };
+    sys_ob_query_info(fd, ObInfoClass::FileSecurity, buf)?;
+    Ok(info)
 }
 
 /// sys_ob_enum (RAX=64): enumerate objects in a namespace directory by fd.

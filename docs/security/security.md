@@ -23,6 +23,7 @@ pub struct Sid {
 | `sid_builtin_administrator()` | `S-1-5-21-0-0-0-500` | Built-in Administrator account |
 | `sid_builtin_guest()` | `S-1-5-21-0-0-0-501` | Built-in Guest account |
 | `sid_builtin_user()` | `S-1-5-21-0-0-0-1000` | Default domain user |
+| `sid_builtin_administrators()` | `S-1-5-32-544` | Built-in Administrators group |
 | `sid_world()` | `S-1-1-0` | `Everyone`: read-only trustee for public data |
 
 `WELL_KNOWN_SIDS` (the `SeWellKnownSids` table) maps the canonical names
@@ -213,13 +214,34 @@ authorization point is `cm/security.rs`:
 - `\Registry\Machine\Software\NeoDOS\Trust` has a DACL: `Everyone` reads,
   Administrators/SYSTEM write.
 - `cm_create_key`, `cm_set_value`, `cm_delete_value` and `cm_delete_key` resolve
-  the full key path (`Hive::key_path`) and call `se_access_check`.
+  the full key path (`Hive::key_path`), call `se_access_check` and mutate the
+  same cell **while `CM_MANAGER` is held**.
+- The token is obtained before locking Cm; there is no authorization/mutation
+  TOCTOU window.
 - Deleting an ancestor of `Trust` is checked too, because `delete_key` is
   recursive.
 - Denials map to `EPERM` and are logged with the path and SID.
 
 End-to-end enforcement still depends on #767 (non-admin identity) and #42/#43
 (VFS ACLs, so the hive file itself is not writable by unprivileged processes).
+
+### VFS files (NeoFS security_id)
+
+NeoFS stores a `security_id: u32` in the `DirEntryV2` padding (the entry stays
+128 bytes). It references a persisted `SecurityDescriptor` in the filesystem
+security table:
+
+- `security_id = 0` means the safe default: Everyone read/execute,
+  SYSTEM/Administrators full.
+- `ObOpen` checks the descriptor and stores the granted mask in `HandleEntry`.
+- `ReadContent`, `WriteContent`, `FileCreate`, `FileDelete`, `VfsRename` and
+  directory destroy check the same DACL; traversal checks `EXECUTE` per parent.
+- New files get an owner descriptor from the creating token.
+- Descriptor codec: `security/acl.rs` (`NDSD` v1), bounded to 1 KiB and 32 ACEs.
+- Only NT DACLs are used; there are no UNIX owner/group/mode bits.
+
+The Ring 3 enforcement is still blocked by #767 (all processes are admin);
+kernel tests use synthetic SYSTEM/Administrators/user tokens.
 
 ### SACL and auditing (`ACE_TYPE_SYSTEM_AUDIT = 2`)
 

@@ -30,6 +30,9 @@ pub(super) fn dispatch(
             if entry.object_id == 0 {
                 return err_to_u64(SyscallError::Inval);
             }
+            if entry.access & crate::security::acl::ACCESS_DELETE == 0 {
+                return err_to_u64(SyscallError::Perm);
+            }
             let obj = match crate::object::ob_lookup(entry.object_id) {
                 Some(o) => o,
                 None => return err_to_u64(SyscallError::BadF),
@@ -56,6 +59,26 @@ pub(super) fn dispatch(
             if new_path.is_empty() {
                 return err_to_u64(SyscallError::Inval);
             }
+            // A rename must not replace a protected target without DELETE on
+            // that target. Checking only the source handle would allow
+            // renaming an unprotected file over roots.der/SOFTWARE.hiv.
+            let token = crate::security::current_token();
+            let target_allowed = crate::globals::with_vfs(|vfs| {
+                match vfs.resolve_path(&new_path) {
+                    Ok((drive, node)) => {
+                        let sd = vfs.security_bytes(drive, node.inode);
+                        Some(crate::security::access::vfs_access_check(
+                            &token,
+                            sd.as_deref(),
+                            crate::security::acl::ACCESS_DELETE,
+                        ))
+                    }
+                    Err(_) => None,
+                }
+            });
+            if target_allowed == Some(false) {
+                return err_to_u64(SyscallError::Perm);
+            }
             match crate::globals::with_vfs(|vfs| vfs.rename(old_vfs_path, &new_path)) {
                 Ok(_) => {
                     let _ = crate::object::namespace::ob_remove_object(obj_name);
@@ -71,6 +94,11 @@ pub(super) fn dispatch(
             }
         }
         _ if info_class == ObSetInfoClass::WriteContent as u32 => {
+            if entry.obj_type() == Some(crate::object::ObType::Filesystem)
+                && entry.access & crate::security::acl::ACCESS_WRITE == 0
+            {
+                return err_to_u64(SyscallError::Perm);
+            }
             let (drive_idx, inode_num, handle_offset) = crate::hal::without_interrupts(|| {
                 let s = scheduler::current_scheduler();
                 let mut lock = s.lock();
@@ -169,6 +197,21 @@ pub(super) fn dispatch(
                 Err(_) => return err_to_u64(SyscallError::Fault),
             };
             if !path_str.contains(':') { return err_to_u64(SyscallError::Inval); }
+            let token = crate::security::current_token();
+            if let Some(parent) = path_str.rsplit_once('\\').map(|(p, _)| p) {
+                let allowed = crate::globals::with_vfs(|vfs| {
+                    let (drive, node) = vfs.resolve_path(parent).ok()?;
+                    let descriptor = vfs.security_bytes(drive, node.inode);
+                    Some(crate::security::access::vfs_access_check(
+                        &token,
+                        descriptor.as_deref(),
+                        crate::security::acl::ACCESS_WRITE | crate::security::acl::ACCESS_EXECUTE,
+                    ))
+                });
+                if allowed == Some(false) {
+                    return err_to_u64(SyscallError::Perm);
+                }
+            }
             let node = match crate::globals::with_vfs(|vfs| vfs.create(&path_str)) {
                 Ok(n) => n,
                 Err(_) => return err_to_u64(SyscallError::Io),
@@ -178,6 +221,13 @@ pub(super) fn dispatch(
                 (drive_letter - b'A') as usize
             };
             let inode = node.inode;
+            if let Some(bytes) = crate::security::acl::serialize_security_descriptor(
+                &crate::security::access::descriptor_for_token(&token),
+            ) {
+                let _ = crate::globals::with_vfs(|vfs| {
+                    vfs.set_security_bytes(drive_idx, inode, &bytes)
+                });
+            }
             let ob_name = alloc::format!("\\Global\\FileSystem\\{}", path_str);
             let ob_id = match crate::object::ob_create_object(
                 crate::object::ObType::Filesystem, &ob_name,
@@ -190,7 +240,7 @@ pub(super) fn dispatch(
                 let _ = crate::object::namespace::ob_create_directory_tree(&ob_name);
             }
             let _ = crate::object::namespace::ob_insert_object(&ob_name, ob_id);
-            let entry = crate::handle::HandleEntry::ob_object(ob_id, 0);
+            let entry = crate::handle::HandleEntry::ob_object(ob_id, u32::MAX);
             let fd = crate::hal::without_interrupts(|| {
                 let s = scheduler::current_scheduler();
                 let mut lock = s.lock();
@@ -215,6 +265,9 @@ pub(super) fn dispatch(
         }
         _ if info_class == ObSetInfoClass::FileDelete as u32 => {
             if entry.object_id == 0 { return err_to_u64(SyscallError::BadF); }
+            if entry.access & crate::security::acl::ACCESS_DELETE == 0 {
+                return err_to_u64(SyscallError::Perm);
+            }
             let obj = match crate::object::ob_lookup(entry.object_id) {
                 Some(o) => o,
                 None => return err_to_u64(SyscallError::BadF),

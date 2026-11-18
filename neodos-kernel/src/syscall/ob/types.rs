@@ -16,6 +16,18 @@ pub struct ObBasicInfo {
 
 
 #[repr(C)]
+#[repr(C)]
+pub struct ObFileSecurity {
+    pub security_id: u32,
+    pub owner_len: u8,
+    pub group_len: u8,
+    /// bit0: default descriptor (security_id == 0); bit1: DACL present.
+    pub flags: u16,
+    pub owner: [u8; 40],
+    pub group: [u8; 40],
+}
+
+#[repr(C)]
 pub struct ObFileInfo {
     pub size: u64,
     pub drive: u8,

@@ -59,6 +59,20 @@ pub trait FileSystem: Send {
     fn mkdir(&mut self, dir_inode: u32, name: &str) -> Result<VfsNode, VfsError>;
     fn create(&mut self, dir_inode: u32, name: &str) -> Result<VfsNode, VfsError>;
     fn stat(&mut self, inode: u32) -> Result<VfsNode, VfsError>;
+
+    /// Serialized NT security descriptor for `inode`, if the filesystem
+    /// supports persistence. `None` means "use the default descriptor".
+    fn security_bytes(&mut self, _inode: u32) -> Option<alloc::vec::Vec<u8>> {
+        None
+    }
+
+    fn security_id(&mut self, _inode: u32) -> u32 {
+        0
+    }
+
+    fn set_security_bytes(&mut self, _inode: u32, _bytes: &[u8]) -> Result<(), VfsError> {
+        Err(VfsError::NotImplemented)
+    }
     fn remove_file(&mut self, _dir_inode: u32, _name: &str) -> Result<(), VfsError> {
         Err(VfsError::NotImplemented)
     }
@@ -291,6 +305,31 @@ impl Vfs {
     pub fn stat(&mut self, drive_idx: usize, inode: u32) -> Result<VfsNode, VfsError> {
         let fs = self.drives[drive_idx].as_mut().ok_or(VfsError::NotFound)?;
         fs.stat(inode)
+    }
+
+    pub fn security_id(&mut self, drive_idx: usize, inode: u32) -> u32 {
+        self.drives
+            .get_mut(drive_idx)
+            .and_then(|d| d.as_mut())
+            .map(|fs| fs.security_id(inode))
+            .unwrap_or(0)
+    }
+
+    pub fn security_bytes(&mut self, drive_idx: usize, inode: u32) -> Option<alloc::vec::Vec<u8>> {
+        self.drives
+            .get_mut(drive_idx)
+            .and_then(|d| d.as_mut())
+            .and_then(|fs| fs.security_bytes(inode))
+    }
+
+    pub fn set_security_bytes(
+        &mut self,
+        drive_idx: usize,
+        inode: u32,
+        bytes: &[u8],
+    ) -> Result<(), VfsError> {
+        let fs = self.drives.get_mut(drive_idx).and_then(|d| d.as_mut()).ok_or(VfsError::NotFound)?;
+        fs.set_security_bytes(inode, bytes)
     }
 
     pub fn write(&mut self, drive_idx: usize, inode: u32, offset: u64, buf: &[u8]) -> Result<usize, VfsError> {

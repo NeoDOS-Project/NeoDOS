@@ -99,6 +99,21 @@ or violating VFS abstractions.
 - Handle partial reads/writes — loop until complete.
 - Storage priority: prefer NVMe over VirtIO/AHCI for boot.
 
+## NT security (NeoFS v2)
+
+- `DirEntryV2.security_id` lives in the 128-byte entry padding (offset 112);
+  `0` means the default descriptor.
+- Descriptors are persisted in a separate security B-tree
+  (`reserved[4..12]` = root LBA, `reserved[12..16]` = next id). Codec in
+  `security/acl.rs` (`NDSD` v1, max 1 KiB / 32 ACEs).
+- Access is checked with `SeAccessCheck` in `ObOpen`, read/write, create,
+  delete, rename and directory destroy; traversal checks `EXECUTE` per parent.
+- Handles store the granted access mask in `HandleEntry.access`.
+- Do not reintroduce UNIX rwx/mode checks. New files receive an owner
+  descriptor from the creating token.
+- Snapshot/COW does not version the security table yet; descriptor GC on unlink
+  is pending.
+
 ## Common mistakes
 
 - Reading directly from the block device, bypassing the page cache (stale data).
@@ -112,7 +127,8 @@ or violating VFS abstractions.
 - [ ] `FileSystem` trait implemented (new FS) / updated safely (existing)
 - [ ] Mount/unmount tested with no leaks
 - [ ] Page-cache coherence maintained on writes
-- [ ] Path traversal prevented
+- [ ] Path traversal prevented (EXECUTE per directory)
+- [ ] NT DACL checked at open/read/write/create/delete/rename
 - [ ] Storage priority respected; GPT parsed correctly
 - [ ] Tests added; `cargo build`, `neodev test`, `neodev check-deps` pass
 - [ ] `docs/filesystem/overview.md` updated if VFS/format changed

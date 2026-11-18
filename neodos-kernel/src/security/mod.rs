@@ -405,4 +405,93 @@ pub fn register_security_tests() {
         test_true!(se_access_check(&token, Some(&sd), ACCESS_READ));
         test_true!(!se_access_check(&token, Some(&sd), ACCESS_WRITE));
     });
+
+    // ── NT security descriptor codec / VFS check ──
+
+    test_case!("sid_binary_roundtrip", {
+        let sid = sid_builtin_administrators();
+        let mut buf = [0u8; 40];
+        let n = sid.write_binary(&mut buf);
+        test_eq!(n, 8 + 2 * 4);
+        test_eq!(Sid::from_binary(&buf[..n]).unwrap(), sid);
+        test_true!(Sid::from_binary(&buf[..n - 1]).is_none());
+    });
+
+    test_case!("security_descriptor_binary_roundtrip", {
+        use crate::security::acl::{
+            deserialize_security_descriptor, serialize_security_descriptor, Ace, Acl,
+            SecurityDescriptor, ACCESS_ALL, ACCESS_READ,
+        };
+
+        let mut dacl = Acl::new();
+        dacl.insert_ace_canonical(Ace::allow(sid_builtin_system(), ACCESS_ALL));
+        dacl.insert_ace_canonical(Ace::allow(sid_world(), ACCESS_READ));
+        let sd = SecurityDescriptor {
+            revision: 1,
+            owner: Some(sid_builtin_system()),
+            group: Some(sid_builtin_administrators()),
+            dacl: Some(dacl),
+            sacl: None,
+        };
+        let bytes = serialize_security_descriptor(&sd).unwrap();
+        let back = deserialize_security_descriptor(&bytes).unwrap();
+        test_eq!(back.revision, sd.revision);
+        test_eq!(back.owner.unwrap(), sid_builtin_system());
+        test_eq!(back.group.unwrap(), sid_builtin_administrators());
+        test_eq!(back.dacl.as_ref().unwrap().aces.len(), 2);
+
+        let mut bad = bytes.clone();
+        bad[0] ^= 0xff;
+        test_true!(deserialize_security_descriptor(&bad).is_none());
+        test_true!(deserialize_security_descriptor(&bytes[..bytes.len() - 1]).is_none());
+    });
+
+    test_case!("vfs_access_default_and_owner", {
+        use crate::security::access::{
+            default_vfs_descriptor, descriptor_for_token, vfs_access_check,
+        };
+        use crate::security::acl::{serialize_security_descriptor, ACCESS_READ, ACCESS_WRITE};
+        use crate::security::token::Token;
+
+        let user = Token::new_user();
+        let other = Token::new_full(
+            sid_builtin_guest(),
+            false,
+            alloc::vec::Vec::new(),
+            SE_USER_PRIVILEGES,
+            0,
+        );
+        let system = Token::new_full(
+            sid_builtin_system(),
+            false,
+            alloc::vec::Vec::new(),
+            SE_USER_PRIVILEGES,
+            0,
+        );
+        let administrators = Token::new_full(
+            sid_builtin_administrators(),
+            false,
+            alloc::vec![sid_builtin_administrators()],
+            SE_USER_PRIVILEGES,
+            0,
+        );
+
+        // Old entries (no security_id) get the safe default: read/execute for
+        // Everyone, write only for SYSTEM/Administrators.
+        test_true!(vfs_access_check(&user, None, ACCESS_READ));
+        test_true!(!vfs_access_check(&user, None, ACCESS_WRITE));
+        test_true!(vfs_access_check(&system, None, ACCESS_WRITE));
+        test_true!(vfs_access_check(&administrators, None, ACCESS_WRITE));
+
+        // A descriptor owned by the user gives the owner write access.
+        let sd = descriptor_for_token(&user);
+        let bytes = serialize_security_descriptor(&sd).unwrap();
+        test_true!(vfs_access_check(&user, Some(&bytes), ACCESS_WRITE));
+        test_true!(vfs_access_check(&other, Some(&bytes), ACCESS_READ));
+        test_true!(!vfs_access_check(&other, Some(&bytes), ACCESS_WRITE));
+
+        // Encoded but invalid descriptor fails closed.
+        test_true!(!vfs_access_check(&user, Some(b"bad"), ACCESS_READ));
+        let _ = default_vfs_descriptor();
+    });
 }

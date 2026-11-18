@@ -99,7 +99,7 @@ pub extern "C" fn _start() -> ! {
 
     let mut ob_buf = [0u8; 512];
     let ob_path = to_ob_path(old_path, &mut ob_buf);
-    match syscall::sys_ob_open(ob_path, libneodos::syscall::ob_access::READ) {
+    match syscall::sys_ob_open(ob_path, libneodos::syscall::ob_access::READ | libneodos::syscall::ob_access::DELETE) {
         Ok(fd) => {
             let new_bytes = new_path.as_bytes();
             match syscall::sys_ob_set_info(fd, syscall::ObSetInfoClass::VfsRename, new_bytes) {

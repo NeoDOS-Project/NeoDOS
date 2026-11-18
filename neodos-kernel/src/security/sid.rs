@@ -38,6 +38,45 @@ impl Sid {
         sid
     }
 
+    /// Serialize into the NT binary SID form (revision, count, authority,
+    /// sub-authorities). Returns the used length (8 + 4 * count).
+    pub fn write_binary(&self, out: &mut [u8; 40]) -> usize {
+        out.fill(0);
+        out[0] = self.revision;
+        out[1] = self.sub_authority_count;
+        out[2..8].copy_from_slice(&self.identifier_authority);
+        let count = (self.sub_authority_count as usize).min(MAX_SUB_AUTHORITIES);
+        for i in 0..count {
+            out[8 + i * 4..12 + i * 4].copy_from_slice(&self.sub_authorities[i].to_le_bytes());
+        }
+        8 + count * 4
+    }
+
+    /// Parse the NT binary SID form. Rejects truncation and counts > 8.
+    pub fn from_binary(bytes: &[u8]) -> Option<Sid> {
+        if bytes.len() < 8 {
+            return None;
+        }
+        let count = bytes[1] as usize;
+        if count > MAX_SUB_AUTHORITIES || bytes.len() < 8 + count * 4 {
+            return None;
+        }
+        let mut sid = Sid::new();
+        sid.revision = bytes[0];
+        sid.sub_authority_count = count as u8;
+        sid.identifier_authority.copy_from_slice(&bytes[2..8]);
+        for i in 0..count {
+            let at = 8 + i * 4;
+            sid.sub_authorities[i] = u32::from_le_bytes([
+                bytes[at],
+                bytes[at + 1],
+                bytes[at + 2],
+                bytes[at + 3],
+            ]);
+        }
+        Some(sid)
+    }
+
     pub fn format_string(&self) -> alloc::string::String {
         let authority = u64::from_be_bytes([
             0, 0,
@@ -71,6 +110,11 @@ pub fn sid_builtin_system() -> Sid {
     sid_builtin_admin()
 }
 
+/// Built-in `Administrators` group: `S-1-5-32-544`.
+pub fn sid_builtin_administrators() -> Sid {
+    Sid::from_parts(1, &[0, 0, 0, 0, 0, 5], &[32, 544])
+}
+
 /// Built-in account domain base: `S-1-5-21-0-0-0`.
 pub fn sid_builtin_domain() -> Sid {
     Sid::from_parts(1, &[0, 0, 0, 0, 0, 5], &[21, 0, 0, 0])
@@ -99,6 +143,7 @@ lazy_static::lazy_static! {
     /// `SeWellKnownSids` — canonical name → SID table (NT well-known SIDs).
     pub static ref WELL_KNOWN_SIDS: alloc::vec::Vec<(&'static str, Sid)> = alloc::vec![
         ("SYSTEM", sid_builtin_system()),
+        ("Administrators", sid_builtin_administrators()),
         ("Administrator", sid_builtin_administrator()),
         ("Guest", sid_builtin_guest()),
         ("Users", sid_builtin_user()),

@@ -114,9 +114,18 @@ and launched via NeoInit / neoshell.
 Cm keys are hive cells, not long-lived Ob objects, so object DACLs cannot protect
 them. Every mutation API (`cm_create_key`, `cm_set_value`, `cm_delete_value`,
 `cm_delete_key`, including their `ob_set_info` entry points) MUST authorize the
-full key path through `cm/security.rs` before touching the hive. Deleting an
-ancestor of a protected subtree is itself a protected mutation (deletion is
-recursive).
+full key path, evaluate the DACL and mutate the cell **inside the same
+`CM_MANAGER` critical section**. No unlock/relock between authorization and
+mutation. The caller token is obtained before locking Cm. Deleting an ancestor
+of a protected subtree is itself a protected mutation (deletion is recursive).
+
+**INV-13. VFS FILE ACCESS USES NT DACLs, NOT UNIX MODE BITS.**
+NeoFS entries carry a `security_id` (padding of the 128-byte `DirEntryV2`) that
+references a persisted `SecurityDescriptor` (owner, group, DACL). Every file
+access path (`ObOpen`, read/write, create, delete, rename, directory destroy and
+traversal) MUST evaluate `SeAccessCheck` before acting. `security_id = 0` uses
+the safe default descriptor; it is never a bypass. New files receive an owner
+descriptor from the creating token.
 
 ---
 

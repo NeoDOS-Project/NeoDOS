@@ -83,7 +83,7 @@ Built-in commands (CWD, SET, EXIT, CALL) are not pipeable and produce an error i
 | RD `<dir>` | `ob_destroy` (RAX 46) on directory ObObject | `sys_ob_destroy(path)` |
 | COPY `<src> <dst>` | `ob_query_info(ReadContent)` → buffer → `ob_set_info(WriteContent)` | read content, create/overwrite dst, write content |
 | TYPE `<path>` | `ob_query_info(ReadContent)` → `sys_write` stdout | read file content to buffer, print to stdout |
-| DIR `<path>` | `ob_enum` (RAX 44) on directory | `sys_ob_enum(dir, &entries)` → tabular output |
+| DIR `<path>` | `ob_enum` (RAX 44) on directory; per-entry `ObInfoClass::FileSecurity` (RAX 42, class 50) for the owner | `sys_ob_enum(dir, &entries)` + `sys_ob_query_info(fd, FileSecurity)` → tabla con columna `OWNER` (SID) |
 | TREE `<path>` | `ob_enum` recursive (depth-first) | `sys_ob_enum` called per subdirectory |
 | CD `<path>` | `ob_set_info(SetCwd)` via `ARGS_ADDR` field; the kernel VFS path resolver canonicalizes `.` / `..`, validates existence + directory type, then commits atomically | `sys_ob_set_info(cwd_handle, SetCwd, &path)` |
 | CLS | ANSI escape: `\x1B[2J\x1B[H` | `sys_write(1, escape, 7)` |

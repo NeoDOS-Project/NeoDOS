@@ -3,7 +3,7 @@
 use crate::object::types::ObInfoClass;
 use crate::syscall::{err_to_u64, SyscallError, copy_to_user};
 use crate::scheduler;
-use crate::syscall::ob::types::ObFileInfo;
+use crate::syscall::ob::types::{ObFileInfo, ObFileSecurity};
 
 pub(super) fn handles(info_class: u32) -> bool {
     info_class == ObInfoClass::File as u32
@@ -11,6 +11,7 @@ pub(super) fn handles(info_class: u32) -> bool {
         || info_class == ObInfoClass::VolumeLabel as u32
         || info_class == ObInfoClass::Cwd as u32
         || info_class == ObInfoClass::FsckStatus as u32
+        || info_class == ObInfoClass::FileSecurity as u32
 }
 
 /// Dispatch the `fs` info classes.
@@ -47,7 +48,65 @@ pub(super) fn dispatch(
             }
             sz as u64
         }
+        _ if info_class == ObInfoClass::FileSecurity as u32 => {
+            match entry.obj_type() {
+                Some(crate::object::ObType::Filesystem)
+                | Some(crate::object::ObType::Directory) => {}
+                _ => return err_to_u64(SyscallError::Inval),
+            }
+            let drive = entry.drive().unwrap_or(0);
+            let inode = entry.native_id().unwrap_or(0) as u32;
+            let (security_id, bytes) = crate::globals::with_vfs(|vfs| {
+                (
+                    vfs.security_id(drive as usize, inode),
+                    vfs.security_bytes(drive as usize, inode),
+                )
+            });
+            let (sd, is_default) = match bytes {
+                Some(raw) => match crate::security::acl::deserialize_security_descriptor(&raw) {
+                    Some(sd) => (sd, false),
+                    None => return err_to_u64(SyscallError::Io),
+                },
+                None => (crate::security::access::default_vfs_descriptor(), true),
+            };
+            let mut info = ObFileSecurity {
+                security_id,
+                owner_len: 0,
+                group_len: 0,
+                flags: if is_default { 1 } else { 0 },
+                owner: [0u8; 40],
+                group: [0u8; 40],
+            };
+            if let Some(owner) = sd.owner {
+                info.owner_len = owner.write_binary(&mut info.owner) as u8;
+            }
+            if let Some(group) = sd.group {
+                info.group_len = group.write_binary(&mut info.group) as u8;
+            }
+            if sd.dacl.is_some() {
+                info.flags |= 2;
+            }
+            let sz = core::mem::size_of::<ObFileSecurity>();
+            if buf_size < sz {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let raw = unsafe {
+                core::slice::from_raw_parts(
+                    &info as *const ObFileSecurity as *const u8,
+                    sz,
+                )
+            };
+            if copy_to_user(buf_ptr, raw).is_err() {
+                return err_to_u64(SyscallError::Fault);
+            }
+            sz as u64
+        }
         _ if info_class == ObInfoClass::ReadContent as u32 => {
+            if entry.obj_type() == Some(crate::object::ObType::Filesystem)
+                && entry.access & crate::security::acl::ACCESS_READ == 0
+            {
+                return err_to_u64(SyscallError::Perm);
+            }
             let (drive_idx, inode_num, handle_offset) = crate::hal::without_interrupts(|| {
                 let s = scheduler::current_scheduler();
                 let mut lock = s.lock();

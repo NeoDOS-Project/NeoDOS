@@ -1,5 +1,5 @@
 use crate::security::acl::{
-    Acl, SecurityDescriptor, ACE_TYPE_ACCESS_ALLOWED, ACE_TYPE_ACCESS_DENIED,
+    Acl, Ace, SecurityDescriptor, ACE_TYPE_ACCESS_ALLOWED, ACE_TYPE_ACCESS_DENIED,
     ACE_TYPE_SYSTEM_AUDIT,
 };
 use crate::security::token::Token;
@@ -161,5 +161,60 @@ pub fn se_audit(
                 granted
             );
         }
+    }
+}
+
+// ── Filesystem (VFS) descriptors ───────────────────────────────────
+
+/// Default descriptor for entries without a persisted `security_id`
+/// (old images, or files whose descriptor was never set):
+/// SYSTEM/Administrators full, Everyone read.
+pub fn default_vfs_descriptor() -> SecurityDescriptor {
+    let mut dacl = Acl::new();
+    dacl.insert_ace_canonical(Ace::allow(crate::security::sid::sid_builtin_system(), super::acl::ACCESS_ALL));
+    dacl.insert_ace_canonical(Ace::allow(crate::security::sid::sid_builtin_administrators(), super::acl::ACCESS_ALL));
+    dacl.insert_ace_canonical(Ace::allow(
+        crate::security::sid::sid_world(),
+        super::acl::ACCESS_READ | super::acl::ACCESS_EXECUTE,
+    ));
+    let mut sd = SecurityDescriptor::new().with_dacl(dacl);
+    sd.owner = Some(crate::security::sid::sid_builtin_system());
+    sd.group = Some(crate::security::sid::sid_builtin_administrators());
+    sd
+}
+
+/// Descriptor for a newly created file/directory: the caller owns it; the
+/// owner gets full access and Everyone can read.
+pub fn descriptor_for_token(token: &Token) -> SecurityDescriptor {
+    let group = token
+        .groups
+        .first()
+        .copied()
+        .unwrap_or_else(crate::security::sid::sid_builtin_administrators);
+    let mut dacl = Acl::new();
+    dacl.insert_ace_canonical(Ace::allow(token.sid, super::acl::ACCESS_ALL));
+    dacl.insert_ace_canonical(Ace::allow(crate::security::sid::sid_world(), super::acl::ACCESS_READ));
+    SecurityDescriptor {
+        revision: 1,
+        owner: Some(token.sid),
+        group: Some(group),
+        dacl: Some(dacl),
+        sacl: None,
+    }
+}
+
+/// Check `access` against an on-disk descriptor. `None` means the entry has
+/// no persisted descriptor (security_id == 0) and gets the safe default.
+/// A malformed persisted descriptor fails closed.
+pub fn vfs_access_check(token: &Token, descriptor: Option<&[u8]>, access: u32) -> bool {
+    match descriptor {
+        None => {
+            let sd = default_vfs_descriptor();
+            se_access_check(token, Some(&sd), access)
+        }
+        Some(bytes) => match super::acl::deserialize_security_descriptor(bytes) {
+            Some(sd) => se_access_check(token, Some(&sd), access),
+            None => false,
+        },
     }
 }

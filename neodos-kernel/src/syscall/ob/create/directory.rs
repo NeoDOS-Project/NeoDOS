@@ -20,9 +20,21 @@ pub(super) fn dispatch(
             // vfs.mkdir and return a VFS-backed fd (no Ob namespace entry).
             if let Some(vfs_path) = path_str.strip_prefix("\\Global\\FileSystem\\") {
                 if !vfs_path.is_empty() {
-                    match crate::globals::with_vfs(|vfs| vfs.mkdir(vfs_path)) {
-                        Ok(_) => {},
+                    let node = match crate::globals::with_vfs(|vfs| vfs.mkdir(vfs_path)) {
+                        Ok(n) => n,
                         Err(_) => return err_to_u64(SyscallError::Io),
+                    };
+                    let drive_idx = {
+                        let b = vfs_path.as_bytes().first().copied().unwrap_or(b'C');
+                        (b.to_ascii_uppercase() - b'A') as usize
+                    };
+                    let token = crate::security::current_token();
+                    if let Some(bytes) = crate::security::acl::serialize_security_descriptor(
+                        &crate::security::access::descriptor_for_token(&token),
+                    ) {
+                        let _ = crate::globals::with_vfs(|vfs| {
+                            vfs.set_security_bytes(drive_idx, node.inode, &bytes)
+                        });
                     }
                 }
                 let token = crate::hal::without_interrupts(|| {
@@ -32,9 +44,20 @@ pub(super) fn dispatch(
                         .map(|ep| ep.token.clone())
                         .unwrap_or(crate::security::DEFAULT_ADMIN_TOKEN.clone())
                 });
-                return match crate::object::ob_open_path(&path_str, &token, 0) {
+                return match crate::object::ob_open_path(
+                    &path_str,
+                    &token,
+                    crate::security::acl::ACCESS_READ
+                        | crate::security::acl::ACCESS_WRITE
+                        | crate::security::acl::ACCESS_EXECUTE,
+                ) {
                     Ok(ob_id) => {
-                        let entry = crate::handle::HandleEntry::ob_object(ob_id, 0);
+                        let entry = crate::handle::HandleEntry::ob_object(
+                            ob_id,
+                            crate::security::acl::ACCESS_READ
+                                | crate::security::acl::ACCESS_WRITE
+                                | crate::security::acl::ACCESS_EXECUTE,
+                        );
                         let fd = crate::hal::without_interrupts(|| {
                             let s = scheduler::current_scheduler();
                             let mut lock = s.lock();

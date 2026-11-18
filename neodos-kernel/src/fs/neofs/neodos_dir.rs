@@ -21,6 +21,8 @@ pub struct DirEntryV2 {
     pub inline_data: [u8; INLINE_MAX],
     pub extent_lba: u64,
     pub extent_count: u32,
+    /// Opaque id into the filesystem security table (`0` = default descriptor).
+    pub security_id: u32,
 }
 
 pub use crate::fs::vfs::{MODE_DIR, MODE_FILE};
@@ -43,6 +45,7 @@ impl DirEntryV2 {
             inline_data: [0u8; INLINE_MAX],
             extent_lba: 0,
             extent_count: 0,
+            security_id: 0,
         }
     }
 
@@ -58,6 +61,7 @@ impl DirEntryV2 {
             inline_data: [0u8; INLINE_MAX],
             extent_lba: 0,
             extent_count: 0,
+            security_id: 0,
         }
     }
 
@@ -83,6 +87,8 @@ impl DirEntryV2 {
         buf[off..off + 4].copy_from_slice(&self.inline_len.to_le_bytes()); off += 4; // 99
         buf[off..off + 8].copy_from_slice(&self.extent_lba.to_le_bytes()); off += 8; // 107
         buf[off..off + 4].copy_from_slice(&self.extent_count.to_le_bytes()); // 111
+        // security_id lives in the previously unused padding.
+        buf[112..116].copy_from_slice(&self.security_id.to_le_bytes());
         // padding to 128
     }
 
@@ -102,7 +108,22 @@ impl DirEntryV2 {
         let inline_len = u32::from_le_bytes(buf[off..off+4].try_into().unwrap_or([0;4])); off += 4;
         let extent_lba = u64::from_le_bytes(buf[off..off+8].try_into().unwrap_or([0;8])); off += 8;
         let extent_count = u32::from_le_bytes(buf[off..off+4].try_into().unwrap_or([0;4]));
-        DirEntryV2 { name, mode, size, created, modified, checksum, inline_len, inline_data, extent_lba, extent_count }
+        let security_id = u32::from_le_bytes([
+            buf[112], buf[113], buf[114], buf[115],
+        ]);
+        DirEntryV2 {
+            name,
+            mode,
+            size,
+            created,
+            modified,
+            checksum,
+            inline_len,
+            inline_data,
+            extent_lba,
+            extent_count,
+            security_id,
+        }
     }
 
     /// Serializar a entrada de B-tree (key=name, value=128 bytes).
@@ -163,6 +184,16 @@ pub fn register_dir_tests() {
         let loaded = DirEntryV2::deserialize(&buf);
         crate::test_eq!(core::str::from_utf8(&loaded.name).unwrap(), "test.txt");
         crate::test_true!(loaded.is_file());
+        crate::test_eq!(loaded.security_id, 0);
+    });
+
+    crate::test_case!("neodos_dir_security_id_roundtrip", {
+        let mut d = DirEntryV2::new_file("secure.txt");
+        d.security_id = 0x1234_5678;
+        let mut buf = [0u8; DIRENTRY_SIZE];
+        d.serialize(&mut buf);
+        let loaded = DirEntryV2::deserialize(&buf);
+        crate::test_eq!(loaded.security_id, 0x1234_5678);
     });
 
     crate::test_case!("neodos_dir_mode_bits", {

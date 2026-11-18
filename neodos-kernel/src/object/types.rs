@@ -191,6 +191,8 @@ pub enum ObInfoClass {
     Random = 48,
     /// Random source capabilities: `SysRandomCaps` (4 bytes) (#712/M8).
     RandomCaps = 49,
+    /// NT security descriptor metadata for a file/directory (owner/group).
+    FileSecurity = 50,
 }
 
 /// Info classes for sys_ob_set_info (RAX=43).
