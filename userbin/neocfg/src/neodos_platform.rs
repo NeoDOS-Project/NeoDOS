@@ -7,8 +7,8 @@ use alloc::{string::String, vec::Vec};
 use core::mem::size_of;
 
 use libneocfg::{
-    AboutInfo, CfgError, CfgPlatform, CpuInfo, DriveInfo, LocaleOps, MemInfo, PowerOps, ServiceInfo,
-    VersionInfo,
+    AboutInfo, CertEntry, CertImport, CertOps, CertRejection, CfgError, CfgPlatform, CpuInfo,
+    DriveInfo, LocaleOps, MemInfo, PowerOps, ServiceInfo, VersionInfo,
 };
 use libneodos::i18n;
 use libneodos::keyboard;
@@ -30,6 +30,7 @@ struct Aligned<const N: usize>([u8; N]);
 /// NeoDOS-backed [`CfgPlatform`].
 pub struct NeodosPlatform {
     locale: Option<NeodosLocale>,
+    certs: NeodosCerts,
 }
 
 impl NeodosPlatform {
@@ -39,6 +40,7 @@ impl NeodosPlatform {
         // so `power()` stays `None` until #326 wires it.
         NeodosPlatform {
             locale: Some(NeodosLocale),
+            certs: NeodosCerts,
         }
     }
 }
@@ -227,6 +229,102 @@ impl CfgPlatform for NeodosPlatform {
 
     fn locale(&self) -> Option<&dyn LocaleOps> {
         self.locale.as_ref().map(|l| l as &dyn LocaleOps)
+    }
+
+    fn certificates(&self) -> Option<&dyn CertOps> {
+        Some(&self.certs)
+    }
+}
+
+/// Trust store operations over `libtrust` (image bundle + user registry store).
+struct NeodosCerts;
+
+fn entry(e: libtrust::Entry, system: bool) -> CertEntry {
+    CertEntry {
+        fingerprint: e.fingerprint,
+        subject: e.subject,
+        issuer: e.issuer,
+        not_before: e.not_before,
+        not_after: e.not_after,
+        system,
+    }
+}
+
+fn rejection(e: libtrust::validate::TrustError) -> CertRejection {
+    use libtrust::validate::TrustError as T;
+    match e {
+        T::Empty => CertRejection::Empty,
+        T::Malformed => CertRejection::Malformed,
+        T::NotACa => CertRejection::NotCa,
+        T::KeyUsageNotCertSign => CertRejection::KeyUsage,
+        T::Expired => CertRejection::Expired,
+        T::NotYetValid => CertRejection::NotYetValid,
+        T::Unsupported => CertRejection::Unsupported,
+    }
+}
+
+/// Read a whole file through the object manager (`ReadContent`).
+fn read_file(path: &str) -> Option<alloc::vec::Vec<u8>> {
+    let mut ob = [0u8; 256];
+    let prefix = b"\\Global\\FileSystem\\";
+    if ob.len() < prefix.len() {
+        return None;
+    }
+    ob[..prefix.len()].copy_from_slice(prefix);
+    let bytes = path.as_bytes();
+    if prefix.len() + bytes.len() > ob.len() {
+        return None;
+    }
+    ob[prefix.len()..prefix.len() + bytes.len()].copy_from_slice(bytes);
+    let len = prefix.len() + bytes.len();
+    let p = core::str::from_utf8(&ob[..len]).ok()?;
+    let fd = syscall::sys_ob_open(p, ob_access::READ).ok()?;
+    let mut buf = alloc::vec![0u8; 128 * 1024];
+    let n = match syscall::sys_ob_query_info(fd, ObInfoClass::ReadContent, &mut buf) {
+        Ok(n) => n,
+        Err(_) => {
+            let _ = syscall::sys_close(fd);
+            return None;
+        }
+    };
+    let _ = syscall::sys_close(fd);
+    buf.truncate(n);
+    Some(buf)
+}
+
+impl CertOps for NeodosCerts {
+    fn entries(&self) -> Vec<CertEntry> {
+        let mut out: Vec<CertEntry> = Vec::new();
+        for e in libtrust::store::system_entries() {
+            out.push(entry(e, true));
+        }
+        for e in libtrust::store::user_entries() {
+            out.push(entry(e, false));
+        }
+        out
+    }
+
+    fn import_file(&self, path: &str) -> Vec<CertImport> {
+        let Some(bytes) = read_file(path) else {
+            return alloc::vec![CertImport::Rejected(CertRejection::Io)];
+        };
+        let Ok(now) = libclock::system::unix_seconds() else {
+            // Without a trusted clock the validity window cannot be judged.
+            return alloc::vec![CertImport::Rejected(CertRejection::Unsupported)];
+        };
+        libtrust::store::import_all(&bytes, now)
+            .into_iter()
+            .map(|r| match r {
+                Ok(libtrust::store::Imported::Installed(fp)) => CertImport::Installed(fp),
+                Ok(libtrust::store::Imported::AlreadyUser(fp)) => CertImport::AlreadyUser(fp),
+                Ok(libtrust::store::Imported::AlreadySystem(fp)) => CertImport::AlreadySystem(fp),
+                Err(e) => CertImport::Rejected(rejection(e)),
+            })
+            .collect()
+    }
+
+    fn remove(&self, fingerprint: &str) -> Result<(), CfgError> {
+        libtrust::store::remove(fingerprint).map_err(|_| CfgError::ModuleUnavailable)
     }
 }
 

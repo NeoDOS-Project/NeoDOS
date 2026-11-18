@@ -125,6 +125,64 @@ pub trait LocaleOps {
     fn set_locale(&self, tag: &str) -> Result<(), CfgError>;
 }
 
+/// One trust anchor as the UI shows it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CertEntry {
+    /// SHA-256 of the DER, lowercase hex (64 chars).
+    pub fingerprint: String,
+    pub subject: String,
+    pub issuer: String,
+    pub not_before: i64,
+    pub not_after: i64,
+    /// `true` for the read-only image bundle, `false` for an imported CA.
+    pub system: bool,
+}
+
+/// Why a certificate was rejected on import (mirrors the trust store rules).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CertRejection {
+    /// Nothing usable in the file.
+    Empty,
+    /// DER/ASN.1 parse failure.
+    Malformed,
+    /// `basicConstraints.cA` is false or missing: a server certificate.
+    NotCa,
+    /// `keyUsage` is present but does not allow `keyCertSign`.
+    KeyUsage,
+    /// Outside its validity window.
+    Expired,
+    NotYetValid,
+    /// Unsupported algorithm or critical extension.
+    Unsupported,
+    /// The file could not be read.
+    Io,
+}
+
+/// Outcome of importing one certificate from a file.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CertImport {
+    /// Stored now, with this fingerprint.
+    Installed(String),
+    /// Already imported by the user.
+    AlreadyUser(String),
+    /// Already shipped in the image bundle.
+    AlreadySystem(String),
+    /// Rejected; the reason says why.
+    Rejected(CertRejection),
+}
+
+/// Trust store operations (image bundle + imported CAs).
+pub trait CertOps {
+    /// Every anchor, system first then user (both sorted by subject).
+    fn entries(&self) -> Vec<CertEntry>;
+
+    /// Import every certificate in `path` (PEM with one or more, or DER).
+    fn import_file(&self, path: &str) -> Vec<CertImport>;
+
+    /// Remove an imported CA. System anchors are never touched.
+    fn remove(&self, fingerprint: &str) -> Result<(), CfgError>;
+}
+
 /// Everything NeoCfg needs from the host system.
 pub trait CfgPlatform {
     fn version(&self) -> Result<VersionInfo, CfgError>;
@@ -143,4 +201,8 @@ pub trait CfgPlatform {
     fn power(&self) -> Option<&dyn PowerOps>;
     /// Locale/i18n operations, or `None` when the runtime is not present.
     fn locale(&self) -> Option<&dyn LocaleOps>;
+    /// Trust store operations, or `None` when the trust store is absent.
+    fn certificates(&self) -> Option<&dyn CertOps> {
+        None
+    }
 }

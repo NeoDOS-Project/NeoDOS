@@ -45,8 +45,8 @@ pub use i18n::Translator;
 pub use model::{Field, FieldValue, Intent, MenuItem, Text, View};
 pub use module::{CfgModule, ModuleId, ModuleSession, Transition};
 pub use platform::{
-    AboutInfo, CfgError, CfgPlatform, CpuInfo, DriveInfo, LocaleOps, MemInfo, PowerOps, PowerPlan,
-    ServiceInfo, VersionInfo,
+    AboutInfo, CertEntry, CertImport, CertOps, CertRejection, CfgError, CfgPlatform, CpuInfo,
+    DriveInfo, LocaleOps, MemInfo, PowerOps, PowerPlan, ServiceInfo, VersionInfo,
 };
 pub use registry::MODULES;
 pub use ui::CfgUi;

@@ -1,9 +1,9 @@
 //! Host tests for the UI-agnostic core, using the mock seams.
 
 use crate::i18n_keys as k;
-use crate::mocks::{MockPlatform, MockTranslator, MockUi};
+use crate::mocks::{MockCerts, MockPlatform, MockTranslator, MockUi};
 use crate::model::{FieldValue, Intent, Text, View};
-use crate::platform::{CfgPlatform, PowerPlan};
+use crate::platform::{CertEntry, CertImport, CertRejection, CfgPlatform, PowerPlan};
 use crate::{App, MODULES};
 
 fn message_body(ui: &MockUi, index: usize) -> &[Text] {
@@ -14,14 +14,15 @@ fn message_body(ui: &MockUi, index: usize) -> &[Text] {
 }
 
 #[test]
-fn registry_lists_the_five_modules_in_order() {
+fn registry_lists_the_modules_in_order() {
     let ids: Vec<_> = MODULES.iter().map(|m| m.id()).collect();
-    assert_eq!(ids.len(), 5);
+    assert_eq!(ids.len(), 6);
     assert_eq!(ids[0], crate::ModuleId::System);
     assert_eq!(ids[1], crate::ModuleId::Power);
     assert_eq!(ids[2], crate::ModuleId::Locale);
     assert_eq!(ids[3], crate::ModuleId::Keyboard);
-    assert_eq!(ids[4], crate::ModuleId::About);
+    assert_eq!(ids[4], crate::ModuleId::Certificates);
+    assert_eq!(ids[5], crate::ModuleId::About);
 }
 
 #[test]
@@ -33,7 +34,7 @@ fn main_menu_renders_all_modules() {
         View::Menu {
             items, selected, ..
         } => {
-            assert_eq!(items.len(), 5);
+            assert_eq!(items.len(), 6);
             assert_eq!(selected, 0);
             assert!(items.iter().all(|i| i.enabled));
         }
@@ -156,9 +157,10 @@ fn locale_stub_switches_to_ready_path_when_runtime_exists() {
 
 #[test]
 fn about_is_reachable_by_activate_after_navigation() {
-    // Down x4 moves the highlight to About, then Enter activates it.
+    // Down x5 moves the highlight to About, then Enter activates it.
     let tr = MockTranslator::new();
     let mut ui = MockUi::new(vec![
+        Intent::Down,
         Intent::Down,
         Intent::Down,
         Intent::Down,
@@ -171,8 +173,8 @@ fn about_is_reachable_by_activate_after_navigation() {
         let mut app = App::new(MODULES, &tr, &mut ui);
         app.run(&platform).unwrap();
     }
-    // views: Menu x5, About(detail), Menu
-    match &ui.views[5] {
+    // views: Menu x6, About(detail), Menu
+    match &ui.views[6] {
         View::Detail { title, .. } => assert_eq!(*title, Text::Key(k::ABOUT_TITLE)),
         other => panic!("expected About detail, got {other:?}"),
     }
@@ -181,7 +183,7 @@ fn about_is_reachable_by_activate_after_navigation() {
 #[test]
 fn about_shows_version_arch_and_neofs() {
     let tr = MockTranslator::new();
-    let mut ui = MockUi::new(vec![Intent::Select(4), Intent::Char('x')]);
+    let mut ui = MockUi::new(vec![Intent::Select(5), Intent::Char('x')]);
     let platform = MockPlatform::default();
     {
         let mut app = App::new(MODULES, &tr, &mut ui);
@@ -219,7 +221,7 @@ fn about_is_read_only() {
     // About must not mutate platform state: a second view is identical.
     let platform = MockPlatform::default();
     let session = {
-        let m = MODULES[4];
+        let m = MODULES[5];
         assert_eq!(m.id(), crate::ModuleId::About);
         m.create()
     };
@@ -241,4 +243,86 @@ fn version_error_is_propagated_by_the_mock() {
     let mut platform = MockPlatform::default();
     platform.version_error = Some(crate::CfgError::ModuleUnavailable);
     assert_eq!(platform.version().unwrap_err(), crate::CfgError::ModuleUnavailable);
+}
+
+fn cert(fingerprint: &str, subject: &str, system: bool) -> CertEntry {
+    CertEntry {
+        fingerprint: fingerprint.to_owned(),
+        subject: subject.to_owned(),
+        issuer: subject.to_owned(),
+        not_before: 1_700_000_000,
+        not_after: 1_800_000_000,
+        system,
+    }
+}
+
+#[test]
+fn certificates_lists_and_deletes_only_user_cas() {
+    let system = cert("aa", "CN=system-root", true);
+    let user = cert("bb", "CN=user-root", false);
+    let platform = MockPlatform::with_certs(MockCerts::new(vec![system, user]));
+
+    let tr = MockTranslator::new();
+    let mut ui = MockUi::new(vec![
+        Intent::Select(4), // main menu -> Certificates
+        Intent::Select(0), // -> user CAs
+        Intent::Select(0), // -> detail of the only user CA
+        Intent::Char('d'),
+        Intent::Activate, // confirm deletion
+        Intent::Back,     // result -> back
+        Intent::Back,     // module -> main menu
+        Intent::Quit,
+    ]);
+    let mut app = App::new(MODULES, &tr, &mut ui);
+    app.run(&platform).unwrap();
+
+    // The detail screen showed the user CA's subject.
+    assert!(ui.views.iter().any(|v| matches!(
+        v,
+        View::Detail { fields, .. } if fields.iter().any(|f| f.value == FieldValue::Text(Text::Owned("CN=user-root".into())))
+    )));
+
+    // Only the imported CA was removed, and the list no longer offers it.
+    let certs = platform.certs.as_ref().unwrap();
+    assert_eq!(*certs.removed.borrow(), vec!["bb".to_owned()]);
+    let left = certs.entries.borrow();
+    assert_eq!(left.len(), 1);
+    assert!(left[0].system);
+}
+
+#[test]
+fn certificates_import_reports_a_rejected_server_certificate() {
+    let mut certs = MockCerts::new(vec![]);
+    certs.import_result = core::cell::RefCell::new(vec![CertImport::Rejected(CertRejection::NotCa)]);
+    let platform = MockPlatform::with_certs(certs);
+
+    let tr = MockTranslator::new();
+    let mut ui = MockUi::new(vec![
+        Intent::Select(4),                    // main menu -> Certificates
+        Intent::Select(2),                    // -> import
+        Intent::Text("C:\\LEAF.PEM".into()), // path
+        Intent::Back,
+        Intent::Quit,
+    ]);
+    let mut app = App::new(MODULES, &tr, &mut ui);
+    app.run(&platform).unwrap();
+
+    let rejected = ui.views.iter().any(|v| match v {
+        View::Message { body, .. } => body.contains(&Text::Key(k::CERT_REJ_NOT_CA)),
+        _ => false,
+    });
+    assert!(rejected, "the rejection reason must be shown");
+}
+
+#[test]
+fn certificates_without_the_store_says_so() {
+    let platform = MockPlatform::default(); // no certificates()
+    let tr = MockTranslator::new();
+    let mut ui = MockUi::new(vec![Intent::Select(4), Intent::Back, Intent::Quit]);
+    let mut app = App::new(MODULES, &tr, &mut ui);
+    app.run(&platform).unwrap();
+    assert!(ui.views.iter().any(|v| match v {
+        View::Message { body, .. } => body.contains(&Text::Key(k::CERT_UNAVAILABLE)),
+        _ => false,
+    }));
 }

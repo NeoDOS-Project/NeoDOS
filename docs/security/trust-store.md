@@ -66,6 +66,7 @@ como deuda en #753-adyacente.
   sustituirlos).
 - `--ca`/`-` no cambian: la validación de cadena, hostname y fechas es la misma
   con anclas importadas.
-- **NeoCfg**: la sección futura `Security → Certificates` consume
-  `libtrust::store::{system_entries, user_entries, import_all, remove}`; el
-  módulo de TUI es solo presentación (ver `libneocfg`).
+- **NeoCfg**: el módulo *Certificados* (lista principal) consume
+  `libtrust::store::{system_entries, user_entries, import_all, remove}` a través
+  del seam `CfgPlatform::certificates()`; muestra las anclas del sistema (solo
+  lectura), permite importar desde un fichero y borrar solo las CAs de usuario.

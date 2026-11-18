@@ -1,7 +1,9 @@
 //! Ordered registry of NeoCfg modules.
 
 use crate::module::CfgModule;
-use crate::modules::{AboutModule, KeyboardModule, LocaleModule, PowerModule, SystemModule};
+use crate::modules::{
+    AboutModule, CertificatesModule, KeyboardModule, LocaleModule, PowerModule, SystemModule,
+};
 
 /// The registered modules, in main-menu order.
 ///
@@ -12,5 +14,6 @@ pub static MODULES: &[&dyn CfgModule] = &[
     &PowerModule,
     &LocaleModule,
     &KeyboardModule,
+    &CertificatesModule,
     &AboutModule,
 ];

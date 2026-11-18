@@ -9,8 +9,8 @@ use core::cell::{Cell, RefCell};
 use crate::i18n::Translator;
 use crate::model::{Intent, View};
 use crate::platform::{
-    AboutInfo, CfgError, CfgPlatform, CpuInfo, DriveInfo, LocaleOps, MemInfo, PowerOps, PowerPlan,
-    ServiceInfo, VersionInfo,
+    AboutInfo, CertEntry, CertImport, CertOps, CfgError, CfgPlatform, CpuInfo, DriveInfo, LocaleOps,
+    MemInfo, PowerOps, PowerPlan, ServiceInfo, VersionInfo,
 };
 use crate::ui::CfgUi;
 
@@ -39,6 +39,57 @@ impl MockTranslator {
 impl Translator for MockTranslator {
     fn tr(&self, id: u32) -> &str {
         self.table.get(&id).map(|s| s.as_str()).unwrap_or("?")
+    }
+}
+
+/// Trust-store double: an in-memory list plus a scripted import result.
+#[derive(Default)]
+pub struct MockCerts {
+    pub entries: RefCell<Vec<CertEntry>>,
+    pub import_result: RefCell<Vec<CertImport>>,
+    /// Fingerprints passed to `remove`, in order.
+    pub removed: RefCell<Vec<String>>,
+}
+
+impl MockCerts {
+    pub fn new(entries: Vec<CertEntry>) -> Self {
+        MockCerts {
+            entries: RefCell::new(entries),
+            import_result: RefCell::new(Vec::new()),
+            removed: RefCell::new(Vec::new()),
+        }
+    }
+}
+
+impl CertOps for MockCerts {
+    fn entries(&self) -> Vec<CertEntry> {
+        self.entries.borrow().clone()
+    }
+
+    fn import_file(&self, _path: &str) -> Vec<CertImport> {
+        let outcomes = self.import_result.borrow().clone();
+        for outcome in &outcomes {
+            if let CertImport::Installed(fp) = outcome {
+                let mut entries = self.entries.borrow_mut();
+                entries.push(CertEntry {
+                    fingerprint: fp.clone(),
+                    subject: "CN=mock-imported".to_owned(),
+                    issuer: "CN=mock-imported".to_owned(),
+                    not_before: 0,
+                    not_after: 0,
+                    system: false,
+                });
+            }
+        }
+        outcomes
+    }
+
+    fn remove(&self, fingerprint: &str) -> Result<(), CfgError> {
+        self.removed.borrow_mut().push(fingerprint.to_owned());
+        self.entries
+            .borrow_mut()
+            .retain(|e| e.system || e.fingerprint != fingerprint);
+        Ok(())
     }
 }
 
@@ -137,6 +188,7 @@ pub struct MockPlatform {
     pub keyboard: RefCell<String>,
     pub power: Option<MockPower>,
     pub locale: Option<MockLocale>,
+    pub certs: Option<MockCerts>,
     /// When set, `version()` fails with this error (to exercise error paths).
     pub version_error: Option<CfgError>,
 }
@@ -179,6 +231,7 @@ impl Default for MockPlatform {
             keyboard: RefCell::new("us".to_owned()),
             power: None,
             locale: None,
+            certs: None,
             version_error: None,
         }
     }
@@ -194,6 +247,12 @@ impl MockPlatform {
     pub fn with_locale(active: &str, available: &[&str]) -> Self {
         let mut p = Self::default();
         p.locale = Some(MockLocale::new(active, available));
+        p
+    }
+
+    pub fn with_certs(certs: MockCerts) -> Self {
+        let mut p = Self::default();
+        p.certs = Some(certs);
         p
     }
 }
@@ -247,6 +306,10 @@ impl CfgPlatform for MockPlatform {
 
     fn locale(&self) -> Option<&dyn LocaleOps> {
         self.locale.as_ref().map(|l| l as &dyn LocaleOps)
+    }
+
+    fn certificates(&self) -> Option<&dyn CertOps> {
+        self.certs.as_ref().map(|c| c as &dyn CertOps)
     }
 }
 

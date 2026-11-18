@@ -19,6 +19,13 @@
   truncado o editado se rechaza en vez de confiar en un subconjunto. `neocurl`
   avisa si el bundle está fechado en el futuro o tiene más de dos años (aviso,
   no fallo).
+- **NeoCfg · Certificados.** Nuevo módulo en la lista principal: muestra las
+  anclas del sistema (solo lectura, con su recuento), lista las CAs de usuario
+  con detalle (sujeto, emisor, validez, huella) y permite importar desde un
+  fichero (PEM/DER) o eliminar solo las importadas, con confirmación. Consume
+  el trust store a través de `CfgPlatform::certificates()`; claves nuevas en
+  `data/locale/{en-US,es-ES,ca-ES}/neocfg.toml` (`i18n_keys.rs` y
+  `libneodos/src/i18n_keymap.rs` regenerados).
 - **System trust store (D8).** La imagen incluye un bundle DER concatenado en
   `\NeoDOS\System\config\roots.der`, empaquetado por NeoDev desde el store de
   la máquina anfitriona (`NEODOS_TRUST_BUNDLE` lo sustituye). `libnet` lo lee
