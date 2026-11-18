@@ -27,6 +27,13 @@
 
 ### Fixed
 
+- **TUI en blanco: EFAULT en las escrituras de `console.nxl`.** Las envolturas
+  de syscall de los NXL (`libconsole-nxl`, `libneodos-nxl`, `libnet-nxl`)
+  dejaban que el compilador asignara los argumentos a `rbx`/`rcx`/`rdx`/`r8`,
+  que el propio bloque escribía: `mov eax, 20` podía borrar `buf` (asignado a
+  `rax`) y el kernel recibía un puntero basura, devolviendo EFAULT. Ahora se
+  copian primero a registros declarados como clobbered y solo después al ABI.
+  `neocfg` (y cualquier TUI que escriba por `console.nxl`) vuelve a dibujar.
 - **Escritura inline parcial (#755).** `file_write` copiaba `new_size` bytes
   desde un buffer de otra longitud y hacía panic en Ring 0 con cualquier append
   o sobrescritura parcial de un fichero de hasta 16 B. Ahora preserva el prefijo

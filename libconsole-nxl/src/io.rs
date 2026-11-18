@@ -6,19 +6,30 @@ use core::arch::asm;
 
 pub(crate) unsafe fn sys_write(fd: u8, buf: *const u8, len: usize) -> i64 {
     let r: i64;
-    asm!(
-        "push rbx", "push rcx", "push rdx",
-        "mov rax, 20",
-        "mov rbx, {fd}",
-        "mov rcx, {buf}",
-        "mov rdx, {len}",
-        "int 0x80",
-        "pop rdx", "pop rcx", "pop rbx",
-        fd = in(reg) fd as u64,
-        buf = in(reg) buf as u64,
-        len = in(reg) len as u64,
-        out("rax") r,
-    );
+    // Los argumentos se copian primero a r8-r10 (declarados como clobbered, así
+    // que el compilador no puede colocarlos ahí) y sólo después a los registros
+    // del ABI. Sin este paso podía asignar `buf` a `rax` y `mov eax, 20` lo
+    // borraba: el kernel recibía un puntero basura y devolvía EFAULT (TUI en
+    // blanco en todo lo que escribe por `console.nxl`).
+    unsafe {
+        core::arch::asm!(
+            "mov r8, {fd}",
+            "mov r9, {buf}",
+            "mov r10, {len}",
+            "mov eax, 20",
+            "push rbx", "push rcx", "push rdx",
+            "mov rbx, r8",
+            "mov rcx, r9",
+            "mov rdx, r10",
+            "int 0x80",
+            "pop rdx", "pop rcx", "pop rbx",
+            fd = in(reg) fd as u64,
+            buf = in(reg) buf as u64,
+            len = in(reg) len as u64,
+            out("rax") r,
+            out("r8") _, out("r9") _, out("r10") _,
+        );
+    }
     r
 }
 
@@ -32,20 +43,23 @@ pub(crate) fn read_byte() -> i32 {
     let mut c: u8 = 0;
     let r: u64;
     unsafe {
-        asm!(
+        core::arch::asm!(
+            "mov r9, {buf}",
+            "mov eax, 21",
             "push rbx", "push rcx", "push rdx",
-            "mov rax, 21",
-            "mov rbx, 0",
-            "mov rcx, {buf}",
-            "mov rdx, 1",
+            "xor ebx, ebx",
+            "mov rcx, r9",
+            "mov edx, 1",
             "int 0x80",
             "pop rdx", "pop rcx", "pop rbx",
             buf = in(reg) (&mut c as *mut u8),
             out("rax") r,
+            out("r9") _,
         );
     }
     if r & 0x8000_0000_0000_0000 != 0 { -1 } else { c as i32 }
 }
+
 pub(crate) fn cstr_len(s: *const u8, max: usize) -> usize {
     unsafe {
         for i in 0..max {
