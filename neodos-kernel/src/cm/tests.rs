@@ -745,7 +745,7 @@ pub fn register_cm_tests() {
     test_case!("cm_trust_acl_admin_and_user", {
         use crate::cm::security::{authorize_delete_token, authorize_token};
         use crate::security::acl::{ACCESS_READ, ACCESS_WRITE};
-        use crate::security::sid::{sid_builtin_admin, sid_world};
+        use crate::security::sid::{sid_builtin_administrators, sid_world};
         use crate::security::token::Token;
 
         let trust = "\\Registry\\Machine\\Software\\NeoDOS\\Trust";
@@ -755,7 +755,7 @@ pub fn register_cm_tests() {
         let admin = Token::new_admin();
         let user = Token::new_user();
         let mut elevated = Token::new_user();
-        elevated.add_group(sid_builtin_admin());
+        elevated.add_group(sid_builtin_administrators());
 
         // Reads are public.
         test_true!(authorize_token(&user, trust, ACCESS_READ));

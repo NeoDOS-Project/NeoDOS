@@ -31,7 +31,7 @@ pub fn handler_ob_open(regs: crate::syscall::Registers) -> u64 {
         let lock = s.lock();
         lock.current_eprocess()
             .map(|ep| ep.token.clone())
-            .unwrap_or(crate::security::DEFAULT_ADMIN_TOKEN.clone())
+            .unwrap_or(crate::security::DEFAULT_SYSTEM_TOKEN.clone())
     });
     ktrace!(LogSubsys::Object, "ObOpen '{}': token read; calling ob_open_path", path);
 

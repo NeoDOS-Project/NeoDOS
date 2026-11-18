@@ -328,6 +328,14 @@ Filesystem snapshot operations: CREATE(0), RESTORE(1), LIST(2), PURGE(3).
 - **Args**: `RBX`=fd, `RCX`=op, `RDX`=buf, `R8`=size.
 - **Returns**: snapshot_id (CREATE), count (LIST), or error code.
 
+### ObCreate(Process) identity flag
+
+`Syscall 41` accepts `attrs` low bytes for stdin/stdout/stderr (`0xFF` =
+inherit). Bit 32 (`1 << 32`) asks the kernel to spawn the process with the
+default unprivileged SAM account (`NeoDOS`). Only an admin/SYSTEM caller may
+set it; the token is built from SAM, never from caller-supplied bits. Child
+processes inherit the parent token.
+
 ### Registry (RAX 50-59)
 
 | RAX | Syscall | Purpose |

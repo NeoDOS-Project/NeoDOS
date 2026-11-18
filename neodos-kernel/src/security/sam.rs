@@ -77,7 +77,7 @@ impl SamDatabase {
     /// accounts; entries that do not fit are ignored.
     pub fn with_builtins() -> Self {
         use crate::security::sid::{
-            sid_builtin_administrator, sid_builtin_guest, sid_builtin_system,
+            sid_builtin_administrator, sid_builtin_guest, sid_builtin_system, sid_builtin_user,
         };
 
         let mut db = SamDatabase::new();
@@ -97,6 +97,13 @@ impl SamDatabase {
         system.full_name = String::from("Local System");
         system.comment = String::from("Operating system account");
         let _ = db.add_user(system);
+
+        // Default interactive account until the logon/session layer (#37/#40)
+        // issues per-user tokens. It is deliberately not an administrator.
+        let mut user = SamEntry::new("NeoDOS", sid_builtin_user(), false);
+        user.full_name = String::from("NeoDOS User");
+        user.comment = String::from("Default unprivileged interactive account");
+        let _ = db.add_user(user);
 
         db
     }
@@ -297,7 +304,7 @@ pub fn register_sam_tests() {
     use crate::test_eq;
     use crate::test_true;
     use crate::test_false;
-    use crate::security::sid::{sid_builtin_admin, sid_builtin_user};
+    use crate::security::sid::{sid_builtin_administrator, sid_builtin_user};
 
     test_case!("sam_create_database", {
         let db = SamDatabase::new();
@@ -306,7 +313,7 @@ pub fn register_sam_tests() {
 
     test_case!("sam_add_user", {
         let mut db = SamDatabase::new();
-        let admin_sid = sid_builtin_admin();
+        let admin_sid = sid_builtin_administrator();
         let entry = SamEntry::new("Admin", admin_sid, true);
         db.add_user(entry).unwrap();
         test_eq!(db.entry_count(), 1);
@@ -315,7 +322,7 @@ pub fn register_sam_tests() {
 
     test_case!("sam_find_by_username", {
         let mut db = SamDatabase::new();
-        db.add_user(SamEntry::new("Admin", sid_builtin_admin(), true)).unwrap();
+        db.add_user(SamEntry::new("Admin", sid_builtin_administrator(), true)).unwrap();
         db.add_user(SamEntry::new("User1", sid_builtin_user(), false)).unwrap();
 
         let found = db.find_by_username("admin").unwrap();
@@ -328,7 +335,7 @@ pub fn register_sam_tests() {
 
     test_case!("sam_find_by_sid", {
         let mut db = SamDatabase::new();
-        let admin_sid = sid_builtin_admin();
+        let admin_sid = sid_builtin_administrator();
         db.add_user(SamEntry::new("Admin", admin_sid, true)).unwrap();
 
         let found = db.find_by_sid(&admin_sid).unwrap();
@@ -337,7 +344,7 @@ pub fn register_sam_tests() {
 
     test_case!("sam_remove_user", {
         let mut db = SamDatabase::new();
-        db.add_user(SamEntry::new("Admin", sid_builtin_admin(), true)).unwrap();
+        db.add_user(SamEntry::new("Admin", sid_builtin_administrator(), true)).unwrap();
         db.add_user(SamEntry::new("Temp", sid_builtin_user(), false)).unwrap();
         test_eq!(db.entry_count(), 2);
 
@@ -356,7 +363,7 @@ pub fn register_sam_tests() {
 
     test_case!("sam_parse_roundtrip", {
         let mut db = SamDatabase::new();
-        db.add_user(SamEntry::new("Admin", sid_builtin_admin(), true)).unwrap();
+        db.add_user(SamEntry::new("Admin", sid_builtin_administrator(), true)).unwrap();
         let mut user_entry = SamEntry::new("Alejandro", sid_builtin_user(), false);
         user_entry.full_name = String::from("Alejandro Martin");
         user_entry.comment = String::from("Default user");
@@ -370,7 +377,7 @@ pub fn register_sam_tests() {
 
         let admin = parsed.find_by_username("Admin").unwrap();
         test_true!(admin.is_admin());
-        test_eq!(admin.sid, sid_builtin_admin());
+        test_eq!(admin.sid, sid_builtin_administrator());
 
         let user = parsed.find_by_username("Alejandro").unwrap();
         test_false!(user.is_admin());
@@ -408,7 +415,7 @@ pub fn register_sam_tests() {
 
     test_case!("sam_case_insensitive_lookup", {
         let mut db = SamDatabase::new();
-        db.add_user(SamEntry::new("Administrator", sid_builtin_admin(), true)).unwrap();
+        db.add_user(SamEntry::new("Administrator", sid_builtin_administrator(), true)).unwrap();
         test_true!(db.find_by_username("ADMINISTRATOR").is_some());
         test_true!(db.find_by_username("administrator").is_some());
         test_true!(db.find_by_username("Administrator").is_some());
@@ -419,7 +426,7 @@ pub fn register_sam_tests() {
             sid_builtin_administrator, sid_builtin_guest, sid_builtin_system,
         };
         let db = SamDatabase::with_builtins();
-        test_eq!(db.entry_count(), 3);
+        test_eq!(db.entry_count(), 4);
 
         let admin = db.find_by_username("administrator").unwrap();
         test_true!(admin.is_admin());
@@ -434,5 +441,9 @@ pub fn register_sam_tests() {
         let system = db.find_by_username("system").unwrap();
         test_true!(system.is_admin());
         test_eq!(system.sid, sid_builtin_system());
+
+        let user = db.find_by_username("neodos").unwrap();
+        test_true!(!user.is_admin());
+        test_true!(!user.is_disabled());
     });
 }

@@ -6,6 +6,14 @@
 
 ### Security
 
+- **Identidad no privilegiada real (#767/#768).** SIDs canónicos de
+  `Users` (`S-1-5-32-545`) y `Administrators` (`S-1-5-32-544`); SYSTEM
+  (`S-1-5-18`) y Administrator (`-500`) separados. `Token::from_sam` emite el
+  token desde SAM con grupos; NeoInit lanza el shell como la cuenta no-admin
+  `NeoDOS` mediante el flag de identidad de `ObCreate(Process)`, mientras
+  servicios/NeoInit siguen SYSTEM. `TokenInfo` expone SID/grupos/sesión y los
+  perfiles reciben DACL de propietario. La elevación (`runas`/login) queda en
+  fase 2 (#37/#39/#40).
 - **`dir` muestra el owner NT.** `ObInfoClass::FileSecurity` (50) devuelve
   `security_id`, owner y group SID; `coredir` consulta cada entrada y añade la
   columna `OWNER` (por ejemplo `S-1-5-18`). Las entradas con `security_id = 0`
@@ -24,8 +32,8 @@
   renombrado y recorrido de directorios; los handles conservan el acceso
   concedido. Las entradas antiguas (`security_id = 0`) usan un descriptor por
   defecto: Everyone lee/ejecuta y solo SYSTEM/Administrators escriben. No se
-  usan bits rwx de estilo UNIX. Sigue bloqueada la prueba Ring 3 real por #767
-  (todo el userland hereda token admin).
+  usan bits rwx de estilo UNIX. La prueba de aislamiento Ring 3 ya es posible
+  con la identidad no privilegiada de #767.
 - **Autorización real del almacén de confianza.** Las mutaciones del Registry
   sobre `\Registry\Machine\Software\NeoDOS\Trust` pasan por una DACL en Cm
   (`cm/security.rs`): `Everyone` puede leer las CAs públicas; crear, escribir o

@@ -193,6 +193,8 @@ pub enum ObInfoClass {
     RandomCaps = 49,
     /// NT security descriptor metadata for a file/directory (owner/group).
     FileSecurity = 50,
+    /// Current process token: SID, groups, session and integrity.
+    TokenInfo = 51,
 }
 
 /// Info classes for sys_ob_set_info (RAX=43).

@@ -32,7 +32,7 @@ pub(super) fn handler_cm_open_key(regs: Registers) -> u64 {
         let lock = s.lock();
         lock.current_eprocess()
             .map(|ep| ep.token.clone())
-            .unwrap_or(crate::security::DEFAULT_ADMIN_TOKEN.clone())
+            .unwrap_or(crate::security::DEFAULT_SYSTEM_TOKEN.clone())
     });
 
     // Try direct Ob namespace lookup first (handles mount points exactly).

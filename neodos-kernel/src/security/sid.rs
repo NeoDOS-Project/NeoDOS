@@ -101,13 +101,9 @@ impl fmt::Display for Sid {
     }
 }
 
-pub fn sid_builtin_admin() -> Sid {
-    Sid::from_parts(1, &[0, 0, 0, 0, 0, 5], &[18])
-}
-
 /// NT AUTHORITY\SYSTEM (`LOCAL_SYSTEM`, `S-1-5-18`).
 pub fn sid_builtin_system() -> Sid {
-    sid_builtin_admin()
+    Sid::from_parts(1, &[0, 0, 0, 0, 0, 5], &[18])
 }
 
 /// Built-in `Administrators` group: `S-1-5-32-544`.
@@ -134,6 +130,11 @@ pub fn sid_builtin_user() -> Sid {
     Sid::from_parts(1, &[0, 0, 0, 0, 0, 5], &[21, 0, 0, 0, RID_USER])
 }
 
+/// Built-in `Users` group: `S-1-5-32-545` (not the `-1000` account RID).
+pub fn sid_builtin_users() -> Sid {
+    Sid::from_parts(1, &[0, 0, 0, 0, 0, 5], &[32, 545])
+}
+
 /// `Everyone` (`S-1-1-0`): the world trustee used by read-only DACLs.
 pub fn sid_world() -> Sid {
     Sid::from_parts(1, &[0, 0, 0, 0, 0, 1], &[0])
@@ -146,7 +147,8 @@ lazy_static::lazy_static! {
         ("Administrators", sid_builtin_administrators()),
         ("Administrator", sid_builtin_administrator()),
         ("Guest", sid_builtin_guest()),
-        ("Users", sid_builtin_user()),
+        ("Users", sid_builtin_users()),
+        ("User", sid_builtin_user()),
         ("Everyone", sid_world()),
     ];
 }

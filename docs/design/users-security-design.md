@@ -29,9 +29,9 @@ The kernel already has a complete NT-style security foundation in `src/security/
 
 | Gap | Impact | Since |
 | ----- | -------- | ------- |
-| SAM not wired to process creation | All processes get DEFAULT_ADMIN_TOKEN | v0.44 |
+| SAM token issuance | Phase 1 done in v0.53 (`Token::from_sam`, shell as `NeoDOS`); real logon pending | v0.44 |
 | No login/authentication flow | No way to authenticate, no sessions | never |
-| Group SIDs not checked in SeAccessCheck | `token.groups` unused by ACL evaluation | v0.44 |
+| Group SIDs checked in SeAccessCheck | Done in v0.53: groups come from SAM and ACL evaluation uses them | v0.44 |
 | Privileges not enforced | `has_privilege()` exists but never called | v0.44 |
 | No security on VFS/NeoFS paths | File operations bypass all access checks | never |
 | No security on Registry keys | `sec_desc_cell` always NULL | never |
@@ -68,12 +68,17 @@ struct Eprocess {
 }
 ```
 
-**Token lifecycle:**
+**Token lifecycle (v0.53):**
 
-- PID 0 (Idle): `Token::new_admin()`
-- PID 1 (NeoInit): `DEFAULT_ADMIN_TOKEN.clone()`
-- Ring 3 processes: `DEFAULT_USER_TOKEN` → then overwritten by parent's token via `parent_ep.token.clone()`
-- No mechanism to create a process with a different token than the parent's
+- PID 0 (Idle), kernel threads, services and NeoInit: `Token::new_system()`
+  (`S-1-5-18`), i.e. `DEFAULT_SYSTEM_TOKEN`.
+- Ring 3 processes inherit the parent token (`parent_ep.token.clone()`).
+- `ObCreate(Process)` attrs bit 32 (admin/SYSTEM only) asks for the default
+  unprivileged account: the kernel issues `Token::from_sam("NeoDOS", 1)`
+  (`-1000`, `is_admin == false`, `Users` group) before the initial thread is
+  activated. NeoInit uses it for `neoshell.nxe` only.
+- `Token::new_admin()` is the built-in `Administrator` account (`-500`) with
+  `Users` + `Administrators`; `runas`/login are phase 2 (#37/#39/#40).
 
 ### 1.5 Filesystem — Current Permission Model
 
@@ -352,6 +357,12 @@ ob_query_info(process_fd, TokenInfo, &buf)
 > `security_id: u32` in its padding; the owner, group and DACL live in a
 > persistent NeoFS security table (see `docs/filesystem/neofs-v2.md`). This is
 > NT-style DACL storage, not UNIX mode bits.
+>
+> Phase 1 of #767 issues tokens from SAM (`Token::from_sam`), keeps
+> SYSTEM/admin services and runs the interactive shell as the non-admin
+> `NeoDOS` account via an `ObCreate(Process)` attrs bit.
+> `ObInfoClass::TokenInfo` exposes the token; profile directories get an NT
+> DACL. Sessions/login (`SessionManager`, `neologon`) remain phase 2.
 
 Add an 8-byte owner SID field to DirEntryV2. The on-disk format grows from 128 to 136 bytes.
 

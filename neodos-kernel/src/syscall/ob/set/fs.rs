@@ -198,20 +198,25 @@ pub(super) fn dispatch(
             };
             if !path_str.contains(':') { return err_to_u64(SyscallError::Inval); }
             let token = crate::security::current_token();
-            if let Some(parent) = path_str.rsplit_once('\\').map(|(p, _)| p) {
-                let allowed = crate::globals::with_vfs(|vfs| {
+            let parent_descriptor = if let Some(parent) = path_str.rsplit_once('\\').map(|(p, _)| p) {
+                let info = crate::globals::with_vfs(|vfs| {
                     let (drive, node) = vfs.resolve_path(parent).ok()?;
                     let descriptor = vfs.security_bytes(drive, node.inode);
-                    Some(crate::security::access::vfs_access_check(
+                    let allowed = crate::security::access::vfs_access_check(
                         &token,
                         descriptor.as_deref(),
                         crate::security::acl::ACCESS_WRITE | crate::security::acl::ACCESS_EXECUTE,
-                    ))
+                    );
+                    Some((allowed, descriptor))
                 });
-                if allowed == Some(false) {
-                    return err_to_u64(SyscallError::Perm);
+                match info {
+                    Some((true, descriptor)) => descriptor,
+                    Some((false, _)) => return err_to_u64(SyscallError::Perm),
+                    None => None,
                 }
-            }
+            } else {
+                None
+            };
             let node = match crate::globals::with_vfs(|vfs| vfs.create(&path_str)) {
                 Ok(n) => n,
                 Err(_) => return err_to_u64(SyscallError::Io),
@@ -222,7 +227,7 @@ pub(super) fn dispatch(
             };
             let inode = node.inode;
             if let Some(bytes) = crate::security::acl::serialize_security_descriptor(
-                &crate::security::access::descriptor_for_token(&token),
+                &crate::security::access::child_descriptor(parent_descriptor.as_deref(), &token),
             ) {
                 let _ = crate::globals::with_vfs(|vfs| {
                     vfs.set_security_bytes(drive_idx, inode, &bytes)

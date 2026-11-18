@@ -22,7 +22,7 @@ impl Eprocess {
             obj_id: None,
             ob_id: None,
             address_space: address_space::AddressSpace::new(),
-            token: crate::security::DEFAULT_ADMIN_TOKEN.clone(),
+            token: crate::security::DEFAULT_SYSTEM_TOKEN.clone(),
             vt_num: 0,
             args: [0u8; 256],
         }
@@ -46,7 +46,7 @@ impl Eprocess {
             obj_id: None,
             ob_id: None,
             address_space: address_space::AddressSpace::new(),
-            token: crate::security::DEFAULT_ADMIN_TOKEN.clone(),
+            token: crate::security::DEFAULT_SYSTEM_TOKEN.clone(),
             vt_num: 0,
             args: [0u8; 256],
         }
@@ -70,7 +70,7 @@ impl Eprocess {
             obj_id: None,
             ob_id: None,
             address_space: address_space::AddressSpace::new(),
-            token: crate::security::DEFAULT_ADMIN_TOKEN.clone(),
+            token: crate::security::DEFAULT_SYSTEM_TOKEN.clone(),
             vt_num: 0,
             args: [0u8; 256],
         }

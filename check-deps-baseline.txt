@@ -56,7 +56,7 @@
   security/mod.rs: imports 'syscall::SyscallError::Perm' which contains forbidden dep(s): syscall
   security/mod.rs: imports 'syscall::check_syscall_permission' which contains forbidden dep(s): syscall
   security/mod.rs: imports 'syscall::err_to_u64' which contains forbidden dep(s): syscall
-  urn/mod.rs: imports 'security::DEFAULT_ADMIN_TOKEN' which contains forbidden dep(s): security
+  urn/mod.rs: imports 'security::DEFAULT_SYSTEM_TOKEN' which contains forbidden dep(s): security
   urn/mod.rs: imports 'security::acl::ACCESS_READ' which contains forbidden dep(s): security
   urn/mod.rs: imports 'security::acl::ACCESS_WRITE' which contains forbidden dep(s): security
   urn/mod.rs: imports 'security::token::Token' which contains forbidden dep(s): security
@@ -142,5 +142,5 @@
   infra/usermode.rs: imports 'globals::with_vfs_site' which contains forbidden dep(s): globals
   infra/usermode.rs: imports 'object' which contains forbidden dep(s): object
   infra/usermode.rs: imports 'object::ObType' which contains forbidden dep(s): object
-  infra/usermode.rs: imports 'security::DEFAULT_ADMIN_TOKEN' which contains forbidden dep(s): security
+  infra/usermode.rs: imports 'security::DEFAULT_SYSTEM_TOKEN' which contains forbidden dep(s): security
   infra/usermode.rs: imports 'elf::LoadRegion::new' which contains forbidden dep(s): elf
