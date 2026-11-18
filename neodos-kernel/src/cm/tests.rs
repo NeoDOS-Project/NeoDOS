@@ -698,4 +698,88 @@ pub fn register_cm_tests() {
         test_true!(hive.query_value(if0, "IP").is_none());
         test_true!(hive.query_value(if0, "Mask").is_none());
     });
+
+    // ── Trust-store key authorization (#A) ──
+
+    test_case!("cm_key_path_rebuilds", {
+        let mut hive = Hive::new("PathHive");
+        let root = hive.root_cell();
+        let trust = hive.create_key(root, "Trust").unwrap();
+        let user = hive.create_key(trust, "UserCAs").unwrap();
+        let leaf = hive.create_key(user, "abc").unwrap();
+
+        test_eq!(hive.key_path(root).unwrap(), "");
+        test_eq!(hive.key_path(trust).unwrap(), "Trust");
+        test_eq!(hive.key_path(user).unwrap(), "Trust\\UserCAs");
+        test_eq!(hive.key_path(leaf).unwrap(), "Trust\\UserCAs\\abc");
+    });
+
+    test_case!("cm_trust_path_matching", {
+        use crate::cm::security::{path_contains_trust, path_is_protected};
+
+        test_true!(path_is_protected(
+            "\\Registry\\Machine\\Software\\NeoDOS\\Trust"
+        ));
+        test_true!(path_is_protected(
+            "\\Registry\\Machine\\Software\\NeoDOS\\Trust\\UserCAs\\abc"
+        ));
+        test_true!(path_is_protected(
+            "\\registry\\machine\\software\\neodos\\trust\\abc"
+        ));
+        test_true!(!path_is_protected(
+            "\\Registry\\Machine\\Software\\NeoDOS\\TrustEvil"
+        ));
+        test_true!(!path_is_protected("\\Registry\\Machine\\System\\Control"));
+
+        test_true!(path_contains_trust(
+            "\\Registry\\Machine\\Software\\NeoDOS"
+        ));
+        test_true!(path_contains_trust(
+            "\\Registry\\Machine\\Software"
+        ));
+        test_true!(!path_contains_trust(
+            "\\Registry\\Machine\\System"
+        ));
+    });
+
+    test_case!("cm_trust_acl_admin_and_user", {
+        use crate::cm::security::{authorize_delete_token, authorize_token};
+        use crate::security::acl::{ACCESS_READ, ACCESS_WRITE};
+        use crate::security::sid::{sid_builtin_admin, sid_world};
+        use crate::security::token::Token;
+
+        let trust = "\\Registry\\Machine\\Software\\NeoDOS\\Trust";
+        let child = "\\Registry\\Machine\\Software\\NeoDOS\\Trust\\UserCAs\\abc";
+        let ancestor = "\\Registry\\Machine\\Software\\NeoDOS";
+
+        let admin = Token::new_admin();
+        let user = Token::new_user();
+        let mut elevated = Token::new_user();
+        elevated.add_group(sid_builtin_admin());
+
+        // Reads are public.
+        test_true!(authorize_token(&user, trust, ACCESS_READ));
+        test_true!(authorize_token(&user, child, ACCESS_READ));
+
+        // Writes require an administrator identity.
+        test_true!(!authorize_token(&user, trust, ACCESS_WRITE));
+        test_true!(!authorize_token(&user, child, ACCESS_WRITE));
+        test_true!(authorize_token(&admin, child, ACCESS_WRITE));
+        test_true!(authorize_token(&elevated, child, ACCESS_WRITE));
+
+        // Deleting an ancestor of the store would delete the store.
+        test_true!(!authorize_delete_token(&user, ancestor));
+        test_true!(authorize_delete_token(&admin, ancestor));
+
+        // Paths outside the subtree stay unprotected for non-admins.
+        test_true!(authorize_token(
+            &user,
+            "\\Registry\\Machine\\System\\CurrentControlSet\\Control",
+            ACCESS_WRITE
+        ));
+
+        // Everyone is a real SID, not an alias for the user account.
+        test_eq!(sid_world().format_string(), "S-1-1-0");
+        test_true!(sid_world() != crate::security::sid::sid_builtin_user());
+    });
 }

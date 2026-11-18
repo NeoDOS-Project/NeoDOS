@@ -1,6 +1,6 @@
 [package]
 name = "libtls"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 description = "Minimal TLS 1.3 client for NeoDOS"
 
@@ -18,6 +18,9 @@ debug-log = []
 [dependencies]
 libcrypto = { path = "../libcrypto" }
 libclock = { path = "../libclock" }
+
+[dev-dependencies]
+x509-fixtures = { path = "../tools/x509-fixtures" }
 
 [profile.release]
 panic = "abort"

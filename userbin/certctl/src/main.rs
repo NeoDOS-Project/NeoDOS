@@ -44,6 +44,11 @@ static ALLOC: SbrkAlloc = SbrkAlloc;
 
 const USAGE: &[u8] = b"uso: certctl list | show <huella> | import <fichero> | remove <huella> | status | repair\r\n";
 
+/// Largest import file we accept. A PEM bundle with several roots is far
+/// smaller; the extra byte detects a file that does not fit instead of
+/// trusting a truncated read.
+const MAX_IMPORT_FILE: usize = 64 * 1024;
+
 fn out(s: &[u8]) {
     let _ = syscall::sys_write(1, s);
 }
@@ -145,10 +150,13 @@ fn read_file(path: &str) -> Result<alloc::vec::Vec<u8>, ()> {
         return Err(());
     };
     let fd = syscall::sys_ob_open(p, syscall::ob_access::READ).map_err(|_| ())?;
-    let mut buf = alloc::vec![0u8; 128 * 1024];
+    let mut buf = alloc::vec![0u8; MAX_IMPORT_FILE + 1];
     let n = syscall::sys_ob_query_info(fd, syscall::ObInfoClass::ReadContent, &mut buf);
     let _ = syscall::sys_close(fd);
     let n = n.map_err(|_| ())? as usize;
+    if n > MAX_IMPORT_FILE {
+        return Err(());
+    }
     buf.truncate(n);
     Ok(buf)
 }
@@ -269,16 +277,28 @@ fn cmd_import(path: &str) {
 }
 
 fn cmd_remove(target: &str) {
-    let Some(e) = find(target) else {
-        fail("no encuentro esa huella")
+    // A corrupt entry may be omitted from `list`, so accept a full fingerprint
+    // even when `find` cannot build an Entry for it.
+    let fingerprint = match find(target) {
+        Some(e) => {
+            if e.source == Source::System {
+                fail("es una CA del sistema: no se puede eliminar (solo las importadas)");
+            }
+            e.fingerprint
+        }
+        None => {
+            let t = target.to_ascii_lowercase();
+            if t.len() == 64 && t.bytes().all(|b| b.is_ascii_hexdigit()) {
+                t
+            } else {
+                fail("no encuentro esa huella")
+            }
+        }
     };
-    if e.source == Source::System {
-        fail("es una CA del sistema: no se puede eliminar (solo las importadas)");
-    }
-    match store::remove(&e.fingerprint) {
+    match store::remove(&fingerprint) {
         Ok(()) => {
             out(b"eliminada ");
-            out(&e.fingerprint.as_bytes()[..16]);
+            out(&fingerprint.as_bytes()[..16]);
             out(b"\r\n");
         }
         Err(_) => fail("no se pudo eliminar"),
@@ -302,6 +322,28 @@ fn cmd_status() {
     out(b"\r\nCAs de usuario: ");
     dec(store::user_entries().len() as u64);
     out(b"\r\n");
+
+    // Diagnostic view: entries that were skipped because they are corrupt,
+    // expired, not a CA, etc. `repair` only removes structural corruption.
+    let now = libclock::system::trusted_now_unix()
+        .or_else(|_| libclock::system::unix_seconds())
+        .unwrap_or(0);
+    let report = store::anchor_report(now);
+    out(b"anclas utilizables: ");
+    dec(report.roots.len() as u64);
+    out(b"\r\n");
+    if !report.rejected.is_empty() {
+        out(b"ignoradas: ");
+        dec(report.rejected.len() as u64);
+        out(b"\r\n");
+        for r in report.rejected.iter().take(16) {
+            out(b"  ");
+            out(&r.fingerprint.as_bytes()[..16.min(r.fingerprint.len())]);
+            out(b"  ");
+            out(r.issue.as_str().as_bytes());
+            out(b"\r\n");
+        }
+    }
 }
 
 fn run(argv: &[&[u8]]) -> i32 {

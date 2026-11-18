@@ -4,6 +4,7 @@ pub mod cache;
 pub mod manager;
 pub mod init;
 pub mod api;
+pub mod security;
 pub mod timezone;
 pub mod tests;
 

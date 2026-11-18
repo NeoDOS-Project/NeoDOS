@@ -241,19 +241,23 @@ pub enum TrustStatus {
     Stale { days: i64 },
 }
 
-/// Read the trust store (system bundle + user CAs).
-pub fn system_trust() -> SystemTrust {
+/// Read the trust store (system bundle + user CAs) at `now`.
+///
+/// `now` must come from the trusted clock: every user CA and every bundle
+/// anchor is revalidated (DER, CA, keyUsage, fingerprint and validity) before
+/// it is returned.
+pub fn system_trust(now: i64) -> SystemTrust {
     let (info, _) = libtrust::store::system_bundle();
     SystemTrust {
         version: info.version,
         built_unix: info.built_unix,
-        roots: libtrust::store::anchors(),
+        roots: libtrust::store::anchors(now),
     }
 }
 
-/// Anchors only (the common case).
-pub fn system_roots() -> alloc::vec::Vec<alloc::vec::Vec<u8>> {
-    libtrust::store::anchors()
+/// Anchors only (the common case), validated at `now`.
+pub fn system_roots(now: i64) -> alloc::vec::Vec<alloc::vec::Vec<u8>> {
+    libtrust::store::anchors(now)
 }
 
 /// Judge the system bundle against the trusted clock.

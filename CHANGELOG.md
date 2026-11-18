@@ -4,6 +4,31 @@
 
 ## Unreleased
 
+### Security
+
+- **Autorización real del almacén de confianza.** Las mutaciones del Registry
+  sobre `\Registry\Machine\Software\NeoDOS\Trust` pasan por una DACL en Cm
+  (`cm/security.rs`): `Everyone` puede leer las CAs públicas; crear, escribir o
+  borrar exige administrador. También se protege el borrado de un ancestro
+  (borrado recursivo). Los rechazos devuelven `EPERM`. La aplicación
+  end-to-end sigue dependiendo de identidades no privilegiadas (#767) y de ACLs
+  de VFS (#42/#43).
+- **Límite y revalidación del almacén de CAs.** `MAX_CERTIFICATE_DER` (8 KiB) se
+  aplica al importar y al leer; la consulta tipada del Registry detecta tipo
+  incorrecto, truncamiento y valores sobredimensionados. `anchor_report(now)`
+  vuelve a validar DER, huella SHA-256, `basicConstraints`, `keyUsage.keyCertSign`
+  y fechas, omite las entradas inválidas y las reporta. `certctl status` muestra
+  las ignoradas; `repair` solo limpia corrupción estructural.
+- **Validación de anclas en TLS.** `verify_chain` exige que la raíz sea CA, tenga
+  `keyCertSign` y esté dentro de validez; `pathLenConstraint` se parsea como
+  entero real y el DER debe consumirse completo (sin bytes trailing).
+- **PKI X.509 determinista en tests.** Los tests host generan los certificados
+  en runtime con OpenSSL y fechas fijas (`tools/x509-fixtures`); no se commitea
+  ningún certificado y un fallo de generación nunca se convierte en un test
+  omitido. Cubre RSA PKCS#1/PSS, ECDSA P-256/P-384, CA sin `keyUsage`,
+  `pathLen` 0/1/300, caducados, no-CA, hostname y cadena incorrecta.
+- **SID `Everyone`.** `sid_world()` (`S-1-1-0`) para DACLs de solo lectura.
+
 ### Added
 
 - **Importación de CAs de terceros.** `certctl import|list|show|remove|status|
@@ -34,6 +59,13 @@
 
 ### Fixed
 
+- **Escritura con dos ficheros abiertos en el mismo directorio (#753).** La
+  entrada cacheada de un fichero guardaba la raíz del B-tree del directorio en
+  el momento del `lookup`. Si otro fichero del mismo directorio crecía el árbol
+  después, la segunda escritura insertaba contra una raíz obsoleta y fallaba con
+  `IOError`. `write` usa ahora la raíz actual del directorio padre. Cubierto por
+  `neofs_v2_chunked_write_in_multi_entry_dir` y
+  `neofs_v2_no_shared_blocks_between_files`.
 - **TUI en blanco: EFAULT en las escrituras de `console.nxl`.** Las envolturas
   de syscall de los NXL (`libconsole-nxl`, `libneodos-nxl`, `libnet-nxl`)
   dejaban que el compilador asignara los argumentos a `rbx`/`rcx`/`rdx`/`r8`,

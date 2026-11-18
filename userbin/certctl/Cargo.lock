@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "certctl"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "libclock",
  "libcrypto",
@@ -31,7 +31,7 @@ version = "0.1.0"
 
 [[package]]
 name = "libneodos"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "libconsole-abi",
  "libnlt",
@@ -47,7 +47,7 @@ version = "0.1.0"
 
 [[package]]
 name = "libtls"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "libclock",
  "libcrypto",
@@ -55,7 +55,7 @@ dependencies = [
 
 [[package]]
 name = "libtrust"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "libcrypto",
  "libneodos",

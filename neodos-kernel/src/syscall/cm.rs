@@ -182,7 +182,10 @@ pub(super) fn handler_cm_create_key(regs: Registers) -> u64 {
                 None => err_to_u64(SyscallError::NoMem),
             }
         }
-        Err(_) => err_to_u64(SyscallError::Exist),
+        Err(cm::CmError::Denied) => err_to_u64(SyscallError::Perm),
+        Err(cm::CmError::AlreadyExists) => err_to_u64(SyscallError::Exist),
+        Err(cm::CmError::NotFound) => err_to_u64(SyscallError::NoEnt),
+        Err(cm::CmError::NoMemory) => err_to_u64(SyscallError::NoMem),
     }
 }
 
@@ -287,6 +290,8 @@ pub(super) fn handler_cm_set_value(regs: Registers) -> u64 {
 
     match cm::cm_set_value(native_id, &name, value_type, &data) {
         Ok(()) => 0,
+        Err(cm::CmError::Denied) => err_to_u64(SyscallError::Perm),
+        Err(cm::CmError::NotFound) => err_to_u64(SyscallError::NoEnt),
         Err(_) => err_to_u64(SyscallError::NoMem),
     }
 }
@@ -381,6 +386,8 @@ pub(super) fn handler_cm_delete_key(regs: Registers) -> u64 {
 
     match cm::cm_delete_key(native_id) {
         Ok(()) => 0,
+        Err(cm::CmError::Denied) => err_to_u64(SyscallError::Perm),
+        Err(cm::CmError::NotFound) => err_to_u64(SyscallError::NoEnt),
         Err(_) => err_to_u64(SyscallError::Inval),
     }
 }

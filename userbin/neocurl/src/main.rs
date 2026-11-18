@@ -218,6 +218,16 @@ fn run(raw: &[u8]) -> Result<(), u32> {
             }
         }
         None => {
+            // The trust store is revalidated against the trusted clock before
+            // it is handed to TLS. Without a trusted clock the validation
+            // cannot be answered, and the handshake would fail anyway.
+            let now = match libclock::system::trusted_now_unix() {
+                Ok(now) => now,
+                Err(_) => {
+                    fail("system clock not trusted; sync it (ntpd) and retry");
+                    return Err(1);
+                }
+            };
             // D8: the image's bundle. A stale or future-dated one is worth
             // saying out loud, but it does not change what we trust: the
             // anchors themselves are what get verified.
@@ -237,7 +247,7 @@ fn run(raw: &[u8]) -> Result<(), u32> {
                     }
                 }
             }
-            let roots = libnet::http_transport::system_roots();
+            let roots = libnet::http_transport::system_roots(now);
             (None, roots)
         }
     };

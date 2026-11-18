@@ -1,0 +1,10 @@
+[package]
+name = "x509-fixtures"
+version = "0.1.0"
+edition = "2021"
+description = "Host-only runtime X.509 fixtures for NeoDOS tests"
+publish = false
+
+[lib]
+name = "x509_fixtures"
+path = "src/lib.rs"

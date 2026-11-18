@@ -39,6 +39,7 @@ Format `S-R-I-S*` (revision, identifier authority, sub-authorities).
 | `sid_builtin_administrator()` | `S-1-5-21-0-0-0-500` | Built-in Administrator account |
 | `sid_builtin_guest()` | `S-1-5-21-0-0-0-501` | Built-in Guest account |
 | `sid_builtin_user()` | `S-1-5-21-0-0-0-1000` | Default domain user |
+| `sid_world()` | `S-1-1-0` | `Everyone` (read-only trustees) |
 
 Construct with `Sid::from_parts(revision: u8, authority: &[u8; 6],
 sub_authorities: &[u32])`; format with `format_string()`. `WELL_KNOWN_SIDS`
@@ -240,6 +241,15 @@ syscalls skill).
 `ob_open` runs `se_access_check` against the object's DACL using the caller's
 token (`current_process().token`). When adding a new object type/operation, make
 sure the access check is reached before the operation executes.
+
+### 7b. Registry (Cm) keys
+
+Cm keys live in hives and are opened as ephemeral `ObType::Key` objects, so their
+DACL cannot live in `OB_SECURITY`. `cm/security.rs` owns the per-key policy:
+`cm_create_key`, `cm_set_value`, `cm_delete_value` and `cm_delete_key` resolve
+the full path with `Hive::key_path` and call `se_access_check`. A protected
+subtree's ancestors must be protected for `delete_key` (recursive). Tests live in
+`cm/tests.rs`; see `docs/security/trust-store.md` for the trust store.
 
 ### 8. Work with the SAM database
 

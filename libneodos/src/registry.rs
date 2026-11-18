@@ -34,6 +34,17 @@ pub struct RegistryKey {
     fd: u8,
 }
 
+/// Header of a Registry value, as returned by [`RegistryKey::query_value_info`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RegistryValueInfo {
+    /// `REG_*` value type from the kernel.
+    pub value_type: u32,
+    /// Payload length declared by the kernel.
+    pub data_len: usize,
+    /// `true` when the whole payload was copied into the caller's buffer.
+    pub complete: bool,
+}
+
 impl RegistryKey {
     /// Open an existing key by full path.
     pub fn open(path: &str) -> Result<Self, i64> {
@@ -119,6 +130,34 @@ impl RegistryKey {
             Ok(total) if total >= 8 => (total - 8).min(buf.len().saturating_sub(8)),
             _ => 0,
         }
+    }
+
+    /// Query a value and report its header, including whether the whole
+    /// payload fit in `buf`.
+    ///
+    /// `sys_cm_query_value` writes the 8-byte header even when the payload is
+    /// too large for the caller's buffer, and returns the *declared* total
+    /// size. Callers that persist security-sensitive data must therefore check
+    /// [`RegistryValueInfo::complete`] before trusting the bytes; this method
+    /// is the strict counterpart of [`Self::query_binary`].
+    pub fn query_value_info(&self, name: &str, buf: &mut [u8]) -> Option<RegistryValueInfo> {
+        if buf.len() < 8 {
+            return None;
+        }
+        let total = syscall::sys_cm_query_value(self.fd, name, buf).ok()?;
+        if total < 8 {
+            return None;
+        }
+        let value_type = u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]);
+        let data_len = u32::from_le_bytes([buf[4], buf[5], buf[6], buf[7]]) as usize;
+        if total != 8 + data_len {
+            return None;
+        }
+        Some(RegistryValueInfo {
+            value_type,
+            data_len,
+            complete: data_len <= buf.len() - 8,
+        })
     }
 
     /// Name of subkey `index` (NUL-terminated in `buf`), or `None` at the end.

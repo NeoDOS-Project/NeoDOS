@@ -1,9 +1,10 @@
 //! X.509 certificate parsing and chain validation (RFC 5280 subset).
 //!
-//! Supported: RSA (PKCS#1 v1.5 and PSS with SHA-256) and ECDSA P-256
-//! signatures, `basicConstraints`, `subjectAltName` (dNSName / iPAddress),
-//! validity windows, and a bounded chain walk. Key usage and name constraints
-//! are not enforced; revocation is out of scope (documented gap).
+//! Supported: RSA (PKCS#1 v1.5 and PSS with SHA-256) and ECDSA P-256/384
+//! signatures, `basicConstraints`, `keyUsage` for anchors and intermediates,
+//! `subjectAltName` (dNSName / iPAddress), validity windows, `pathLenConstraint`
+//! and a bounded chain walk. Name constraints and revocation are not
+//! implemented (documented gap); `must-staple`/SCT are not enforced.
 
 use alloc::vec::Vec;
 
@@ -23,6 +24,7 @@ pub enum X509Error {
     NotYetValid,
     ChainTooLong,
     NotACa,
+    KeyUsageNotCertSign,
     PathLenExceeded,
 }
 
@@ -40,6 +42,9 @@ impl X509Error {
             X509Error::NotYetValid => "certificate not yet valid",
             X509Error::ChainTooLong => "certificate chain: too long",
             X509Error::NotACa => "certificate chain: issuer is not a CA",
+            X509Error::KeyUsageNotCertSign => {
+                "certificate chain: issuer keyUsage does not allow keyCertSign"
+            }
             X509Error::PathLenExceeded => "certificate chain: path length exceeded",
         }
     }
@@ -102,7 +107,7 @@ pub struct Certificate<'a> {
     pub dns_names: Vec<&'a [u8]>,
     pub ip_addresses: Vec<[u8; 4]>,
     pub is_ca: bool,
-    pub path_len: Option<u8>,
+    pub path_len: Option<u32>,
     /// `keyUsage.digitalSignature` (true when the extension is absent).
     pub digital_signature: bool,
     /// `keyUsage.keyCertSign`: the certificate may sign other certificates.
@@ -121,6 +126,26 @@ pub struct Certificate<'a> {
 pub enum Host<'a> {
     Dns(&'a str),
     Ip([u8; 4]),
+}
+
+/// Interpret a DER INTEGER payload as a non-negative `u32`.
+///
+/// A negative value (high bit set without a sign byte) is invalid for
+/// `pathLenConstraint`. Leading sign zeroes are stripped; values wider than 32
+/// bits saturate, which is enough because the parser never needs more than
+/// "very large".
+fn non_negative_u32(bytes: &[u8]) -> Option<u32> {
+    if bytes.is_empty() || bytes[0] & 0x80 != 0 {
+        return None;
+    }
+    let mut value = bytes;
+    while value.len() > 1 && value[0] == 0 {
+        value = &value[1..];
+    }
+    if value.len() > 4 {
+        return Some(u32::MAX);
+    }
+    Some(value.iter().fold(0u32, |acc, b| (acc << 8) | *b as u32))
 }
 
 pub fn parse_certificate(der: &[u8]) -> core::result::Result<Certificate<'_>, X509Error> {
@@ -190,8 +215,11 @@ pub fn parse_certificate(der: &[u8]) -> core::result::Result<Certificate<'_>, X5
                             is_ca = boolean(&seq.next_tlv()?)?;
                         }
                         if !seq.is_empty() && seq.peek_tag() == Some(TAG_INTEGER) {
-                            let p = integer_bytes(&seq.next_tlv()?)?;
-                            path_len = Some(p.iter().fold(0u8, |acc, b| acc.saturating_mul(10).saturating_add(*b)));
+                            let tlv = seq.next_tlv()?;
+                            let _ = integer_bytes(&tlv)?;
+                            path_len = Some(
+                                non_negative_u32(tlv.value).ok_or(X509Error::BadCertificate)?,
+                            );
                         }
                     }
                     OID_KEY_USAGE => {
@@ -241,6 +269,13 @@ pub fn parse_certificate(der: &[u8]) -> core::result::Result<Certificate<'_>, X5
                 }
             }
         }
+    }
+
+    // DER is not self-delimiting at the caller's boundary: the certificate
+    // must consume the whole input. Trailing bytes would let two different
+    // blobs share a fingerprint space and are rejected (RFC 5280 DER).
+    if !cert.is_empty() || !outer.is_empty() {
+        return Err(X509Error::BadCertificate);
     }
 
     Ok(Certificate {
@@ -492,6 +527,19 @@ pub fn verify_chain(
     // Walk from the leaf towards a trust anchor. The server may send the
     // anchor itself and extra cross-signing certs, so stop as soon as the
     // current certificate is anchored and never assume a fixed chain order.
+    // A certificate used as a trust anchor must itself be usable as a CA and
+    // be inside its validity window. This also covers `--ca` and any anchor
+    // that bypassed the store's own revalidation.
+    let anchor_checks = |root: &Certificate<'_>| -> core::result::Result<(), X509Error> {
+        if !root.is_ca {
+            return Err(X509Error::NotACa);
+        }
+        if !root.key_cert_sign {
+            return Err(X509Error::KeyUsageNotCertSign);
+        }
+        check_time(root)
+    };
+
     let mut current = leaf;
     for depth in 0..8u8 {
         check_time(current)?;
@@ -502,10 +550,18 @@ pub fn verify_chain(
         let mut anchored = false;
         for root in &anchors {
             if root.subject == current.subject && root.spki == current.spki {
+                if let Err(e) = anchor_checks(root) {
+                    anchor_err = Some(e);
+                    continue;
+                }
                 anchored = true;
                 break;
             }
             if root.subject == current.issuer {
+                if let Err(e) = anchor_checks(root) {
+                    anchor_err = Some(e);
+                    continue;
+                }
                 match verify_issuer(current, root) {
                     Ok(()) => {
                         anchored = true;
@@ -537,12 +593,200 @@ pub fn verify_chain(
         if !candidate.is_ca {
             return Err(X509Error::NotACa);
         }
+        if !candidate.key_cert_sign {
+            return Err(X509Error::KeyUsageNotCertSign);
+        }
         if let Some(limit) = candidate.path_len {
-            if depth > limit {
+            if depth as u32 > limit {
                 return Err(X509Error::PathLenExceeded);
             }
         }
         current = candidate;
     }
     Err(X509Error::ChainTooLong)
+}
+#[cfg(test)]
+mod fixture_tests {
+    use super::*;
+
+    use x509_fixtures::{fixtures, NOW};
+
+    const HOST: Host<'static> = Host::Dns("test.homelab.arpa");
+
+    macro_rules! root_rsa { () => { fixtures().ca_rsa.as_slice() } }
+    macro_rules! root_pss { () => { fixtures().ca_pss.as_slice() } }
+    macro_rules! root_p256 { () => { fixtures().ca_p256.as_slice() } }
+    macro_rules! root_p384 { () => { fixtures().ca_p384.as_slice() } }
+    macro_rules! root_other { () => { fixtures().ca_other_rsa.as_slice() } }
+    macro_rules! root_expired { () => { fixtures().ca_expired.as_slice() } }
+    macro_rules! root_bad_ku { () => { fixtures().ca_bad_key_usage.as_slice() } }
+    macro_rules! leaf_rsa { () => { fixtures().leaf_rsa.as_slice() } }
+    macro_rules! leaf_pss { () => { fixtures().leaf_pss.as_slice() } }
+    macro_rules! leaf_p256 { () => { fixtures().leaf_p256.as_slice() } }
+    macro_rules! leaf_p384 { () => { fixtures().leaf_p384.as_slice() } }
+    macro_rules! leaf_wrong_host { () => { fixtures().leaf_wrong_host.as_slice() } }
+    macro_rules! leaf_expired { () => { fixtures().leaf_expired.as_slice() } }
+    macro_rules! leaf_not_yet { () => { fixtures().leaf_not_yet.as_slice() } }
+    macro_rules! leaf_valid_expired_root { () => { fixtures().leaf_valid_expired_root.as_slice() } }
+    macro_rules! leaf_other_ca { () => { fixtures().leaf_other_ca.as_slice() } }
+    macro_rules! leaf_bad_ku { () => { fixtures().leaf_bad_ku.as_slice() } }
+    macro_rules! leaf_via_intermediate { () => { fixtures().leaf_via_intermediate.as_slice() } }
+    macro_rules! leaf_via_bad_ku { () => { fixtures().leaf_via_bad_ku.as_slice() } }
+    macro_rules! leaf_pathlen0 { () => { fixtures().leaf_pathlen0.as_slice() } }
+    macro_rules! leaf_pathlen300 { () => { fixtures().leaf_pathlen300.as_slice() } }
+    macro_rules! leaf_pathlen_violation { () => { fixtures().leaf_pathlen_violation.as_slice() } }
+    macro_rules! int_pathlen0 { () => { fixtures().intermediate_pathlen0.as_slice() } }
+    macro_rules! int_pathlen300 { () => { fixtures().intermediate_pathlen300.as_slice() } }
+    macro_rules! int_bad_ku { () => { fixtures().intermediate_bad_ku.as_slice() } }
+    macro_rules! int_layer1 { () => { fixtures().intermediate_pathlen1_layer.as_slice() } }
+    macro_rules! int_layer0 { () => { fixtures().intermediate_pathlen0_layer.as_slice() } }
+
+    fn roots(ders: &[&[u8]]) -> Vec<Vec<u8>> {
+        ders.iter().map(|d| d.to_vec()).collect()
+    }
+
+    fn parse(der: &[u8]) -> Certificate<'_> {
+        parse_certificate(der).expect("fixture parses")
+    }
+
+    fn check(
+        chain: &[&[u8]],
+        anchors: &[&[u8]],
+        host: Host<'_>,
+    ) -> core::result::Result<(), X509Error> {
+        let certs: Vec<Certificate<'_>> = chain.iter().map(|d| parse(d)).collect();
+        verify_chain(&certs, &roots(anchors), host, NOW)
+    }
+
+    #[test]
+    fn accepts_supported_signature_algorithms() {
+        assert_eq!(check(&[leaf_rsa!()], &[root_rsa!()], HOST), Ok(()));
+        assert_eq!(check(&[leaf_pss!()], &[root_pss!()], HOST), Ok(()));
+        assert_eq!(check(&[leaf_p256!()], &[root_p256!()], HOST), Ok(()));
+        assert_eq!(check(&[leaf_p384!()], &[root_p384!()], HOST), Ok(()));
+    }
+
+    #[test]
+    fn accepts_a_chain_through_an_intermediate() {
+        // leaf -> intermediate(pathlen 1) -> root
+        let leaf = parse(leaf_via_intermediate!());
+        let intermediate = parse(fixtures().intermediate_pathlen1.as_slice());
+        let chain = [leaf, intermediate];
+        assert_eq!(
+            verify_chain(&chain, &roots(&[root_rsa!()]), HOST, NOW),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn rejects_a_wrong_chain() {
+        assert_eq!(
+            check(&[leaf_other_ca!()], &[root_rsa!()], HOST),
+            Err(X509Error::NotTrusted)
+        );
+        // The same leaf is valid under its real root, so the failure above is
+        // about the anchor, not the leaf.
+        assert_eq!(check(&[leaf_other_ca!()], &[root_other!()], HOST), Ok(()));
+    }
+
+    #[test]
+    fn rejects_a_hostname_mismatch() {
+        assert_eq!(
+            check(&[leaf_wrong_host!()], &[root_rsa!()], HOST),
+            Err(X509Error::HostnameMismatch)
+        );
+    }
+
+    #[test]
+    fn rejects_expired_and_not_yet_valid_leaves() {
+        assert_eq!(
+            check(&[leaf_expired!()], &[root_rsa!()], HOST),
+            Err(X509Error::Expired)
+        );
+        assert_eq!(
+            check(&[leaf_not_yet!()], &[root_rsa!()], HOST),
+            Err(X509Error::NotYetValid)
+        );
+    }
+
+    #[test]
+    fn rejects_an_expired_anchor_even_if_the_leaf_is_valid() {
+        assert_eq!(
+            check(&[leaf_valid_expired_root!()], &[root_expired!()], HOST),
+            Err(X509Error::Expired)
+        );
+    }
+
+    #[test]
+    fn rejects_a_non_ca_anchor() {
+        assert_eq!(
+            check(&[leaf_rsa!()], &[leaf_rsa!()], HOST),
+            Err(X509Error::NotACa)
+        );
+    }
+
+    #[test]
+    fn rejects_an_anchor_without_key_cert_sign() {
+        assert_eq!(
+            check(&[leaf_bad_ku!()], &[root_bad_ku!()], HOST),
+            Err(X509Error::KeyUsageNotCertSign)
+        );
+    }
+
+    #[test]
+    fn rejects_an_intermediate_without_key_cert_sign() {
+        let leaf = parse(leaf_via_bad_ku!());
+        let intermediate = parse(int_bad_ku!());
+        let chain = [leaf, intermediate];
+        assert_eq!(
+            verify_chain(&chain, &roots(&[root_rsa!()]), HOST, NOW),
+            Err(X509Error::KeyUsageNotCertSign)
+        );
+    }
+
+    #[test]
+    fn rejects_a_pathlen_violation() {
+        // leaf -> int2(pathlen 1) -> int1(pathlen 0) -> root.
+        let leaf = parse(leaf_pathlen_violation!());
+        let int2 = parse(int_layer1!());
+        let int1 = parse(int_layer0!());
+        let chain = [leaf, int2, int1];
+        assert_eq!(
+            verify_chain(&chain, &roots(&[root_rsa!()]), HOST, NOW),
+            Err(X509Error::PathLenExceeded)
+        );
+    }
+
+    #[test]
+    fn accepts_pathlen_zero_and_large_values() {
+        // pathLen 0 is valid when the intermediate signs an end entity.
+        let leaf0 = parse(leaf_pathlen0!());
+        let int0 = parse(int_pathlen0!());
+        assert_eq!(
+            verify_chain(&[leaf0, int0], &roots(&[root_rsa!()]), HOST, NOW),
+            Ok(())
+        );
+
+        // pathLen 300 must be parsed as a real integer, not decimal bytes.
+        let leaf300 = parse(leaf_pathlen300!());
+        let int300 = parse(int_pathlen300!());
+        assert_eq!(int300.path_len, Some(300));
+        assert_eq!(
+            verify_chain(&[leaf300, int300], &roots(&[root_rsa!()]), HOST, NOW),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn rejects_trailing_bytes_and_truncated_der() {
+        let mut padded = root_rsa!().to_vec();
+        padded.push(0);
+        assert_eq!(
+            parse_certificate(&padded).unwrap_err(),
+            X509Error::BadCertificate
+        );
+
+        let truncated = &root_rsa!()[..root_rsa!().len() - 1];
+        assert!(parse_certificate(truncated).is_err());
+    }
 }

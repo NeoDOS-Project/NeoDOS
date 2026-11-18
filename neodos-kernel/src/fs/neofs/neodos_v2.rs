@@ -638,6 +638,20 @@ impl FileSystem for NeoDosFsV2 {
     fn write(&mut self, inode: u32, offset: u64, buf: &[u8]) -> Result<usize, VfsError> {
         let (btree_root, entry, parent) = self.inode_cache.get(inode as usize).and_then(|x| x.as_ref())
             .map(|c| (c.root, c.entry.clone(), c.parent)).ok_or(VfsError::NotFound)?;
+        // The cached `root` of a file is the directory root observed when the
+        // file was looked up. Another file in the same directory may have grown
+        // that B-tree since then, so insert against the *current* root of the
+        // parent instead of the stale snapshot (two open handles in one
+        // directory would otherwise lose the second write).
+        let insert_root = match parent {
+            Some(p) => self
+                .inode_cache
+                .get(p as usize)
+                .and_then(|x| x.as_ref())
+                .map(|c| c.root)
+                .unwrap_or(btree_root),
+            None => btree_root,
+        };
         let dev_id = self.io_stack.device_id;
         let part_base = self.io_stack.translate_lba(0);
         // Lock order: PAGE_CACHE before BLOCK_DEVICES (#343); the `with_*`
@@ -657,7 +671,7 @@ impl FileSystem for NeoDosFsV2 {
         }
 
         let mut garbage = Vec::new();
-        let new_root = BTree::insert_tracked(self, btree_root, &new_entry.name, &{
+        let new_root = BTree::insert_tracked(self, insert_root, &new_entry.name, &{
             let mut tmp = [0u8; DIRENTRY_SIZE]; new_entry.serialize(&mut tmp); tmp.to_vec()
         }, &mut garbage).ok_or(VfsError::IOError)?;
         for lba in garbage { self.cow_garbage.push((lba, 1)); }
@@ -1592,4 +1606,156 @@ pub fn register_neodos_v2_tests() {
         let _ = crate::globals::BLOCK_DEVICES.lock().force_remove(dev_id);
     });
 
+
+    crate::test_case!("neofs_v2_fragmented_write_survives_remount", {
+        // #753: a body delivered in two sys_write calls must survive a reboot
+        // byte for byte, not only in the in-memory page cache.
+        let sectors = alloc::vec![[0u8; 512]; 4096];
+        let dev_id = crate::fs::fsck::register_test_device(sectors);
+        let io = IoStack::new(dev_id);
+        mkfs_ne2(&io, 512, "TEST").unwrap();
+
+        let mut fs = NeoDosFsV2::new(io).unwrap();
+        fs.create(0, "FRAG.BIN").unwrap();
+        let ino = fs.lookup(0, "FRAG.BIN").unwrap().inode;
+        let head = [0xA5u8; 1024];
+        let tail = [0x5Au8; 367];
+        crate::test_eq!(fs.write(ino, 0, &head).unwrap(), head.len());
+        crate::test_eq!(fs.write(ino, 1024, &tail).unwrap(), tail.len());
+        drop(fs);
+
+        let mut fs2 = NeoDosFsV2::new(IoStack::new(dev_id)).unwrap();
+        let ino2 = fs2.lookup(0, "FRAG.BIN").unwrap().inode;
+        let mut buf = [0u8; 1391];
+        let n = fs2.read(ino2, 0, &mut buf).unwrap();
+        crate::test_eq!(n, 1391);
+        crate::test_true!(buf[..1024].iter().all(|b| *b == 0xA5));
+        crate::test_true!(buf[1024..].iter().all(|b| *b == 0x5A));
+
+        let _ = crate::globals::BLOCK_DEVICES.lock().force_remove(dev_id);
+    });
+
+    crate::test_case!("neofs_v2_repeated_chunked_writes_same_file", {
+        // Repeated partial overwrites on the same file, including the middle
+        // and a later append. The final bytes must survive a remount.
+        let sectors = alloc::vec![[0u8; 512]; 4096];
+        let dev_id = crate::fs::fsck::register_test_device(sectors);
+        let io = IoStack::new(dev_id);
+        mkfs_ne2(&io, 512, "TEST").unwrap();
+
+        let mut fs = NeoDosFsV2::new(io).unwrap();
+        fs.create(0, "REPEAT.BIN").unwrap();
+        let ino = fs.lookup(0, "REPEAT.BIN").unwrap().inode;
+
+        for round in 0..5u8 {
+            let first = [0x10u8 + round; 1024];
+            let second = [0x80u8 + round; 512];
+            crate::test_eq!(fs.write(ino, round as u64 * 64, &first).unwrap(), 1024);
+            crate::test_eq!(fs.write(ino, 1000, &second).unwrap(), 512);
+        }
+
+        let mut buf = [0u8; 2048];
+        let n = fs.read(ino, 0, &mut buf).unwrap();
+        crate::test_true!(n > 0);
+        // The last write at offset 1000 is the authoritative tail.
+        crate::test_true!(buf[1000..1512].iter().all(|b| *b == 0x84));
+        drop(fs);
+
+        let mut fs2 = NeoDosFsV2::new(IoStack::new(dev_id)).unwrap();
+        let ino2 = fs2.lookup(0, "REPEAT.BIN").unwrap().inode;
+        let mut buf2 = [0u8; 2048];
+        let n2 = fs2.read(ino2, 0, &mut buf2).unwrap();
+        crate::test_true!(n2 > 0);
+        crate::test_true!(buf2[1000..1512].iter().all(|b| *b == 0x84));
+
+        let _ = crate::globals::BLOCK_DEVICES.lock().force_remove(dev_id);
+    });
+
+    crate::test_case!("neofs_v2_chunked_write_in_multi_entry_dir", {
+        // Several entries in one directory: a fragmented write to one file
+        // must not disturb its neighbours, before or after a remount.
+        let sectors = alloc::vec![[0u8; 512]; 4096];
+        let dev_id = crate::fs::fsck::register_test_device(sectors);
+        let io = IoStack::new(dev_id);
+        mkfs_ne2(&io, 512, "TEST").map_err(|_| "MKFS")?;
+        let mut fs = NeoDosFsV2::new(io).map_err(|_| "MOUNT1")?;
+        fs.mkdir(0, "DIR").map_err(|_| "MKDIR")?;
+        let dir = fs.lookup(0, "DIR").map_err(|_| "LOOKUP_DIR")?.inode;
+        let names = ["A.BIN", "B.BIN", "C.BIN", "D.BIN", "E.BIN"];
+        for name in names {
+            fs.create(dir, name).map_err(|_| "CREATE")?;
+        }
+        let ino_a = fs.lookup(dir, "A.BIN").map_err(|_| "LOOKUP_A")?.inode;
+        let ino_c = fs.lookup(dir, "C.BIN").map_err(|_| "LOOKUP_C")?.inode;
+        let head = [0x11u8; 1024];
+        let tail = [0x22u8; 367];
+        crate::test_eq!(fs.write(ino_a, 0, &head).map_err(|_| "WRITE_A1")?, 1024);
+        crate::test_eq!(fs.write(ino_a, 1024, &tail).map_err(|_| "WRITE_A2")?, 367);
+        crate::test_eq!(fs.write(ino_c, 0, b"neighbour").map_err(|_| "WRITE_C")?, 9);
+        drop(fs);
+
+        let mut fs2 = NeoDosFsV2::new(IoStack::new(dev_id)).map_err(|_| "MOUNT2")?;
+        let dir2 = fs2.lookup(0, "DIR").map_err(|_| "LOOKUP_DIR2")?.inode;
+        let a2 = fs2.lookup(dir2, "A.BIN").map_err(|_| "LOOKUP_A2")?.inode;
+        let c2 = fs2.lookup(dir2, "C.BIN").map_err(|_| "LOOKUP_C2")?.inode;
+        let mut buf = [0u8; 1391];
+        let n = fs2.read(a2, 0, &mut buf).map_err(|_| "READ_A2")?;
+        crate::test_eq!(n, 1391);
+        crate::test_true!(buf[..1024].iter().all(|b| *b == 0x11));
+        crate::test_true!(buf[1024..].iter().all(|b| *b == 0x22));
+        let mut neighbour = [0u8; 16];
+        let nn = fs2.read(c2, 0, &mut neighbour).map_err(|_| "READ_C2")?;
+        crate::test_eq!(nn, 9);
+        crate::test_eq!(&neighbour[..9], &b"neighbour"[..]);
+        for name in ["B.BIN", "D.BIN", "E.BIN"] {
+            crate::test_eq!(fs2.lookup(dir2, name).map_err(|_| "LOOKUP_EMPTY")?.size, 0);
+        }
+
+        let _ = crate::globals::BLOCK_DEVICES.lock().force_remove(dev_id);
+    });
+
+    crate::test_case!("neofs_v2_no_shared_blocks_between_files", {
+        // #753: two files must never reference overlapping block ranges, and
+        // the allocator must not consider a live block free.
+        let sectors = alloc::vec![[0u8; 512]; 4096];
+        let dev_id = crate::fs::fsck::register_test_device(sectors);
+        let io = IoStack::new(dev_id);
+        mkfs_ne2(&io, 512, "TEST").map_err(|_| "NS_MKFS")?;
+
+        let mut fs = NeoDosFsV2::new(io).map_err(|_| "NS_MOUNT1")?;
+        fs.create(0, "ONE.BIN").map_err(|_| "NS_CREATE1")?;
+        fs.create(0, "TWO.BIN").map_err(|_| "NS_CREATE2")?;
+        let one = fs.lookup(0, "ONE.BIN").map_err(|_| "NS_LOOKUP1")?.inode;
+        let two = fs.lookup(0, "TWO.BIN").map_err(|_| "NS_LOOKUP2")?.inode;
+        let data = alloc::vec![0x3Cu8; 4096];
+        crate::test_eq!(fs.write(one, 0, &data).map_err(|_| "NS_WRITE1")?, data.len());
+        crate::test_eq!(fs.write(two, 0, &data).map_err(|_| "NS_WRITE2")?, data.len());
+
+        let range = |fs: &NeoDosFsV2, ino: u32| -> (u64, u64) {
+            let entry = &fs.inode_cache[ino as usize].as_ref().unwrap().entry;
+            (entry.extent_lba, entry.extent_count as u64)
+        };
+        let (a_lba, a_len) = range(&fs, one);
+        let (b_lba, b_len) = range(&fs, two);
+        crate::test_true!(a_len > 0 && b_len > 0);
+        let a_end = a_lba + a_len;
+        let b_end = b_lba + b_len;
+        crate::test_true!(a_end <= b_lba || b_end <= a_lba);
+        crate::test_true!(fs.freelist.is_valid(512));
+        drop(fs);
+
+        // Remount and repeat the invariant: the on-disk tree must keep them
+        // disjoint too.
+        let mut fs2 = NeoDosFsV2::new(IoStack::new(dev_id)).map_err(|_| "NS_MOUNT2")?;
+        let one2 = fs2.lookup(0, "ONE.BIN").map_err(|_| "NS_LOOKUP1B")?.inode;
+        let two2 = fs2.lookup(0, "TWO.BIN").map_err(|_| "NS_LOOKUP2B")?.inode;
+        let (a_lba2, a_len2) = range(&fs2, one2);
+        let (b_lba2, b_len2) = range(&fs2, two2);
+        let a_end2 = a_lba2 + a_len2;
+        let b_end2 = b_lba2 + b_len2;
+        crate::test_true!(a_end2 <= b_lba2 || b_end2 <= a_lba2);
+        crate::test_true!(fs2.freelist.is_valid(512));
+
+        let _ = crate::globals::BLOCK_DEVICES.lock().force_remove(dev_id);
+    });
 }

@@ -254,7 +254,7 @@ fn rejection(e: libtrust::validate::TrustError) -> CertRejection {
     use libtrust::validate::TrustError as T;
     match e {
         T::Empty => CertRejection::Empty,
-        T::Malformed => CertRejection::Malformed,
+        T::Malformed | T::TooLarge => CertRejection::Malformed,
         T::NotACa => CertRejection::NotCa,
         T::KeyUsageNotCertSign => CertRejection::KeyUsage,
         T::Expired => CertRejection::Expired,

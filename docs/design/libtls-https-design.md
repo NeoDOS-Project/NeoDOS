@@ -366,9 +366,12 @@ cannot silently trust a subset. The build time comes from
   (`/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem`, or `NEODOS_TRUST_BUNDLE`),
   decoding each `CERTIFICATE` block and concatenating the DER. No source → no
   bundle, and HTTPS fails closed.
-- `libnet::http_transport::system_roots()` reads it through `ReadContent` and
+- `libnet::http_transport::system_roots(now)` reads it through `ReadContent`,
+  rejects a file larger than the read buffer instead of truncating it, and
   splits it with `libtls::der::split_certificates` (the X.690 lengths delimit
-  each certificate, so no PEM parser is needed on the target).
+  each certificate, so no PEM parser is needed on the target). Every anchor is
+  revalidated at `now`: DER exact, CA, `keyCertSign`, fingerprint for user CAs
+  and validity window. A broken entry is skipped and reported.
 - `neocurl` uses the bundle when `--ca` is absent; `--ca` still overrides it.
   With no anchors at all the client refuses to connect ("no trust anchors").
 - **User CAs.** `libtrust` adds a second store (registry, one key per imported

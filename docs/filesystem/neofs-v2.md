@@ -438,6 +438,25 @@ neodos-kernel/src/
 | `neofs_v2_mkdir_lookup` | MD → DIR muestra el directorio, CD entra |
 | `neofs_v2_write_power_loss_safe` | Simular corte entre COW pasos → datos preservados |
 
+### Regresiones de escritura fragmentada (#748/#751/#753/#755)
+
+Estas pruebas existen en `neodos_v2.rs` y cubren los fallos originales:
+
+- `neofs_v2_chunked_write_preserves_prefix` — 1024 + 367 + 100 bytes.
+- `neofs_v2_chunked_writes_many_files` — el mismo patrón repetido sobre varios
+  ficheros (reutilización de bloques y page cache).
+- `neofs_v2_reused_blocks_do_not_leak_old_data` — crear/borrar/recrear y leer.
+- `neofs_v2_fragmented_write_survives_remount` — persistencia tras remontar.
+- `neofs_v2_repeated_chunked_writes_same_file` — reescrituras parciales
+  repetidas y remontaje.
+- `neofs_v2_chunked_write_in_multi_entry_dir` — directorio con varias entradas;
+  los vecinos no se alteran.
+- `neofs_v2_no_shared_blocks_between_files` — ningún rango de extents se
+  solapa y la free list no marca bloques vivos como libres.
+
+Limitación: el "reinicio" se simula cerrando y remontando el volumen; no hay una
+prueba de corte real a mitad de una transacción.
+
 ---
 
 ## 9. Plan de Implementación (por orden)

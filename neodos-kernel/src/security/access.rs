@@ -21,8 +21,12 @@ pub fn auditing_enabled() -> bool {
 }
 
 /// True when `ace_sid` is the token's primary SID or one of its group SIDs.
+///
+/// `Everyone` (`S-1-1-0`) is implicitly present in every token, as in NT.
 fn trustee_matches(ace_sid: &Sid, token_sid: &Sid, groups: &[Sid]) -> bool {
-    ace_sid == token_sid || groups.iter().any(|g| g == ace_sid)
+    ace_sid == &crate::security::sid::sid_world()
+        || ace_sid == token_sid
+        || groups.iter().any(|g| g == ace_sid)
 }
 
 /// NT-correct DACL evaluation.

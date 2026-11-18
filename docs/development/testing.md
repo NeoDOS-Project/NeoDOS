@@ -37,6 +37,20 @@ test_case!("my_test", {
 
 `neodev test` waits for a regex match on the final summary line, then exits with code 0 if 0 failures, code 1 otherwise.
 
+## Host tests (no kernel, no VM)
+
+Pure libraries are tested on the host with ordinary `cargo test`:
+
+```bash
+cargo test --manifest-path libtrust/Cargo.toml --lib
+cargo test --manifest-path libtls/Cargo.toml --lib
+```
+
+`libtrust`/`libtls` X.509 tests generate their PKI at test time with OpenSSL
+and fixed validity dates (`tools/x509-fixtures`). No certificate is committed;
+a missing `openssl` or a failed command is a test failure, never a skipped
+test. The `Host tests` CI job runs the same two commands.
+
 ## Harness caveats
 
 - **Disk image freshness.** Some kernel tests mutate the NeoFS volume (mkdir/rmdir,
