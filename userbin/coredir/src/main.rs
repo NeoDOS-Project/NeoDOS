@@ -202,6 +202,77 @@ struct Info {
     dir: bool,
     mode: u16,
     size: u32,
+    owner: [u8; 40],
+    owner_len: u8,
+}
+
+/// Append a decimal number to `out`, returning the new end offset.
+fn append_num(out: &mut [u8], mut pos: usize, mut v: u64) -> usize {
+    let mut tmp = [0u8; 20];
+    let mut i = 20;
+    if v == 0 {
+        if pos < out.len() { out[pos] = b'0'; pos += 1; }
+        return pos;
+    }
+    while v > 0 && i > 0 {
+        i -= 1;
+        tmp[i] = b'0' + (v % 10) as u8;
+        v /= 10;
+    }
+    for &b in &tmp[i..] {
+        if pos < out.len() { out[pos] = b; pos += 1; }
+    }
+    pos
+}
+
+/// Format a binary NT SID as `S-R-A-SA...`; 0 if invalid.
+fn fmt_sid(raw: &[u8], len: u8, out: &mut [u8; 48]) -> usize {
+    let len = (len as usize).min(raw.len());
+    if len < 8 { return 0; }
+    let count = raw[1] as usize;
+    if count > 8 || len < 8 + count * 4 { return 0; }
+    let authority = u64::from_be_bytes([0, 0, raw[2], raw[3], raw[4], raw[5], raw[6], raw[7]]);
+    let mut pos = 0usize;
+    out[pos] = b'S'; pos += 1;
+    out[pos] = b'-'; pos += 1;
+    pos = append_num(out, pos, raw[0] as u64);
+    out[pos] = b'-'; pos += 1;
+    pos = append_num(out, pos, authority);
+    for i in 0..count {
+        out[pos] = b'-'; pos += 1;
+        let at = 8 + i * 4;
+        let v = u32::from_le_bytes([raw[at], raw[at+1], raw[at+2], raw[at+3]]) as u64;
+        pos = append_num(out, pos, v);
+    }
+    pos
+}
+
+/// Query the owner SID for `dir_path\name`; empty when unavailable.
+fn query_owner(dir_path: &str, name: &str) -> ([u8; 40], u8) {
+    let mut vfs_path = [0u8; 260];
+    let mut n = 0usize;
+    for &b in dir_path.as_bytes() {
+        if n < 259 { vfs_path[n] = b; n += 1; }
+    }
+    if n > 0 && vfs_path[n - 1] != b'\\' {
+        if n < 259 { vfs_path[n] = b'\\'; n += 1; }
+    }
+    for &b in name.as_bytes() {
+        if n < 259 { vfs_path[n] = b; n += 1; }
+    }
+    let mut ob_buf = [0u8; 512];
+    let Some(ob_path) = libneoutil::to_ob_path_bytes(&vfs_path[..n], &mut ob_buf) else {
+        return ([0u8; 40], 0);
+    };
+    let Ok(fd) = syscall::sys_ob_open(ob_path, libneodos::syscall::ob_access::READ) else {
+        return ([0u8; 40], 0);
+    };
+    let owner = match syscall::ob_query_file_security(fd) {
+        Ok(info) => (info.owner, info.owner_len),
+        Err(_) => ([0u8; 40], 0),
+    };
+    let _ = syscall::sys_close(fd);
+    owner
 }
 
 fn list_directory(dir_path: &[u8], wide: bool, pause: bool) {
@@ -221,7 +292,14 @@ fn list_directory(dir_path: &[u8], wide: bool, pause: bool) {
     let ob_path = to_ob_path(clean_path, &mut ob_buf);
     match syscall::sys_ob_open(ob_path, libneodos::syscall::ob_access::READ) {
         Ok(fd) => {
-            let mut entries: [Info; 256] = [Info { name: [0u8; 260], dir: false, mode: 0, size: 0 }; 256];
+            let mut entries: [Info; 256] = [Info {
+                name: [0u8; 260],
+                dir: false,
+                mode: 0,
+                size: 0,
+                owner: [0u8; 40],
+                owner_len: 0,
+            }; 256];
             let mut count = 0usize;
 
             let mut ob_entries: [ObEnumEntry; 256] = core::array::from_fn(|_| ObEnumEntry {
@@ -240,7 +318,15 @@ fn list_directory(dir_path: &[u8], wide: bool, pause: bool) {
                         let cl = b.len().min(259);
                         nb[..cl].copy_from_slice(&b[..cl]);
                         let is_dir = raw.obj_type == 11; // ObType::Directory
-                        entries[count] = Info { name: nb, dir: is_dir, mode: raw.mode, size: raw.size };
+                        let (owner, owner_len) = query_owner(clean_path, n);
+                        entries[count] = Info {
+                            name: nb,
+                            dir: is_dir,
+                            mode: raw.mode,
+                            size: raw.size,
+                            owner,
+                            owner_len,
+                        };
                         count += 1;
                     }
                 }
@@ -280,7 +366,7 @@ fn list_directory(dir_path: &[u8], wide: bool, pause: bool) {
                     let n = entry_name(&e.name);
                     let perms = fmt_perms(e.mode);
 
-                    let mut line_buf = [b' '; 40];
+                    let mut line_buf = [b' '; 64];
                     let name_len = n.len().min(12);
                     line_buf[..name_len].copy_from_slice(&n.as_bytes()[..name_len]);
 
@@ -307,8 +393,17 @@ fn list_directory(dir_path: &[u8], wide: bool, pause: bool) {
                     let size_start = 25 + (10 - size_src.len());
                     line_buf[size_start..size_start + size_src.len()].copy_from_slice(size_src);
 
+                    let mut sid_buf = [0u8; 48];
+                    let sid_len = fmt_sid(&e.owner, e.owner_len, &mut sid_buf);
+                    if sid_len > 0 {
+                        let copy = sid_len.min(23);
+                        line_buf[36..36 + copy].copy_from_slice(&sid_buf[..copy]);
+                    } else {
+                        line_buf[36] = b'?';
+                    }
+
                     write_str(b"  ");
-                    write_str(&line_buf[..35]);
+                    write_str(&line_buf[..60]);
                     write_str(b"\r\n");
 
                     line_count += 1;
@@ -341,6 +436,7 @@ DIR [path] [/W] [/P]\r\n\
   path   Directory to list (default: current dir)\r\n\
   /W     Wide format: 5 columns, names only\r\n\
   /P     Pause after each screenful\r\n\
+  Normal output includes OWNER as an NT SID (S-1-5-18 = SYSTEM).\r\n\
 ::END::";
 
 fn print_help() {

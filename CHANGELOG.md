@@ -6,6 +6,11 @@
 
 ### Security
 
+- **`dir` muestra el owner NT.** `ObInfoClass::FileSecurity` (50) devuelve
+  `security_id`, owner y group SID; `coredir` consulta cada entrada y añade la
+  columna `OWNER` (por ejemplo `S-1-5-18`). Las entradas con `security_id = 0`
+  reportan el owner del descriptor por defecto. La estructura es aditiva y no
+  cambia `ObEnumEntry`.
 - **Atomicidad de autorización y mutación en Cm (#787).** La ruta, la DACL y la
   mutación se ejecutan bajo el mismo `CM_MANAGER`; se elimina la ventana en la
   que una celda podía borrarse y reutilizarse entre autorizar y escribir. Las

@@ -177,7 +177,10 @@ pub fn default_vfs_descriptor() -> SecurityDescriptor {
         crate::security::sid::sid_world(),
         super::acl::ACCESS_READ | super::acl::ACCESS_EXECUTE,
     ));
-    SecurityDescriptor::new().with_dacl(dacl)
+    let mut sd = SecurityDescriptor::new().with_dacl(dacl);
+    sd.owner = Some(crate::security::sid::sid_builtin_system());
+    sd.group = Some(crate::security::sid::sid_builtin_administrators());
+    sd
 }
 
 /// Descriptor for a newly created file/directory: the caller owns it; the

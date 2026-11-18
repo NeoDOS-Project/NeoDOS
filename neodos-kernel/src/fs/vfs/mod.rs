@@ -66,6 +66,10 @@ pub trait FileSystem: Send {
         None
     }
 
+    fn security_id(&mut self, _inode: u32) -> u32 {
+        0
+    }
+
     fn set_security_bytes(&mut self, _inode: u32, _bytes: &[u8]) -> Result<(), VfsError> {
         Err(VfsError::NotImplemented)
     }
@@ -301,6 +305,14 @@ impl Vfs {
     pub fn stat(&mut self, drive_idx: usize, inode: u32) -> Result<VfsNode, VfsError> {
         let fs = self.drives[drive_idx].as_mut().ok_or(VfsError::NotFound)?;
         fs.stat(inode)
+    }
+
+    pub fn security_id(&mut self, drive_idx: usize, inode: u32) -> u32 {
+        self.drives
+            .get_mut(drive_idx)
+            .and_then(|d| d.as_mut())
+            .map(|fs| fs.security_id(inode))
+            .unwrap_or(0)
     }
 
     pub fn security_bytes(&mut self, drive_idx: usize, inode: u32) -> Option<alloc::vec::Vec<u8>> {

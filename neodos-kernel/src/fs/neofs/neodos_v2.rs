@@ -876,6 +876,14 @@ impl FileSystem for NeoDosFsV2 {
         NeoDosFsV2::security_bytes(self, inode)
     }
 
+    fn security_id(&mut self, inode: u32) -> u32 {
+        self.inode_cache
+            .get(inode as usize)
+            .and_then(|x| x.as_ref())
+            .map(|c| c.entry.security_id)
+            .unwrap_or(0)
+    }
+
     fn set_security_bytes(&mut self, inode: u32, bytes: &[u8]) -> Result<(), VfsError> {
         NeoDosFsV2::set_security_bytes(self, inode, bytes)
     }
