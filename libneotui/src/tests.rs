@@ -7,7 +7,6 @@ use crate::screen::{Console, Screen};
 use crate::widgets::dialog::Dialog;
 use crate::widgets::input::read_line;
 use crate::widgets::menu::{Menu, MenuItem, MenuOutcome};
-use crate::widgets::progress::Progress;
 
 /// A scripted console: replays `input` and captures everything written.
 struct MockConsole {
@@ -134,18 +133,6 @@ fn line_input_edits_with_backspace() {
     assert_eq!(out, "ac");
 }
 
-#[test]
-fn progress_renders_a_bar() {
-    let mut con = MockConsole::new(&[]);
-    let mut screen = Screen::new(&mut con);
-    {
-        let mut p = Progress::new(&mut screen, "Working", 4);
-        p.update(2);
-        p.finish();
-    }
-    assert!(con.out.contains("Working"));
-    assert!(con.out.contains("100%"));
-}
 
 #[test]
 fn toolkit_is_reusable_without_neocfg() {

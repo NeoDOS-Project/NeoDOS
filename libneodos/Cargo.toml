@@ -21,6 +21,7 @@ i18n-signatures = ["libnlt/signatures"]
 i18n-require-signed = ["i18n-signatures"]
 
 [dependencies]
+libconsole-abi = { path = "../libconsole-abi" }
 libnlt = { path = "../libnlt" }
 
 [profile.release]

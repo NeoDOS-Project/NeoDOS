@@ -78,6 +78,16 @@
 - **Rutas legacy con doble separador (#750)** y **test del heap-break desde
   hilos de kernel (#752).**
 
+### Changed
+
+- **ABI de `console.nxl` declarado una sola vez (#594).** `libconsole-nxl` y
+  `libneodos::console` mantenían copias byte a byte de `ConsoleAbiTable`; ahora
+  ambas usan el crate `libconsole-abi` y el consumidor rechaza una tabla con
+  versión desconocida en vez de llamar punteros desplazados. `libneotui` deja
+  de reimplementar la barra de progreso (solo la usaba su propio test): color,
+  borrado de pantalla y progreso van por `console.nxl` a través del seam
+  `Console`. La consolidación de la entrada/`readline` queda para #571.
+
 ## v0.52 — 2026-11-17
 
 ### Added

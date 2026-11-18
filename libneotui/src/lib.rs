@@ -1,6 +1,6 @@
 //! `libneotui` — a generic, reusable console-UI toolkit for NeoDOS.
 //!
-//! It provides a small widget set (menu, dialogs, input, list, progress) and
+//! It provides a small widget set (menu, dialogs, input, list) and
 //! key decoding on top of an abstract [`Console`]. It is **not** specific to
 //! NeoCfg: any `.NXE` console tool can use it, and nothing here knows about
 //! configuration or system objects.
@@ -25,7 +25,6 @@ pub use widgets::dialog::Dialog;
 pub use widgets::input::read_line;
 pub use widgets::list::List;
 pub use widgets::menu::{Menu, MenuItem, MenuOutcome};
-pub use widgets::progress::Progress;
 
 #[cfg(test)]
 mod tests;

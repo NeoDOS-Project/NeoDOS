@@ -11,9 +11,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "libconsole-abi"
+version = "0.1.0"
+
+[[package]]
 name = "libneodos"
 version = "0.2.1"
 dependencies = [
+ "libconsole-abi",
  "libnlt",
 ]
 

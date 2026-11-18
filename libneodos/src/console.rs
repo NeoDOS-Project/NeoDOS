@@ -11,39 +11,17 @@ const EXPORT_TABLE_OFFSET: u64 = 0x00;
 
 static CONSOLE_BASE: AtomicU64 = AtomicU64::new(0);
 
-/// Completion handler type.
-/// Receives (input_text, cursor_pos, candidates_buffer, max_len) and returns
-/// number of candidates written (null-separated) into the buffer.
-pub type CompletionHandler = extern "C" fn(*const u8, i32, *mut u8, i32) -> i32;
+pub use libconsole_abi::CompletionHandler;
+pub use libconsole_abi::ConsoleAbiTable;
+use libconsole_abi::CONSOLE_ABI_VERSION;
 
-#[repr(C)]
-pub struct ConsoleAbiTable {
-    pub version: u32,
-    pub readline: extern "C" fn(*const u8, *mut u8, i32) -> i32,
-    pub read_byte: extern "C" fn() -> i32,
-    pub write: extern "C" fn(*const u8, i32) -> i32,
-    pub write_line: extern "C" fn(*const u8, i32) -> i32,
-    pub set_color: extern "C" fn(u8, u8),
-    pub reset_color: extern "C" fn(),
-    pub clear_screen: extern "C" fn(),
-    pub cursor_home: extern "C" fn(),
-    pub history_add: extern "C" fn(*const u8),
-    pub history_prev: extern "C" fn() -> *const u8,
-    pub history_next: extern "C" fn() -> *const u8,
-    pub history_reset: extern "C" fn(),
-    pub history_get_count: extern "C" fn() -> i32,
-    pub history_get_entry: extern "C" fn(i32) -> *const u8,
-    pub completion_register: extern "C" fn(Option<CompletionHandler>),
-    pub progress_begin: extern "C" fn(*const u8, u64) -> i32,
-    pub progress_update: extern "C" fn(i32, u64),
-    pub progress_set_message: extern "C" fn(i32, *const u8),
-    pub progress_finish: extern "C" fn(i32),
-    pub spinner_begin: extern "C" fn(*const u8),
-    pub spinner_update: extern "C" fn(),
-    pub spinner_finish: extern "C" fn(),
-    pub set_color_256: extern "C" fn(u8, u8),
-    pub set_truecolor: extern "C" fn(u8, u8, u8, u8, u8, u8),
-    _reserved: [u64; 4],
+fn check_table(table: &'static ConsoleAbiTable) -> Option<&'static ConsoleAbiTable> {
+    // Refuse an unknown ABI revision instead of calling shifted pointers.
+    if table.version == CONSOLE_ABI_VERSION {
+        Some(table)
+    } else {
+        None
+    }
 }
 
 fn get_table() -> Option<&'static ConsoleAbiTable> {
@@ -57,8 +35,10 @@ fn get_table() -> Option<&'static ConsoleAbiTable> {
     let path = core::str::from_utf8(&pbuf[..n]).ok()?;
     match crate::loadlib(path) {
         Ok(base) => {
+            let table = unsafe { &*((base + EXPORT_TABLE_OFFSET) as *const ConsoleAbiTable) };
+            let table = check_table(table)?;
             CONSOLE_BASE.store(base, Ordering::Relaxed);
-            Some(unsafe { &*((base + EXPORT_TABLE_OFFSET) as *const ConsoleAbiTable) })
+            Some(table)
         }
         Err(_) => None,
     }
@@ -83,7 +63,7 @@ pub fn readline_buf(prompt: &str, buf: &mut [u8]) -> i32 {
     pbuf[..plen].copy_from_slice(&prompt.as_bytes()[..plen]);
     pbuf[plen] = 0;
     let maxlen = buf.len() as i32;
-    (table.readline)(pbuf.as_ptr(), buf.as_mut_ptr(), maxlen)
+    unsafe { (table.readline)(pbuf.as_ptr(), buf.as_mut_ptr(), maxlen) }
 }
 
 /// Read a single key byte from the console.
@@ -99,7 +79,7 @@ pub fn read_byte() -> i32 {
 /// Write text to stdout.
 pub fn write(text: &[u8]) -> i32 {
     match get_table() {
-        Some(t) => (t.write)(text.as_ptr(), text.len() as i32),
+        Some(t) => unsafe { (t.write)(text.as_ptr(), text.len() as i32) },
         None => -1,
     }
 }
@@ -107,7 +87,7 @@ pub fn write(text: &[u8]) -> i32 {
 /// Write text + CRLF to stdout.
 pub fn write_line(text: &[u8]) -> i32 {
     match get_table() {
-        Some(t) => (t.write_line)(text.as_ptr(), text.len() as i32),
+        Some(t) => unsafe { (t.write_line)(text.as_ptr(), text.len() as i32) },
         None => -1,
     }
 }
@@ -161,7 +141,7 @@ pub fn cursor_home() {
 /// Add a raw C-string to the history.
 pub fn history_add_raw(text: *const u8) {
     if let Some(t) = get_table() {
-        (t.history_add)(text);
+        unsafe { (t.history_add)(text) };
     }
 }
 
@@ -172,7 +152,7 @@ pub fn history_add(text: &str) {
         let len = core::cmp::min(text.len(), 127);
         buf[..len].copy_from_slice(&text.as_bytes()[..len]);
         buf[len] = 0;
-        (t.history_add)(buf.as_ptr());
+        unsafe { (t.history_add)(buf.as_ptr()) };
     }
 }
 
@@ -239,7 +219,7 @@ pub fn progress_begin(title: &str, total: u64) -> i32 {
     let len = core::cmp::min(title.len(), 63);
     buf[..len].copy_from_slice(&title.as_bytes()[..len]);
     buf[len] = 0;
-    (table.progress_begin)(buf.as_ptr(), total)
+    unsafe { (table.progress_begin)(buf.as_ptr(), total) }
 }
 
 /// Update progress bar current position.
@@ -256,7 +236,7 @@ pub fn progress_set_message(id: i32, text: &str) {
         let len = core::cmp::min(text.len(), 127);
         buf[..len].copy_from_slice(&text.as_bytes()[..len]);
         buf[len] = 0;
-        (t.progress_set_message)(id, buf.as_ptr());
+        unsafe { (t.progress_set_message)(id, buf.as_ptr()) };
     }
 }
 
@@ -276,7 +256,7 @@ pub fn spinner_begin(title: &str) {
         let len = core::cmp::min(title.len(), 63);
         buf[..len].copy_from_slice(&title.as_bytes()[..len]);
         buf[len] = 0;
-        (t.spinner_begin)(buf.as_ptr());
+        unsafe { (t.spinner_begin)(buf.as_ptr()) };
     }
 }
 

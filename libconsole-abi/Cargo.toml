@@ -1,0 +1,17 @@
+[package]
+name = "libconsole-abi"
+version = "0.1.0"
+edition = "2021"
+description = "console.nxl export table layout — one declaration shared by producer and consumer"
+
+[lib]
+name = "libconsole_abi"
+path = "src/lib.rs"
+crate-type = ["lib"]
+test = true
+
+[profile.release]
+panic = "abort"
+opt-level = 3
+lto = true
+debug = false

@@ -3,6 +3,10 @@
 version = 4
 
 [[package]]
+name = "libconsole-abi"
+version = "0.1.0"
+
+[[package]]
 name = "libmath"
 version = "0.1.0"
 dependencies = [
@@ -13,6 +17,7 @@ dependencies = [
 name = "libneodos"
 version = "0.2.1"
 dependencies = [
+ "libconsole-abi",
  "libnlt",
 ]
 
