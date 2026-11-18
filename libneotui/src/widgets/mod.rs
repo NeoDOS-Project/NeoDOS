@@ -4,4 +4,3 @@ pub mod dialog;
 pub mod input;
 pub mod list;
 pub mod menu;
-pub mod progress;
