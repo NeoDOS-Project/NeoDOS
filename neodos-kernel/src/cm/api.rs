@@ -8,6 +8,8 @@ use self::super::hive::{Hive, ValueCell};
 use self::super::manager::{CM_MANAGER, encode_cell, decode_cell};
 use self::super::init::flush_hive_to_vfs;
 use self::super::security;
+use crate::security::acl::{ACCESS_DELETE, ACCESS_WRITE};
+use crate::security::token::Token;
 
 /// Errors that a Cm mutation can report to its caller.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -111,29 +113,50 @@ pub fn cm_open_key(key_native_id: u64, subkey_path: &str) -> Result<u64, ()> {
 }
 
 pub fn cm_create_key(key_native_id: u64, name: &str) -> Result<u64, CmError> {
-    if !security::authorize_new_key(key_native_id, name) {
-        return Err(CmError::Denied);
-    }
+    let token = crate::security::current_token();
+    cm_create_key_as(&token, key_native_id, name)
+}
+
+pub(crate) fn cm_create_key_as(
+    token: &Token,
+    key_native_id: u64,
+    name: &str,
+) -> Result<u64, CmError> {
     let (hive_idx, cell_idx) = decode_cell(key_native_id);
     let mut cm = CM_MANAGER.lock();
-    if (hive_idx as usize) >= cm.hives.len() {
-        return Err(CmError::NotFound);
+    let hm = cm.hives.get_mut(hive_idx as usize).ok_or(CmError::NotFound)?;
+    let path = security::new_key_path(&hm.mount_path, &hm.hive, cell_idx, name)
+        .ok_or(CmError::NotFound)?;
+    if !security::authorize_token(token, &path, ACCESS_WRITE) {
+        drop(cm);
+        security::deny(&path, ACCESS_WRITE);
+        return Err(CmError::Denied);
     }
-    let hm = &mut cm.hives[hive_idx as usize];
-    let new_idx = hm.hive.create_key(cell_idx, name).ok_or(CmError::AlreadyExists)?;
+    let new_idx = hm
+        .hive
+        .create_key(cell_idx, name)
+        .ok_or(CmError::AlreadyExists)?;
     Ok(encode_cell(hive_idx, new_idx))
 }
 
 pub fn cm_delete_key(key_native_id: u64) -> Result<(), CmError> {
-    if !security::authorize_delete_key(key_native_id) {
-        return Err(CmError::Denied);
-    }
+    let token = crate::security::current_token();
+    cm_delete_key_as(&token, key_native_id)
+}
+
+pub(crate) fn cm_delete_key_as(token: &Token, key_native_id: u64) -> Result<(), CmError> {
     let (hive_idx, cell_idx) = decode_cell(key_native_id);
     let mut cm = CM_MANAGER.lock();
-    if (hive_idx as usize) >= cm.hives.len() {
-        return Err(CmError::NotFound);
+    let path = {
+        let hm = cm.hives.get(hive_idx as usize).ok_or(CmError::NotFound)?;
+        security::full_path(&hm.mount_path, &hm.hive, cell_idx).ok_or(CmError::NotFound)?
+    };
+    if !security::authorize_delete_token(token, &path) {
+        drop(cm);
+        security::deny(&path, ACCESS_DELETE);
+        return Err(CmError::Denied);
     }
-    let hm = &mut cm.hives[hive_idx as usize];
+    let hm = cm.hives.get_mut(hive_idx as usize).ok_or(CmError::NotFound)?;
     hm.hive.delete_key(cell_idx);
     Ok(())
 }
@@ -148,31 +171,62 @@ pub fn cm_enum_key(key_native_id: u64, index: u32) -> Result<String, ()> {
     hm.hive.enum_key(cell_idx, index).ok_or(())
 }
 
-pub fn cm_set_value(key_native_id: u64, name: &str, value_type: u32, data: &[u8]) -> Result<(), CmError> {
-    if !security::authorize_key(key_native_id, crate::security::acl::ACCESS_WRITE) {
-        return Err(CmError::Denied);
-    }
+pub fn cm_set_value(
+    key_native_id: u64,
+    name: &str,
+    value_type: u32,
+    data: &[u8],
+) -> Result<(), CmError> {
+    let token = crate::security::current_token();
+    cm_set_value_as(&token, key_native_id, name, value_type, data)
+}
+
+pub(crate) fn cm_set_value_as(
+    token: &Token,
+    key_native_id: u64,
+    name: &str,
+    value_type: u32,
+    data: &[u8],
+) -> Result<(), CmError> {
     let (hive_idx, cell_idx) = decode_cell(key_native_id);
     let mut cm = CM_MANAGER.lock();
-    if (hive_idx as usize) >= cm.hives.len() {
-        return Err(CmError::NotFound);
+    let path = {
+        let hm = cm.hives.get(hive_idx as usize).ok_or(CmError::NotFound)?;
+        security::full_path(&hm.mount_path, &hm.hive, cell_idx).ok_or(CmError::NotFound)?
+    };
+    if !security::authorize_token(token, &path, ACCESS_WRITE) {
+        drop(cm);
+        security::deny(&path, ACCESS_WRITE);
+        return Err(CmError::Denied);
     }
-    let hm = &mut cm.hives[hive_idx as usize];
+    let hm = cm.hives.get_mut(hive_idx as usize).ok_or(CmError::NotFound)?;
     hm.hive
         .set_value(cell_idx, name, value_type, data)
         .ok_or(CmError::NoMemory)
 }
 
 pub fn cm_delete_value(key_native_id: u64, name: &str) -> Result<(), CmError> {
-    if !security::authorize_key(key_native_id, crate::security::acl::ACCESS_WRITE) {
-        return Err(CmError::Denied);
-    }
+    let token = crate::security::current_token();
+    cm_delete_value_as(&token, key_native_id, name)
+}
+
+pub(crate) fn cm_delete_value_as(
+    token: &Token,
+    key_native_id: u64,
+    name: &str,
+) -> Result<(), CmError> {
     let (hive_idx, cell_idx) = decode_cell(key_native_id);
     let mut cm = CM_MANAGER.lock();
-    if (hive_idx as usize) >= cm.hives.len() {
-        return Err(CmError::NotFound);
+    let path = {
+        let hm = cm.hives.get(hive_idx as usize).ok_or(CmError::NotFound)?;
+        security::full_path(&hm.mount_path, &hm.hive, cell_idx).ok_or(CmError::NotFound)?
+    };
+    if !security::authorize_token(token, &path, ACCESS_WRITE) {
+        drop(cm);
+        security::deny(&path, ACCESS_WRITE);
+        return Err(CmError::Denied);
     }
-    let hm = &mut cm.hives[hive_idx as usize];
+    let hm = cm.hives.get_mut(hive_idx as usize).ok_or(CmError::NotFound)?;
     if hm.hive.delete_value(cell_idx, name) {
         Ok(())
     } else {

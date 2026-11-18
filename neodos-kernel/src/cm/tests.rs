@@ -782,4 +782,100 @@ pub fn register_cm_tests() {
         test_eq!(sid_world().format_string(), "S-1-1-0");
         test_true!(sid_world() != crate::security::sid::sid_builtin_user());
     });
+
+    // ── Atomic authorization + cell reuse (#787 follow-up) ──
+
+    test_case!("cm_trust_mutation_atomic_authorization", {
+        use crate::cm::security::{self, TRUST_STORE_KEY};
+        use crate::cm::{decode_cell, encode_cell, CmError, CM_MANAGER};
+        use crate::security::acl::ACCESS_READ;
+        use crate::security::token::Token;
+
+        struct TestMount;
+        impl Drop for TestMount {
+            fn drop(&mut self) {
+                let mut cm = CM_MANAGER.lock();
+                let _ = cm.unmount(TRUST_STORE_KEY);
+            }
+        }
+
+        let admin = Token::new_admin();
+        let user = Token::new_user();
+
+        let hive_idx = {
+            let mut cm = CM_MANAGER.lock();
+            let idx = cm.hives.len() as u32;
+            test_true!(cm
+                .mount("TrustTest", TRUST_STORE_KEY, Hive::new("TrustTest"), 0)
+                .is_some());
+            idx
+        };
+        let _mount = TestMount;
+        let root = encode_cell(hive_idx, 0);
+
+        test_true!(matches!(
+            crate::cm::cm_create_key_as(&user, root, "UserCAs"),
+            Err(CmError::Denied)
+        ));
+        let user_cas = crate::cm::cm_create_key_as(&admin, root, "UserCAs").unwrap();
+        test_true!(decode_cell(user_cas).0 == hive_idx);
+
+        test_eq!(
+            crate::cm::cm_set_value_as(
+                &user,
+                user_cas,
+                "Der",
+                crate::cm::hive::REG_BINARY,
+                b"x"
+            ),
+            Err(CmError::Denied)
+        );
+        test_true!(crate::cm::cm_set_value_as(
+            &admin,
+            user_cas,
+            "Der",
+            crate::cm::hive::REG_BINARY,
+            b"x"
+        )
+        .is_ok());
+        test_eq!(
+            crate::cm::cm_delete_value_as(&user, user_cas, "Der"),
+            Err(CmError::Denied)
+        );
+        test_true!(crate::cm::cm_delete_value_as(&admin, user_cas, "Der").is_ok());
+        test_true!(security::authorize_token(
+            &user,
+            "\\Registry\\Machine\\Software\\NeoDOS\\Trust\\UserCAs",
+            ACCESS_READ
+        ));
+        test_eq!(
+            crate::cm::cm_delete_key_as(&user, user_cas),
+            Err(CmError::Denied)
+        );
+        test_true!(crate::cm::cm_delete_key_as(&admin, user_cas).is_ok());
+    });
+
+    test_case!("cm_cell_reuse_resolves_new_path", {
+        use crate::cm::security::{self, TRUST_STORE_KEY};
+        use crate::security::acl::ACCESS_WRITE;
+        use crate::security::token::Token;
+
+        let admin = Token::new_admin();
+        let user = Token::new_user();
+
+        let mut hive = Hive::new("Reuse");
+        let root = hive.root_cell();
+        let old = hive.create_key(root, "OldUnprotected").unwrap();
+        hive.set_value(old, "Der", crate::cm::hive::REG_BINARY, b"old").unwrap();
+        hive.delete_key(old);
+        hive.next_alloc_hint = old;
+        let new = hive.create_key(root, "Trust").unwrap();
+        test_eq!(new, old);
+
+        let path = alloc::format!("{}\\{}", TRUST_STORE_KEY, hive.key_path(new).unwrap());
+        test_true!(security::path_is_protected(&path));
+        test_true!(!security::authorize_token(&user, &path, ACCESS_WRITE));
+        test_true!(security::authorize_token(&admin, &path, ACCESS_WRITE));
+        test_eq!(hive.key_path(old).unwrap(), "Trust");
+    });
 }

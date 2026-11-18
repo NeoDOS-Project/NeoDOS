@@ -9,7 +9,7 @@
 //! certificates are public); create/delete/write require an administrator or a
 //! token whose groups contain the administrator SID.
 
-use alloc::string::String;
+use alloc::string::{String, ToString};
 
 use lazy_static::lazy_static;
 
@@ -20,7 +20,7 @@ use crate::security::acl::{
 use crate::security::sid::{sid_builtin_admin, sid_world};
 use crate::security::token::Token;
 
-use super::manager::{decode_cell, CM_MANAGER};
+use super::hive::Hive;
 
 /// Registry subtree that owns the system trust store.
 pub const TRUST_STORE_KEY: &str = "\\Registry\\Machine\\Software\\NeoDOS\\Trust";
@@ -84,72 +84,33 @@ pub fn authorize_delete_token(token: &Token, path: &str) -> bool {
     se_access_check(token, Some(&TRUST_SD), ACCESS_DELETE)
 }
 
-/// Full Ob path of a Cm key from its encoded `(hive, cell)` native id.
-fn key_path(native_id: u64) -> Option<String> {
-    let (hive_idx, cell) = decode_cell(native_id);
-    let cm = CM_MANAGER.lock();
-    let mount = cm.hives.get(hive_idx as usize)?;
-    let relative = mount.hive.key_path(cell)?;
+/// Full Ob path of a key relative to the hive root. Pure: the caller holds
+/// `CM_MANAGER`, so authorization and mutation share one critical section.
+pub(crate) fn full_path(mount_path: &str, hive: &Hive, cell: u32) -> Option<String> {
+    let relative = hive.key_path(cell)?;
     if relative.is_empty() {
-        Some(mount.mount_path.clone())
+        Some(mount_path.to_string())
     } else {
-        Some(alloc::format!("{}\\{}", mount.mount_path, relative))
+        Some(alloc::format!("{}\\{}", mount_path, relative))
     }
 }
 
-/// Path of a subkey that is about to be created under `parent_native_id`.
-fn new_key_path(parent_native_id: u64, name: &str) -> Option<String> {
-    let parent = key_path(parent_native_id)?;
+/// Path of a subkey that is about to be created.
+pub(crate) fn new_key_path(
+    mount_path: &str,
+    hive: &Hive,
+    parent_cell: u32,
+    name: &str,
+) -> Option<String> {
+    let parent = full_path(mount_path, hive, parent_cell)?;
     Some(alloc::format!("{}\\{}", parent, name))
 }
 
-fn deny(path: &str, access: u32) {
+pub(crate) fn deny(path: &str, access: u32) {
     kwarn!(
         crate::log::LogSubsys::Security,
         "cm: access denied path='{}' access={:#x}",
         path,
         access
     );
-}
-
-/// Authorize mutating the key identified by `native_id`.
-pub fn authorize_key(native_id: u64, access: u32) -> bool {
-    // Token first (SCHEDULER) then the key path (CM_MANAGER), matching the
-    // syscall handlers' lock order.
-    let token = crate::security::current_token();
-    let Some(path) = key_path(native_id) else {
-        return true; // invalid key: the operation will fail on its own
-    };
-    let ok = authorize_token(&token, &path, access);
-    if !ok {
-        deny(&path, access);
-    }
-    ok
-}
-
-/// Authorize creating `name` under `parent_native_id`.
-pub fn authorize_new_key(parent_native_id: u64, name: &str) -> bool {
-    let token = crate::security::current_token();
-    let Some(path) = new_key_path(parent_native_id, name) else {
-        return true;
-    };
-    let ok = authorize_token(&token, &path, ACCESS_WRITE);
-    if !ok {
-        deny(&path, ACCESS_WRITE);
-    }
-    ok
-}
-
-/// Authorize deleting the key identified by `native_id`, including the case
-/// where it is an ancestor of the trust store.
-pub fn authorize_delete_key(native_id: u64) -> bool {
-    let token = crate::security::current_token();
-    let Some(path) = key_path(native_id) else {
-        return true;
-    };
-    let ok = authorize_delete_token(&token, &path);
-    if !ok {
-        deny(&path, ACCESS_DELETE);
-    }
-    ok
 }
