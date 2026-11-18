@@ -283,7 +283,7 @@ pub fn spawn_usermode(entry: u64, stack_top: u64, slot_idx: u8, cwd_drive: u8, c
         let lock = scheduler::current_scheduler().lock();
         lock.find_eprocess(parent_pid)
             .map(|ep| ep.token.clone())
-            .unwrap_or(crate::security::DEFAULT_ADMIN_TOKEN.clone())
+            .unwrap_or(crate::security::DEFAULT_SYSTEM_TOKEN.clone())
     });
 
     // Single transactional critical section: pid/tid allocation, slot reservation,

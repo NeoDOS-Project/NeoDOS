@@ -1,4 +1,8 @@
-use crate::security::sid::{Sid, sid_builtin_admin, sid_builtin_user};
+use crate::security::sid::{
+    sid_builtin_administrator, sid_builtin_administrators, sid_builtin_system,
+    sid_builtin_user, sid_builtin_users, Sid,
+};
+use crate::security::sam::SamEntry;
 use alloc::vec::Vec;
 
 // ── Privilege flags ─────────────────────────────────────────────────
@@ -120,11 +124,12 @@ impl Token {
         }
     }
 
+    /// Built-in Administrator account (`-500`) with Users/Administrators.
     pub fn new_admin() -> Self {
         Token {
-            sid: sid_builtin_admin(),
+            sid: sid_builtin_administrator(),
             is_admin: true,
-            groups: Vec::new(),
+            groups: alloc::vec![sid_builtin_users(), sid_builtin_administrators()],
             privileges: SE_ADMIN_PRIVILEGES,
             session_id: 0,
             integrity_level: IntegrityLevel::System,
@@ -132,14 +137,48 @@ impl Token {
         }
     }
 
+    /// Kernel/SYSTEM identity (`S-1-5-18`).
+    pub fn new_system() -> Self {
+        Token {
+            sid: sid_builtin_system(),
+            is_admin: true,
+            groups: alloc::vec![sid_builtin_users(), sid_builtin_administrators()],
+            privileges: SE_ADMIN_PRIVILEGES,
+            session_id: 0,
+            integrity_level: IntegrityLevel::System,
+            creation_time: token_timestamp(),
+        }
+    }
+
+    /// Ordinary user token, with the Users group populated.
     pub fn new_user() -> Self {
         Token {
             sid: sid_builtin_user(),
             is_admin: false,
-            groups: Vec::new(),
+            groups: alloc::vec![sid_builtin_users()],
             privileges: SE_USER_PRIVILEGES,
             session_id: 1,
             integrity_level: IntegrityLevel::Medium,
+            creation_time: token_timestamp(),
+        }
+    }
+
+    /// Build a token from a SAM account. `session_id` is assigned by the
+    /// session/logon layer; phase 1 uses a fixed interactive session.
+    pub fn from_sam(entry: &SamEntry, session_id: u32) -> Self {
+        let is_admin = entry.is_admin();
+        let groups = if is_admin {
+            alloc::vec![sid_builtin_users(), sid_builtin_administrators()]
+        } else {
+            alloc::vec![sid_builtin_users()]
+        };
+        Token {
+            sid: entry.sid,
+            is_admin,
+            groups,
+            privileges: if is_admin { SE_ADMIN_PRIVILEGES } else { SE_USER_PRIVILEGES },
+            session_id,
+            integrity_level: Self::default_integrity(is_admin),
             creation_time: token_timestamp(),
         }
     }

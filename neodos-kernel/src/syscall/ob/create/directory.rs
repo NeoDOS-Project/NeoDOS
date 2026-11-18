@@ -20,6 +20,29 @@ pub(super) fn dispatch(
             // vfs.mkdir and return a VFS-backed fd (no Ob namespace entry).
             if let Some(vfs_path) = path_str.strip_prefix("\\Global\\FileSystem\\") {
                 if !vfs_path.is_empty() {
+                    let token = crate::security::current_token();
+                    let parent_descriptor = if let Some(parent) =
+                        vfs_path.rsplit_once('\\').map(|(p, _)| p)
+                    {
+                        let info = crate::globals::with_vfs(|vfs| {
+                            let (drive, node) = vfs.resolve_path(parent).ok()?;
+                            let descriptor = vfs.security_bytes(drive, node.inode);
+                            let allowed = crate::security::access::vfs_access_check(
+                                &token,
+                                descriptor.as_deref(),
+                                crate::security::acl::ACCESS_WRITE
+                                    | crate::security::acl::ACCESS_EXECUTE,
+                            );
+                            Some((allowed, descriptor))
+                        });
+                        match info {
+                            Some((true, descriptor)) => descriptor,
+                            Some((false, _)) => return err_to_u64(SyscallError::Perm),
+                            None => None,
+                        }
+                    } else {
+                        None
+                    };
                     let node = match crate::globals::with_vfs(|vfs| vfs.mkdir(vfs_path)) {
                         Ok(n) => n,
                         Err(_) => return err_to_u64(SyscallError::Io),
@@ -28,9 +51,11 @@ pub(super) fn dispatch(
                         let b = vfs_path.as_bytes().first().copied().unwrap_or(b'C');
                         (b.to_ascii_uppercase() - b'A') as usize
                     };
-                    let token = crate::security::current_token();
                     if let Some(bytes) = crate::security::acl::serialize_security_descriptor(
-                        &crate::security::access::descriptor_for_token(&token),
+                        &crate::security::access::child_descriptor(
+                            parent_descriptor.as_deref(),
+                            &token,
+                        ),
                     ) {
                         let _ = crate::globals::with_vfs(|vfs| {
                             vfs.set_security_bytes(drive_idx, node.inode, &bytes)
@@ -42,7 +67,7 @@ pub(super) fn dispatch(
                     let lock = s.lock();
                     lock.current_eprocess()
                         .map(|ep| ep.token.clone())
-                        .unwrap_or(crate::security::DEFAULT_ADMIN_TOKEN.clone())
+                        .unwrap_or(crate::security::DEFAULT_SYSTEM_TOKEN.clone())
                 });
                 return match crate::object::ob_open_path(
                     &path_str,

@@ -37,6 +37,18 @@ pub struct ObFileInfo {
 
 
 #[repr(C)]
+pub struct ObTokenInfo {
+    pub sid_len: u8,
+    pub group_count: u8,
+    pub is_admin: u8,
+    pub integrity: u8,
+    pub session_id: u32,
+    pub sid: [u8; 40],
+    pub groups: [[u8; 40]; 8],
+    pub group_lens: [u8; 8],
+}
+
+#[repr(C)]
 pub struct ObProcessInfo {
     pub pid: u32,
     pub parent_pid: u32,

@@ -82,7 +82,7 @@ fn current_token() -> crate::security::token::Token {
         let lock = s.lock();
         lock.current_eprocess()
             .map(|ep| ep.token.clone())
-            .unwrap_or(crate::security::DEFAULT_ADMIN_TOKEN.clone())
+            .unwrap_or(crate::security::DEFAULT_SYSTEM_TOKEN.clone())
     })
 }
 

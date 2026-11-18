@@ -337,6 +337,7 @@ Current ABI is **v8**. Key ABI structs (all `#[repr(C)]`, defined in `libneodos/
 - `ObBasicInfo` — base info for any Ob object (type, refcount, name)
 - `ObEnumEntry` — directory listing entry (id, type, name, mode, size)
 - `ObFileSecurity` — NT owner/group/security_id metadata (`ob_query_file_security`)
+- `ObTokenInfo` — current token SID, groups, session and integrity (`ob_query_token_info`)
 - `ObProcessInfo` — process query result (pid, parent pid, priority, thread count, state)
 - `CpuStatsEntry` / `ThreadStatsEntry` — SMP observability snapshots (classes 24/25)
 - `SmpStats` — global work-stealing counters (class 27, `\Global\Info\CpuInfo`)

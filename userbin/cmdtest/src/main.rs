@@ -74,7 +74,7 @@ fn test_cd() -> bool {
 fn test_md_rd() -> bool {
     let mut ob_buf = [0u8; 512];
     let prefix = b"\\Global\\FileSystem\\";
-    let test_path = b"C:\\CMDTEST_TMP";
+    let test_path = b"C:\\Users\\NeoDOS\\CMDTEST_TMP";
     let total = prefix.len() + test_path.len();
     let mut path_buf = [0u8; 512];
     path_buf[..prefix.len()].copy_from_slice(prefix);
@@ -96,7 +96,7 @@ fn test_md_rd() -> bool {
 fn test_del() -> bool {
     let mut ob_buf = [0u8; 512];
     let prefix = b"\\Global\\FileSystem\\";
-    let test_path = b"C:\\CMDTEST_DEL";
+    let test_path = b"C:\\Users\\NeoDOS\\CMDTEST_DEL";
     let total = prefix.len() + test_path.len();
     let mut path_buf = [0u8; 512];
     path_buf[..prefix.len()].copy_from_slice(prefix);

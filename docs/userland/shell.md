@@ -90,6 +90,10 @@ Built-in commands (CWD, SET, EXIT, CALL) are not pipeable and produce an error i
 | ECHO `<text>` | `sys_write` (RAX 20) to stdout | direct write |
 | MD `<dir>` | `ob_create(Directory)` (RAX 41) | `sys_ob_create(path, Directory)` |
 
+El shell interactivo arranca como la cuenta no privilegiada `NeoDOS` (SID
+`-1000`); los servicios y NeoInit siguen siendo SYSTEM. La elevación
+(`runas`/login) es fase 2.
+
 ## System Commands
 
 | Command | Implementation |

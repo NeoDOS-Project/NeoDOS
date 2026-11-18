@@ -3,7 +3,7 @@
 use crate::object::types::ObInfoClass;
 use crate::syscall::{err_to_u64, SyscallError, copy_to_user};
 use crate::scheduler::ThreadState;
-use crate::syscall::ob::types::{ObProcessInfo, ObThreadInfo};
+use crate::syscall::ob::types::{ObProcessInfo, ObThreadInfo, ObTokenInfo};
 
 /// Aggregate a process's thread states into the documented `ObProcessInfo`
 /// state encoding (0 Ready, 1 Running, 2 Blocked, 3 Terminated):
@@ -29,6 +29,7 @@ pub(super) fn handles(info_class: u32) -> bool {
         || info_class == ObInfoClass::ProcessId as u32
         || info_class == ObInfoClass::ProcessArgs as u32
         || info_class == ObInfoClass::ProcessShutdownState as u32
+        || info_class == ObInfoClass::TokenInfo as u32
 }
 
 /// Dispatch the `process` info classes.
@@ -193,6 +194,41 @@ pub(super) fn dispatch(
                 }
             }
             return arg_len as u64;
+        }
+        _ if info_class == ObInfoClass::TokenInfo as u32 => {
+            let token = crate::hal::without_interrupts(|| {
+                let s = crate::scheduler::current_scheduler();
+                let lock = s.lock();
+                lock.current_eprocess()
+                    .map(|ep| ep.token.clone())
+                    .unwrap_or(crate::security::DEFAULT_SYSTEM_TOKEN.clone())
+            });
+            let mut info = ObTokenInfo {
+                sid_len: 0,
+                group_count: 0,
+                is_admin: token.is_admin_token() as u8,
+                integrity: token.integrity_level.to_u8(),
+                session_id: token.session_id,
+                sid: [0u8; 40],
+                groups: [[0u8; 40]; 8],
+                group_lens: [0u8; 8],
+            };
+            info.sid_len = token.sid.write_binary(&mut info.sid) as u8;
+            for (i, group) in token.groups.iter().take(8).enumerate() {
+                info.group_lens[i] = group.write_binary(&mut info.groups[i]) as u8;
+                info.group_count += 1;
+            }
+            let sz = core::mem::size_of::<ObTokenInfo>();
+            if buf_size < sz {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let raw = unsafe {
+                core::slice::from_raw_parts(&info as *const ObTokenInfo as *const u8, sz)
+            };
+            if copy_to_user(buf_ptr, raw).is_err() {
+                return err_to_u64(SyscallError::Fault);
+            }
+            sz as u64
         }
         _ if info_class == ObInfoClass::ProcessShutdownState as u32 => {
             // #358: report whether a graceful shutdown has been requested for

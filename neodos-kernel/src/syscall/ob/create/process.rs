@@ -24,6 +24,28 @@ pub(super) fn dispatch(
             let stdout_fd = ((attrs >> 8) & 0xFF) as u8;
             let stderr_fd = ((attrs >> 16) & 0xFF) as u8;
 
+            // Optional "spawn as default unprivileged user" (NeoInit -> shell).
+            // Only an admin/SYSTEM caller may request it; the token itself is
+            // built from the SAM account, never from user-provided bits.
+            let as_user = attrs & (1u64 << 32) != 0;
+            let user_token = if as_user {
+                if !crate::syscall::is_current_admin() {
+                    return err_to_u64(SyscallError::Perm);
+                }
+                let entry = crate::security::SAM_DB
+                    .lock()
+                    .find_by_username("NeoDOS")
+                    .cloned();
+                match entry {
+                    Some(entry) if !entry.is_disabled() && !entry.is_locked() => {
+                        Some(crate::security::token::Token::from_sam(&entry, 1))
+                    }
+                    _ => return err_to_u64(SyscallError::NoEnt),
+                }
+            } else {
+                None
+            };
+
             let (cwd_drive, cwd_path, parent_pid) = crate::hal::without_interrupts(|| {
                 let s = scheduler::current_scheduler().lock();
                 let pid = s.current_pid();
@@ -47,6 +69,25 @@ pub(super) fn dispatch(
             };
             let child_pid = created.pid;
             crate::serial_println!("[OB] Process spawned: child_pid={} entry=0x{:x}", child_pid, created.entry);
+
+            // The initial thread stays `Suspended` until ObWait hands it off, so
+            // replacing the inherited token here is race-free and keeps
+            // `infra::usermode` free of the SAM/token policy.
+            if let Some(token) = user_token {
+                crate::hal::without_interrupts(|| {
+                    let s = scheduler::current_scheduler();
+                    let mut lock = s.lock();
+                    if let Some(ep) = lock.find_eprocess_mut(child_pid) {
+                        crate::serial_println!(
+                            "[SEC] pid={} spawned as {} (admin={})",
+                            child_pid,
+                            token.sid,
+                            token.is_admin_token()
+                        );
+                        ep.token = token;
+                    }
+                });
+            }
 
             // ── Fix 1.2: per-process args storage ──
             // Atomically copy args from the shared 0x41F000 buffer into the child's

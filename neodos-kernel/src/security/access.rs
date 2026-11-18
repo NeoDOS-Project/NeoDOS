@@ -203,6 +203,63 @@ pub fn descriptor_for_token(token: &Token) -> SecurityDescriptor {
     }
 }
 
+/// Descriptor for a user's private profile tree: owner full, Administrators
+/// and SYSTEM full, no Everyone access.
+pub fn descriptor_for_account(sid: crate::security::sid::Sid) -> SecurityDescriptor {
+    let mut dacl = Acl::new();
+    dacl.insert_ace_canonical(Ace::allow(sid, super::acl::ACCESS_ALL));
+    dacl.insert_ace_canonical(Ace::allow(
+        crate::security::sid::sid_builtin_administrators(),
+        super::acl::ACCESS_ALL,
+    ));
+    dacl.insert_ace_canonical(Ace::allow(
+        crate::security::sid::sid_builtin_system(),
+        super::acl::ACCESS_ALL,
+    ));
+    let mut sd = SecurityDescriptor::new().with_dacl(dacl);
+    sd.owner = Some(sid);
+    sd.group = Some(crate::security::sid::sid_builtin_users());
+    sd
+}
+
+/// Descriptor for the shared profile root (`C:\\Users`): Administrators and
+/// SYSTEM own it, while `Users` may only read/traverse. Per-user trees carry
+/// their own owner; no account gets control of the container.
+pub fn descriptor_for_profile_root() -> SecurityDescriptor {
+    let mut dacl = Acl::new();
+    dacl.insert_ace_canonical(Ace::allow(
+        crate::security::sid::sid_builtin_administrators(),
+        super::acl::ACCESS_ALL,
+    ));
+    dacl.insert_ace_canonical(Ace::allow(
+        crate::security::sid::sid_builtin_system(),
+        super::acl::ACCESS_ALL,
+    ));
+    dacl.insert_ace_canonical(Ace::allow(
+        crate::security::sid::sid_builtin_users(),
+        super::acl::ACCESS_READ | super::acl::ACCESS_EXECUTE,
+    ));
+    let mut sd = SecurityDescriptor::new().with_dacl(dacl);
+    sd.owner = Some(crate::security::sid::sid_builtin_administrators());
+    sd.group = Some(crate::security::sid::sid_builtin_users());
+    sd
+}
+
+/// Descriptor for a new child: inherit the parent DACL/group when present,
+/// otherwise use the normal new-file descriptor.
+pub fn child_descriptor(
+    parent: Option<&[u8]>,
+    token: &Token,
+) -> SecurityDescriptor {
+    if let Some(bytes) = parent {
+        if let Some(mut sd) = super::acl::deserialize_security_descriptor(bytes) {
+            sd.owner = Some(token.sid);
+            return sd;
+        }
+    }
+    descriptor_for_token(token)
+}
+
 /// Check `access` against an on-disk descriptor. `None` means the entry has
 /// no persisted descriptor (security_id == 0) and gets the safe default.
 /// A malformed persisted descriptor fails closed.

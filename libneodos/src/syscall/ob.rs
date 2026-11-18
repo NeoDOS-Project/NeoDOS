@@ -87,6 +87,8 @@ pub enum ObInfoClass {
     RandomCaps = 49,
     /// NT security descriptor metadata for a file/directory.
     FileSecurity = 50,
+    /// Current process token: SID, groups, session and integrity.
+    TokenInfo = 51,
 }
 
 pub mod ob_type {
@@ -227,6 +229,20 @@ impl ObBasicInfo {
         let end = self.name.iter().position(|&b| b == 0).unwrap_or(32);
         core::str::from_utf8(&self.name[..end]).unwrap_or("<?>")
     }
+}
+
+/// Current process token metadata (RAX=62, class=51).
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct ObTokenInfo {
+    pub sid_len: u8,
+    pub group_count: u8,
+    pub is_admin: u8,
+    pub integrity: u8,
+    pub session_id: u32,
+    pub sid: [u8; 40],
+    pub groups: [[u8; 40]; 8],
+    pub group_lens: [u8; 8],
 }
 
 /// NT security metadata for one file/directory (RAX=62, class=50).
@@ -392,6 +408,28 @@ pub fn ob_query_file_security(fd: u8) -> Result<ObFileSecurity, i64> {
     };
     sys_ob_query_info(fd, ObInfoClass::FileSecurity, buf)?;
     Ok(info)
+}
+
+/// Query the calling process token (SID, groups, session, integrity).
+pub fn ob_query_token_info() -> Result<ObTokenInfo, i64> {
+    let fd = sys_ob_open("\\Global\\Info\\Process", ob_access::READ)?;
+    let mut info = ObTokenInfo {
+        sid_len: 0,
+        group_count: 0,
+        is_admin: 0,
+        integrity: 0,
+        session_id: 0,
+        sid: [0u8; 40],
+        groups: [[0u8; 40]; 8],
+        group_lens: [0u8; 8],
+    };
+    let len = core::mem::size_of::<ObTokenInfo>();
+    let buf = unsafe {
+        core::slice::from_raw_parts_mut(&mut info as *mut ObTokenInfo as *mut u8, len)
+    };
+    let r = sys_ob_query_info(fd, ObInfoClass::TokenInfo, buf);
+    let _ = sys_close(fd);
+    r.map(|_| info)
 }
 
 /// sys_ob_enum (RAX=64): enumerate objects in a namespace directory by fd.

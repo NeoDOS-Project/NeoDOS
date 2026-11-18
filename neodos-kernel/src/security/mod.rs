@@ -9,7 +9,7 @@ use lazy_static::lazy_static;
 use crate::log::LogSubsys;
 
 lazy_static! {
-    pub static ref DEFAULT_ADMIN_TOKEN: token::Token = token::Token::new_admin();
+    pub static ref DEFAULT_SYSTEM_TOKEN: token::Token = token::Token::new_system();
     pub static ref DEFAULT_USER_TOKEN: token::Token = token::Token::new_user();
 
     /// Global SAM database, seeded with the built-in accounts on first use
@@ -26,7 +26,7 @@ pub fn current_token() -> token::Token {
         let lock = s.lock();
         lock.current_eprocess()
             .map(|ep| ep.token.clone())
-            .unwrap_or_else(|| DEFAULT_ADMIN_TOKEN.clone())
+            .unwrap_or_else(|| DEFAULT_SYSTEM_TOKEN.clone())
     })
 }
 
@@ -54,7 +54,7 @@ pub fn register_security_tests() {
     // ── NT6.1 Tests ─────────────────────────────────────────────────
 
     test_case!("sid_format", {
-        let admin_sid = sid_builtin_admin();
+        let admin_sid = sid_builtin_system();
         let s = admin_sid.format_string();
         test_true!(!s.is_empty());
         test_true!(s.starts_with("S-"));
@@ -73,6 +73,9 @@ pub fn register_security_tests() {
 
     test_case!("sid_well_known_table", {
         test_eq!(well_known_sid("Administrator").unwrap(), sid_builtin_administrator());
+        test_eq!(well_known_sid("Administrators").unwrap(), sid_builtin_administrators());
+        test_eq!(well_known_sid("Users").unwrap(), sid_builtin_users());
+        test_eq!(well_known_sid("User").unwrap(), sid_builtin_user());
         test_eq!(well_known_sid("guest").unwrap(), sid_builtin_guest());
         test_eq!(well_known_sid("SYSTEM").unwrap(), sid_builtin_system());
         test_eq!(well_known_sid("Everyone").unwrap(), sid_world());
@@ -89,7 +92,7 @@ pub fn register_security_tests() {
     test_case!("token_admin_boot_default", {
         let admin_token = Token::new_admin();
         test_true!(admin_token.is_admin_token());
-        test_eq!(admin_token.sid, sid_builtin_admin());
+        test_eq!(admin_token.sid, sid_builtin_administrator());
 
         let user_token = Token::new_user();
         test_true!(!user_token.is_admin_token());
@@ -100,7 +103,7 @@ pub fn register_security_tests() {
         // USR-P1b: admin = System IL, standard user = Medium IL.
         test_eq!(Token::new_admin().integrity_level, IntegrityLevel::System);
         test_eq!(Token::new_user().integrity_level, IntegrityLevel::Medium);
-        test_eq!(Token::new(sid_builtin_admin(), true).integrity_level, IntegrityLevel::System);
+        test_eq!(Token::new(sid_builtin_system(), true).integrity_level, IntegrityLevel::System);
         test_eq!(Token::new(sid_builtin_user(), false).integrity_level, IntegrityLevel::Medium);
 
         test_eq!(IntegrityLevel::System.to_u8(), 4);
@@ -134,7 +137,7 @@ pub fn register_security_tests() {
         let child = Token::new(parent.sid, parent.is_admin);
         test_true!(child.is_admin_token());
         test_eq!(child.sid, parent.sid);
-        test_eq!(child.sid, sid_builtin_admin());
+        test_eq!(child.sid, sid_builtin_administrator());
 
         let user_parent = Token::new_user();
         let user_child = Token::new(user_parent.sid, user_parent.is_admin);
@@ -158,7 +161,7 @@ pub fn register_security_tests() {
 
     test_case!("acl_deny_access", {
         let user = sid_builtin_user();
-        let admin_s = sid_builtin_admin();
+        let admin_s = sid_builtin_administrators();
         let mut acl = Acl::new();
         acl.add_ace(Ace::allow(admin_s, ACCESS_ALL));
         acl.add_ace(Ace::deny(user, ACCESS_ALL));
@@ -287,7 +290,7 @@ pub fn register_security_tests() {
 
     test_case!("se_deny_first_mixed_aces", {
         let user = sid_builtin_user();
-        let admin_s = sid_builtin_admin();
+        let admin_s = sid_builtin_administrators();
         let mut acl = Acl::new();
         acl.add_ace(Ace::allow(admin_s, ACCESS_ALL));
         acl.add_ace(Ace::allow(user, ACCESS_WRITE));
@@ -493,5 +496,28 @@ pub fn register_security_tests() {
         // Encoded but invalid descriptor fails closed.
         test_true!(!vfs_access_check(&user, Some(b"bad"), ACCESS_READ));
         let _ = default_vfs_descriptor();
+    });
+
+    test_case!("token_from_sam_groups", {
+        use crate::security::token::Token;
+        let db = SAM_DB.lock();
+        let user = db.find_by_username("NeoDOS").unwrap();
+        let user_token = Token::from_sam(user, 1);
+        test_true!(!user_token.is_admin_token());
+        test_eq!(user_token.sid, sid_builtin_user());
+        test_true!(user_token.is_in_group(&sid_builtin_users()));
+        test_true!(!user_token.is_in_group(&sid_builtin_administrators()));
+
+        let admin = db.find_by_username("Administrator").unwrap();
+        let admin_token = Token::from_sam(admin, 1);
+        test_true!(admin_token.is_admin_token());
+        test_eq!(admin_token.sid, sid_builtin_administrator());
+        test_true!(admin_token.is_in_group(&sid_builtin_users()));
+        test_true!(admin_token.is_in_group(&sid_builtin_administrators()));
+    });
+
+    test_case!("syscall_permission_denies_user_admin_op", {
+        test_true!(crate::syscall::check_syscall_permission(58, true).is_ok());
+        test_true!(crate::syscall::check_syscall_permission(58, false).is_err());
     });
 }

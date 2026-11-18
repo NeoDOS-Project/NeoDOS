@@ -59,8 +59,11 @@ fn read_reg_dword(key_fd: u8, name: &str) -> Option<u32> {
     Some(u32::from_le_bytes([reg_buf[8], reg_buf[9], reg_buf[10], reg_buf[11]]))
 }
 
-fn spawn_and_wait(path: &str) -> Result<u32, i64> {
-    let attrs = 0xFFu64 | (0xFFu64 << 8) | (0xFFu64 << 16);
+fn spawn_and_wait(path: &str, as_user: bool) -> Result<u32, i64> {
+    let mut attrs = 0xFFu64 | (0xFFu64 << 8) | (0xFFu64 << 16);
+    if as_user {
+        attrs |= 1u64 << 32;
+    }
     let fd = syscall::sys_ob_create(path, 1, None, attrs)?;
     let _ = syscall::sys_ob_wait(fd);
     let _ = syscall::sys_close(fd);
@@ -78,7 +81,7 @@ fn try_spawn_test(path: &str, tag: &str) {
         Ok(s) => s,
         Err(_) => return,
     };
-    match spawn_and_wait(ob_path) {
+    match spawn_and_wait(ob_path, false) {
         Ok(_) => write_str(b"[neoinit] test completed: "),
         Err(_) => write_str(b"[neoinit] test not found or failed: "),
     }
@@ -202,7 +205,7 @@ pub extern "C" fn _start() -> ! {
         if enable_vt != 0 {
             set_vt(0);
         }
-        match spawn_and_wait(ob_path) {
+        match spawn_and_wait(ob_path, true) {
             Ok(_pid) => {
                 write_str(b"[neoinit] shell exited, respawning...\r\n");
             }

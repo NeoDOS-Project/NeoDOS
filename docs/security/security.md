@@ -19,7 +19,7 @@ pub struct Sid {
 
 | Name | SID String | Usage |
 |------|------------|-------|
-| `sid_builtin_system()` / `sid_builtin_admin()` | `S-1-5-18` | NT AUTHORITY\SYSTEM (kernel/Idle/NeoInit) |
+| `sid_builtin_system()` | `S-1-5-18` | NT AUTHORITY\SYSTEM (kernel/Idle/NeoInit) |
 | `sid_builtin_administrator()` | `S-1-5-21-0-0-0-500` | Built-in Administrator account |
 | `sid_builtin_guest()` | `S-1-5-21-0-0-0-501` | Built-in Guest account |
 | `sid_builtin_user()` | `S-1-5-21-0-0-0-1000` | Default domain user |
@@ -33,6 +33,26 @@ pub struct Sid {
 `sid_builtin_domain()` = `S-1-5-21-0-0-0`.
 
 `format_string()` produces the human-readable `S-R-I-S*` format. `from_parts()` constructs a Sid from raw components.
+
+## Token chain (v0.53)
+
+- Kernel/Idle/services/NeoInit use SYSTEM (`S-1-5-18`) via `Token::new_system()`.
+- The built-in `Administrator` account (`-500`) gets `new_admin()` with
+  `Users` + `Administrators` groups.
+- `Token::from_sam(entry, session_id)` issues a token from a SAM account;
+  ordinary accounts get `Users`; admin accounts also get `Administrators`.
+- The default interactive account is `NeoDOS` (`-1000`, non-admin). `NeoInit`
+  spawns the shell with this token through the `ObCreate(Process)` attrs
+  bit 32; only an admin/SYSTEM caller may request it.
+- Child processes inherit the parent token (`Token::inherit_from`), so shell
+  commands run unprivileged.
+- `ObInfoClass::TokenInfo` (51) exposes SID, groups, session and integrity.
+- Profiles (`C:\Users\<user>`) get an NT DACL: owner full, Administrators/
+  SYSTEM full, no Everyone access. New files inherit the parent DACL. The
+  shared `C:\Users` container stays owned by Administrators with `Users`
+  limited to read/traverse, so no account controls another's tree.
+- Admin elevation (`runas`/login) is phase 2 (#37/#39/#40); #767 remains open
+  until the final Ring 3 verification is recorded.
 
 ## Token
 

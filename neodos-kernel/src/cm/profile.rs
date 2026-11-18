@@ -73,6 +73,31 @@ fn persist(profile: &Profile) {
     let _ = crate::cm::cm_flush_key(key);
 }
 
+/// Apply the profile's NT owner/DACL to every directory in the tree.
+fn apply_security(profile: &Profile) {
+    let owner_bytes = crate::security::acl::serialize_security_descriptor(
+        &crate::security::access::descriptor_for_account(profile.sid),
+    );
+    let root_bytes = crate::security::acl::serialize_security_descriptor(
+        &crate::security::access::descriptor_for_profile_root(),
+    );
+    let (Some(owner_bytes), Ok(dirs)) = (owner_bytes, profile::plan(&profile.username)) else {
+        return;
+    };
+    for (idx, dir) in dirs.iter().enumerate() {
+        // `plan` starts with the shared root, which must stay owned by
+        // Administrators instead of the last user that registered.
+        let bytes = if idx == 0 { root_bytes.as_deref() } else { Some(owner_bytes.as_slice()) };
+        let Some(bytes) = bytes else { continue };
+        let _ = crate::globals::with_vfs(|vfs| {
+            let Ok((drive, node)) = vfs.resolve_path(dir) else {
+                return;
+            };
+            let _ = vfs.set_security_bytes(drive, node.inode, bytes);
+        });
+    }
+}
+
 /// Create the profile tree for `username`/`sid` (idempotent).
 pub fn ensure_profile(username: &str, sid: &Sid) -> Result<Profile, ProfileError> {
     let dirs = profile::plan(username)?;
@@ -88,6 +113,7 @@ pub fn ensure_profile(username: &str, sid: &Sid) -> Result<Profile, ProfileError
     };
     profile::register(profile.clone());
     persist(&profile);
+    apply_security(&profile);
     Ok(profile)
 }
 
@@ -156,6 +182,81 @@ pub fn register_profile_service_tests() {
         let visible = crate::globals::with_vfs(|vfs| vfs.resolve_path(PROBE).is_ok());
         test_true!(visible);
         let _ = crate::globals::with_vfs(|vfs| vfs.remove_dir(PROBE));
+    });
+
+    test_case!("security_profile_owner_acl", {
+        use crate::security::acl::deserialize_security_descriptor;
+        use crate::security::access::vfs_access_check;
+        use crate::security::acl::{ACCESS_READ, ACCESS_WRITE};
+        use crate::security::token::Token;
+
+        let own = profile::lookup("NeoDOS").unwrap();
+        let bytes = crate::globals::with_vfs(|vfs| {
+            let (drive, node) = vfs.resolve_path(&own.path).ok()?;
+            vfs.security_bytes(drive, node.inode)
+        });
+        let bytes = match bytes { Some(b) => b, None => return Err("profile has no descriptor") };
+        let sd = deserialize_security_descriptor(&bytes).unwrap();
+        test_eq!(sd.owner.unwrap(), own.sid);
+
+        let user = Token::new_user();
+        test_true!(vfs_access_check(&user, Some(&bytes), ACCESS_WRITE));
+
+        // The shared container stays owned by Administrators, not by the last
+        // account that registered a profile.
+        let root = crate::globals::with_vfs(|vfs| {
+            let (drive, node) = vfs.resolve_path(profile::PROFILE_ROOT).ok()?;
+            vfs.security_bytes(drive, node.inode)
+        });
+        if let Some(root_bytes) = root {
+            let root_sd = deserialize_security_descriptor(&root_bytes).unwrap();
+            test_eq!(
+                root_sd.owner.unwrap(),
+                crate::security::sid::sid_builtin_administrators()
+            );
+            test_true!(vfs_access_check(&user, Some(&root_bytes), ACCESS_READ));
+            test_true!(!vfs_access_check(&user, Some(&root_bytes), ACCESS_WRITE));
+        }
+
+        let guest = profile::lookup("Guest").unwrap();
+        let guest_bytes = crate::globals::with_vfs(|vfs| {
+            let (drive, node) = vfs.resolve_path(&guest.path).ok()?;
+            vfs.security_bytes(drive, node.inode)
+        });
+        if let Some(guest_bytes) = guest_bytes {
+            test_true!(!vfs_access_check(&user, Some(&guest_bytes), ACCESS_WRITE));
+        }
+    });
+
+    test_case!("security_profile_isolated_open", {
+        use crate::security::acl::{ACCESS_READ, ACCESS_WRITE};
+        use crate::security::token::Token;
+        use crate::object::types::ObError;
+
+        // The real open path used by Ring 3 (`ObOpen`) checks the VFS DACL with
+        // the caller token, so this asserts the isolation criterion end to end
+        // at the kernel boundary.
+        let own = "\\Global\\FileSystem\\C:\\Users\\NeoDOS";
+        let other = "\\Global\\FileSystem\\C:\\Users\\Guest";
+        let user = Token::new_user();
+        let admin = Token::new_admin();
+
+        let id = crate::object::ob_open_path(own, &user, ACCESS_WRITE)
+            .expect("user opens own profile for writing");
+        crate::object::ob_close_object(id).unwrap();
+
+        test_eq!(
+            crate::object::ob_open_path(other, &user, ACCESS_READ),
+            Err(ObError::AccessDenied)
+        );
+        test_eq!(
+            crate::object::ob_open_path(other, &user, ACCESS_WRITE),
+            Err(ObError::AccessDenied)
+        );
+
+        let id = crate::object::ob_open_path(other, &admin, ACCESS_WRITE)
+            .expect("administrator opens another profile");
+        crate::object::ob_close_object(id).unwrap();
     });
 
     test_case!("security_profile_tree_exists", {
