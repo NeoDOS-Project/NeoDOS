@@ -106,6 +106,11 @@ pub fn sid_builtin_system() -> Sid {
     Sid::from_parts(1, &[0, 0, 0, 0, 0, 5], &[18])
 }
 
+/// Local account SID for a built-in domain RID (`S-1-5-21-0-0-0-<rid>`).
+pub fn sid_builtin_account(rid: u32) -> Sid {
+    Sid::from_parts(1, &[0, 0, 0, 0, 0, 5], &[21, 0, 0, 0, rid])
+}
+
 /// Built-in `Administrators` group: `S-1-5-32-544`.
 pub fn sid_builtin_administrators() -> Sid {
     Sid::from_parts(1, &[0, 0, 0, 0, 0, 5], &[32, 544])

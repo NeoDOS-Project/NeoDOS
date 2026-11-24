@@ -85,6 +85,11 @@ fn se_access_check_inner(
     sd: Option<&SecurityDescriptor>,
     desired_access: u32,
 ) -> bool {
+    // A logged-off session invalidates every token already handed out, even for
+    // administrators: the identity no longer exists (#39).
+    if !super::session::token_session_valid(token) {
+        return false;
+    }
     if token.is_admin_token() {
         return true;
     }

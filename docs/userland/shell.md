@@ -91,8 +91,14 @@ Built-in commands (CWD, SET, EXIT, CALL) are not pipeable and produce an error i
 | MD `<dir>` | `ob_create(Directory)` (RAX 41) | `sys_ob_create(path, Directory)` |
 
 El shell interactivo arranca como la cuenta no privilegiada `NeoDOS` (SID
-`-1000`); los servicios y NeoInit siguen siendo SYSTEM. La elevación
-(`runas`/login) es fase 2.
+`-1000`); los servicios y NeoInit siguen siendo SYSTEM.
+
+`LOGON` abre una sesión autenticada contra SAM y lanza un shell con ese token
+(por defecto `NeoDOS`; acepta cualquier cuenta, p. ej. `amartinper`). `RUNAS`
+hace lo mismo pero exige que la cuenta sea administradora (`Administrator`).
+Ambos ejecutan `neologon.nxe`; la contraseña se autentica en el kernel y el
+token se liga a la sesión, de modo que al salir (`EXIT`) la sesión se cierra y
+sus tokens dejan de ser válidos.
 
 ## System Commands
 

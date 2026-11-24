@@ -24,6 +24,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "libcrypto"
+version = "0.1.0"
+
+[[package]]
 name = "libnlt"
 version = "0.1.0"
 
@@ -53,9 +57,10 @@ checksum = "953f07c43838f8e6f9758cab68bf5bed85465e7587ebe0b823f1bcd81978ad3a"
 
 [[package]]
 name = "neodos_kernel"
-version = "0.53.0"
+version = "0.54.0"
 dependencies = [
  "lazy_static",
+ "libcrypto",
  "libnlt",
  "linked_list_allocator",
  "log",

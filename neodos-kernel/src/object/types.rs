@@ -195,6 +195,8 @@ pub enum ObInfoClass {
     FileSecurity = 50,
     /// Current process token: SID, groups, session and integrity.
     TokenInfo = 51,
+    /// Login session state, identity and process count (#37).
+    SessionInfo = 52,
 }
 
 /// Info classes for sys_ob_set_info (RAX=43).
@@ -254,6 +256,13 @@ pub enum ObSetInfoClass {
     /// Toggle raw keyboard mode for the caller's VT (#466). 1 byte: 0 = cooked,
     /// 1 = raw. Idempotent; cleared when the VT's foreground process exits.
     KeyboardSetRawMode = 55,
+    /// Authenticate `ObSessionCredentials` against SAM and bind the issued
+    /// token to the session (#37/#40).
+    SessionLogon = 56,
+    /// Lock an active session (`Active -> Locked`).
+    SessionLock = 57,
+    /// Log off a session: drop the token and invalidate issued copies (#39).
+    SessionLogoff = 58,
 }
 
 // ═══════════════════════════════════════════════════════════════════════

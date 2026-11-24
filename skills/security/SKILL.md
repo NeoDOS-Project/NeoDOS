@@ -35,10 +35,13 @@ Format `S-R-I-S*` (revision, identifier authority, sub-authorities).
 
 | Built-in | SID string | Usage |
 | ---------- | ----------- | ------- |
-| `sid_builtin_system()` / `sid_builtin_admin()` | `S-1-5-18` | NT AUTHORITY\SYSTEM (kernel/Idle/NeoInit) |
+| `sid_builtin_system()` | `S-1-5-18` | NT AUTHORITY\SYSTEM (kernel/Idle/NeoInit) |
+| `sid_builtin_administrators()` | `S-1-5-32-544` | BUILTIN\Administrators group |
+| `sid_builtin_users()` | `S-1-5-32-545` | BUILTIN\Users group |
 | `sid_builtin_administrator()` | `S-1-5-21-0-0-0-500` | Built-in Administrator account |
 | `sid_builtin_guest()` | `S-1-5-21-0-0-0-501` | Built-in Guest account |
-| `sid_builtin_user()` | `S-1-5-21-0-0-0-1000` | Default domain user |
+| `sid_builtin_user()` | `S-1-5-21-0-0-0-1000` | Default `NeoDOS` account |
+| `sid_builtin_account(rid)` | `S-1-5-21-0-0-0-<rid>` | Built-in domain account |
 | `sid_world()` | `S-1-1-0` | `Everyone` (read-only trustees) |
 
 Construct with `Sid::from_parts(revision: u8, authority: &[u8; 6],
@@ -66,8 +69,10 @@ pub struct Token {
 
 | Factory | Privileges | Integrity | Description |
 | --------- | ----------- | ----------- | ------------- |
-| `Token::new_admin()` | `SE_ADMIN_PRIVILEGES` (0xFFFF) | System | Full-privilege token for SYSTEM |
-| `Token::new_user()` | `SE_USER_PRIVILEGES` (`SE_CHANGE_NOTIFY_PRIVILEGE`) | Medium | Restricted user token |
+| `Token::new_system()` | `SE_ADMIN_PRIVILEGES` (0xFFFF) | System | SYSTEM (`-18`) for kernel/services |
+| `Token::new_admin()` | `SE_ADMIN_PRIVILEGES` | System | `Administrator` account (`-500`) + Users/Administrators |
+| `Token::new_user()` | `SE_USER_PRIVILEGES` (`SE_CHANGE_NOTIFY_PRIVILEGE`) | Medium | `NeoDOS` user token + Users group |
+| `Token::from_sam(entry, session_id)` | admin/user by account | System/Medium | Token issued from SAM (#37) |
 | `Token::new_full(sid, is_admin, groups, privileges, session_id)` | custom | System/Medium | Complete construction |
 | `Token::inherit_from(parent)` | inherited | inherited | Copies identity; fresh `creation_time` |
 
@@ -280,7 +285,10 @@ let parsed = parse_sam(&bytes).unwrap();
 - ACEs are matched against the primary SID and all group SIDs.
 - Tokens are copied at spawn; mutating a parent token does not affect children.
 - SAM usernames are case-insensitive and zero-padded to 32 bytes.
-- Session IDs isolate terminal sessions (per-VT login context).
+- Session IDs isolate terminal sessions. `security/session.rs` binds tokens to
+  `\Session\{id}`; `SeAccessCheck` denies tokens of a logged-off session.
+  Logon is `ObSetInfo(SessionLogon)`; spawn-in-session uses `ObCreate(Process)`
+  bit 33 with the session handle in attrs bits 40..47.
 
 ## Common mistakes
 

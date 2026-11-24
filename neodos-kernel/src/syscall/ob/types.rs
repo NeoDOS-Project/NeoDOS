@@ -36,6 +36,30 @@ pub struct ObFileInfo {
 }
 
 
+/// Login session metadata (`ObInfoClass::SessionInfo`, RAX=42 class=52).
+#[repr(C)]
+pub struct ObSessionInfo {
+    pub session_id: u32,
+    pub process_count: u32,
+    pub login_tick: u64,
+    pub state: u8,
+    pub vt_num: u8,
+    pub is_admin: u8,
+    pub user_sid_len: u8,
+    pub user_sid: [u8; 40],
+    pub username: [u8; 32],
+}
+
+/// Credentials payload for `ObSetInfoClass::SessionLogon` (#40).
+///
+/// Both fields are NUL-terminated UTF-8. The plaintext password exists only in
+/// this user buffer and is hashed before it leaves the handler.
+#[repr(C)]
+pub struct ObSessionCredentials {
+    pub username: [u8; 32],
+    pub password: [u8; 64],
+}
+
 #[repr(C)]
 pub struct ObTokenInfo {
     pub sid_len: u8,

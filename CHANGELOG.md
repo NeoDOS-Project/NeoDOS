@@ -6,6 +6,16 @@
 
 ### Security
 
+- **Sesiones de login y elevación (#37/#39/#40/#67).** `SessionManager` con
+  objetos `\Session\{id}` (`ObType::Session`, estados Active/Locked/LoggedOff),
+  autenticación de contraseñas SAM (`SHA-256(salt || password)`) y tokens ligados
+  a la sesión: `ObSetInfo(SessionLogon/Lock/Logoff)`, `ObInfoClass::SessionInfo`
+  (52). `SeAccessCheck` deniega tokens de una sesión cerrada. `ObCreate(Process)`
+  bit 33 + fd de sesión en los bits 40..47 lanza un proceso con la identidad
+  autenticada; `neologon.nxe` implementa `LOGON` (cualquier cuenta) y `RUNAS`
+  (solo administradores), que abren un shell en la nueva sesión. Credenciales de
+  desarrollo: `amartinper`/`neodos` (no admin, `-1001`) y
+  `Administrator`/`neodos`; SAM sigue siendo RAM-only.
 - **Identidad no privilegiada real (#767/#768).** SIDs canónicos de
   `Users` (`S-1-5-32-545`) y `Administrators` (`S-1-5-32-544`); SYSTEM
   (`S-1-5-18`) y Administrator (`-500`) separados. `Token::from_sam` emite el

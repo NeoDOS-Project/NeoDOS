@@ -18,6 +18,7 @@ mod service;
 mod power;
 mod object;
 mod time;
+mod session;
 
 /// True if `info_class` is routed by some set domain. Completeness guard for
 /// ObSetInfoClass (NEODOS-06/#636, CH-06/#510, AUD-006/#526).
@@ -32,6 +33,7 @@ pub fn set_class_handled(info_class: u32) -> bool {
         || power::handles(info_class)
         || object::handles(info_class)
         || time::handles(info_class)
+        || session::handles(info_class)
 }
 
 /// Set-info classes that carry no payload: the operation ignores the buffer, so
@@ -90,6 +92,7 @@ pub fn handler_ob_set_info(regs: crate::syscall::Registers) -> u64 {
         _ if power::handles(info_class) => power::dispatch(info_class, fd, entry, buf_ptr, buf_size),
         _ if object::handles(info_class) => object::dispatch(info_class, fd, entry, buf_ptr, buf_size),
         _ if time::handles(info_class) => time::dispatch(info_class, fd, entry, buf_ptr, buf_size),
+        _ if session::handles(info_class) => session::dispatch(info_class, fd, entry, buf_ptr, buf_size),
         _ => err_to_u64(SyscallError::Inval),
     }
 }

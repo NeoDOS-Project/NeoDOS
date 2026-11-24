@@ -362,7 +362,9 @@ ob_query_info(process_fd, TokenInfo, &buf)
 > SYSTEM/admin services and runs the interactive shell as the non-admin
 > `NeoDOS` account via an `ObCreate(Process)` attrs bit.
 > `ObInfoClass::TokenInfo` exposes the token; profile directories get an NT
-> DACL. Sessions/login (`SessionManager`, `neologon`) remain phase 2.
+> DACL. Phase 2 (v0.54) adds `SessionManager`, `\Session\{id}` objects,
+> SAM password authentication, `neologon.nxe` (`LOGON`/`RUNAS`) and
+> logoff-driven token invalidation; see `docs/security/security.md`.
 
 Add an 8-byte owner SID field to DirEntryV2. The on-disk format grows from 128 to 136 bytes.
 
