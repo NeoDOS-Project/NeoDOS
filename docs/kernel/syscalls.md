@@ -426,7 +426,7 @@ Power management is handled entirely via the Object Manager — no dedicated sys
 
 | Path | Operation | Class |
 | ------ | ----------- | ------- |
-| `\System\PowerManager` | Query power system state | `ObInfoClass::PowerState = 32` (class declared; handler pending) |
+| `\System\PowerManager` | Query power system state | `ObInfoClass::PowerState = 32` (returns `PowerSystemState` as a LE `u32`) |
 | `\System\PowerManager` | Shutdown (power off) | `ObSetInfoClass::PowerShutdown = 37` |
 | `\System\PowerManager` | Reboot | `ObSetInfoClass::PowerReboot = 38` |
 

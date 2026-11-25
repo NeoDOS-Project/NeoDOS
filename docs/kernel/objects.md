@@ -220,7 +220,7 @@ Supports the following info classes:
 | 40 | TimeZone | `SysTimeZone` (16 bytes: standard/DST offsets + DST window) read from the Registry — `\Global\Info\DateTime` (#357) |
 | 41 | LocalDateTime | `SysDateTime` (7 bytes) with the RTC UTC time converted to local using the configured timezone — `\Global\Info\DateTime` (#357) |
 | 42 | ProcessShutdownState | 1 byte: `0` = normal execution, `1` = graceful shutdown requested. Any valid handle; answers for the *calling* process. Set by the Service Manager `stop_service()` and cleared on process exit — #358 |
-| 32 | PowerState | PowerSystemState u32 (Active/ShuttingDown/Rebooting/Suspending/Hibernating/Off) — `\System\PowerManager`. Class declared; handler not yet implemented. |
+| 32 | PowerState | PowerSystemState u32 (Active/ShuttingDown/Rebooting/Suspending/Hibernating/Off) — `\System\PowerManager`; returned as a little-endian `u32`. |
 | 48 | Random | Fill the buffer from `\Device\Random` (kernel ChaCha20 DRBG). Returns the byte count; at most 4096 bytes per call (#712/M8). |
 | 49 | RandomCaps | `SysRandomCaps` (4 bytes: `hw_rdrand`, `hw_rdseed`, `pool_ready`, pad) — `\Device\Random`. Consumers that need a CSPRNG (TLS) fail closed unless a hardware source is reported (#712/M8). |
 | 50 | FileSecurity | `ObFileSecurity` (88 bytes: security_id, owner/group length, flags, owner/group SID bytes) for files/directories. Additive ABI extension; `security_id=0` reports the default descriptor (SYSTEM/Administrators). |
