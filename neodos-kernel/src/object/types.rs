@@ -263,6 +263,8 @@ pub enum ObSetInfoClass {
     SessionLock = 57,
     /// Log off a session: drop the token and invalidate issued copies (#39).
     SessionLogoff = 58,
+    /// Unlock a locked session by re-authenticating its user (#38).
+    SessionUnlock = 59,
 }
 
 // ═══════════════════════════════════════════════════════════════════════

@@ -13,6 +13,7 @@ pub(super) fn handles(info_class: u32) -> bool {
     info_class == ObSetInfoClass::SessionLogon as u32
         || info_class == ObSetInfoClass::SessionLock as u32
         || info_class == ObSetInfoClass::SessionLogoff as u32
+        || info_class == ObSetInfoClass::SessionUnlock as u32
 }
 
 fn session_id_of(entry: crate::handle::HandleEntry) -> Option<u32> {
@@ -107,6 +108,28 @@ pub(super) fn dispatch(
                     0
                 }
                 Err(session::SessionError::NotFound) => err_to_u64(SyscallError::NoEnt),
+                Err(_) => err_to_u64(SyscallError::Inval),
+            }
+        }
+        _ if info_class == ObSetInfoClass::SessionUnlock as u32 => {
+            let size = core::mem::size_of::<ObSessionCredentials>();
+            if buf_size < size {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let mut raw = alloc::vec![0u8; size];
+            if copy_from_user(&mut raw, buf_ptr).is_err() {
+                return err_to_u64(SyscallError::Fault);
+            }
+            let mut password = [0u8; 64];
+            password.copy_from_slice(&raw[32..96]);
+            let password = field_str(&password);
+            match session::unlock(session_id, password.as_bytes()) {
+                Ok(()) => {
+                    crate::serial_println!("[SEC] session {} unlocked", session_id);
+                    0
+                }
+                Err(session::SessionError::NotFound) => err_to_u64(SyscallError::NoEnt),
+                Err(session::SessionError::Auth(_)) => err_to_u64(SyscallError::Perm),
                 Err(_) => err_to_u64(SyscallError::Inval),
             }
         }

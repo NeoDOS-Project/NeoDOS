@@ -340,7 +340,9 @@ SAM, never from caller-supplied identities. Child processes also inherit the
 parent token.
 
 Session info classes: `ObInfoClass::SessionInfo = 52`;
-`ObSetInfoClass::SessionLogon = 56`, `SessionLock = 57`, `SessionLogoff = 58`.
+`ObSetInfoClass::SessionLogon = 56`, `SessionLock = 57`, `SessionLogoff = 58`,
+`SessionUnlock = 59`. Spawning into a session requires its creator, an
+administrator, or `SE_IMPERSONATE_PRIVILEGE`.
 
 ### Registry (RAX 50-59)
 

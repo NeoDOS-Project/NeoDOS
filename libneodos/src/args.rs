@@ -34,6 +34,18 @@ pub fn read_args() -> [u8; 256] {
     buf
 }
 
+/// Write the argument string a child process will receive through the shared
+/// per-VT buffer (`ObCreate(Process)` copies it into the child's `Eprocess`).
+pub fn write_args(args: &[u8]) {
+    unsafe {
+        let dst = ARGS_ADDR as *mut u8;
+        dst.write_bytes(0, 256);
+        let n = args.len().min(255);
+        core::ptr::copy_nonoverlapping(args.as_ptr(), dst, n);
+        dst.add(n).write(0);
+    }
+}
+
 /// Check if the given args slice matches any help flag pattern (/?, -h, --help).
 pub fn is_help_flag(args: &[u8]) -> bool {
     let trimmed = trim_ascii(args);

@@ -339,7 +339,7 @@ Current ABI is **v8**. Key ABI structs (all `#[repr(C)]`, defined in `libneodos/
 - `ObFileSecurity` — NT owner/group/security_id metadata (`ob_query_file_security`)
 - `ObTokenInfo` — current token SID, groups, session and integrity (`ob_query_token_info`)
 - `ObSessionInfo` — session state, identity and process count (`ob_query_session_info`)
-- `ob_create_session` / `ob_session_logon` / `ob_session_logoff` — logon lifecycle
+- `ob_create_session` / `ob_session_logon` / `ob_session_logoff` / `ob_session_unlock` — logon lifecycle
 - `ob_spawn_in_session` — spawn a process with an authenticated session token
 - `ObProcessInfo` — process query result (pid, parent pid, priority, thread count, state)
 - `CpuStatsEntry` / `ThreadStatsEntry` — SMP observability snapshots (classes 24/25)

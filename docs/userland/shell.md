@@ -100,6 +100,12 @@ Ambos ejecutan `neologon.nxe`; la contraseña se autentica en el kernel y el
 token se liga a la sesión, de modo que al salir (`EXIT`) la sesión se cierra y
 sus tokens dejan de ser válidos.
 
+`RUNAS /user:<cuenta> <comando>` ejecuta un `.NXE` concreto (resuelto en
+`C:\NeoDOS\System` y `C:\NeoDOS\System\Tools`, con argumentos) en una sesión
+autenticada; sin comando abre un shell. `WHO` enumera las sesiones
+(`\Session` + `SessionInfo`) y `LOGOFF` cierra la sesión del shell actual; el
+shell detecta la sesión cerrada y termina, volviendo al shell anterior.
+
 ## System Commands
 
 | Command | Implementation |

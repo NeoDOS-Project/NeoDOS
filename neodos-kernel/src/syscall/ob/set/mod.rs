@@ -45,6 +45,8 @@ pub fn set_info_allows_empty_payload(info_class: u32) -> bool {
         || info_class == ObSetInfoClass::SetForegroundProcess as u32
         || info_class == ObSetInfoClass::SocketListen as u32
         || info_class == ObSetInfoClass::SocketClose as u32
+        || info_class == ObSetInfoClass::SessionLock as u32
+        || info_class == ObSetInfoClass::SessionLogoff as u32
 }
 
 pub fn handler_ob_set_info(regs: crate::syscall::Registers) -> u64 {

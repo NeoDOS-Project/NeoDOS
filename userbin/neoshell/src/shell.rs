@@ -667,7 +667,52 @@ impl Shell {
 
         console::register_completion(Some(shell_complete));
 
+        // Session-bound shells exit when their login session is closed. The
+        // first shell (legacy session 1) has no registered session and skips
+        // the check.
+        let my_session = syscall::ob_query_token_info()
+            .map(|info| info.session_id)
+            .unwrap_or(0);
+        let mut session_path = [0u8; 24];
+        let mut session_path_len = 0usize;
+        if my_session >= 2 {
+            for &b in b"\\Session\\" {
+                session_path[session_path_len] = b;
+                session_path_len += 1;
+            }
+            let mut v = my_session as u64;
+            let mut digits = [0u8; 10];
+            let mut d = 0usize;
+            while v > 0 {
+                digits[d] = b'0' + (v % 10) as u8;
+                v /= 10;
+                d += 1;
+            }
+            while d > 0 {
+                d -= 1;
+                session_path[session_path_len] = digits[d];
+                session_path_len += 1;
+            }
+        }
+
         loop {
+            if my_session >= 2 {
+                let path = core::str::from_utf8(&session_path[..session_path_len]).unwrap_or("");
+                let alive = match syscall::sys_ob_open(path, syscall::ob_access::READ) {
+                    Ok(fd) => {
+                        let ok = syscall::ob_query_session_info(fd)
+                            .map(|info| info.state == 0)
+                            .unwrap_or(false);
+                        let _ = syscall::sys_close(fd);
+                        ok
+                    }
+                    Err(_) => false,
+                };
+                if !alive {
+                    write_str(b"\r\nSesion finalizada.\r\n");
+                    syscall::sys_exit(0);
+                }
+            }
             let drive = self.get_drive();
             let path = self.env_get(b"PATH").unwrap_or(b"\\Programs");
             set_completion_ctx(drive, path);

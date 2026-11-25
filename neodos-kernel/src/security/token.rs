@@ -19,6 +19,9 @@ pub const SE_RESTORE_PRIVILEGE: u64 = 1 << 8;
 pub const SE_TAKE_OWNERSHIP_PRIVILEGE: u64 = 1 << 9;
 pub const SE_INCREASE_QUOTA_PRIVILEGE: u64 = 1 << 10;
 pub const SE_MANAGE_VOLUME_PRIVILEGE: u64 = 1 << 11;
+/// Impersonate another user's session (e.g. a trusted logon service opening a
+/// session it does not own). Granted to administrators/SYSTEM by default.
+pub const SE_IMPERSONATE_PRIVILEGE: u64 = 1 << 12;
 
 pub const SE_ADMIN_PRIVILEGES: u64 = 0xFFFF;
 pub const SE_USER_PRIVILEGES: u64 = SE_CHANGE_NOTIFY_PRIVILEGE;

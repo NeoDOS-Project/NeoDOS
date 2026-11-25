@@ -22,6 +22,10 @@ use crate::security::token::Token;
 /// (`1..=MAX_SESSIONS`) so validity can be tracked in lock-free bitmaps that
 /// the access check can consult from any context, including IRQs.
 pub const MAX_SESSIONS: usize = 16;
+/// First usable session id. Id 1 is the legacy phase-1 interactive token
+/// (`Token::new_user()`), which has no registered session, so real sessions
+/// start at 2 and can never collide with it.
+pub const SESSION_ID_MIN: u32 = 2;
 
 /// Bit `id` is set while `\Session\{id}` exists.
 static SESSION_REGISTERED: AtomicU64 = AtomicU64::new(0);
@@ -62,6 +66,9 @@ pub struct Session {
     pub ob_id: u64,
     pub state: SessionState,
     pub vt_num: u8,
+    /// Process that created the session (capability to spawn into it without
+    /// `SE_IMPERSONATE_PRIVILEGE`).
+    pub owner_pid: u32,
     pub username: String,
     pub user_sid: Option<Sid>,
     /// Token bound by the last successful logon. Dropped on logoff.
@@ -100,7 +107,7 @@ impl SessionManager {
     /// First free slot id (1..=MAX_SESSIONS), if any.
     pub fn next_free_id(&self) -> Option<u32> {
         let used = SESSION_REGISTERED.load(Ordering::Relaxed);
-        (1..=MAX_SESSIONS as u32)
+        (SESSION_ID_MIN..=MAX_SESSIONS as u32)
             .find(|id| used & bit(*id) == 0 && self.get(*id).is_none())
     }
 
@@ -130,12 +137,13 @@ impl SessionManager {
         requested_id: Option<u32>,
         ob_id: u64,
         vt_num: u8,
+        owner_pid: u32,
     ) -> Result<u32, SessionError> {
         if self.sessions.len() >= MAX_SESSIONS {
             return Err(SessionError::AlreadyExists);
         }
         let id = match requested_id {
-            Some(id) if id == 0 || id as usize > MAX_SESSIONS => {
+            Some(id) if id < SESSION_ID_MIN || id as usize > MAX_SESSIONS => {
                 return Err(SessionError::AlreadyExists)
             }
             Some(id) => {
@@ -146,7 +154,7 @@ impl SessionManager {
             }
             None => {
                 let used = SESSION_REGISTERED.load(Ordering::Relaxed);
-                (1..=MAX_SESSIONS as u32)
+                (SESSION_ID_MIN..=MAX_SESSIONS as u32)
                     .find(|id| used & bit(*id) == 0 && self.get(*id).is_none())
                     .ok_or(SessionError::AlreadyExists)?
             }
@@ -157,6 +165,7 @@ impl SessionManager {
             ob_id,
             state: SessionState::LoggedOff,
             vt_num,
+            owner_pid,
             username: String::new(),
             user_sid: None,
             token: None,
@@ -209,7 +218,7 @@ impl SessionManager {
         Ok(())
     }
 
-    /// Session id backing an Object Manager object.
+/// Session id backing an Object Manager object.
     pub fn id_for_ob(&self, ob_id: u64) -> Option<u32> {
         self.find_by_ob(ob_id).map(|s| s.id)
     }
@@ -249,7 +258,7 @@ pub fn logon(session_id: u32, username: &str, password: &[u8]) -> Result<Token, 
 /// logged-off/locked one denies its tokens, and unknown ids keep the legacy
 /// (unbound) behaviour.
 pub fn allows_token_session(session_id: u32) -> bool {
-    if session_id == 0 || session_id as usize > MAX_SESSIONS {
+    if session_id < SESSION_ID_MIN || session_id as usize > MAX_SESSIONS {
         return true;
     }
     if SESSION_REGISTERED.load(Ordering::Acquire) & bit(session_id) == 0 {
@@ -262,6 +271,31 @@ pub fn allows_token_session(session_id: u32) -> bool {
 /// bound to a registered session (session 0, or phase-1 tokens) stay valid.
 pub fn token_session_valid(token: &Token) -> bool {
     allows_token_session(token.session_id)
+}
+
+/// Unlock a locked session by re-authenticating its user. The bound token is
+/// kept; only the `Active` bit is restored.
+pub fn unlock(session_id: u32, password: &[u8]) -> Result<(), SessionError> {
+    let username = {
+        let mgr = crate::security::SESSIONS.lock();
+        let session = mgr.get(session_id).ok_or(SessionError::NotFound)?;
+        if session.token.is_none() {
+            return Err(SessionError::NotActive);
+        }
+        session.username.clone()
+    };
+    if username.is_empty() {
+        return Err(SessionError::NotActive);
+    }
+    {
+        let mut db = SAM_DB.lock();
+        db.ensure_default_credentials();
+        db.authenticate(&username, password)
+            .map_err(SessionError::Auth)?;
+    }
+    crate::security::SESSIONS
+        .lock()
+        .set_state(session_id, SessionState::Active)
 }
 
 /// Session id backing an Object Manager object.
@@ -320,7 +354,7 @@ pub fn register_session_tests() {
 
     test_case!("session_lifecycle_binds_token", {
         let mut mgr = SessionManager::new();
-        let id = mgr.register(None, 900, 0).unwrap();
+        let id = mgr.register(None, 900, 0, 0).unwrap();
         test_eq!(mgr.get(id).unwrap().state, SessionState::LoggedOff);
 
         let entry = {
@@ -334,6 +368,8 @@ pub fn register_session_tests() {
 
         mgr.logoff(id).unwrap();
         test_false!(mgr.allows_token(&token));
+        // Unlock is only valid for a locked session with a live token.
+        test_eq!(mgr.set_state(id, SessionState::Locked), Err(SessionError::NotActive));
         test_eq!(mgr.get(id).unwrap().state, SessionState::LoggedOff);
         test_true!(mgr.get(id).unwrap().token.is_none());
 
@@ -344,7 +380,7 @@ pub fn register_session_tests() {
     test_case!("session_logon_authenticates_sam", {
         let id = crate::security::SESSIONS
             .lock()
-            .register(None, 901, 0)
+            .register(None, 901, 0, 0)
             .unwrap();
         // Bind through the production path: SAM lookup + token issuance.
         let token = logon(id, "NeoDOS", b"").unwrap();
@@ -369,13 +405,37 @@ pub fn register_session_tests() {
         crate::security::SESSIONS.lock().remove_by_ob(901);
     });
 
+    test_case!("session_unlock_requires_password", {
+        let id = crate::security::SESSIONS
+            .lock()
+            .register(None, 903, 0, 0)
+            .unwrap();
+        let token = logon(id, "amartinper", b"neodos").unwrap();
+        crate::security::SESSIONS
+            .lock()
+            .set_state(id, SessionState::Locked)
+            .unwrap();
+        test_false!(token_session_valid(&token));
+
+        test_eq!(
+            unlock(id, b"bad").err(),
+            Some(SessionError::Auth(SamError::BadPassword))
+        );
+        test_true!(unlock(id, b"neodos").is_ok());
+        test_true!(token_session_valid(&token));
+
+        crate::security::SESSIONS.lock().logoff(id).unwrap();
+        test_eq!(unlock(id, b"neodos").err(), Some(SessionError::NotActive));
+        crate::security::SESSIONS.lock().remove_by_ob(903);
+    });
+
     test_case!("session_logoff_denies_access", {
         use crate::security::acl::ACCESS_READ;
         use crate::security::access::se_access_check;
 
         let id = crate::security::SESSIONS
             .lock()
-            .register(None, 902, 0)
+            .register(None, 902, 0, 0)
             .unwrap();
         let entry = {
             let db = SAM_DB.lock();
