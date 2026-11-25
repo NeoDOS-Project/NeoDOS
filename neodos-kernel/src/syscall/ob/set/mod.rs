@@ -201,20 +201,16 @@ pub fn register_ob_set_tests() {
 
     test_case!("neodos06_ob_class_coverage", {
         // Complete coverage guard (NEODOS-06/#636, CH-06/#510, AUD-006/#526):
-        // every ObInfoClass variant must be routed by a query domain. PowerState
-        // (=32) is the known CH-06 gap and is excluded *explicitly*; any NEW gap
-        // fails the test.
-        let known_unhandled: [u32; 1] = [crate::object::types::ObInfoClass::PowerState as u32];
-        for c in 0..=49u32 {
-            if !known_unhandled.contains(&c) {
-                test_true!(crate::syscall::ob::query::info_class_handled(c));
-            }
+        // every ObInfoClass variant must be routed by a query domain.
+        // Bump the upper bound when a new variant is appended.
+        for c in 0..=crate::object::types::ObInfoClass::SessionInfo as u32 {
+            test_true!(crate::syscall::ob::query::info_class_handled(c));
         }
         // Every defined ObSetInfoClass variant must be routed.
         for c in [
             0u32, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21,
             22, 23, 24, 25, 26, 27, 28, 29, 33, 34, 35, 36, 37, 38, 39, 43, 44, 45, 46, 47,
-            49, 50, 51,
+            49, 50, 51, 55, 56, 57, 58, 59,
         ] {
             test_true!(set_class_handled(c));
         }

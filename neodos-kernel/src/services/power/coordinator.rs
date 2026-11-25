@@ -1,6 +1,8 @@
+use super::{PowerSystemState, POWER_MANAGER};
 use crate::log::LogSubsys;
 
 pub fn shutdown() -> ! {
+    POWER_MANAGER.lock().set_state(PowerSystemState::ShuttingDown);
     ktrace!(LogSubsys::Power, "Shutting down: start");
     kinfo!(LogSubsys::Power, "Shutting down...");
     ktrace!(LogSubsys::Power, "Shutting down: flushing hives");
@@ -19,6 +21,7 @@ pub fn shutdown() -> ! {
 }
 
 pub fn reboot() -> ! {
+    POWER_MANAGER.lock().set_state(PowerSystemState::Rebooting);
     kinfo!(LogSubsys::Power, "Rebooting...");
     crate::cm::cm_flush_all_hives();
     crate::globals::flush_cache_if_needed();
