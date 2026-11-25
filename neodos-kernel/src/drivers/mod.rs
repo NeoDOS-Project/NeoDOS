@@ -12,34 +12,6 @@ pub use storage::{block, gpt, manager as storage_manager};
 pub use nem::management::{abi, boot_loader, caps, dependency, driver_manager, hotreload, isolation, manifest};
 pub use nem::runtime as driver_runtime;
 
-use core::sync::atomic::AtomicBool;
-
-pub struct DeviceEvent {
-    pub pending: AtomicBool,
-}
-
-impl DeviceEvent {
-    pub const fn new() -> Self {
-        Self {
-            pending: AtomicBool::new(false),
-        }
-    }
-}
-
-pub const MAX_DEVICES: usize = 8;
-
-// No `mut`: each DeviceEvent owns an AtomicBool (NEODOS-07 / #637).
-pub static DEVICE_EVENTS: [DeviceEvent; MAX_DEVICES] = [
-    DeviceEvent::new(),
-    DeviceEvent::new(),
-    DeviceEvent::new(),
-    DeviceEvent::new(),
-    DeviceEvent::new(),
-    DeviceEvent::new(),
-    DeviceEvent::new(),
-    DeviceEvent::new(),
-];
-
 /// Signal that a device has pending data (called from interrupt handlers or other kernel code)
 /// NEODOS-07 (#637): registry soundness + no `static mut` regression tests.
 pub fn register_registry_tests() {
@@ -62,10 +34,3 @@ pub fn register_registry_tests() {
     });
 }
 
-pub fn signal_device_event(device_id: u32) {
-    if (device_id as usize) < MAX_DEVICES {
-        DEVICE_EVENTS[device_id as usize]
-            .pending
-            .store(true, core::sync::atomic::Ordering::SeqCst);
-    }
-}
