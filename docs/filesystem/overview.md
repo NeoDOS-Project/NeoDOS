@@ -221,6 +221,8 @@ not duplicate sources of truth:
 The **transition is centralized**: `vfs_mount_filesystem` /
 `vfs_unmount_filesystem` (`fs/vfs/mount.rs`) update both while the VFS lock is
 held, so no caller performs a manual two-table rollback, and a lookup can never
-observe a half-mounted drive. Driver registries (`DRIVER_RUNTIME`,
+observe a half-mounted drive. `verify_mount_consistency()` runs after the boot
+mounts and returns the first drive letter where the two tables disagree.
+Driver registries (`DRIVER_RUNTIME`,
 `LOADED_DRIVERS`, `ISOLATED_REGIONS`) are all lock-protected — there is no
 `static mut` registry (the driver-id context is an `AtomicU32`).

@@ -442,6 +442,12 @@ pub unsafe fn init(boot_info: &BootInfo) -> ! {
         println!("[+] FAT32 ESP mounted on A:");
     }
 
+    if let Err(letter) = vfs::mount::verify_mount_consistency() {
+        kerror!(LogSubsys::Kernel,
+            "Mount tables disagree for drive {}: Vfs.drives and MountManager are out of sync",
+            letter);
+    }
+
     drivers::ps2::set_leds(0b111); // All ON = storage ready
 
     // A4.4: Initialize Input Manager (VT subsystem)

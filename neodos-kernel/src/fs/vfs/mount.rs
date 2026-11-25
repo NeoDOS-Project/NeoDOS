@@ -224,7 +224,35 @@ pub fn vfs_path_to_mount(path: &str) -> Option<(usize, MountPoint)> {
     })
 }
 
+/// Verify that `Vfs.drives[]` and `MountManager` agree on which drive letters
+/// are mounted. Returns the first inconsistent drive letter.
+///
+/// The two tables have different jobs: `Vfs.drives[]` owns the filesystem
+/// instance and `MountManager` owns its Ob namespace projection
+/// (`\Device\X:` + `\DosDevices\X:`). This guard catches drift between them
+/// without collapsing either table; the unified mount/unmount paths keep both
+/// in sync under the VFS lock.
+pub fn verify_mount_consistency() -> Result<(), char> {
+    crate::globals::with_vfs(|vfs| {
+        with_mount_manager(|mgr| {
+            for i in 0..26 {
+                let letter = (b'A' + i as u8) as char;
+                let in_vfs = vfs.drives[i].is_some();
+                let in_mgr = mgr.find_by_letter(letter).is_some();
+                if in_vfs != in_mgr {
+                    return Err(letter);
+                }
+            }
+            Ok(())
+        })
+    })
+}
+
 pub fn register_mount_tests() {
+    crate::test_case!("vfs_mount_tables_consistent", {
+        crate::test_true!(verify_mount_consistency().is_ok());
+    });
+
     crate::test_case!("vfs_mount_create_device_object", {
         let mut mgr = MountManager::new();
         let r = mgr.mount("\\Device\\Harddisk0\\Partition1", 'C', FilesystemType::NeoDosFs);
