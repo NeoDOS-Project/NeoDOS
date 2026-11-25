@@ -89,6 +89,8 @@ pub enum ObInfoClass {
     FileSecurity = 50,
     /// Current process token: SID, groups, session and integrity.
     TokenInfo = 51,
+    /// Login session metadata (state, identity, process count).
+    SessionInfo = 52,
 }
 
 pub mod ob_type {
@@ -99,6 +101,7 @@ pub mod ob_type {
     pub const EVENT: u32 = 13;
     pub const THREAD: u32 = 16;
     pub const SOCKET: u32 = 18;
+    pub const SESSION: u32 = 19;
     pub const SERVICE: u32 = 20;
 }
 
@@ -168,6 +171,12 @@ pub enum ObSetInfoClass {
     /// Toggle raw keyboard mode for the caller's VT (#466). 1 byte: 0 = cooked,
     /// 1 = raw.
     KeyboardSetRawMode = 55,
+    /// Authenticate `ObSessionCredentials` against SAM (`#37/#40`).
+    SessionLogon = 56,
+    /// Lock an active session.
+    SessionLock = 57,
+    /// Log off a session and invalidate issued tokens (`#39`).
+    SessionLogoff = 58,
 }
 
 /// Backward-compatible constants for `ObSetInfoClass`.
@@ -243,6 +252,30 @@ pub struct ObTokenInfo {
     pub sid: [u8; 40],
     pub groups: [[u8; 40]; 8],
     pub group_lens: [u8; 8],
+}
+
+/// Login session metadata (`ObInfoClass::SessionInfo`, class 52).
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct ObSessionInfo {
+    pub session_id: u32,
+    pub process_count: u32,
+    pub login_tick: u64,
+    pub state: u8,
+    pub vt_num: u8,
+    pub is_admin: u8,
+    pub user_sid_len: u8,
+    pub user_sid: [u8; 40],
+    pub username: [u8; 32],
+}
+
+/// Credentials for `ObSetInfoClass::SessionLogon`. Both fields are
+/// NUL-terminated UTF-8.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct ObSessionCredentials {
+    pub username: [u8; 32],
+    pub password: [u8; 64],
 }
 
 /// NT security metadata for one file/directory (RAX=62, class=50).
@@ -430,6 +463,72 @@ pub fn ob_query_token_info() -> Result<ObTokenInfo, i64> {
     let r = sys_ob_query_info(fd, ObInfoClass::TokenInfo, buf);
     let _ = sys_close(fd);
     r.map(|_| info)
+}
+
+/// Create a login session. The kernel assigns the next session id and returns
+/// a handle to `\Session\{id}`.
+pub fn ob_create_session() -> Result<u8, i64> {
+    sys_ob_create("\\Session", ob_type::SESSION, None, 0xFF)
+}
+
+/// Authenticate `username`/`password` against SAM and bind the issued token to
+/// the session handle.
+pub fn ob_session_logon(fd: u8, username: &str, password: &str) -> Result<(), i64> {
+    let mut creds = ObSessionCredentials {
+        username: [0u8; 32],
+        password: [0u8; 64],
+    };
+    let u = username.as_bytes();
+    let ul = u.len().min(31);
+    creds.username[..ul].copy_from_slice(&u[..ul]);
+    let p = password.as_bytes();
+    let pl = p.len().min(63);
+    creds.password[..pl].copy_from_slice(&p[..pl]);
+    let bytes = unsafe {
+        core::slice::from_raw_parts(
+            &creds as *const ObSessionCredentials as *const u8,
+            core::mem::size_of::<ObSessionCredentials>(),
+        )
+    };
+    sys_ob_set_info(fd, ObSetInfoClass::SessionLogon, bytes)
+}
+
+/// Drop the session token and invalidate every token issued for the session.
+pub fn ob_session_logoff(fd: u8) -> Result<(), i64> {
+    sys_ob_set_info(fd, ObSetInfoClass::SessionLogoff, &[])
+}
+
+/// Query session metadata (state, identity, process count).
+pub fn ob_query_session_info(fd: u8) -> Result<ObSessionInfo, i64> {
+    let mut info = ObSessionInfo {
+        session_id: 0,
+        process_count: 0,
+        login_tick: 0,
+        state: 0,
+        vt_num: 0,
+        is_admin: 0,
+        user_sid_len: 0,
+        user_sid: [0u8; 40],
+        username: [0u8; 32],
+    };
+    let len = core::mem::size_of::<ObSessionInfo>();
+    let buf = unsafe {
+        core::slice::from_raw_parts_mut(&mut info as *mut ObSessionInfo as *mut u8, len)
+    };
+    sys_ob_query_info(fd, ObInfoClass::SessionInfo, buf).map(|_| info)
+}
+
+/// Spawn `path` with the identity of an authenticated session.
+///
+/// `session_fd` must be a session handle in the caller, and the session must be
+/// `Active` (the kernel rejects the combination with the default-user flag).
+pub fn ob_spawn_in_session(path: &str, session_fd: u8) -> Result<u8, i64> {
+    let attrs = 0xFFu64
+        | (0xFFu64 << 8)
+        | (0xFFu64 << 16)
+        | (1u64 << 33)
+        | ((session_fd as u64) << 40);
+    sys_ob_create(path, ob_type::PROCESS, None, attrs)
 }
 
 /// sys_ob_enum (RAX=64): enumerate objects in a namespace directory by fd.

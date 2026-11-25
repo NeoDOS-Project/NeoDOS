@@ -24,11 +24,43 @@ pub(super) fn dispatch(
             let stdout_fd = ((attrs >> 8) & 0xFF) as u8;
             let stderr_fd = ((attrs >> 16) & 0xFF) as u8;
 
-            // Optional "spawn as default unprivileged user" (NeoInit -> shell).
-            // Only an admin/SYSTEM caller may request it; the token itself is
-            // built from the SAM account, never from user-provided bits.
-            let as_user = attrs & (1u64 << 32) != 0;
-            let user_token = if as_user {
+            // Optional identity override for the child:
+            //   bit 32 — default unprivileged account (NeoInit -> shell);
+            //   bit 33 — the active session passed in bits 40..47 (login UI).
+            // NeoInit's path is admin/SYSTEM only; the session path is gated by
+            // possession of the session handle, which only the login process
+            // gets after authenticating. Tokens are always built by the kernel.
+            const ATTR_SPAWN_USER: u64 = 1u64 << 32;
+            const ATTR_SPAWN_SESSION: u64 = 1u64 << 33;
+            let as_user = attrs & ATTR_SPAWN_USER != 0;
+            let spawn_session = attrs & ATTR_SPAWN_SESSION != 0;
+            if as_user && spawn_session {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let user_token = if spawn_session {
+                let session_fd = ((attrs >> 40) & 0xFF) as u8;
+                let entry = crate::syscall::current_handle_entry(session_fd);
+                if !entry.is_open() {
+                    return err_to_u64(SyscallError::BadF);
+                }
+                let session_id = match crate::security::session::id_for_ob(entry.object_id) {
+                    Some(id) => id,
+                    None => return err_to_u64(SyscallError::Inval),
+                };
+                let token = {
+                    let mgr = crate::security::SESSIONS.lock();
+                    match mgr.get(session_id) {
+                        Some(s) if s.state == crate::security::session::SessionState::Active => {
+                            s.token.clone()
+                        }
+                        _ => None,
+                    }
+                };
+                match token {
+                    Some(token) => Some(token),
+                    None => return err_to_u64(SyscallError::Perm),
+                }
+            } else if as_user {
                 if !crate::syscall::is_current_admin() {
                     return err_to_u64(SyscallError::Perm);
                 }

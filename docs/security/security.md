@@ -34,7 +34,7 @@ pub struct Sid {
 
 `format_string()` produces the human-readable `S-R-I-S*` format. `from_parts()` constructs a Sid from raw components.
 
-## Token chain (v0.53)
+## Token chain (v0.54)
 
 - Kernel/Idle/services/NeoInit use SYSTEM (`S-1-5-18`) via `Token::new_system()`.
 - The built-in `Administrator` account (`-500`) gets `new_admin()` with
@@ -51,8 +51,38 @@ pub struct Sid {
   SYSTEM full, no Everyone access. New files inherit the parent DACL. The
   shared `C:\Users` container stays owned by Administrators with `Users`
   limited to read/traverse, so no account controls another's tree.
-- Admin elevation (`runas`/login) is phase 2 (#37/#39/#40); #767 remains open
-  until the final Ring 3 verification is recorded.
+- Logon binds a token to an `ObType::Session` object; `LOGON`/`RUNAS` spawn a
+  shell with that session token (bit 33). See "Sessions and logon" below.
+
+## Sessions and logon (v0.54)
+
+`security/session.rs` owns `SESSION_MANAGER`, a bounded table (16 entries) of
+login sessions. `ObCreate(Session)` creates `\Session\{id}` (id auto-assigned
+when the path is `\Session`) in `LoggedOff` and returns a handle.
+
+- **Logon** — `ObSetInfo(SessionLogon)` with `ObSessionCredentials`
+  (`username[32]`, `password[64]`, NUL-terminated UTF-8) authenticates against
+  SAM and binds `Token::from_sam(entry, session_id)` to the session
+  (`Active`). Wrong credentials return `EPERM`; an already-active session
+  returns `EEXIST`.
+- **Lock / logoff** — `SessionLock`/`SessionLogoff` are restricted to an
+  administrator or the session's own identity. Logoff drops the token and
+  invalidates every copy already handed to processes: `SeAccessCheck` denies a
+  token whose registered session is no longer `Active` (`session_id == 0` and
+  unregistered ids are unaffected).
+- **Process identity** — `ObCreate(Process)` bit 33 spawns the child with the
+  active token of the session in attrs bits 40..47; bit 32 keeps the phase-1
+  default-account path. Both bits together are rejected.
+- **Query** — `ObInfoClass::SessionInfo` (52) returns id, state, VT, admin flag,
+  login sequence, username, user SID and the live process count.
+- **Credentials** — SAM stores `SHA-256(salt || password)` with a per-entry
+  salt; comparison is constant-time. SAM is RAM-only, so the demo credentials
+  are installed lazily on the first logon: `amartinper` / `neodos`
+  (non-admin, `-1001`) and `Administrator` / `neodos` (admin, `-500`).
+  `NeoDOS` (`-1000`) has no password and accepts the empty string. Change these
+  defaults before any real deployment; a password-management tool is pending.
+- **Userland** — `neologon.nxe` implements `LOGON` (any account) and
+  `RUNAS` (administrator only), then opens a shell in the new session.
 
 ## Token
 

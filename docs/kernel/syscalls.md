@@ -332,9 +332,15 @@ Filesystem snapshot operations: CREATE(0), RESTORE(1), LIST(2), PURGE(3).
 
 `Syscall 41` accepts `attrs` low bytes for stdin/stdout/stderr (`0xFF` =
 inherit). Bit 32 (`1 << 32`) asks the kernel to spawn the process with the
-default unprivileged SAM account (`NeoDOS`). Only an admin/SYSTEM caller may
-set it; the token is built from SAM, never from caller-supplied bits. Child
-processes inherit the parent token.
+default unprivileged SAM account (`NeoDOS`); only an admin/SYSTEM caller may
+set it. Bit 33 (`1 << 33`) spawns with the active token of the session whose
+handle is passed in bits 40..47 (`attrs >> 40`), used by `neologon`/`runas`.
+Setting both bits is `EINVAL`; the tokens are always built by the kernel from
+SAM, never from caller-supplied identities. Child processes also inherit the
+parent token.
+
+Session info classes: `ObInfoClass::SessionInfo = 52`;
+`ObSetInfoClass::SessionLogon = 56`, `SessionLock = 57`, `SessionLogoff = 58`.
 
 ### Registry (RAX 50-59)
 

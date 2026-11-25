@@ -4,6 +4,7 @@ pub mod acl;
 pub mod access;
 pub mod sam;
 pub mod profile;
+pub mod session;
 
 use lazy_static::lazy_static;
 use crate::log::LogSubsys;
@@ -16,6 +17,10 @@ lazy_static! {
     /// (Administrator, Guest, SYSTEM). See `docs/design/users-security-design.md`.
     pub static ref SAM_DB: spin::Mutex<sam::SamDatabase> =
         spin::Mutex::new(sam::SamDatabase::with_builtins());
+
+    /// Live login sessions (#37); allocated on `ObCreate(Session)`.
+    pub static ref SESSIONS: spin::Mutex<session::SessionManager> =
+        spin::Mutex::new(session::SessionManager::new());
 }
 
 /// Token of the calling process, or the boot/system token when there is no
@@ -30,7 +35,8 @@ pub fn current_token() -> token::Token {
     })
 }
 
-pub fn init_security() {    kinfo!(LogSubsys::Security, "Security subsystem initialized");
+pub fn init_security() {
+    kinfo!(LogSubsys::Security, "Security subsystem initialized");
     kinfo!(LogSubsys::Security, "System SID: {}", sid::sid_builtin_system());
     kinfo!(LogSubsys::Security, "Administrator SID: {}", sid::sid_builtin_administrator());
     kinfo!(LogSubsys::Security, "Guest SID: {}", sid::sid_builtin_guest());
@@ -42,6 +48,7 @@ pub fn init_security() {    kinfo!(LogSubsys::Security, "Security subsystem init
 pub fn register_security_tests() {
     sam::register_sam_tests();
     profile::register_profile_tests();
+    session::register_session_tests();
     use crate::test_case;
     use crate::test_eq;
     use crate::test_ne;

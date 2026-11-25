@@ -1,8 +1,9 @@
-//! Ob query — basic/name/pipe/version/keyboard/service classes.
+//! Ob query — basic/name/pipe/version/keyboard/service classes and the login
+//! session metadata (#37).
 
 use crate::object::types::ObInfoClass;
 use crate::syscall::{err_to_u64, SyscallError, copy_to_user};
-use crate::syscall::ob::types::{ObBasicInfo, ObPipeInfo};
+use crate::syscall::ob::types::{ObBasicInfo, ObPipeInfo, ObSessionInfo};
 
 pub(super) fn handles(info_class: u32) -> bool {
     info_class == ObInfoClass::Basic as u32
@@ -16,6 +17,7 @@ pub(super) fn handles(info_class: u32) -> bool {
         || info_class == ObInfoClass::ServiceState as u32
         || info_class == ObInfoClass::ServiceConfig as u32
         || info_class == ObInfoClass::ServiceStatus as u32
+        || info_class == ObInfoClass::SessionInfo as u32
 }
 
 /// Dispatch the `session` info classes.
@@ -27,6 +29,66 @@ pub(super) fn dispatch(
     buf_size: usize,
 ) -> u64 {
     match info_class {
+        _ if info_class == ObInfoClass::SessionInfo as u32 => {
+            let session_id = match crate::security::session::id_for_ob(entry.object_id) {
+                Some(id) => id,
+                None => return err_to_u64(SyscallError::Inval),
+            };
+            let (state, vt_num, is_admin, login_tick, username, user_sid) = {
+                let mgr = crate::security::SESSIONS.lock();
+                let s = match mgr.get(session_id) {
+                    Some(s) => s,
+                    None => return err_to_u64(SyscallError::NoEnt),
+                };
+                (
+                    s.state,
+                    s.vt_num,
+                    s.token.as_ref().is_some_and(|t| t.is_admin_token()),
+                    s.login_tick,
+                    s.username.clone(),
+                    s.user_sid,
+                )
+            };
+            let process_count = crate::hal::without_interrupts(|| {
+                let sched = crate::scheduler::current_scheduler();
+                let lock = sched.lock();
+                lock.eprocesses
+                    .iter()
+                    .filter(|e| {
+                        e.as_ref()
+                            .is_some_and(|ep| ep.token.session_id == session_id)
+                    })
+                    .count() as u32
+            });
+            let mut info = ObSessionInfo {
+                session_id,
+                process_count,
+                login_tick,
+                state: state as u8,
+                vt_num,
+                is_admin: is_admin as u8,
+                user_sid_len: 0,
+                user_sid: [0u8; 40],
+                username: [0u8; 32],
+            };
+            if let Some(sid) = user_sid {
+                info.user_sid_len = sid.write_binary(&mut info.user_sid) as u8;
+            }
+            let name = username.as_bytes();
+            let len = name.len().min(31);
+            info.username[..len].copy_from_slice(&name[..len]);
+            let sz = core::mem::size_of::<ObSessionInfo>();
+            if buf_size < sz {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let bytes = unsafe {
+                core::slice::from_raw_parts(&info as *const ObSessionInfo as *const u8, sz)
+            };
+            if copy_to_user(buf_ptr, bytes).is_err() {
+                return err_to_u64(SyscallError::Fault);
+            }
+            sz as u64
+        }
         _ if info_class == ObInfoClass::Basic as u32 => {
             if entry.object_id == 0 {
                 let basic = ObBasicInfo {

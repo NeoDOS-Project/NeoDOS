@@ -1,11 +1,12 @@
 [package]
 name = "neodos_kernel"
-version = "0.53.0"
+version = "0.54.0"
 edition = "2021"
 
 
 [dependencies]
 libnlt = { path = "../libnlt" }
+libcrypto = { path = "../libcrypto" }
 log = "0.4.32"
 x86_64 = { version = "0.14.10", default-features = false, features = ["abi_x86_interrupt", "instructions"] }
 lazy_static = { version = "1.4", features = ["spin_no_std"] }

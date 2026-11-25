@@ -371,16 +371,31 @@ impl Shell {
             }
             _ => {
                 write_str(b"\r\n");
-                unsafe { let d = ARGS_ADDR as *mut u8; d.write_bytes(0,256); let n=args_slice.len().min(255); core::ptr::copy_nonoverlapping(args_slice.as_ptr(),d,n); d.add(n).write(0); }
-                const ALIASES: &[(&[u8], &[u8])] = &[
-                    (b"HELP", b"COREHELP"), (b"DIR", b"COREDIR"), (b"CLS", b"CORECLS"),
-                    (b"MD", b"COREMD"), (b"RD", b"CORERD"), (b"DEL", b"COREDEL"),
-                    (b"REN", b"COREREN"), (b"COPY", b"CORECOPY"), (b"TYPE", b"CORETYPE"),
-                    (b"TIME", b"DATETIME"), (b"DATE", b"DATETIME"),
+                // (alias, target, argument prefix). RUNAS reuses the logon
+                // binary with the `runas` mode argument (#40/#67).
+                const ALIASES: &[(&[u8], &[u8], &[u8])] = &[
+                    (b"HELP", b"COREHELP", b""), (b"DIR", b"COREDIR", b""), (b"CLS", b"CORECLS", b""),
+                    (b"MD", b"COREMD", b""), (b"RD", b"CORERD", b""), (b"DEL", b"COREDEL", b""),
+                    (b"REN", b"COREREN", b""), (b"COPY", b"CORECOPY", b""), (b"TYPE", b"CORETYPE", b""),
+                    (b"TIME", b"DATETIME", b""), (b"DATE", b"DATETIME", b""),
+                    (b"LOGON", b"NEOLOGON", b""), (b"RUNAS", b"NEOLOGON", b"runas "),
                 ];
                 let cmd = &cu[..cul];
-                let alias = ALIASES.iter().find(|(a,_)| *a == cmd).map(|(_,t)| *t);
-                let names = if let Some(a) = alias { &[cmd, a] } else { &[cmd][..] };
+                let alias = ALIASES.iter().find(|(a,_,_)| *a == cmd).map(|(_,t,p)| (*t,*p));
+                let names = if let Some((target, _)) = alias { &[cmd, target] } else { &[cmd][..] };
+                let arg_prefix = alias.map(|(_, p)| p).unwrap_or(b"");
+                unsafe {
+                    let d = ARGS_ADDR as *mut u8;
+                    d.write_bytes(0, 256);
+                    let mut n = 0usize;
+                    let pl = arg_prefix.len().min(255);
+                    core::ptr::copy_nonoverlapping(arg_prefix.as_ptr(), d, pl);
+                    n += pl;
+                    let al = args_slice.len().min(255 - n);
+                    core::ptr::copy_nonoverlapping(args_slice.as_ptr(), d.add(n), al);
+                    n += al;
+                    d.add(n).write(0);
+                }
                 let mut ok = false;
                 for name in names {
                     if let Ok(full) = self.resolve_path(name) {

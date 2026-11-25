@@ -1,16 +1,23 @@
 use crate::security::sid::{Sid, MAX_SUB_AUTHORITIES};
 use alloc::string::String;
 use alloc::vec::Vec;
+use libcrypto::sha256::Sha256;
 
 // ── Binary format constants ─────────────────────────────────────────
 
 const SAM_MAGIC: [u8; 4] = [b'S', b'A', b'M', 0];
-const SAM_VERSION: u32 = 1;
+const SAM_VERSION: u32 = 2;
 const MAX_SAM_ENTRIES: u32 = 64;
 
 pub const SAM_FLAG_ADMIN: u32 = 1;
 pub const SAM_FLAG_DISABLED: u32 = 2;
 pub const SAM_FLAG_LOCKED: u32 = 4;
+/// The entry carries a password hash (otherwise only the empty password is
+/// accepted).
+pub const SAM_FLAG_PASSWORD_SET: u32 = 8;
+
+/// Salt length for password hashes.
+pub const SAM_SALT_LEN: usize = 16;
 
 // ── Error type ──────────────────────────────────────────────────────
 
@@ -23,6 +30,8 @@ pub enum SamError {
     InvalidSid,
     UsernameTooLong,
     EntryNotFound,
+    BadPassword,
+    AccountDisabled,
 }
 
 // ── Entry ────────────────────────────────────────────────────────────
@@ -34,6 +43,11 @@ pub struct SamEntry {
     pub flags: u32,
     pub full_name: String,
     pub comment: String,
+    /// Per-entry salt; random when the CSPRNG is available, otherwise derived
+    /// from the username.
+    pub password_salt: [u8; SAM_SALT_LEN],
+    /// `SHA-256(salt || password)` when `SAM_FLAG_PASSWORD_SET` is set.
+    pub password_hash: [u8; 32],
 }
 
 impl SamEntry {
@@ -44,7 +58,42 @@ impl SamEntry {
             flags: if is_admin { SAM_FLAG_ADMIN } else { 0 },
             full_name: String::new(),
             comment: String::new(),
+            password_salt: [0u8; SAM_SALT_LEN],
+            password_hash: [0u8; 32],
         }
+    }
+
+    pub fn has_password(&self) -> bool {
+        self.flags & SAM_FLAG_PASSWORD_SET != 0
+    }
+
+    /// Set (or replace) the account password. The plaintext is never stored.
+    pub fn set_password(&mut self, password: &[u8]) {
+        let mut salt = [0u8; SAM_SALT_LEN];
+        if crate::random::fill(&mut salt).is_err() {
+            // Before the CSPRNG is seeded the salt is deterministic per user;
+            // it still prevents a single rainbow table from covering all
+            // accounts.
+            let digest = Sha256::digest(self.username.as_bytes());
+            salt.copy_from_slice(&digest[..SAM_SALT_LEN]);
+        }
+        self.password_salt = salt;
+        self.password_hash = hash_password(&salt, password);
+        self.flags |= SAM_FLAG_PASSWORD_SET;
+    }
+
+    /// Constant-time password check. Accounts without a password accept only
+    /// the empty string.
+    pub fn verify_password(&self, password: &[u8]) -> bool {
+        if !self.has_password() {
+            return password.is_empty();
+        }
+        let candidate = hash_password(&self.password_salt, password);
+        let mut diff = 0u8;
+        for i in 0..32 {
+            diff |= self.password_hash[i] ^ candidate[i];
+        }
+        diff == 0
     }
 
     pub fn is_admin(&self) -> bool {
@@ -105,6 +154,16 @@ impl SamDatabase {
         user.comment = String::from("Default unprivileged interactive account");
         let _ = db.add_user(user);
 
+        // Local operator account used to exercise the logon/runas flow (#37/#40).
+        let mut local = SamEntry::new(
+            "amartinper",
+            crate::security::sid::sid_builtin_account(1001),
+            false,
+        );
+        local.full_name = String::from("Alejandro Martin");
+        local.comment = String::from("Local unprivileged account");
+        let _ = db.add_user(local);
+
         db
     }
 
@@ -138,6 +197,38 @@ impl SamDatabase {
         }
     }
 
+    /// Install the documented development credentials on first use.
+    ///
+    /// SAM is RAM-only, so the built-in demo accounts start without a password
+    /// on every boot. Seeding is lazy (first logon) instead of at boot: it runs
+    /// in user context with the CSPRNG already initialized, and it avoids
+    /// extending the early-boot crypto window.
+    pub fn ensure_default_credentials(&mut self) {
+        for (name, password) in [("amartinper", b"neodos".as_slice()), ("Administrator", b"neodos".as_slice())] {
+            if let Some(entry) = self.find_by_username_mut(name) {
+                if !entry.has_password() {
+                    entry.set_password(password);
+                }
+            }
+        }
+    }
+
+    /// Verify a username/password pair. Disabled and locked accounts never
+    /// authenticate.
+    pub fn authenticate(&self, name: &str, password: &[u8]) -> Result<&SamEntry, SamError> {
+        let entry = self.find_by_username(name).ok_or(SamError::EntryNotFound)?;
+        if entry.is_disabled() {
+            return Err(SamError::AccountDisabled);
+        }
+        if entry.is_locked() {
+            return Err(SamError::AccountDisabled);
+        }
+        if !entry.verify_password(password) {
+            return Err(SamError::BadPassword);
+        }
+        Ok(entry)
+    }
+
     pub fn is_admin(&self, name: &str) -> bool {
         self.find_by_username(name).map_or(false, |e| e.is_admin())
     }
@@ -145,6 +236,13 @@ impl SamDatabase {
     pub fn entry_count(&self) -> u32 {
         self.entries.len() as u32
     }
+}
+
+fn hash_password(salt: &[u8; SAM_SALT_LEN], password: &[u8]) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(salt);
+    hasher.update(password);
+    hasher.finalize()
 }
 
 // ── Binary serialisation helpers ────────────────────────────────────
@@ -214,6 +312,16 @@ pub fn parse_sam(data: &[u8]) -> Result<SamDatabase, SamError> {
         let flags = u32::from_le_bytes([data[offset], data[offset + 1], data[offset + 2], data[offset + 3]]);
         offset += 4;
 
+        if offset + SAM_SALT_LEN + 32 > data.len() {
+            return Err(SamError::Truncated);
+        }
+        let mut password_salt = [0u8; SAM_SALT_LEN];
+        password_salt.copy_from_slice(&data[offset..offset + SAM_SALT_LEN]);
+        offset += SAM_SALT_LEN;
+        let mut password_hash = [0u8; 32];
+        password_hash.copy_from_slice(&data[offset..offset + 32]);
+        offset += 32;
+
         if offset + 2 > data.len() {
             return Err(SamError::Truncated);
         }
@@ -246,6 +354,8 @@ pub fn parse_sam(data: &[u8]) -> Result<SamDatabase, SamError> {
             flags,
             full_name: String::from(full_name),
             comment: String::from(comment),
+            password_salt,
+            password_hash,
         });
     }
 
@@ -280,6 +390,10 @@ pub fn serialize_sam(db: &SamDatabase) -> Result<Vec<u8>, SamError> {
 
         // flags
         buf.extend_from_slice(&entry.flags.to_le_bytes());
+
+        // password salt + hash (v2)
+        buf.extend_from_slice(&entry.password_salt);
+        buf.extend_from_slice(&entry.password_hash);
 
         // full_name
         let fname = entry.full_name.as_bytes();
@@ -393,8 +507,11 @@ pub fn register_sam_tests() {
     });
 
     test_case!("sam_parse_truncated", {
-        let bad = b"SAM\x00\x01\x00\x00\x00\x01\x00\x00\x00\x00\x00\x00\x00";
-        let result = parse_sam(bad);
+        let mut bad = [0u8; 16];
+        bad[0..4].copy_from_slice(&SAM_MAGIC);
+        bad[4..8].copy_from_slice(&SAM_VERSION.to_le_bytes());
+        bad[8..12].copy_from_slice(&1u32.to_le_bytes());
+        let result = parse_sam(&bad);
         test_true!(result.is_err());
         test_eq!(result.unwrap_err(), SamError::Truncated);
     });
@@ -426,7 +543,7 @@ pub fn register_sam_tests() {
             sid_builtin_administrator, sid_builtin_guest, sid_builtin_system,
         };
         let db = SamDatabase::with_builtins();
-        test_eq!(db.entry_count(), 4);
+        test_eq!(db.entry_count(), 5);
 
         let admin = db.find_by_username("administrator").unwrap();
         test_true!(admin.is_admin());
@@ -445,5 +562,10 @@ pub fn register_sam_tests() {
         let user = db.find_by_username("neodos").unwrap();
         test_true!(!user.is_admin());
         test_true!(!user.is_disabled());
+
+        let local = db.find_by_username("AMARTINPER").unwrap();
+        test_true!(!local.is_admin());
+        test_true!(!local.is_disabled());
+        test_eq!(local.sid, crate::security::sid::sid_builtin_account(1001));
     });
 }
