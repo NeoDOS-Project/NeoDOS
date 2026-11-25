@@ -5,6 +5,9 @@ use super::core::Hive;
 
 impl Hive {
     pub fn set_value(&mut self, key_idx: u32, name: &str, value_type: u32, data: &[u8]) -> Option<()> {
+        if data.len() > super::types::MAX_VALUE_DATA {
+            return None;
+        }
         let existing = self.find_value(key_idx, name);
         if let Some(val_idx) = existing {
             if let Some(Cell::Value(ref mut v)) = self.slot_mut(val_idx) {

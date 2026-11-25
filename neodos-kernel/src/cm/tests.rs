@@ -878,4 +878,21 @@ pub fn register_cm_tests() {
         test_true!(security::authorize_token(&admin, &path, ACCESS_WRITE));
         test_eq!(hive.key_path(old).unwrap(), "Trust");
     });
+
+    test_case!("cm_value_size_limit", {
+        let mut hive = Hive::new("ValueLimit");
+        let root = hive.root_cell();
+        let max = alloc::vec![0u8; crate::cm::hive::types::MAX_VALUE_DATA];
+        test_true!(hive.set_value(root, "Max", hive::REG_BINARY, &max).is_some());
+        let too_big = alloc::vec![0u8; crate::cm::hive::types::MAX_VALUE_DATA + 1];
+        test_true!(hive.set_value(root, "Big", hive::REG_BINARY, &too_big).is_none());
+    });
+
+    test_case!("cm_hive_capacity_is_fixed", {
+        let mut hive = Hive::new("Capacity");
+        for cell in hive.cells.iter_mut() {
+            *cell = Some(hive::Cell::Free);
+        }
+        test_true!(hive.alloc_cell(hive::Cell::Free).is_none());
+    });
 }

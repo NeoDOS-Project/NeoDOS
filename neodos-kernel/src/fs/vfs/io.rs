@@ -2,6 +2,7 @@ use crate::vfs::partition::PartitionInfo;
 use crate::drivers::block::BlockDevice;
 use crate::test_case;
 use crate::test_eq;
+use crate::test_true;
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum PageCacheLevel {
@@ -249,4 +250,11 @@ pub fn register_tests() {
     test_case!("iostack_cache_levels", { test_iostack_cache_levels()?; });
     test_case!("iostack_partition_read_device", { test_iostack_partition_read_device()?; });
     test_case!("iostack_partition_offset_correct", { test_iostack_partition_offset_correct()?; });
+    test_case!("vfs_invalid_drive_index_rejected", {
+        let mut vfs = crate::fs::vfs::Vfs::new();
+        test_true!(vfs.read(26, 0, 0, &mut [0u8; 1]).is_err());
+        test_true!(vfs.write(999, 0, 0, &[0u8; 1]).is_err());
+        test_true!(vfs.stat(26, 0).is_err());
+        test_true!(vfs.readdir(26, 0, 0).is_err());
+    });
 }

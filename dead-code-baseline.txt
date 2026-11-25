@@ -38,7 +38,6 @@ src/cm/hive/serialize.rs	associated items `flush_to_io` and `load_from_io` are n
 src/cm/hive/types.rs	constant `REG_NONE` is never used
 src/cm/hive/types.rs	enum `CellType` is never used
 src/cm/hive/types.rs	method `cell_type` is never used
-src/cm/hive/types.rs	variant `Free` is never constructed
 src/cm/manager.rs	field `name` is never read
 src/cm/manager.rs	function `find_by_native_mut` is never used
 src/cm/manager.rs	function `find_by_native` is never used

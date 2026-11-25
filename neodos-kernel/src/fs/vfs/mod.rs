@@ -298,12 +298,20 @@ impl Vfs {
     }
 
     pub fn read(&mut self, drive_idx: usize, inode: u32, offset: u64, buf: &mut [u8]) -> Result<usize, VfsError> {
-        let fs = self.drives[drive_idx].as_mut().ok_or(VfsError::NotFound)?;
+        let fs = self
+            .drives
+            .get_mut(drive_idx)
+            .and_then(|d| d.as_mut())
+            .ok_or(VfsError::NotFound)?;
         fs.read(inode, offset, buf)
     }
 
     pub fn stat(&mut self, drive_idx: usize, inode: u32) -> Result<VfsNode, VfsError> {
-        let fs = self.drives[drive_idx].as_mut().ok_or(VfsError::NotFound)?;
+        let fs = self
+            .drives
+            .get_mut(drive_idx)
+            .and_then(|d| d.as_mut())
+            .ok_or(VfsError::NotFound)?;
         fs.stat(inode)
     }
 
@@ -333,12 +341,20 @@ impl Vfs {
     }
 
     pub fn write(&mut self, drive_idx: usize, inode: u32, offset: u64, buf: &[u8]) -> Result<usize, VfsError> {
-        let fs = self.drives[drive_idx].as_mut().ok_or(VfsError::NotFound)?;
+        let fs = self
+            .drives
+            .get_mut(drive_idx)
+            .and_then(|d| d.as_mut())
+            .ok_or(VfsError::NotFound)?;
         fs.write(inode, offset, buf)
     }
 
     pub fn readdir(&mut self, drive_idx: usize, inode: u32, index: usize) -> Result<Option<DirEntry>, VfsError> {
-        let fs = self.drives[drive_idx].as_mut().ok_or(VfsError::NotFound)?;
+        let fs = self
+            .drives
+            .get_mut(drive_idx)
+            .and_then(|d| d.as_mut())
+            .ok_or(VfsError::NotFound)?;
         fs.readdir(inode, index)
     }
 

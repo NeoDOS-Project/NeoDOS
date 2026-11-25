@@ -73,6 +73,7 @@
 | Document | Description |
 |----------|-------------|
 | [Security](security/security.md) | SID, Token, ACL, SAM, SeAccessCheck |
+| [Security audit 2026-11](security/audit-2026-11.md) | Full audit: findings, fixes and regression tests (#112) |
 | [Trust store](security/trust-store.md) | System bundle, user CAs, authorization, revalidation |
 
 ## Registry

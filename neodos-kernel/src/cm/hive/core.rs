@@ -48,12 +48,9 @@ impl Hive {
                 return Some(i as u32);
             }
         }
-        let idx = len;
-        self.cells.push(Some(cell));
-        self.count += 1;
-        self.dirty = true;
-        self.next_alloc_hint = (idx + 1) as u32;
-        Some(idx as u32)
+        // Fixed-capacity hive: growing past MAX_CELLS made serialized hives
+        // unloadable (`deserialize` rejects cell indexes >= MAX_CELLS).
+        None
     }
 
     pub fn free_cell(&mut self, idx: u32) {

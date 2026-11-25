@@ -163,6 +163,13 @@ fn with_user_memory_locked<R>(
     result
 }
 
+/// Checked user-address arithmetic. A wrapped address must never be validated
+/// as a different (valid) user page.
+#[inline]
+pub(crate) fn user_addr(base: u64, offset: usize) -> Result<u64, ()> {
+    base.checked_add(offset as u64).ok_or(())
+}
+
 /// Fault-safe copy of `src` (user VA) into `dst` (kernel buffer). Validates and
 /// reads each byte under SCHEDULER -> USER_MEMORY_LOCK, so the range cannot be
 /// unmapped/freed between validation and the read (NEODOS-04 / #634).
@@ -175,7 +182,7 @@ pub(crate) fn copy_from_user(dst: &mut [u8], src: u64) -> Result<usize, ()> {
     }
     with_user_memory_locked(|sched| {
         for (i, slot) in dst.iter_mut().enumerate() {
-            let cur = src + i as u64;
+            let cur = user_addr(src, i)?;
             if !is_valid_user_byte_locked(sched, cur) {
                 return Err(());
             }
@@ -193,7 +200,7 @@ pub(crate) fn copy_to_user(dst: u64, src: &[u8]) -> Result<(), ()> {
     }
     with_user_memory_locked(|sched| {
         for (i, b) in src.iter().enumerate() {
-            let cur = dst + i as u64;
+            let cur = user_addr(dst, i)?;
             if !is_valid_user_byte_locked(sched, cur) {
                 return Err(());
             }
@@ -218,20 +225,45 @@ pub(crate) fn copy_user_string(ptr: u64) -> Result<String, ()> {
     }
     let mut buf = [0u8; 256];
     let mut len = 0usize;
+    let mut terminated = false;
 
     with_user_memory_locked(|sched| {
         while len < 255 {
-            let cur = ptr + len as u64;
+            let cur = user_addr(ptr, len)?;
             if !is_valid_user_byte_locked(sched, cur) {
                 return Err(());
             }
             let byte = unsafe { (cur as *const u8).read() };
-            if byte == 0 { break; }
+            if byte == 0 {
+                terminated = true;
+                break;
+            }
             buf[len] = byte;
             len += 1;
         }
         Ok(())
     })?;
 
+    if !terminated {
+        return Err(());
+    }
+
     core::str::from_utf8(&buf[..len]).map(|s| s.to_string()).map_err(|_| ())
+}
+
+pub fn register_util_tests() {
+    use crate::{test_case, test_eq, test_true};
+
+    test_case!("syscall_user_addr_checked", {
+        test_eq!(user_addr(0x1000, 0), Ok(0x1000));
+        test_eq!(user_addr(0x1000, 0xFFF), Ok(0x1FFF));
+        test_true!(user_addr(u64::MAX, 1).is_err());
+        test_true!(user_addr(u64::MAX, 0).is_ok());
+    });
+
+    test_case!("syscall_copy_from_user_rejects_wrapped_range", {
+        let mut buf = [0u8; 2];
+        test_true!(copy_from_user(&mut buf, u64::MAX - 1).is_err());
+        test_true!(copy_to_user(u64::MAX - 1, &[1, 2]).is_err());
+    });
 }

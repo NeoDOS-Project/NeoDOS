@@ -21,6 +21,12 @@ mod power;
 
 pub use stats::register_ob_stats_tests;
 
+/// Upper bound for a single `ob_query_info`/`ob_set_info` payload. Prevents a
+/// Ring-3 caller from sizing a kernel allocation to the whole user window
+/// (heap-exhaustion DoS, #764). Individual classes remain free to impose
+/// smaller limits.
+pub const MAX_OB_IO_BUF: usize = 64 * 1024;
+
 /// True if `info_class` is routed by some query domain. Completeness guard for
 /// ObInfoClass (NEODOS-06/#636, CH-06/#510, AUD-006/#526).
 pub fn info_class_handled(info_class: u32) -> bool {
@@ -44,6 +50,9 @@ pub fn handler_ob_query_info(regs: crate::syscall::Registers) -> u64 {
     let buf_size = regs.r8 as usize;
 
     if buf_ptr == 0 || buf_size == 0 {
+        return err_to_u64(SyscallError::Inval);
+    }
+    if buf_size > MAX_OB_IO_BUF {
         return err_to_u64(SyscallError::Inval);
     }
     if !is_user_ptr_valid(buf_ptr, buf_size as u64) {

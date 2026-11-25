@@ -260,6 +260,10 @@ pub(super) fn handler_cm_set_value(regs: Registers) -> u64 {
     let data_ptr = regs.r8;
     let data_len = regs.r9 as usize;
 
+    if data_len > crate::cm::hive::types::MAX_VALUE_DATA {
+        return err_to_u64(SyscallError::Inval);
+    }
+
     let name = match copy_user_string(name_ptr) {
         Ok(s) => s,
         Err(_) => return err_to_u64(SyscallError::Fault),
