@@ -110,6 +110,15 @@ jobs:
       - name: scripts/check-irq-locks.sh (INV-3 / Rule 3.5.1)
         run: ./scripts/check-irq-locks.sh
 
+  abi-manifest:
+    name: ABI manifest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Verify abi/kernel-abi.json is current
+        run: cargo run --quiet --manifest-path tools/abi-manifest/Cargo.toml -- --check
+
   keyboard-layouts:
     name: Keyboard layouts
     runs-on: ubuntu-latest
