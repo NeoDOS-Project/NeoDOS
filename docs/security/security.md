@@ -254,13 +254,6 @@ pub fn se_access_check(
     sd: Option<&SecurityDescriptor>,
     desired_access: u32,
 ) -> bool
-
-pub fn se_access_check_sid(        // single SID, no group membership
-    token_sid: &Sid,
-    is_admin: bool,
-    dacl: Option<&Acl>,
-    desired_access: u32,
-) -> bool
 ```
 
 ### Cm keys (Registry)

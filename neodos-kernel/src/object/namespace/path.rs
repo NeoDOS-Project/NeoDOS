@@ -12,7 +12,6 @@ pub const OB_PATH_TOO_LONG: &str = "OB_PATH_TOO_LONG";
 pub const OB_NAME_TOO_LONG: &str = "OB_NAME_TOO_LONG";
 pub const OB_NOT_FOUND: &str = "OB_NOT_FOUND";
 pub const OB_ALREADY_EXISTS: &str = "OB_ALREADY_EXISTS";
-pub const OB_CANNOT_CREATE_ROOT: &str = "OB_CANNOT_CREATE_ROOT";
 pub const OB_SAME_NAME: &str = "OB_SAME_NAME";
 pub const OB_SYMLINK_LOOP: &str = "OB_SYMLINK_LOOP";
 pub const OB_PROTECTED: &str = "OB_PROTECTED";

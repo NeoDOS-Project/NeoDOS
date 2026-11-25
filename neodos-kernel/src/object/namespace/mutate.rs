@@ -170,31 +170,6 @@ impl ObNamespace {
         current.children.remove(&key).ok_or(OB_NOT_FOUND)
     }
 
-    pub fn remove_symlink(&mut self, path: &str) -> Result<SymlinkEntry, &'static str> {
-        let components = Self::parse_path(path)?;
-        if components.is_empty() {
-            return Err(OB_INVALID_PATH);
-        }
-        let sl_name = components[components.len() - 1];
-        let key = name_to_key(sl_name);
-
-        if components.len() == 1 {
-            return self.root.symlinks.remove(&key).ok_or(OB_NOT_FOUND);
-        }
-
-        let parent_components = &components[..components.len() - 1];
-        let mut current = &mut self.root;
-        for &comp in parent_components {
-            let ckey = name_to_key(comp);
-            if let Some(subdir) = current.child_dirs.get_mut(&ckey) {
-                current = subdir;
-            } else {
-                return Err(OB_NOT_FOUND);
-            }
-        }
-        current.symlinks.remove(&key).ok_or(OB_NOT_FOUND)
-    }
-
     pub fn rename_directory(&mut self, old_path: &str, new_name: &str) -> Result<(), &'static str> {
         let components = Self::parse_path(old_path)?;
         if components.is_empty() {

@@ -14,7 +14,6 @@ use crate::test_true;
 use alloc::string::String;
 use alloc::string::ToString;
 use alloc::format;
-use crate::globals::with_vfs;
 use crate::handle::HandleEntry;
 use crate::object::{self, ObType, ob_open_path, ob_lookup};
 
@@ -93,32 +92,6 @@ fn alloc_handle(entry: HandleEntry) -> Result<u8, &'static str> {
         lock.current_eprocess_mut()
             .and_then(|ep| ep.handle_table.alloc_handle(entry))
     }).ok_or("No process context for handle allocation")
-}
-
-fn update_handle_offset(fd: u8, delta: u64) {
-    crate::hal::without_interrupts(|| {
-        let s = crate::scheduler::current_scheduler();
-        let mut lock = s.lock();
-        if let Some(ep) = lock.current_eprocess_mut() {
-            ep.handle_table[fd as usize].offset += delta;
-        }
-    });
-}
-
-fn extract_file_params(fd: u8) -> (usize, u32, u64) {
-    crate::hal::without_interrupts(|| {
-        let s = crate::scheduler::current_scheduler();
-        let lock = s.lock();
-        if let Some(ep) = lock.current_eprocess() {
-            let entry = ep.handle_table.get(fd);
-            if entry.obj_type() == Some(crate::object::ObType::Filesystem) {
-                if let Some(obj) = ob_lookup(entry.object_id) {
-                    return (entry.drive().unwrap_or(0) as usize, obj.native_id as u32, entry.offset);
-                }
-            }
-        }
-        (usize::MAX, 0, 0)
-    })
 }
 
 // ── Public API ──
@@ -224,48 +197,6 @@ pub fn urn_open(urn_str: &str) -> Result<UrnHandle, &'static str> {
             }
         }
     }
-}
-
-/// Read from an open URN handle into a buffer.
-pub fn urn_read(handle: &mut UrnHandle, buf: &mut [u8]) -> Result<usize, &'static str> {
-    let (drive, inode, offset) = extract_file_params(handle.fd);
-    if drive == usize::MAX {
-        return Err("URN read: not a file handle");
-    }
-    let mut bytes_read = 0usize;
-    with_vfs(|vfs| {
-        bytes_read = vfs.read(drive, inode, offset, buf)
-            .map_err(|_| "VFS read failed")?;
-        Ok(())
-    })?;
-    update_handle_offset(handle.fd, bytes_read as u64);
-    Ok(bytes_read)
-}
-
-/// Write to an open URN handle from a buffer.
-pub fn urn_write(handle: &mut UrnHandle, buf: &[u8]) -> Result<usize, &'static str> {
-    let (drive, inode, offset) = extract_file_params(handle.fd);
-    if drive == usize::MAX {
-        return Err("URN write: not a file handle");
-    }
-    let written = with_vfs(|vfs| {
-        vfs.write(drive, inode, offset, buf)
-            .map_err(|_| "VFS write failed")
-    })?;
-    update_handle_offset(handle.fd, written as u64);
-    Ok(written)
-}
-
-/// Seek to a position in an open URN handle.
-pub fn urn_seek(handle: &mut UrnHandle, pos: u64) {
-    let fd = handle.fd;
-    crate::hal::without_interrupts(|| {
-        let s = crate::scheduler::current_scheduler();
-        let mut lock = s.lock();
-        if let Some(ep) = lock.current_eprocess_mut() {
-            ep.handle_table[fd as usize].offset = pos;
-        }
-    });
 }
 
 // ── Tests ──

@@ -194,11 +194,11 @@ Unified object manager system for creating, tracking, referencing, and enumerati
 | **Symlinks** | `src/object/namespace.rs` | `SymlinkEntry` in namespace nodes, max 10 hop resolution with loop detection |
 | **Mount points** | `src/fs/vfs/mount.rs` | `MountManager` with `MountPoint` struct, `FilesystemType` enum, DosDevices symlink creation, global `MOUNT_MANAGER` |
 | **Public API** | `src/object/mod.rs` | `ob_create_object()`, `ob_destroy_object()`, `ob_lookup()`, `ob_open_object(id)`, `ob_close_object(id)`, `ob_reference()`, `ob_dereference()`, `ob_count()`, `ob_enum_snapshot()`, `ob_open_path(path, token, access)` |
-| **Namespace API** | `src/object/namespace.rs` | `ob_insert_object()`/`ob_remove_object()`, `ob_lookup_path()`, `ob_create_directory()`, `ob_enumerate_namespace()`, `ob_insert_symlink()`, `ob_find_path_by_id()`, `normalize_path()`, `ob_insert_object_auto()`/`ob_remove_object_auto()` |
-| **Integration** | | Processes, drivers, pipes, timers, semaphores, sections auto-register on creation and auto-unregister on destruction. Mount points register via `vfs_mount()` during boot |
+| **Namespace API** | `src/object/namespace/` | `ob_insert_object()`/`ob_remove_object()`, `ob_lookup_path()`, `ob_create_directory()`, `ob_enumerate_namespace()`, `ob_insert_symlink()`, `ob_find_path_by_id()`, `normalize_path()` |
+| **Integration** | | Processes, drivers, pipes, timers, semaphores and sections register during creation and unregister when destroyed. Mount points register via `vfs_mount()` during boot |
 | **CLI** | | `KOBJ` via Ring 3 `kobj.nxe` (ob_enum RAX=44) — lists all namespace objects |
 
-The Ob registry is populated at boot by driver loading and at runtime by process/pipe/timer/semaphore/section creation. Objects are automatically removed when their lifecycle ends (process exit, driver unload, pipe close, timer/semaphore free). Directory entries for `\Device`, `\DosDevices`, `\Global`, `\Driver`, `\FileSystem`, `\Ob`, `\Registry`, `\Process` are created at boot via `init_object_namespace()`. MountPoints for `C:` (NeoDOS FS) and `A:` (FAT32 ESP) are registered during PHASE 3.
+The Ob registry is populated at boot by driver loading and at runtime by process/pipe/timer/semaphore/section creation. Objects are removed when their lifecycle ends (process exit, driver unload, pipe close, timer/semaphore free). Directory entries for `\Device`, `\DosDevices`, `\Global`, `\Driver`, `\FileSystem`, `\Ob`, `\Registry`, `\Process` are created at boot via `init_object_namespace()`. MountPoints for `C:` (NeoDOS FS) and `A:` (FAT32 ESP) are registered during PHASE 3.
 
 ---
 

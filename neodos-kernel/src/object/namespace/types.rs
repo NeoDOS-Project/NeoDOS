@@ -27,10 +27,6 @@ impl SymlinkEntry {
         let len = self.target.iter().position(|&b| b == 0).unwrap_or(254);
         core::str::from_utf8(&self.target[..len]).unwrap_or("<?>")
     }
-
-    pub fn name_str(&self) -> &str {
-        key_to_str(&self.name)
-    }
 }
 
 /// Entry returned by namespace enumeration.

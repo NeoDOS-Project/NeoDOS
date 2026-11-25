@@ -84,14 +84,6 @@ pub fn ob_lookup_path(path: &str) -> Result<ObId, &'static str> {
     OB_NAMESPACE.lock().lookup_path(path)
 }
 
-pub fn ob_lookup_path_no_follow(path: &str) -> Result<ObId, &'static str> {
-    OB_NAMESPACE.lock().lookup_path_no_follow(path)
-}
-
-pub fn ob_lookup_by_path(path: &str) -> Result<ObId, &'static str> {
-    OB_NAMESPACE.lock().lookup_by_path(path)
-}
-
 pub fn ob_remove_object(path: &str) -> Result<ObId, &'static str> {
     OB_NAMESPACE.lock().remove_object(path)
 }
@@ -124,10 +116,6 @@ pub fn ob_create_directory_tree(path: &str) -> Result<(), &'static str> {
         let _ = OB_NAMESPACE.lock().create_directory(&p);
     }
     Ok(())
-}
-
-pub fn ob_rename_directory(old_path: &str, new_name: &str) -> Result<(), &'static str> {
-    OB_NAMESPACE.lock().rename_directory(old_path, new_name)
 }
 
 pub fn ob_enumerate_namespace(path: &str) -> Result<Vec<NamespaceEntry>, &'static str> {
@@ -178,26 +166,6 @@ pub fn ob_set_protected(path: &str, protected: bool) -> Result<(), &'static str>
     OB_NAMESPACE.lock().set_protected(path, protected)
 }
 
-pub fn ob_is_path_protected(path: &str) -> bool {
-    let ns = OB_NAMESPACE.lock();
-    let components = match ObNamespace::parse_path(path) {
-        Ok(c) => c,
-        Err(_) => return false,
-    };
-    if components.is_empty() {
-        return ns.root.protected;
-    }
-    let mut current = &ns.root;
-    for comp in &components {
-        let key = name_to_key(comp);
-        match current.child_dirs.get(&key) {
-            Some(dir) => current = dir,
-            None => return false,
-        }
-    }
-    current.protected
-}
-
 pub fn ob_insert_object_checked(path: &str, obj_id: ObId) -> Result<(), &'static str> {
     let mut ns = OB_NAMESPACE.lock();
     let components = ObNamespace::parse_path(path).map_err(|_| OB_INVALID_PATH)?;
@@ -239,72 +207,7 @@ pub fn ob_create_directory_checked(path: &str) -> Result<(), &'static str> {
     ns.create_directory(path)
 }
 
-pub fn ob_insert_symlink_checked(path: &str, target: &str) -> Result<(), &'static str> {
-    let mut ns = OB_NAMESPACE.lock();
-    let components = ObNamespace::parse_path(path).map_err(|_| OB_INVALID_PATH)?;
-    if components.len() > 1 {
-        let parent_components = &components[..components.len() - 1];
-        let mut current = &ns.root;
-        for &comp in parent_components {
-            let key = name_to_key(comp);
-            match current.child_dirs.get(&key) {
-                Some(dir) => current = dir,
-                None => return Err(OB_NOT_FOUND),
-            }
-        }
-        if current.protected {
-            return Err(OB_PROTECTED);
-        }
-    }
-    ns.insert_symlink(path, target)
-}
-
 pub fn ob_insert_symlink(path: &str, target: &str) -> Result<(), &'static str> {
     OB_NAMESPACE.lock().insert_symlink(path, target)
 }
 
-pub fn ob_lookup_symlink(path: &str) -> Result<SymlinkEntry, &'static str> {
-    OB_NAMESPACE.lock().lookup_symlink(path)
-}
-
-pub fn ob_remove_symlink(path: &str) -> Result<SymlinkEntry, &'static str> {
-    OB_NAMESPACE.lock().remove_symlink(path)
-}
-
-fn obj_type_to_auto_path(obj_type: ObType, name: &str) -> alloc::string::String {
-    match obj_type {
-        ObType::Process => alloc::format!("\\Ob\\Process\\{}", name),
-        ObType::Driver => alloc::format!("\\Driver\\{}", name),
-        ObType::Pipe => alloc::format!("\\Ob\\Pipe\\{}", name),
-        ObType::Device => alloc::format!("\\Device\\{}", name),
-        ObType::BlockDevice => alloc::format!("\\Device\\{}", name),
-        ObType::EventBus => alloc::format!("\\Global\\EventBus\\{}", name),
-        ObType::Filesystem => alloc::format!("\\FileSystem\\{}", name),
-        ObType::MemoryRegion => alloc::format!("\\Ob\\Memory\\{}", name),
-        ObType::Symlink => alloc::format!("\\Ob\\Symlink\\{}", name),
-        ObType::MountPoint => alloc::format!("\\Global\\Mount\\{}", name),
-        ObType::Directory => alloc::format!("\\Ob\\Dir\\{}", name),
-        ObType::Socket => alloc::format!("\\Ob\\Socket\\{}", name),
-        ObType::Unknown => alloc::format!("\\Ob\\Unknown\\{}", name),
-        _ => alloc::format!("\\Ob\\Unknown\\{}", name),
-    }
-}
-
-pub fn ob_insert_object_auto(obj_type: ObType, name: &str, obj_id: ObId) -> Result<(), &'static str> {
-    let path = obj_type_to_auto_path(obj_type, name);
-    {
-        let mut ns = OB_NAMESPACE.lock();
-        let components = ObNamespace::parse_path(&path).ok();
-        if let Some(comp) = components {
-            if comp.len() > 1 {
-                let _ = ObNamespace::create_dir_internal(&mut ns.root, &comp[..comp.len() - 1]);
-            }
-        }
-    }
-    OB_NAMESPACE.lock().insert_object(&path, obj_id)
-}
-
-pub fn ob_remove_object_auto(obj_type: ObType, name: &str) {
-    let path = obj_type_to_auto_path(obj_type, name);
-    let _ = OB_NAMESPACE.lock().remove_object(&path);
-}
