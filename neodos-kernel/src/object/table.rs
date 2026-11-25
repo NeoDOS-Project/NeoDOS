@@ -436,6 +436,13 @@ pub fn ob_set_object_name(id: ObId, name: &str) -> Result<(), ObError> {
     Ok(())
 }
 
+/// Kernel-internal name update for VFS operations (rename). Userland renames
+/// go through `ObSetInfo(ObjectName)`, which rejects protected namespaces and
+/// path-like names (AUDIT-004 / #812).
+pub fn ob_set_object_name_trusted(id: ObId, name: &str) -> Result<(), ObError> {
+    ob_set_object_name(id, name)
+}
+
 pub fn ob_set_security(
     id: ObId,
     sd: crate::security::acl::SecurityDescriptor,

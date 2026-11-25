@@ -174,7 +174,10 @@ fn set_label(drive: u8, label: &[u8]) {
     let vfs_str = core::str::from_utf8(&vfs_bytes).unwrap_or("C:\\");
     let mut ob_buf = [0u8; 512];
     let ob_path = to_ob_path(vfs_str, &mut ob_buf);
-    match syscall::sys_ob_open(ob_path, libneodos::syscall::ob_access::READ) {
+    match syscall::sys_ob_open(
+        ob_path,
+        libneodos::syscall::ob_access::READ | libneodos::syscall::ob_access::WRITE,
+    ) {
         Ok(fd) => {
             match syscall::sys_ob_set_info(fd, libneodos::syscall::ob_set_info_class::SET_VOLUME_LABEL, label) {
                 Ok(()) => {

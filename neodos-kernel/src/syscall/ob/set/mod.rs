@@ -20,6 +20,18 @@ mod object;
 mod time;
 mod session;
 
+/// Privilege gate for `ObSetInfo` classes that change system configuration
+/// (services, NIC address/gateway, volume label, fsck repair).
+pub(crate) use object::object_rename_allowed;
+
+pub(crate) fn require_admin_for_set_info(is_admin: bool) -> Result<(), SyscallError> {
+    if is_admin {
+        Ok(())
+    } else {
+        Err(SyscallError::Perm)
+    }
+}
+
 /// True if `info_class` is routed by some set domain. Completeness guard for
 /// ObSetInfoClass (NEODOS-06/#636, CH-06/#510, AUD-006/#526).
 pub fn set_class_handled(info_class: u32) -> bool {

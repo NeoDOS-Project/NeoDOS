@@ -37,6 +37,14 @@ pub(super) fn validate_hostname(name: &str) -> Result<&str, ()> {
     Ok(s)
 }
 
+/// NIC address/gateway changes must go through the `\Global\Info\Network`
+/// object (`Key`, native_id 10), not through an arbitrary open handle.
+fn is_network_info_handle(entry: crate::handle::HandleEntry) -> bool {
+    crate::object::ob_lookup(entry.object_id).is_some_and(|o| {
+        o.obj_type == crate::object::ObType::Key && o.native_id == 10
+    })
+}
+
 /// Dispatch the `net` info classes.
 pub(super) fn dispatch(
     info_class: u32,
@@ -172,6 +180,13 @@ pub(super) fn dispatch(
         }
         // ── RegistryCreateKey (23): create a subkey (name in buf) ──
         _ if info_class == ObSetInfoClass::SetNicIp as u32 => {
+            // AUDIT-005 / #813: reconfiguring the NIC is a privileged operation.
+            if let Err(e) = super::require_admin_for_set_info(crate::syscall::is_current_admin()) {
+                return err_to_u64(e);
+            }
+            if !is_network_info_handle(entry) {
+                return err_to_u64(SyscallError::Inval);
+            }
             if buf_size < 8 { return err_to_u64(SyscallError::Inval); }
             let mut hdr = [0u8; 8];
             if copy_from_user(&mut hdr, buf_ptr).is_err() {
@@ -196,6 +211,13 @@ pub(super) fn dispatch(
         }
         // ── SetNicGateway (28): set NIC default gateway (0.0.0.0 = unset) ──
         _ if info_class == ObSetInfoClass::SetNicGateway as u32 => {
+            // AUDIT-005 / #813: reconfiguring the default gateway is privileged.
+            if let Err(e) = super::require_admin_for_set_info(crate::syscall::is_current_admin()) {
+                return err_to_u64(e);
+            }
+            if !is_network_info_handle(entry) {
+                return err_to_u64(SyscallError::Inval);
+            }
             if buf_size < 8 { return err_to_u64(SyscallError::Inval); }
             let mut hdr = [0u8; 8];
             if copy_from_user(&mut hdr, buf_ptr).is_err() {
@@ -210,8 +232,8 @@ pub(super) fn dispatch(
             0
         }
         _ if info_class == ObSetInfoClass::SetHostname as u32 => {
-            if !crate::syscall::is_current_admin() {
-                return err_to_u64(SyscallError::Perm);
+            if let Err(e) = super::require_admin_for_set_info(crate::syscall::is_current_admin()) {
+                return err_to_u64(e);
             }
             if buf_size == 0 || buf_size > 64 {
                 return err_to_u64(SyscallError::Inval);

@@ -18,6 +18,12 @@ pub(super) fn dispatch(
     buf_ptr: u64,
     buf_size: usize,
 ) -> u64 {
+    // AUDIT-005 / #813: service control is an administrator operation, even
+    // when reached through ObSetInfo (RAX=43) instead of the admin-only
+    // sys_ob_service (RAX=47).
+    if let Err(e) = super::require_admin_for_set_info(crate::syscall::is_current_admin()) {
+        return err_to_u64(e);
+    }
     match info_class {
         _ if info_class == ObSetInfoClass::ServiceStart as u32 => {
             if entry.object_id == 0 {

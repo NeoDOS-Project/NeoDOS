@@ -107,6 +107,63 @@ const NEM_LOAD_ARG: &[u8] = b"NEMLOAD";
 const USERWIN_ARG: &[u8] = b"USERWIN";
 const USERWIN_START: u64 = 0x023F_C000; // USER_LIMIT (0x2400000) - 16 KiB
 
+/// Ring 3 probe for #813/#817: privileged ObSetInfo classes must return EPERM
+/// for an unprivileged caller (NIC reconfiguration, volume label, fsck repair).
+const PRIVSET_ARG: &[u8] = b"PRIVSET";
+
+fn denied(r: Result<(), i64>) -> bool {
+    matches!(r, Err(e) if e == EPERM)
+}
+
+fn run_privset_probe() -> u32 {
+    write_str(b"[PRIVSET] start\r\n");
+    let mut ok = true;
+
+    // NIC reconfiguration through any open fd (stdout) must be denied first.
+    let nic = [0u8; 12];
+    if !denied(syscall::sys_ob_set_info(
+        1,
+        syscall::ObSetInfoClass::SetNicIp,
+        &nic,
+    )) {
+        write_str(b"[PRIVSET] FAIL SetNicIp was not denied\r\n");
+        ok = false;
+    }
+
+    match syscall::sys_ob_open("\\Global\\FileSystem\\C:\\", syscall::ob_access::READ) {
+        Ok(fd) => {
+            if !denied(syscall::sys_ob_set_info(
+                fd,
+                syscall::ObSetInfoClass::SetVolumeLabel,
+                b"X",
+            )) {
+                write_str(b"[PRIVSET] FAIL SetVolumeLabel was not denied\r\n");
+                ok = false;
+            }
+            if !denied(syscall::sys_ob_set_info(
+                fd,
+                syscall::ObSetInfoClass::FsckRepair,
+                &[1u8],
+            )) {
+                write_str(b"[PRIVSET] FAIL FsckRepair was not denied\r\n");
+                ok = false;
+            }
+            let _ = syscall::sys_close(fd);
+        }
+        Err(_) => {
+            write_str(b"[PRIVSET] FAIL could not open C:\\\r\n");
+            ok = false;
+        }
+    }
+
+    if ok {
+        write_str(b"[PRIVSET] PASS privileged ObSetInfo denied\r\n");
+        0
+    } else {
+        1
+    }
+}
+
 fn run_user_window_probe() -> u32 {
     write_str(b"[USERWIN] start\r\n");
     let mut ok = true;
@@ -349,6 +406,9 @@ pub extern "C" fn _start() -> ! {
     }
     if libneodos::args::trim_ascii(&raw_args) == USERWIN_ARG {
         syscall::sys_exit(run_user_window_probe());
+    }
+    if libneodos::args::trim_ascii(&raw_args) == PRIVSET_ARG {
+        syscall::sys_exit(run_privset_probe());
     }
 
     let mut passed = 0u32;

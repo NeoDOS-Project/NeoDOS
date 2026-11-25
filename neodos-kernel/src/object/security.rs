@@ -3,6 +3,22 @@ use alloc::vec::Vec;
 use crate::object::types::{ObError, ObId, ObType};
 use crate::object::table::{OB_TABLE, OB_SECURITY, ob_lookup, ob_create_object, ob_reference, ob_destroy_object, ob_close_object, FILE_HANDLE_OPS};
 
+/// May `token` replace the security descriptor of `id`?
+///
+/// NT semantics: the owner or an administrator. Objects without a descriptor
+/// (most kernel-created namespace objects) are administrator-only, so holding
+/// a handle is not enough to rewrite their DACL (AUDIT-009 / #817).
+pub fn ob_can_set_security(
+    id: ObId,
+    token: &crate::security::token::Token,
+) -> bool {
+    if token.is_admin_token() {
+        return true;
+    }
+    let sd = OB_SECURITY.lock().get(&id).cloned();
+    matches!(sd, Some(sd) if sd.owner.as_ref() == Some(&token.sid))
+}
+
 #[derive(Clone, Copy)]
 enum VfsOpenError {
     NotFound,

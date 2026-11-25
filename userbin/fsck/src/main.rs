@@ -128,7 +128,12 @@ pub extern "C" fn _start() -> ! {
     let mut ob_buf = [0u8; 512];
     let ob_path = to_ob_path(vfs_str, &mut ob_buf);
 
-    let fd = match syscall::sys_ob_open(ob_path, libneodos::syscall::ob_access::READ) {
+    let access = if repair {
+        libneodos::syscall::ob_access::READ | libneodos::syscall::ob_access::WRITE
+    } else {
+        libneodos::syscall::ob_access::READ
+    };
+    let fd = match syscall::sys_ob_open(ob_path, access) {
         Ok(f) => f,
         Err(_) => {
             write_err(b"\r\n");

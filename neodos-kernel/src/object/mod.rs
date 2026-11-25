@@ -12,8 +12,8 @@ pub mod security;
 
 pub use types::{ObError, ObId, ObType, OB_NAME_LEN};
 pub use types::{ObObjectSnapshot, ObEnumEntry};
-pub(crate) use table::{ObObject, ObObjectTable, ObOperations, FileHandleOps, FILE_HANDLE_OPS, OB_TABLE, OB_SECURITY, init_object_manager, ob_create_object, ob_destroy_object, ob_lookup, ob_open_object, ob_close_object, ob_reference, ob_dereference, ob_refcount_stats, ob_set_refcount_for_test, ob_count, ob_enum_snapshot, ob_set_object_name, ob_set_security, ob_create_object_path};
-pub use security::ob_open_path;
+pub(crate) use table::{ObObject, ObObjectTable, ObOperations, FileHandleOps, FILE_HANDLE_OPS, OB_TABLE, OB_SECURITY, init_object_manager, ob_create_object, ob_destroy_object, ob_lookup, ob_open_object, ob_close_object, ob_reference, ob_dereference, ob_refcount_stats, ob_set_refcount_for_test, ob_count, ob_enum_snapshot, ob_set_object_name, ob_set_object_name_trusted, ob_set_security, ob_create_object_path};
+pub use security::{ob_can_set_security, ob_open_path};
 pub use enum_mod::ob_enum_directory;
 
 // NEODOS-06 (#636): Ob dispatch — handlers consult the object's `ObOperations`
@@ -329,6 +329,37 @@ pub fn register_object_tests() {
         ob_close_object(id).unwrap();
         ob_destroy_object(id).unwrap();
         let _ = crate::object::namespace::ob_remove_object("\\Driver\\secure_drv");
+    });
+
+    test_case!("ob_security_change_requires_owner_or_admin", {
+        use crate::security::acl::SecurityDescriptor;
+        use crate::security::token::Token;
+
+        let id = ob_create_object(ObType::Event, "sd_owner_probe", 0, 0, None).unwrap();
+        let user = Token::new_user();
+        let admin = Token::new_admin();
+
+        // No descriptor: holding a handle is not enough; admin only.
+        test_true!(ob_can_set_security(id, &admin));
+        test_false!(ob_can_set_security(id, &user));
+
+        let mut sd = SecurityDescriptor::new();
+        sd.owner = Some(user.sid);
+        ob_set_security(id, sd).unwrap();
+        test_true!(ob_can_set_security(id, &user));
+        test_true!(ob_can_set_security(id, &admin));
+
+        let guest = Token::new(crate::security::sid::sid_builtin_guest(), false);
+        test_false!(ob_can_set_security(id, &guest));
+
+        // Empty DACL (deny all) must not change the ownership rule.
+        let mut empty = SecurityDescriptor::new().with_dacl(crate::security::acl::Acl::new());
+        empty.owner = Some(user.sid);
+        ob_set_security(id, empty).unwrap();
+        test_true!(ob_can_set_security(id, &user));
+        test_false!(ob_can_set_security(id, &guest));
+
+        ob_destroy_object(id).unwrap();
     });
 
     test_case!("ob_open_path_vfs_default_dacl", {

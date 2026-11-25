@@ -83,7 +83,7 @@ pub(super) fn dispatch(
                 Ok(_) => {
                     let _ = crate::object::namespace::ob_remove_object(obj_name);
                     let new_ob_name = alloc::format!("\\Global\\FileSystem\\{}", new_path);
-                    let _ = crate::object::ob_set_object_name(entry.object_id, &new_ob_name);
+                    let _ = crate::object::ob_set_object_name_trusted(entry.object_id, &new_ob_name);
                     {
                         let _ = crate::object::namespace::ob_create_directory_tree(&new_ob_name);
                     }
@@ -170,6 +170,12 @@ pub(super) fn dispatch(
             }
         }
         _ if info_class == ObSetInfoClass::SetVolumeLabel as u32 => {
+            // AUDIT-005 / #813: volume metadata is privileged and needs write access.
+            if !crate::syscall::is_current_admin()
+                || entry.access & crate::security::acl::ACCESS_WRITE == 0
+            {
+                return err_to_u64(SyscallError::Perm);
+            }
             if entry.obj_type() != Some(crate::object::ObType::Filesystem) {
                 return err_to_u64(SyscallError::Inval);
             }
@@ -300,6 +306,13 @@ pub(super) fn dispatch(
             0
         }
         _ if info_class == ObSetInfoClass::FsckRepair as u32 => {
+            // AUDIT-005 / #813: repairing a filesystem mutates metadata and is
+            // an administrator operation.
+            if !crate::syscall::is_current_admin()
+                || entry.access & crate::security::acl::ACCESS_WRITE == 0
+            {
+                return err_to_u64(SyscallError::Perm);
+            }
             if entry.obj_type() != Some(crate::object::ObType::Filesystem) {
                 return err_to_u64(SyscallError::Inval);
             }
