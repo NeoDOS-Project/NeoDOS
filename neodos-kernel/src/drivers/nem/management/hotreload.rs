@@ -100,19 +100,22 @@ impl ResourceRegistry {
 
 pub struct HotReloadRegistry {
     entries: Vec<HotReloadEntry>,
+    dropped: u64,
 }
 
 impl HotReloadRegistry {
     pub const fn new() -> Self {
-        HotReloadRegistry { entries: Vec::new() }
+        HotReloadRegistry { entries: Vec::new(), dropped: 0 }
     }
 
-    pub fn register(&mut self, driver_id: DriverId, result: &NemV3LoadResult) {
+    /// Register a load result. Returns false (and counts the drop) when the
+    /// registry is full.
+    pub fn register(&mut self, driver_id: DriverId, result: &NemV3LoadResult) -> bool {
         // Remove old entry for same driver_id (if reloading)
         self.entries.retain(|e| e.driver_id != driver_id);
         if self.entries.len() >= MAX_HOTRELOAD_ENTRIES {
-            kwarn!(LogSubsys::Hotreload, "Warning: hot reload entry limit reached for driver {}", driver_id);
-            return;
+            self.dropped += 1;
+            return false;
         }
         self.entries.push(HotReloadEntry {
             driver_id,
@@ -124,6 +127,12 @@ impl HotReloadRegistry {
             isolated_size: result.total_size as u64,
             loaded_at_tick: crate::hal::get_ticks(),
         });
+        true
+    }
+
+    /// Number of load results rejected because the registry was full.
+    pub fn dropped(&self) -> u64 {
+        self.dropped
     }
 
     pub fn unregister(&mut self, driver_id: DriverId) {
@@ -187,9 +196,19 @@ pub fn untrack_ob_entry(driver_id: DriverId, resource_id: u32) {
 
 /// Register a load result for future hot reload/unload use.
 pub fn register_load_result(driver_id: DriverId, result: &NemV3LoadResult) {
-    HOT_RELOAD_REGISTRY.lock().register(driver_id, result);
-    ktrace!(LogSubsys::Hotreload, "Registered load result for driver {} ({})", driver_id,
-        core::str::from_utf8(&result.name).unwrap_or("?"));
+    if HOT_RELOAD_REGISTRY.lock().register(driver_id, result) {
+        ktrace!(LogSubsys::Hotreload, "Registered load result for driver {} ({})", driver_id,
+            core::str::from_utf8(&result.name).unwrap_or("?"));
+    } else {
+        kerror!(LogSubsys::Hotreload,
+            "Hot reload registry full (max {}); load result for driver {} not stored",
+            MAX_HOTRELOAD_ENTRIES, driver_id);
+    }
+}
+
+/// Number of load results the hot reload registry rejected because it was full.
+pub fn hotreload_dropped_count() -> u64 {
+    HOT_RELOAD_REGISTRY.lock().dropped()
 }
 
 /// Register the unload ack handler with the event bus.
