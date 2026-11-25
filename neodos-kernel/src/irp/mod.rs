@@ -29,6 +29,7 @@
 use alloc::boxed::Box;
 use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use spin::Mutex;
+use crate::slot_table::SlotTable;
 use crate::work_queue::WORK_QUEUE;
 use crate::{test_case, test_eq, test_ne, test_true};
 
@@ -92,48 +93,41 @@ pub struct IrpParams {
     pub id: IrpId,
 }
 
-struct IrpSlot {
-    in_use: bool,
-    irp: Irp,
-}
-
 pub(crate) struct IrpPoolInner {
-    slots: [IrpSlot; IRP_POOL_SIZE],
+    slots: SlotTable<Irp, IRP_POOL_SIZE>,
 }
 
 impl IrpPoolInner {
+    fn new_irp(id: IrpId) -> Irp {
+        Irp {
+            id,
+            op: IrpOp::Read,
+            lba: 0,
+            count: 0,
+            buf: core::ptr::null_mut(),
+            buf_len: 0,
+            status: IrpStatus::Pending,
+            callback: None,
+            callback_ctx: core::ptr::null_mut(),
+            waiting_pid: None,
+        }
+    }
+
     fn alloc(&mut self, id: IrpId) -> Option<&mut Irp> {
         let idx = (id as usize) % IRP_POOL_SIZE;
-        if self.slots[idx].in_use {
-            return None;
-        }
-        self.slots[idx] = IrpSlot {
-            in_use: true,
-            irp: Irp {
-                id,
-                op: IrpOp::Read,
-                lba: 0,
-                count: 0,
-                buf: core::ptr::null_mut(),
-                buf_len: 0,
-                status: IrpStatus::Pending,
-                callback: None,
-                callback_ctx: core::ptr::null_mut(),
-                waiting_pid: None,
-            },
-        };
-        Some(&mut self.slots[idx].irp)
+        self.slots.alloc_at(idx, Self::new_irp(id)).ok()?;
+        self.slots.get_mut(idx)
     }
 
     fn free(&mut self, id: IrpId) {
         let idx = (id as usize) % IRP_POOL_SIZE;
-        self.slots[idx].in_use = false;
+        self.slots.free(idx);
     }
 
     pub fn get_mut(&mut self, id: IrpId) -> Option<&mut Irp> {
         let idx = (id as usize) % IRP_POOL_SIZE;
-        if self.slots[idx].in_use && self.slots[idx].irp.id == id {
-            Some(&mut self.slots[idx].irp)
+        if self.slots.get(idx).is_some_and(|irp| irp.id == id) {
+            self.slots.get_mut(idx)
         } else {
             None
         }
@@ -151,24 +145,9 @@ unsafe impl Sync for IrpPool {}
 
 impl IrpPool {
     pub const fn new() -> Self {
-        const EMPTY_SLOT: IrpSlot = IrpSlot {
-            in_use: false,
-            irp: Irp {
-                id: 0,
-                op: IrpOp::Read,
-                lba: 0,
-                count: 0,
-                buf: core::ptr::null_mut::<u8>(),
-                buf_len: 0,
-                status: IrpStatus::Pending,
-                callback: None,
-                callback_ctx: core::ptr::null_mut::<u8>(),
-                waiting_pid: None,
-            },
-        };
         IrpPool {
             inner: Mutex::new(IrpPoolInner {
-                slots: [EMPTY_SLOT; IRP_POOL_SIZE],
+                slots: SlotTable::new(),
             }),
             next_id: AtomicU32::new(1),
         }

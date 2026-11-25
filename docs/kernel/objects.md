@@ -75,13 +75,16 @@ offset for SeAccessCheck re-verification.
 
 ### Bounded slot tables
 
-Fixed-capacity managers (timers, semaphores, sections and event handlers) store
-their entries in `slot_table::SlotTable<T, N>` (`src/slot_table.rs`). `alloc()`
-returns `Result<usize, SlotTableFull>`, so exhaustion is distinguishable from an
-invalid argument; the owning manager maps it to `ObError::TableFull` (and invalid
-parameters to `ObError::InvalidParam`). There is no silent `None`/`false`
-overflow. Pipes and the IRP pool keep their own storage because they carry
-additional per-entry semantics, and remain a follow-up for the same abstraction.
+Fixed-capacity managers (timers, semaphores, sections, event handlers, pipes and
+the IRP pool) store their entries in `slot_table::SlotTable<T, N>`
+(`src/slot_table.rs`). `alloc()` returns `Result<usize, SlotTableFull>`, so
+exhaustion is distinguishable from an invalid argument; the owning manager maps
+it to its own error (usually `ObError::TableFull`). There is no silent
+`None`/`false` overflow.
+
+Most tables use first-free allocation. The IRP pool uses indexed allocation
+(`alloc_at(id % IRP_POOL_SIZE)`) because its slot is derived from the global IRP
+ID; pipes keep their per-entry refcount/KOBJ lifecycle inside the slot table.
 
 ## ObType Enum
 

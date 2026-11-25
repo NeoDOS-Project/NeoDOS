@@ -3,9 +3,9 @@
 //! FROZEN ABI (v0.43). See protocol invariants below.
 
 use alloc::boxed::Box;
-use alloc::vec::Vec;
 use spin::Mutex;
-use crate::object::{self, ObOperations, ObId, ObType};
+use crate::object::{self, ObError, ObOperations, ObId, ObType};
+use crate::slot_table::SlotTable;
 
 pub const PIPE_BUF_SIZE: usize = 4096;
 pub const MAX_PIPES: usize = 16;
@@ -79,123 +79,101 @@ impl PipeInner {
     }
 }
 
-// ── Pipe Manager (dynamic, v0.41) ──
+// ── Pipe Manager ──
+
+struct PipeEntry {
+    inner: Mutex<PipeInner>,
+    kobj_id: Option<ObId>,
+}
 
 pub struct PipeManager {
-    pipes: Mutex<Vec<Option<Mutex<PipeInner>>>>,
-    kobj_ids: Mutex<Vec<Option<ObId>>>,
+    pipes: Mutex<SlotTable<PipeEntry, MAX_PIPES>>,
 }
 
 impl PipeManager {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         PipeManager {
-            pipes: Mutex::new(Vec::new()),
-            kobj_ids: Mutex::new(Vec::new()),
-        }
-    }
-
-    fn ensure_idx(&self, idx: usize) {
-        let mut pipes = self.pipes.lock();
-        if idx >= pipes.len() {
-            pipes.resize_with(idx + 1, || None);
-        }
-        drop(pipes);
-        let mut ids = self.kobj_ids.lock();
-        if idx >= ids.len() {
-            ids.resize_with(idx + 1, || None);
+            pipes: Mutex::new(SlotTable::new()),
         }
     }
 
     fn set_kobj_id(&self, idx: usize, id: Option<ObId>) {
-        self.ensure_idx(idx);
-        self.kobj_ids.lock()[idx] = id;
+        if let Some(entry) = self.pipes.lock().get_mut(idx) {
+            entry.kobj_id = id;
+        }
     }
 
     fn get_kobj_id(&self, idx: usize) -> Option<ObId> {
-        self.ensure_idx(idx);
-        self.kobj_ids.lock()[idx]
+        self.pipes.lock().get(idx).and_then(|entry| entry.kobj_id)
     }
 
-    pub fn alloc(&self) -> Option<u8> {
-        // Try to find an unused pipe by scanning
-        let mut pipes = self.pipes.lock();
-        for i in 0..pipes.len() {
-            if let Some(ref mp) = pipes[i] {
-                let mut pipe = mp.lock();
+    fn with_pipe<R>(&self, idx: usize, f: impl FnOnce(&mut PipeInner) -> R) -> Option<R> {
+        let pipes = self.pipes.lock();
+        let entry = pipes.get(idx)?;
+        let mut inner = entry.inner.lock();
+        Some(f(&mut inner))
+    }
+
+    pub fn alloc(&self) -> Result<u8, ObError> {
+        let index = {
+            let mut pipes = self.pipes.lock();
+            let mut reusable = None;
+            for (i, entry) in pipes.iter() {
+                let mut pipe = entry.inner.lock();
                 if !pipe.in_use {
                     pipe.in_use = true;
                     pipe.reset();
-                    drop(pipe);
-                    // Drop pipes *before* set_kobj_id to avoid reentrancy:
-                    // set_kobj_id → ensure_idx → pipes.lock() would deadlock.
-                    drop(pipes);
-                    let name = alloc::format!("pipe/{}", i);
-                                if let Ok(kid) = object::ob_create_object(ObType::Pipe, &name, i as u64, 0, None) {
-                        self.set_kobj_id(i, Some(kid));
-                    }
-                    return Some(i as u8);
+                    reusable = Some(i);
+                    break;
                 }
             }
-        }
-        // No free slot found — create a new one
-        if pipes.len() >= MAX_PIPES {
-            return None;
-        }
-        let i = pipes.len();
-        let inner = Mutex::new(PipeInner::new_unused());
-        // Mark as in_use
-        {
-            let mut pipe = inner.lock();
-            pipe.in_use = true;
-        }
-        pipes.push(Some(inner));
-        drop(pipes);
+            match reusable {
+                Some(i) => i,
+                None => {
+                    let mut inner = PipeInner::new_unused();
+                    inner.in_use = true;
+                    pipes
+                        .alloc(PipeEntry {
+                            inner: Mutex::new(inner),
+                            kobj_id: None,
+                        })
+                        .map_err(|_| ObError::TableFull)?
+                }
+            }
+        };
 
-        self.ensure_idx(i);
-        let name = alloc::format!("pipe/{}", i);
-        if let Ok(kid) = object::ob_create_object(ObType::Pipe, &name, i as u64, 0, None) {
-            self.set_kobj_id(i, Some(kid));
+        let name = alloc::format!("pipe/{}", index);
+        if let Ok(kid) = object::ob_create_object(ObType::Pipe, &name, index as u64, 0, None) {
+            self.set_kobj_id(index, Some(kid));
         }
-        Some(i as u8)
+        Ok(index as u8)
     }
 
     pub fn inc_read_ref(&self, pipe_id: u8) {
-        self.ensure_idx(pipe_id as usize);
-        let pipes = self.pipes.lock();
-        if let Some(Some(ref mp)) = pipes.get(pipe_id as usize) {
-            let mut pipe = mp.lock();
+        self.with_pipe(pipe_id as usize, |pipe| {
             pipe.read_refs = pipe.read_refs.saturating_add(1);
-        }
+        });
     }
 
     pub fn inc_write_ref(&self, pipe_id: u8) {
-        self.ensure_idx(pipe_id as usize);
-        let pipes = self.pipes.lock();
-        if let Some(Some(ref mp)) = pipes.get(pipe_id as usize) {
-            let mut pipe = mp.lock();
+        self.with_pipe(pipe_id as usize, |pipe| {
             pipe.write_refs = pipe.write_refs.saturating_add(1);
-        }
+        });
     }
 
     fn maybe_free_pipe(&self, pipe_id: u8) {
         let idx = pipe_id as usize;
-        // Extract kobj_id *before* the pipes lock to avoid reentrancy:
-        // get_kobj_id calls ensure_idx which tries to lock self.pipes.
         let kid = self.get_kobj_id(idx);
-        let should_free = {
-            let pipes = self.pipes.lock();
-            if let Some(Some(ref mp)) = pipes.get(idx) {
-                let mut pipe = mp.lock();
+        let should_free = self
+            .with_pipe(idx, |pipe| {
                 if pipe.read_refs == 0 && pipe.write_refs == 0 {
                     pipe.in_use = false;
                     true
                 } else {
                     false
                 }
-            } else {
-                false
-            }
-        };
+            })
+            .unwrap_or(false);
         if should_free {
             if let Some(kobj_id) = kid {
                 object::ob_destroy_object(kobj_id).ok();
@@ -205,67 +183,59 @@ impl PipeManager {
     }
 
     pub fn dec_read_ref(&self, pipe_id: u8) {
-        self.ensure_idx(pipe_id as usize);
-        let pipes = self.pipes.lock();
-        if let Some(Some(ref mp)) = pipes.get(pipe_id as usize) {
-            let mut pipe = mp.lock();
-            if pipe.read_refs > 0 { pipe.read_refs -= 1; }
+        self.with_pipe(pipe_id as usize, |pipe| {
+            if pipe.read_refs > 0 {
+                pipe.read_refs -= 1;
+            }
             pipe.read_closed = true;
-        }
-        drop(pipes);
+        });
         self.maybe_free_pipe(pipe_id);
     }
 
     pub fn dec_write_ref(&self, pipe_id: u8) {
-        self.ensure_idx(pipe_id as usize);
-        let pipes = self.pipes.lock();
-        if let Some(Some(ref mp)) = pipes.get(pipe_id as usize) {
-            let mut pipe = mp.lock();
-            if pipe.write_refs > 0 { pipe.write_refs -= 1; }
+        self.with_pipe(pipe_id as usize, |pipe| {
+            if pipe.write_refs > 0 {
+                pipe.write_refs -= 1;
+            }
             pipe.write_closed = true;
-        }
-        drop(pipes);
+        });
         self.maybe_free_pipe(pipe_id);
     }
 
     pub fn read(&self, pipe_id: u8, buf: &mut [u8]) -> Result<usize, ()> {
-        self.ensure_idx(pipe_id as usize);
-        let pipes = self.pipes.lock();
-        let mp = pipes.get(pipe_id as usize)
-            .and_then(|p| p.as_ref())
-            .ok_or(())?;
-        let mut pipe = mp.lock();
-        if pipe.used() > 0 {
-            let n = pipe.read_into(buf);
-            drop(pipe);
-            drop(pipes);
+        let result = {
+            let pipes = self.pipes.lock();
+            let entry = pipes.get(pipe_id as usize).ok_or(())?;
+            let mut pipe = entry.inner.lock();
+            if pipe.used() > 0 {
+                Ok(pipe.read_into(buf))
+            } else if pipe.write_closed {
+                Ok(0)
+            } else {
+                Err(())
+            }
+        };
+        if matches!(result, Ok(n) if n > 0) {
             wake_pipe_readers(pipe_id);
-            Ok(n)
-        } else if pipe.write_closed {
-            Ok(0)
-        } else {
-            Err(())
         }
+        result
     }
 
     pub fn write(&self, pipe_id: u8, buf: &[u8]) -> Result<usize, ()> {
-        self.ensure_idx(pipe_id as usize);
-        let pipes = self.pipes.lock();
-        let mp = pipes.get(pipe_id as usize)
-            .and_then(|p| p.as_ref())
-            .ok_or(())?;
-        let mut pipe = mp.lock();
-        if pipe.read_closed {
-            return Err(());
+        let result = {
+            let pipes = self.pipes.lock();
+            let entry = pipes.get(pipe_id as usize).ok_or(())?;
+            let mut pipe = entry.inner.lock();
+            if pipe.read_closed || pipe.free() == 0 {
+                Err(())
+            } else {
+                Ok(pipe.write_from(buf))
+            }
+        };
+        if matches!(result, Ok(n) if n > 0) {
+            wake_pipe_readers(pipe_id);
         }
-        if pipe.free() == 0 {
-            return Err(());
-        }
-        let n = pipe.write_from(buf);
-        drop(pipe);
-        drop(pipes);
-        wake_pipe_readers(pipe_id);
-        Ok(n)
+        result
     }
 }
 
@@ -274,28 +244,19 @@ impl PipeManager {
 /// Peek whether a pipe has data available for reading.
 /// Returns None if pipe_id is invalid.
 pub fn pipe_peek_read_ready(pipe_id: u8) -> Option<bool> {
-    let pipes = PIPE_MANAGER.pipes.lock();
-    let mp = pipes.get(pipe_id as usize).and_then(|p| p.as_ref())?;
-    let pipe = mp.lock();
-    Some(pipe.used() > 0 || pipe.write_closed)
+    PIPE_MANAGER.with_pipe(pipe_id as usize, |pipe| pipe.used() > 0 || pipe.write_closed)
 }
 
 /// Peek whether a pipe's write end is still open.
 /// Returns None if pipe_id is invalid.
 pub fn pipe_peek_write_closed(pipe_id: u8) -> Option<bool> {
-    let pipes = PIPE_MANAGER.pipes.lock();
-    let mp = pipes.get(pipe_id as usize).and_then(|p| p.as_ref())?;
-    let pipe = mp.lock();
-    Some(pipe.write_closed)
+    PIPE_MANAGER.with_pipe(pipe_id as usize, |pipe| pipe.write_closed)
 }
 
 /// Peek whether a pipe's read end is still open.
 /// Returns None if pipe_id is invalid.
 pub fn pipe_peek_read_closed(pipe_id: u8) -> Option<bool> {
-    let pipes = PIPE_MANAGER.pipes.lock();
-    let mp = pipes.get(pipe_id as usize).and_then(|p| p.as_ref())?;
-    let pipe = mp.lock();
-    Some(pipe.read_closed)
+    PIPE_MANAGER.with_pipe(pipe_id as usize, |pipe| pipe.read_closed)
 }
 
 // ── Blocking support (via KWait, OB-031) ──
@@ -324,20 +285,17 @@ pub static PIPE_OPS: PipeObOps = PipeObOps;
 impl PipeManager {
     pub fn free_pipe(&self, pipe_id: u8) {
         let idx = pipe_id as usize;
-        self.ensure_idx(idx);
         // Unregister KOBJ if registered
         let kid = self.get_kobj_id(idx);
         if let Some(obj_id) = kid {
             let _ = object::ob_destroy_object(obj_id);
             self.set_kobj_id(idx, None);
         }
-        // Mark pipe slot as unused
-        let pipes = self.pipes.lock();
-        if let Some(Some(ref mp)) = pipes.get(idx) {
-            let mut pipe = mp.lock();
+        // Mark pipe slot as reusable
+        self.with_pipe(idx, |pipe| {
             pipe.in_use = false;
             pipe.reset();
-        }
+        });
     }
 }
 
@@ -437,12 +395,12 @@ pub fn register_tests() {
 
     test_case!("pipe_alloc_max", {
         let mut pipes = alloc::vec::Vec::new();
-        while let Some(pid) = PIPE_MANAGER.alloc() {
+        while let Ok(pid) = PIPE_MANAGER.alloc() {
             pipes.push(pid);
         }
         test_true!(pipes.len() <= 16);
         test_true!(!pipes.is_empty());
-        test_eq!(PIPE_MANAGER.alloc(), None);
+        test_eq!(PIPE_MANAGER.alloc(), Err(ObError::TableFull));
         for pid in pipes {
             PIPE_MANAGER.inc_read_ref(pid);
             PIPE_MANAGER.inc_write_ref(pid);

@@ -38,6 +38,20 @@ impl<T, const N: usize> SlotTable<T, N> {
         Err(SlotTableFull)
     }
 
+    /// Store `value` in a specific slot. Fails if the index is out of range or
+    /// already occupied (used by index-derived owners such as the IRP pool).
+    pub fn alloc_at(&mut self, index: usize, value: T) -> Result<(), SlotTableFull> {
+        let Some(slot) = self.slots.get_mut(index) else {
+            return Err(SlotTableFull);
+        };
+        if slot.is_some() {
+            return Err(SlotTableFull);
+        }
+        *slot = Some(value);
+        self.used += 1;
+        Ok(())
+    }
+
     /// Remove and return the entry at `index`, if present.
     pub fn free(&mut self, index: usize) -> Option<T> {
         let value = self.slots.get_mut(index)?.take();
@@ -131,6 +145,17 @@ pub fn register_tests() {
         table.clear();
         test_eq!(table.used(), 0);
         test_true!(table.iter().next().is_none());
+    });
+
+    test_case!("slot_table_alloc_at", {
+        let mut table: SlotTable<Entry, 3> = SlotTable::new();
+        test_eq!(table.alloc_at(2, Entry(7)), Ok(()));
+        test_eq!(table.alloc_at(2, Entry(8)), Err(SlotTableFull));
+        test_eq!(table.alloc_at(3, Entry(9)), Err(SlotTableFull));
+        test_eq!(table.get(2), Some(&Entry(7)));
+        test_eq!(table.free(2), Some(Entry(7)));
+        test_eq!(table.alloc_at(1, Entry(5)), Ok(()));
+        test_eq!(table.used(), 1);
     });
 }
 
