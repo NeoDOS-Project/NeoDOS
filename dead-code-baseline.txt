@@ -1,0 +1,232 @@
+# Dead-code baseline (see docs/investigation/dead-code-triage-2026-11.md).
+# Format: <source file>\t<compiler message>. Update with:
+#   python3 scripts/check-dead-code.py --update
+src/apc/mod.rs	function `has_pending_kernel_apcs` is never used
+src/apc/mod.rs	function `irp_complete_apc_dpc_callback` is never used
+src/apc/mod.rs	function `irp_queue_apc_dpc_completion` is never used
+src/apc/mod.rs	struct `IrpApcDpcInfo` is never constructed
+src/arch/x64/cpu_local.rs	constant `SLAB_CACHE_SIZES` is never used
+src/arch/x64/cpu_local.rs	function `set_apic_id` is never used
+src/arch/x64/cpu_local.rs	function `this_cpu_current_tid` is never used
+src/arch/x64/cpu_local.rs	function `this_cpu_in_dispatch_level` is never used
+src/arch/x64/cpu_local.rs	function `this_cpu_inc_interrupt_count` is never used
+src/arch/x64/cpu_local.rs	function `this_cpu_run_queue_mut` is never used
+src/arch/x64/cpu_local.rs	function `this_cpu_set_slab_head` is never used
+src/arch/x64/cpu_local.rs	function `this_cpu_slab_head` is never used
+src/arch/x64/cpu_local.rs	method `peek` is never used
+src/arch/x64/gdt.rs	function `set_kernel_stack` is never used
+src/arch/x64/idt/diag/kbd.rs	function `kbd_irq_total` is never used
+src/arch/x64/idt/diag/netd.rs	constant `FRAME_SLOTS` is never used
+src/arch/x64/idt/diag/timer.rs	function `timer_diag_dump_secondary` is never used
+src/arch/x64/idt/mod.rs	function `is_user_mode_interrupt` is never used
+src/arch/x64/idt/mod.rs	function `read_cs_from_stack` is never used
+src/arch/x64/ipi.rs	constant `ICR_SHORTHAND_ALL_EXCL_SELF` is never used
+src/arch/x64/ipi.rs	constant `MAX_CPUS` is never used
+src/arch/x64/ipi.rs	function `send_ipi_all_excl_self` is never used
+src/arch/x64/ipi.rs	function `send_ipi_all` is never used
+src/arch/x64/smp.rs	function `bsp_id` is never used
+src/arch/x64/smp.rs	function `detect_apic_id_count` is never used
+src/arch/x64/smp.rs	function `send_init_to` is never used
+src/arch/x64/smp.rs	function `send_sipi_to` is never used
+src/arch/x64/smp.rs	function `total_cpus` is never used
+src/buffer/page_cache/hash.rs	method `contains` is never used
+src/buffer/page_cache/mod.rs	field `readahead_count` is never read
+src/cm/cache.rs	multiple associated items are never used
+src/cm/cache.rs	struct `CachedCell` is never constructed
+src/cm/cache.rs	struct `CellCache` is never constructed
+src/cm/hive/serialize.rs	associated items `flush_to_io` and `load_from_io` are never used
+src/cm/hive/types.rs	constant `REG_NONE` is never used
+src/cm/hive/types.rs	enum `CellType` is never used
+src/cm/hive/types.rs	method `cell_type` is never used
+src/cm/hive/types.rs	variant `Free` is never constructed
+src/cm/manager.rs	field `name` is never read
+src/cm/manager.rs	function `find_by_native_mut` is never used
+src/cm/manager.rs	function `find_by_native` is never used
+src/cm/manager.rs	method `relative_cell` is never used
+src/cm/manager.rs	methods `find_hive_by_key` and `find_hive_by_key_mut` are never used
+src/console/mod.rs	function `clear_screen` is never used
+src/console/mod.rs	function `cursor_blink_enabled` is never used
+src/crash/mod.rs	function `print_crash_dump_full` is never used
+src/crash/mod.rs	function `print_crash_dump_status` is never used
+src/dpc/mod.rs	function `dpc_dropped_count` is never used
+src/drivers/device/mod.rs	fields `bus`, `subclass`, `prog_if`, and `revision` are never read
+src/drivers/device/mod.rs	method `bus_type` is never used
+src/drivers/device/mod.rs	methods `add_device`, `find_by_vendor_device`, `find_by_class`, `pci_devices`, and `devices_without_driver` are never used
+src/drivers/device/mod.rs	variants `Acpi` and `Virtio` are never constructed
+src/drivers/device/mod.rs	variants `Serial` and `Rtc` are never constructed
+src/drivers/device/pci_scan.rs	function `print_pci_devices` is never used
+src/drivers/hw/ps2.rs	function `read_scancode` is never used
+src/drivers/hw/ps2.rs	function `wait_for_key` is never used
+src/drivers/nem/loader/driver.rs	associated items `new` and `register_callback` are never used
+src/drivers/nem/loader/driver.rs	function `register_event` is never used
+src/drivers/nem/loader/driver.rs	struct `DriverState` is never constructed
+src/drivers/nem/loader/driver.rs	struct `NemDriver` is never constructed
+src/drivers/nem/loader/runtime.rs	fields `name` and `fini_fn` are never read
+src/drivers/nem/loader/runtime.rs	function `call_fini` is never used
+src/drivers/nem/loader/runtime.rs	function `register_event_bus_handler` is never used
+src/drivers/nem/loader/v3loader.rs	fields `text_size`, `rodata_size`, `data_size`, and `bss_size` are never read
+src/drivers/nem/management/caps.rs	constant `CAP_NONE` is never used
+src/drivers/nem/management/caps.rs	constant `EVENT_CAP_ESCALATION` is never used
+src/drivers/nem/management/caps.rs	function `cap_name` is never used
+src/drivers/nem/management/caps.rs	function `grant_capabilities` is never used
+src/drivers/nem/management/caps.rs	function `handle_cap_escalation` is never used
+src/drivers/nem/management/dependency/mod.rs	constant `MAX_DRIVERS_DEPS` is never used
+src/drivers/nem/management/dependency/mod.rs	method `all_drivers` is never used
+src/drivers/nem/management/dependency/mod.rs	struct `DriverDependency` is never constructed
+src/drivers/nem/management/dependency/mod.rs	variants `MissingDependency` and `DriverNotFound` are never constructed
+src/drivers/nem/management/driver_manager.rs	fields `id`, `name`, `driver_class`, and `bound_device` are never read
+src/drivers/nem/management/driver_manager.rs	methods `loaded_count`, `loaded_drivers`, `unmatched_devices`, and `device_registry` are never used
+src/drivers/nem/management/hotreload.rs	function `hotreload_dropped_count` is never used
+src/drivers/nem/management/hotreload.rs	function `read_whole_file` is never used
+src/drivers/nem/management/hotreload.rs	function `reload_driver` is never used
+src/drivers/nem/management/hotreload.rs	function `track_ob_entry` is never used
+src/drivers/nem/management/hotreload.rs	function `untrack_ob_entry` is never used
+src/drivers/nem/management/hotreload.rs	methods `dropped` and `get_by_name` are never used
+src/drivers/nem/management/hotreload.rs	variant `ObNamespace` is never constructed
+src/drivers/nem/management/isolation.rs	constant `PERM_RW` is never used
+src/drivers/nem/management/isolation.rs	constant `PERM_RX` is never used
+src/drivers/nem/management/isolation.rs	constant `PERM_R` is never used
+src/drivers/nem/management/isolation.rs	function `format_isolation_info` is never used
+src/drivers/nem/management/isolation.rs	function `handle_isolated_page_fault` is never used
+src/drivers/nem/management/isolation.rs	function `iter_isolated_regions` is never used
+src/drivers/nem/management/isolation.rs	function `set_page_permissions` is never used
+src/drivers/nem/management/isolation.rs	function `set_rw_permissions` is never used
+src/drivers/nem/management/isolation.rs	function `set_rx_permissions` is never used
+src/drivers/nem/management/isolation.rs	function `validate_driver_data_ptr` is never used
+src/drivers/nem/management/isolation.rs	function `validate_export_str` is never used
+src/drivers/nem/management/manifest.rs	function `descriptors_for_class` is never used
+src/drivers/nem/management/manifest.rs	function `find_descriptor` is never used
+src/drivers/nem/management/manifest.rs	function `find_descriptors_for_device` is never used
+src/drivers/nem/runtime/instance.rs	fields `compat_flags`, `last_event_type`, and `last_event_tick` are never read
+src/drivers/nem/runtime/instance.rs	method `is_operational` is never used
+src/drivers/nem/runtime/mod.rs	constant `INVALID_DRIVER_ID` is never used
+src/drivers/nem/runtime/mod.rs	function `driver_count` is never used
+src/drivers/nem/runtime/mod.rs	function `driver_names` is never used
+src/drivers/nem/runtime/mod.rs	function `get_capabilities` is never used
+src/drivers/nem/runtime/mod.rs	function `set_capabilities` is never used
+src/drivers/nem/runtime/mod.rs	function `unregister_driver` is never used
+src/drivers/nem/runtime/pipeline.rs	variants `Load`, `Init`, `Registration`, and `Binding` are never constructed
+src/drivers/nem/runtime/runtime.rs	multiple methods are never used
+src/drivers/nem/runtime/state.rs	method `to_str` is never used
+src/drivers/virtio/transport.rs	associated function `probe_any` is never used
+src/drivers/virtio/transport.rs	variant `Modern` is never constructed
+src/fs/neofs/btree/node.rs	method `max_entries` is never used
+src/fs/neofs/neodos_dir.rs	constant `PERM_S` is never used
+src/fs/neofs/neodos_dir.rs	method `to_btree_entry` is never used
+src/fs/neofs/neodos_io.rs	function `file_free_extents` is never used
+src/fs/neofs/neodos_io.rs	function `register_io_tests` is never used
+src/hal/pci.rs	function `ecam_read_config_byte` is never used
+src/hal/pci.rs	function `ecam_write_config_byte` is never used
+src/hal/pci.rs	function `ecam_write_config_word` is never used
+src/hal/raw/cpu.rs	function `raw_lgdt` is never used
+src/hal/raw/cpu.rs	function `raw_ltr` is never used
+src/hal/raw/cpu.rs	function `raw_read_tscp` is never used
+src/hal/raw/mod.rs	associated function `from_raw` is never used
+src/hal/raw/mod.rs	struct `GdtDescriptor` is never constructed
+src/infra/boot_benchmark.rs	constant `PIT_HZ` is never used
+src/infra/elf.rs	constant `DT_RELAENT` is never used
+src/infra/nxl.rs	constant `SLOT` is never used
+src/infra/nxl.rs	field `size` is never read
+src/infra/usermode.rs	function `exit_to_kernel` is never used
+src/input/kbd/config.rs	constant `REG_PATH` is never used
+src/input/kbd/event.rs	function `kbd_next_seq` is never used
+src/input/vt.rs	function `vt_counts` is never used
+src/input/vt.rs	function `vt_event_trace_enable` is never used
+src/input/vt.rs	method `has_data` is never used
+src/interrupts/ioapic.rs	constant `IOAPIC_ARB` is never used
+src/interrupts/ioapic.rs	constant `IOAPIC_ID` is never used
+src/interrupts/ioapic.rs	constant `IOAPIC_IRQ_LOGICAL` is never used
+src/interrupts/ioapic.rs	function `eoi_irq` is never used
+src/interrupts/ioapic.rs	function `ioapic_addr` is never used
+src/interrupts/ioapic.rs	function `read_redir_entry` is never used
+src/interrupts/ioapic.rs	function `route_pci_vector` is never used
+src/interrupts/msi.rs	constant `MSIX_VECTOR_CTRL_MASK` is never used
+src/irp/mod.rs	method `peek` is never used
+src/memory/buddy.rs	field `free_lists` is never read
+src/memory/layout.rs	field `flags` is never read
+src/memory/layout.rs	function `reserve_region` is never used
+src/memory/layout.rs	method `end` is never used
+src/memory/layout.rs	methods `reserve_at`, `region_count`, and `iter` are never used
+src/memory/mod.rs	fields `total_phys` and `highest_page` are never read
+src/memory/mod.rs	function `max_phys_addr` is never used
+src/memory/mod.rs	function `memory_map` is never used
+src/memory/mod.rs	function `page_size` is never used
+src/memory/mod.rs	method `highest_addr` is never used
+src/memory/mod.rs	multiple fields are never read
+src/net/arp.rs	function `arp_cache_entries` is never used
+src/net/arp.rs	function `arp_resolve` is never used
+src/net/arp.rs	methods `clear` and `is_empty` are never used
+src/net/ethernet.rs	constant `ETH_MAX_PAYLOAD` is never used
+src/net/ethernet.rs	constant `ETH_MIN_PAYLOAD` is never used
+src/net/ethernet.rs	function `compute_eth_fcs` is never used
+src/net/icmp.rs	associated function `new` is never used
+src/net/icmp.rs	constant `ICMP_TYPE_DEST_UNREACH` is never used
+src/net/icmp.rs	constant `ICMP_TYPE_TIME_EXCEEDED` is never used
+src/net/icmp.rs	function `build_port_unreachable` is never used
+src/net/icmp.rs	function `compute_icmp_checksum_raw` is never used
+src/net/ipv4.rs	function `ip_fragment_needed` is never used
+src/net/ipv4.rs	multiple methods are never used
+src/net/loopback.rs	struct `LoopbackInterface` is never constructed
+src/net/nic.rs	field `mac` is never read
+src/net/nic.rs	field `next_id` is never read
+src/net/nic.rs	function `nic_default_link_up` is never used
+src/net/nic.rs	function `nic_get_gateway` is never used
+src/net/nic.rs	function `nic_get_mask` is never used
+src/net/nic.rs	function `nic_mac` is never used
+src/net/nic.rs	method `next_hop_mac` is never used
+src/net/nic.rs	methods `subnet_mask`, `gateway`, and `mtu` are never used
+src/net/socket.rs	field `send_buf` is never read
+src/net/socket.rs	function `socket_next_accept_id` is never used
+src/net/socket.rs	function `socket_set_local` is never used
+src/net/tcp.rs	associated items `new`, `window_size`, `is_rst`, and `is_psh` are never used
+src/net/tcp.rs	constant `TCP_HDR_MIN_LEN` is never used
+src/net/tcp.rs	constant `TCP_SYN_ACK` is never used
+src/net/tcp.rs	field `next_ip_id` is never read
+src/net/tcp.rs	fields `retransmit_count` and `ob_id` are never read
+src/net/tcp.rs	function `compute_tcp_checksum` is never used
+src/net/tcp.rs	function `tcp_send_syn_ack` is never used
+src/net/tcp.rs	methods `next_ip_id`, `find_connection_by_addr`, and `find_listener` are never used
+src/net/types.rs	associated items `from_slice` and `as_bytes` are never used
+src/net/types.rs	constant `MAX_TCP_CONNECTIONS` is never used
+src/net/types.rs	constant `TCP_RECV_BUF_SIZE` is never used
+src/net/types.rs	constant `TCP_SEND_BUF_SIZE` is never used
+src/net/types.rs	enum `IpProtocol` is never used
+src/net/types.rs	variant `Unused` is never constructed
+src/net/types.rs	variants `Closing` and `TimeWait` are never constructed
+src/net/udp.rs	method `payload_len` is never used
+src/object/mod.rs	function `ob_dispatch_ioctl` is never used
+src/object/mod.rs	function `ob_dispatch_wait` is never used
+src/object/namespace/types.rs	field `creator` is never read
+src/object/pipe.rs	function `pipe_peek_read_closed` is never used
+src/object/section.rs	field `ob_id` is never read
+src/object/semaphore.rs	field `ob_id` is never read
+src/object/semaphore.rs	function `free_semaphore` is never used
+src/object/semaphore.rs	function `get_semaphore_count` is never used
+src/object/semaphore.rs	method `is_used` is never used
+src/object/table.rs	method `is_empty` is never used
+src/object/table.rs	methods `ioctl` and `wait` are never used
+src/object/timer.rs	field `ob_id` is never read
+src/object/timer.rs	function `free_timer` is never used
+src/object/types.rs	fields `refcount` and `flags` are never read
+src/random.rs	variant `Unavailable` is never constructed
+src/scheduler/diag/ctx.rs	field `old_tid` is never read
+src/scheduler/lifecycle.rs	field `stack` is never read
+src/security/acl.rs	methods `set_owner`, `set_group`, `set_dacl`, and `set_sacl` are never used
+src/security/sam.rs	variant `UsernameTooLong` is never constructed
+src/security/session.rs	associated function `from_u8` is never used
+src/security/session.rs	methods `count` and `active_count` are never used
+src/security/session.rs	variant `Disconnected` is never constructed
+src/security/sid.rs	function `sid_builtin_domain` is never used
+src/services/manager.rs	method `config` is never used
+src/services/power/acpi.rs	function `read_u16_at` is never used
+src/stress_spawn.rs	function `init` is never used
+src/stress_spawn.rs	variant `CreateOnly` is never constructed
+src/syscall/ob/types.rs	struct `ObPipeFds` is never constructed
+src/timers/hpet.rs	constant `HPET_GEN_INT_STATUS` is never used
+src/timers/hpet.rs	constant `HPET_TIMER_SET_VAL` is never used
+src/timers/hpet.rs	constant `HPET_TIMER_TYPE` is never used
+src/timers/hpet.rs	function `ticks_to_us` is never used
+src/watchdog/mod.rs	constant `WATCHDOG_KOBJ_ID` is never used
+src/watchdog/mod.rs	function `watchdog_current_hpet` is never used
+src/watchdog/mod.rs	function `watchdog_expiries` is never used
+src/watchdog/mod.rs	function `watchdog_stats_string` is never used

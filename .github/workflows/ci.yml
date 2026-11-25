@@ -60,7 +60,10 @@ jobs:
 
       - name: cargo build (dev profile)
         working-directory: neodos-kernel
-        run: cargo build
+        run: cargo build --message-format=json > /tmp/neodos-build.json
+
+      - name: Dead-code guard
+        run: python3 scripts/check-dead-code.py --json-file /tmp/neodos-build.json
 
   deps:
     name: check-deps
