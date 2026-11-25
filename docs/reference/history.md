@@ -498,6 +498,206 @@ periódico.
 **Auditoría arquitectónica (AUDIT-1..10):** Corrección de 10 inconsistencias
 entre código y documentación. Sincronización de enums libneodos-kernel.
 
+### 16–18 de julio de 2026 — Hostname, DNS y separación en repositorios
+
+**v0.50.2 — Hostname del sistema:** infraestructura completa con persistencia en
+Registry (`...\Control\ComputerName\ComputerName`), `ObInfoClass::Hostname = 38`,
+`ObSetInfoClass::SetHostname = 49`, wrappers en `libneodos`, `hostname.nxe` y
+`ipconfig` mostrando el nombre real en tres locales.
+
+**DNS resolver (18 julio):** cliente DNS en `libnet`, `nslookup.nxe` y servidores
+DNS obtenidos por DHCP. La red deja de depender de direcciones IP literales.
+
+**Separación multi-repositorio:** NeoDev, NeoTools (`nxeinfo`, `nxpkg`,
+`nxdump`) y `neodos-dev-server` (LSP + MCP) se extraen a repositorios propios.
+GitHub Issues pasa a ser el sistema oficial de planificación; los scripts de
+build se reescriben en Rust y `scripts/` se renombra a `data/`.
+
+**Fix AUDIT-TF:** el reinicio intermitente de NeoShell se corrige sustituyendo
+la espera activa de `handler_read` por un bloqueo atómico con `-EAGAIN` y
+reintento con `sys_yield` en `libconsole-nxl`, más un stack canary en cada
+kernel stack validado antes de volver a Ring 3.
+
+**Impacto:** El sistema obtiene identidad de red y el proyecto se organiza como
+un ecosistema de repositorios independientes.
+
+### 20–25 de julio de 2026 — Driver Manager y scheduler de kernel threads
+
+- **Driver Manager:** carga selectiva de drivers NEM basada en el hardware
+  detectado (manifest de ATA/AHCI/PCI), con descripción dinámica de cada NIC
+  (vendor, device, descripción).
+- **netd como kernel thread:** polling de red en segundo plano sin bloquear el
+  shell, con boost periódico del idle para evitar starvation.
+- **Logging configurable:** filtrado en compilación y en runtime.
+- **B-tree persistente COW** en NeoFS v2 y corrección del doble spawn de NeoInit.
+- **Scheduler:** preemption de kernel threads, trazas `sched_debug`, validación
+  del stack top y TSS movido a `.data` para que LTO no lo deje en solo lectura.
+- **AHCI:** reset y reintento de puertos para estabilizar el arranque.
+
+**Impacto:** El arranque deja de depender de drivers cargados a ciegas y la red
+funciona como servicio de fondo.
+
+### 27 de agosto – 18 de septiembre de 2026 — Auditoría P0 del scheduler
+
+Una auditoría de invariantes destapa entradas stale/duplicadas en las colas de
+ejecución y carreras de propiedad entre CPUs:
+
+- `make_thread_ready()` como única vía de publicación; dedup en enqueue y salida
+  de la runqueue antes de marcar `Running`.
+- Migración del ownership del thread durante work stealing.
+- Frame de `iretq` completo (RIP/CS/RFLAGS/RSP/SS) y validación del stack top.
+- Ring buffer lock-free de diagnóstico del timer y captura forense.
+
+**Impacto:** Se eliminan reinicios y `#GP` intermitentes en SMP antes de
+continuar con la fase de planificación por CPU.
+
+### 25–27 de septiembre de 2026 — SMP, neotop y contabilidad de CPU
+
+**v0.50.4:** `schedule()` valida que el candidato tenga un frame despachable
+(Ring 3) antes de comprometerlo como `Running`; arreglos de bring-up de APs
+(offset ICR `0x300`, trampoline, KPRCB/stack/APIC por CPU, lecturas
+`read_unaligned` de MADT/MCFG/HPET).
+
+**v0.50.5:** el yield se registra como intención (`yield_requested`) en vez de
+publicar el thread como `Ready` con un `rsp` obsoleto; el bloqueo del boot
+thread usa la CPU actual.
+
+**v0.51.0:** nombres de proceso/hilo (`KernelName`), snapshot consistente de
+procesos e hilos, `neotop.nxe`, scheduling en APs activado por defecto y
+recuperación de la pila e1000.
+
+**v0.51.1:** contabilidad de CPU por hilo, `ProcessSnapshot` ABI v2, `neotop`
+v0.2 con CPU% real, eliminación de dos locks globales por syscall y revisión git
+en los banners.
+
+**v0.51.2:** el fallback a idle exige que el hilo idle pertenezca a la CPU que
+lo adopta (fix del `#GP` de SMP4).
+
+**Impacto:** El scheduler SMP pasa de "funciona" a "se puede observar y
+auditar": CPU%, nombres, snapshots y diagnósticos.
+
+### 3–9 de octubre de 2026 — NLTv3, NXL v2, NeoFS v2 y seguridad NT
+
+**NLTv3 (v0.51.3):** el formato de internacionalización se concentra en el crate
+`libnlt` (38 tests), compartido por compilador, runtime y herramientas. Añade
+compresión LZSS, UTF-16LE con transcodificación, plurales CLDR, formatos
+regionales de número/fecha/moneda, detección RTL y firmas Ed25519 opcionales.
+`neoshell` gana `LOCALE` y `neolocale` se convierte en herramienta de host.
+
+**NeoFS v2 (v0.51.5):** free list persistente con asignación best-fit y
+reconstrucción al montar, snapshots con generaciones estables y borrado
+individual, extracción por fichero (`SNAPSHOT EXTRACT`), reclamación de basura
+COW, B-tree dimensionado por bytes serializados, page cache por dispositivo y
+persistencia del árbol de subdirectorios en el padre.
+
+**NXL v2:** bibliotecas PIE relocalizables (`ET_DYN`) con resolución de símbolos
+`R_X86_64_64`/`GLOB_DAT`/`JUMP_SLOT`, imports NXL→NXL, tabla de exportación
+version-first (`AbiTable` v7→v8), límite de slot de 256 KB y solo `fs.nxl` como
+biblioteca de base fija. Nacen `libmath` (servicio de unidades) y las
+utilidades compartidas `libneodiag`/`libneoutil`; el Registry se consume con
+`RegistryKey` RAII.
+
+**Red:** loopback `127/8`, estadísticas por interfaz (`NetStats`), renovación
+DHCP T1/T2 con reinicio DORA, e1000 multi-NIC, `SocketBindNic`, camino de datos
+TCP con ACK/FIN y DNS/NTP compartidos en `libnet::udp`.
+
+**Seguridad:** `ObType::Session`, cuentas SAM integradas, `Token` con
+`IntegrityLevel` y `creation_time`, y `SeAccessCheck` NT correcto (DACL vacía
+deniega, grupos, SACL de auditoría).
+
+**Consolidación:** `check-skills.sh`, CI de compilación, FSCK por trait,
+reducción de contención de locks del VFS y reorganización del kernel en
+`infra/`, `boot/`, `memory/`, `fs/vfs/`, `fs/neofs/`, `input/kbd/`,
+`services/power/` y `drivers/{hw,storage,virtio,nem}`.
+
+**Impacto:** Se cierran de golpe las tres deudas que bloqueaban la fase: formato
+i18n único, bibliotecas compartidas relocalizables y un NeoFS v2 persistente.
+
+### 9–15 de octubre de 2026 — IRQ lock-safety, SMEP/SMAP y red real
+
+- **INV-3 / Rule 3.5.1:** ningún handler de IRQ puede bloquearse esperando un
+  lock que código interrumpible de la misma CPU pueda tener. Se corrige el
+  bloqueo del renderer de consola (cursor parpadeante tras arrancar la red) y
+  del pool de IRPs, y se añade `scripts/check-irq-locks.sh` a CI.
+- **Protección de memoria:** SMEP, SMAP y NXE, con W^X para datos de usuario;
+  `copy_from_user`/`copy_to_user` a prueba de fallos en todos los handlers.
+- **Objetos y scheduler:** índice O(1) por `ObId`, `ObOperations` con
+  read/write/ioctl/wait, tope duro de la cola de zombies, cuarentena acotada de
+  kernel stacks, arranque por fases y boosts de aging persistentes.
+- **Red y servicios:** NTP/SNTP persistente (`ntpd`), MAC MD5, hostname
+  automático por DHCP/MAC, resolución del propio hostname, `ob_wait` con
+  timeout para cualquier objeto y applier de red notificado por cambio.
+- **Entrada y tiempo:** layouts XKB (sin `.klc`), API de eventos de teclado raw
+  para usuario, `uptime`/reloj de alta resolución y fix del anillo DPC.
+- **Drivers:** MSI/MSI-X con tablas por encima de 4 GiB, NVMe con phase bit,
+  eliminación de registros `static mut` y documentación del montaje.
+
+**Impacto:** La regla de locks de IRQ se vuelve enforceable y el kernel gana
+las mitigaciones de memoria y las primitivas que TLS y la identidad necesitan.
+
+### 14–18 de noviembre de 2026 — TLS 1.3, HTTPS y almacén de confianza
+
+**Criptografía y TLS:** `libcrypto` incorpora SHA-256/384/512, HMAC/HKDF,
+ChaCha20-Poly1305, X25519, RSA PKCS#1/PSS y ECDSA P-256/P-384 con vectores
+RFC/NIST/OpenSSL. `libtls` implementa un cliente TLS 1.3 con validación de
+cadena, hostname, validez, SNI y ALPN; la autenticación del servidor es
+obligatoria y no existe modo inseguro. `neocurl` usa HTTPS de extremo a extremo.
+
+**NeoHTTP:** `libhttp` (núcleo offline, framing y `execute`), transporte TCP y
+TLS en `libnet`, cliente `neocurl`, runner `httptest` y orquestador
+`tools/http-e2e`. Descargas masivas fiables: ARP con expiración real, ACKs que
+no se pierden, ventanas que se actualizan al drenar, FIN ordenados y RST que
+cierran la conexión.
+
+**Confianza:** bundle DER concatenado en `\NeoDOS\System\config\roots.der`
+generado desde el store del anfitrión, con cabecera versionada y fecha; un
+bundle truncado o manipulado se rechaza. `certctl` importa/lista/muestra/borra
+CAs de usuario en `SOFTWARE.hiv`, deduplicadas por SHA-256 y protegidas por DACL
+de Cm. `neocfg` estrena el módulo de Certificados.
+
+**Prerrequisitos:** reloj de confianza (`libclock` + estado de NTP), CSPRNG de
+Ring 3 (`\Device\Random`, ChaCha20 DRBG sembrado con RDSEED/RDRAND) y caché DNS
+con TTL.
+
+**v0.52:** perfiles por usuario (`C:\Users\<usuario>\…`), árbol de imagen
+movido a `\NeoDOS`, `AGENTS.md` adelgazado y arreglos de escritura parcial, COW
+y page cache.
+
+**Impacto:** NeoDOS puede hablar con Internet real de forma segura y verificar
+actualizaciones; la confianza deja de ser una lista compilada.
+
+### 25 de noviembre de 2026 — Sesiones, identidad y limpieza final
+
+**Sesiones de login:** `SessionManager` con objetos `\Session\{id}`
+(`ObType::Session`, estados Active/Locked/LoggedOff), autenticación SAM
+(`SHA-256(salt || password)`) y tokens ligados a sesión. `neologon` implementa
+`LOGON` y `RUNAS`; `who` enumera sesiones; `logoff` cierra la del shell;
+`RUNAS /user:<cuenta>` ejecuta un `.NXE` en la sesión autenticada.
+`SessionUnlock` re-autentica sin perder el token y `SeAccessCheck` deniega
+tokens de sesiones cerradas.
+
+**Identidad real:** SIDs canónicos de `Users`/`Administrators`, separación de
+SYSTEM y Administrator, `Token::from_sam` con grupos y NeoInit lanzando el shell
+con la cuenta no privilegiada `NeoDOS`. La elevación queda para login/runas.
+
+**DACL por fichero:** `DirEntryV2` guarda un `security_id` (sin cambiar sus 128
+bytes) que referencia descriptores persistentes con owner, group y DACL.
+`SeAccessCheck` se aplica en apertura, lectura, escritura, creación, borrado,
+renombrado y recorrido; `dir` muestra el owner. La autorización y la mutación de
+Cm comparten sección crítica, y el almacén de confianza exige administrador
+para mutar.
+
+**Consolidación:** `console.nxl` declara su ABI una sola vez
+(`libconsole-abi`), los wrappers de syscall de los NXL dejan de pisar sus
+propios argumentos, y la limpieza de código muerto (#505) retira lotes de
+código sin uso y documenta el ABI reservado. Se añade un generador de manifiesto
+ABI, la cola acotada reporta overflow y HAL comparte descubrimiento ACPI,
+helpers MMIO y una única implementación de IPI.
+
+**Impacto:** El sistema tiene identidad y autorización NT de verdad, no solo
+interfaces. Con **v0.55.0** y **1.042 tests**, la fase de kernel maduro se
+cierra con la superficie muerta reducida.
+
 ---
 
 ## Evolución de la filosofía del sistema
@@ -526,11 +726,20 @@ Migración masiva a Ring 3. SMP, IRQL, SSDT, Security Reference Monitor, Ob.
 NeoDOS abandona su herencia DOS y adopta una arquitectura NT-like con Object
 Manager como abstracción central. El shell se convierte en un proceso de usuario más.
 
-### Fase 5: Expansión (v0.46 – presente)
+### Fase 5: Expansión (v0.46 – v0.50)
 
 Networking TCP/IP, Registry persistente, VirtIO, SAM. El sistema se expande
 horizontalmente añadiendo subsistemas completos mientras mantiene la coherencia
 arquitectónica alrededor del Object Manager.
+
+### Fase 6: Madurez NT y confianza (v0.51 – presente)
+
+El kernel consolida lo construido: scheduler SMP observable y auditable, NeoFS v2
+con snapshots persistentes, NLTv3, NXL v2 relocalizable y una pila TLS/HTTP
+completa con almacén de confianza propio. La seguridad deja de ser una interfaz
+y pasa a aplicarse de verdad: sesiones, identidad no privilegiada, DACL por
+fichero y autorización atómica en Cm. El trabajo se cierra con una limpieza
+profunda de código muerto y la reorganización del árbol en subsistemas.
 
 ---
 
@@ -549,6 +758,12 @@ arquitectónica alrededor del Object Manager.
 | Migration Ob de syscalls legacy | Jun 2026 | Todas las syscalls nuevas (RAX ≥ 60) deben ser `sys_ob_*`. |
 | Registry persistente cell-based | Jun 2026 | Modelo NT Cm con hives en disco. |
 | ABI freeze progresivo | Jun 2026 | Interfaces se congelan por versión: eventos, capacidades, IOAPIC en v0.42. |
+| IRQ lock-safety (INV-3) | Oct 2026 | Ningún handler puede bloquear en un lock que código interrumpible de su CPU pueda tener. |
+| NXL v2 PIE con símbolos | Oct 2026 | Bibliotecas relocalizables e imports NXL→NXL; solo `fs.nxl` conserva base fija. |
+| TLS fail-closed | Nov 2026 | Sin modo inseguro y sin anclas de confianza la conexión falla. |
+| Trust store en Registry | Nov 2026 | CAs de usuario en `SOFTWARE.hiv`; lectura para todos, mutación solo admin. |
+| DACL por fichero con `security_id` | Nov 2026 | `DirEntryV2` referencia descriptores persistentes; sin bits rwx de estilo UNIX. |
+| Árbol de imagen en `\NeoDOS` | Nov 2026 | Sistema, librerías, hives y drivers salen de la raíz de `C:`. |
 
 ---
 
@@ -595,6 +810,18 @@ arquitectónica alrededor del Object Manager.
 | 2026-07-12 | **NeoKBD + ACPI Power Management** | v0.49.2 |
 | 2026-07-13 | **NXE/NXP Ecosystem, i18n NLTv2** | v0.50.0 |
 | 2026-07-15 | **sys_ob_snapshot, dead code cleanup, roadmap reorganizado** | v0.50.1 |
+| 2026-07-17 | Hostname, DNS y separación de repositorios | v0.50.2 |
+| 2026-07-20 | Driver Manager, B-tree COW persistente | v0.50.2 |
+| 2026-08-27 | Auditoría P0 del scheduler | — |
+| 2026-09-25 | Dispatch commit point, AP bring-up | v0.50.4 |
+| 2026-09-26 | neotop, AP scheduling, CPU accounting | v0.51.0–v0.51.1 |
+| 2026-09-27 | SMP4 idle ownership | v0.51.2 |
+| 2026-10-03 | **NLTv3 (libnlt)** | v0.51.3 |
+| 2026-10-09 | **NeoFS v2, NXL v2, red, seguridad NT** | v0.51.5 |
+| 2026-10-12 | **IRQ lock-safety (INV-3)** | — |
+| 2026-10-15 | SMEP/SMAP, NTP, XKB, input raw | — |
+| 2026-11-17 | **TLS 1.3, HTTPS, trust store** | v0.52 |
+| 2026-11-25 | **Sesiones, DACL por fichero, limpieza** | v0.55.0 |
 
 ---
 
@@ -652,6 +879,22 @@ arquitectónica alrededor del Object Manager.
 | nxverify | Jul 13 | `userbin/nxverify/` — Integrity verifier |
 | sys_ob_snapshot | Jul 15 | `syscall/ob.rs` — NeoFS snapshot syscall (RAX=48) |
 | ROADMAP.md | Jul 15 | Roadmap oficial reorganizado por fases (raíz del proyecto) |
+| Driver Manager | Jul 20 | Carga selectiva de drivers NEM según hardware detectado |
+| DNS resolver | Jul 18 | `libnet` + `nslookup.nxe` + DNS por DHCP |
+| neotop | Sep 26 | `userbin/neotop/` — Monitor de procesos e hilos |
+| Per-CPU runqueues | Oct 9 | `arch/x64/cpu_local.rs` — despacho O(1) por prioridad |
+| libnlt / NLTv3 | Oct 3 | Formato i18n compartido: LZSS, UTF-16LE, plurales CLDR, RTL |
+| libneodiag | Oct 9 | Utilidades puras de tablas y padding |
+| libneoutil | Oct 9 | Rutas, texto y errno compartidos en Ring 3 |
+| SMEP/SMAP/NXE | Oct 10 | W^X para datos de usuario |
+| libhttp / NeoHTTP | Nov 14 | Núcleo HTTP/1.1 offline, framing y transporte |
+| libcrypto | Nov 16 | SHA-2, HMAC/HKDF, ChaCha20-Poly1305, X25519, RSA, ECDSA |
+| libtls | Nov 17 | Cliente TLS 1.3 con X.509, SNI y ALPN |
+| Trust store | Nov 18 | `roots.der` versionado + CAs de usuario en `SOFTWARE.hiv` |
+| certctl | Nov 18 | Importación y gestión de CAs de terceros |
+| SessionManager | Nov 25 | `\Session\{id}` — login, lock, logoff y unlock |
+| DACL por fichero | Nov 25 | `security_id` persistente en `DirEntryV2` |
+| ABI manifest | Nov 25 | Generador de manifiesto ABI del kernel |
 
 ---
 
@@ -659,13 +902,15 @@ arquitectónica alrededor del Object Manager.
 
 ### 🌱 Girona — Lugar de nacimiento
 
-Todo el desarrollo hasta la fecha se ha realizado íntegramente en Girona.
-Aquí nació NeoDOS el 4 de mayo de 2026 y aquí continúa su evolución.
+NeoDOS nació aquí el 4 de mayo de 2026 y aquí se gestó la primera etapa del
+proyecto: del shell en Ring 0 al Object Manager, pasando por HAL, NEM, SMP y el
+modelo NT-like.
 
-### 🚀 Lleida — Pendiente de confirmar
+### 🚀 Lleida — Lugar actual del desarrollo
 
-Futura ubicación del desarrollo principal si el proyecto se traslada.
-No marcar como completada hasta que ocurra el traslado.
+El traslado ya se ha producido. A fecha de esta actualización (25 de noviembre
+de 2026), todo el desarrollo nuevo se realiza en Lleida: la fase de kernel
+maduro, TLS, sesiones e identidad y la limpieza final del árbol.
 
 ---
 
@@ -682,6 +927,10 @@ No marcar como completada hasta que ocurra el traslado.
 | 2026-07-05 | ~280 | ~646 | ~45.580 | v0.48.8 |
 | 2026-07-12 | ~310 | ~662 | ~47.200 | v0.49.2 |
 | 2026-07-15 | ~350 | ~670 | ~46.500 | v0.50.1 |
+| 2026-09-25 | 419 | 665 | 58.163 | v0.50.3 |
+| 2026-10-09 | 648 | 861 | 74.007 | v0.51.5 |
+| 2026-11-17 | 789 | 997 | 82.656 | v0.52 |
+| 2026-11-25 | 819 | 1.042 | 86.027 | v0.55.0 |
 
 ---
 
