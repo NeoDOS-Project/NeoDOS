@@ -268,6 +268,24 @@ pub struct BootSummary {
 If a BOOT driver fails, the kernel continues (no panic); the driver is marked
 FAULTED and logged. 8 tests.
 
+## Driver registry layers
+
+Driver bookkeeping is split by concern, not duplicated. Every layer is keyed by
+the same `DriverId` and has a different owner:
+
+| Layer | Location | Owns | Lifetime |
+| ------- | -------- | ---- | -------- |
+| `DriverManager` | `management/driver_manager.rs` | Boot-time discovery, matching and load orchestration | Local to the boot loader |
+| `DriverRuntime` / `DRIVER_RUNTIME` | `runtime/runtime.rs` | Certification state machine and per-driver runtime state | Kernel lifetime |
+| `LOADED_DRIVERS` | `loader/runtime.rs` | Callable `init`/`event`/`fini` pointers and HST | Driver loaded |
+| `HOT_RELOAD_REGISTRY` | `management/hotreload.rs` | Reload/unload metadata (entry point, name, category) | Driver loaded |
+| `ISOLATED_REGIONS` | `management/isolation.rs` | Isolated memory regions and permissions | Driver loaded |
+
+Collapsing them into one structure would couple the loader, the isolation layer
+and hot reload without removing a duplicate: each answers a different question
+(what to load, what state it is in, how to call it, how to reload it, where its
+memory lives).
+
 ## Driver diagnostics
 
 There is currently no userland driver-diagnostics CLI: the interim tools
