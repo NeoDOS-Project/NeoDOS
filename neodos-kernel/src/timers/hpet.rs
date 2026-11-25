@@ -1,8 +1,7 @@
-use core::ptr::read_volatile;
+use crate::hal::acpi::{self, AcpiSdtHeader, Rsdp};
 use crate::log::LogSubsys;
 
 // ── ACPI table signatures ──────────────────────────────────────────
-const RSDP_SIGNATURE: [u8; 8] = *b"RSD PTR ";
 const HPET_SIGNATURE: [u8; 4] = *b"HPET";
 const RSDT_SIGNATURE: [u8; 4] = *b"RSDT";
 const XSDT_SIGNATURE: [u8; 4] = *b"XSDT";
@@ -25,35 +24,6 @@ const HPET_TIMER_TYPE: u64       = 1 << 1;   // 0=edge, 1=level
 const HPET_TIMER_INT_ENABLE: u64 = 1 << 2;
 const HPET_TIMER_PERIODIC: u64   = 1 << 3;
 const HPET_TIMER_SET_VAL: u64    = 1 << 6;   // force timer to use comparator value
-
-// ── ACPI RSDP ──────────────────────────────────────────────────────
-#[repr(C, packed)]
-struct Rsdp {
-    signature: [u8; 8],
-    checksum: u8,
-    oem_id: [u8; 6],
-    revision: u8,
-    rsdt_addr: u32,
-    // ACPI v2.0+ fields (revision >= 2)
-    length: u32,
-    xsdt_addr: u64,
-    ext_checksum: u8,
-    reserved: [u8; 3],
-}
-
-// ── ACPI SDT header ────────────────────────────────────────────────
-#[repr(C, packed)]
-struct AcpiSdtHeader {
-    signature: [u8; 4],
-    length: u32,
-    revision: u8,
-    checksum: u8,
-    oem_id: [u8; 6],
-    oem_table_id: [u8; 8],
-    oem_revision: u32,
-    creator_id: u32,
-    creator_revision: u32,
-}
 
 // ── ACPI HPET table ────────────────────────────────────────────────
 #[repr(C, packed)]
@@ -87,129 +57,6 @@ unsafe fn hpet_write(base: u64, offset: u64, val: u64) {
     crate::hal::mmio::write64((base + offset) as usize, val);
 }
 
-// ── ACPI table scanning ────────────────────────────────────────────
-
-/// Validate ACPI table checksum.
-fn acpi_checksum(data: &[u8]) -> bool {
-    let mut sum: u8 = 0;
-    for &byte in data {
-        sum = sum.wrapping_add(byte);
-    }
-    sum == 0
-}
-
-/// Scan a memory range for the RSDP (aligned to 16 bytes).
-fn scan_range_for_rsdp(start: u64, end: u64) -> Option<&'static Rsdp> {
-    let mut addr = start;
-    while addr + 16 <= end {
-        let ptr = addr as *const Rsdp;
-        unsafe {
-            if (*ptr).signature == RSDP_SIGNATURE
-                && acpi_checksum(core::slice::from_raw_parts(ptr as *const u8, 20)) {
-                return Some(&*ptr);
-            }
-        }
-        addr += 16;
-    }
-    None
-}
-
-/// Validate a potential RSDP pointer.
-fn validate_rsdp(ptr: *const Rsdp) -> bool {
-    unsafe {
-        if (*ptr).signature != RSDP_SIGNATURE {
-            return false;
-        }
-        // For ACPI v1, checksum first 20 bytes.
-        // For ACPI v2+, checksum first 20 bytes, then full 36 bytes.
-        if !acpi_checksum(core::slice::from_raw_parts(ptr as *const u8, 20)) {
-            return false;
-        }
-        if (*ptr).revision >= 2
-            && !acpi_checksum(core::slice::from_raw_parts(ptr as *const u8, 36)) {
-            return false;
-        }
-        true
-    }
-}
-
-/// Scan for the ACPI RSDP.
-///
-/// Strategy:
-/// 0. Boot-provided RSDP address (from UEFI config table) — most reliable.
-/// 1. Legacy BIOS area (0xE0000..0x100000) — works on SeaBIOS / real HW.
-/// 2. EBDA (Extended BIOS Data Area at segment 0x40E) — early BIOS area.
-/// 3. Option ROM area (0xC0000..0xE0000) — some UEFI puts RSDP here.
-/// 4. Low memory (0x80000..0xA0000) — some firmware places RSDP here.
-/// 5. First 64 KB (0x0..0x10000) — rare but worth checking.
-fn find_rsdp() -> Option<&'static Rsdp> {
-    // 0. Boot-provided RSDP (from UEFI configuration table, most reliable)
-    let boot_rsdp = unsafe { crate::timers::BOOT_RSDP_ADDR };
-    if boot_rsdp != 0 {
-        let ptr = boot_rsdp as *const Rsdp;
-        if validate_rsdp(ptr) {
-            return Some(unsafe { &*ptr });
-        }
-    }
-
-    // 1. Standard legacy BIOS area
-    if let Some(rsdp) = scan_range_for_rsdp(0xE0000, 0x100000) {
-        return Some(rsdp);
-    }
-
-    // 2. EBDA
-    let ebda_seg = crate::hal::inw(0x40E) as u64;
-    if ebda_seg > 0 {
-        let ebda_addr = ebda_seg << 4;
-        if let Some(rsdp) = scan_range_for_rsdp(ebda_addr, ebda_addr + 1024) {
-            return Some(rsdp);
-        }
-    }
-
-    // 3. Option ROM area
-    if let Some(rsdp) = scan_range_for_rsdp(0xC0000, 0xE0000) {
-        return Some(rsdp);
-    }
-
-    // 4. Extended BIOS data area
-    if let Some(rsdp) = scan_range_for_rsdp(0x80000, 0xA0000) {
-        return Some(rsdp);
-    }
-
-    // 5. First 64 KB (BDA area)
-    if let Some(rsdp) = scan_range_for_rsdp(0x0, 0x10000) {
-        return Some(rsdp);
-    }
-
-    None
-}
-
-/// Scan RSDT for a table with the given signature.
-fn find_table_in_rsdt(rsdt: &'static [u32], signature: &[u8; 4]) -> Option<&'static AcpiSdtHeader> {
-    for &entry in rsdt {
-        let sdt = entry as u64 as *const AcpiSdtHeader;
-        unsafe {
-            if (*sdt).signature == *signature {
-                return Some(&*sdt);
-            }
-        }
-    }
-    None
-}
-
-/// Scan XSDT for a table with the given signature.
-fn find_table_in_xsdt(xsdt: &'static [u64], signature: &[u8; 4]) -> Option<&'static AcpiSdtHeader> {
-    for &entry in xsdt {
-        let sdt = entry as *const AcpiSdtHeader;
-        unsafe {
-            if (*sdt).signature == *signature {
-                return Some(&*sdt);
-            }
-        }
-    }
-    None
-}
-
 // ── ACPI MCFG (PCI Express MMIO config space) table ────────────────
 
 #[repr(C, packed)]
@@ -230,7 +77,7 @@ struct McfgEntry {
 
 /// Find the MCFG table by scanning RSDP → RSDT/XSDT.
 fn find_mcfg_table() -> Option<&'static AcpiMcfg> {
-    let rsdp = find_rsdp()?;
+    let rsdp = acpi::find_rsdp(unsafe { crate::timers::BOOT_RSDP_ADDR })?;
     let sdt: Option<&'static AcpiSdtHeader>;
 
     if rsdp.revision >= 2 && rsdp.xsdt_addr != 0 {
@@ -244,7 +91,7 @@ fn find_mcfg_table() -> Option<&'static AcpiMcfg> {
                 (rsdp.xsdt_addr + core::mem::size_of::<AcpiSdtHeader>() as u64) as *const u64,
                 entry_count,
             );
-            sdt = find_table_in_xsdt(entries, &MCFG_SIGNATURE);
+            sdt = acpi::find_table_in_xsdt(entries, &MCFG_SIGNATURE);
         }
     } else {
         let rsdt_ptr = rsdp.rsdt_addr as u64 as *const AcpiSdtHeader;
@@ -257,7 +104,7 @@ fn find_mcfg_table() -> Option<&'static AcpiMcfg> {
                 (rsdp.rsdt_addr as u64 + core::mem::size_of::<AcpiSdtHeader>() as u64) as *const u32,
                 entry_count,
             );
-            sdt = find_table_in_rsdt(entries, &MCFG_SIGNATURE);
+            sdt = acpi::find_table_in_rsdt(entries, &MCFG_SIGNATURE);
         }
     }
 
@@ -326,7 +173,7 @@ struct MadtIsoOverride {
 
 /// Find the MADT table.
 fn find_madt_table() -> Option<&'static AcpiMadt> {
-    let rsdp = find_rsdp()?;
+    let rsdp = acpi::find_rsdp(unsafe { crate::timers::BOOT_RSDP_ADDR })?;
     let sdt: Option<&'static AcpiSdtHeader>;
 
     if rsdp.revision >= 2 && rsdp.xsdt_addr != 0 {
@@ -340,7 +187,7 @@ fn find_madt_table() -> Option<&'static AcpiMadt> {
                 (rsdp.xsdt_addr + core::mem::size_of::<AcpiSdtHeader>() as u64) as *const u64,
                 entry_count,
             );
-            sdt = find_table_in_xsdt(entries, &APIC_SIGNATURE);
+            sdt = acpi::find_table_in_xsdt(entries, &APIC_SIGNATURE);
         }
     } else {
         let rsdt_ptr = rsdp.rsdt_addr as u64 as *const AcpiSdtHeader;
@@ -353,7 +200,7 @@ fn find_madt_table() -> Option<&'static AcpiMadt> {
                 (rsdp.rsdt_addr as u64 + core::mem::size_of::<AcpiSdtHeader>() as u64) as *const u32,
                 entry_count,
             );
-            sdt = find_table_in_rsdt(entries, &APIC_SIGNATURE);
+            sdt = acpi::find_table_in_rsdt(entries, &APIC_SIGNATURE);
         }
     }
 
@@ -491,7 +338,7 @@ pub fn get_isa_overrides() -> alloc::vec::Vec<(u8, u32, u16)> {
 
 /// Find the HPET ACPI table by scanning RSDP → RSDT/XSDT → HPET.
 fn find_hpet_table() -> Option<&'static AcpiHpet> {
-    let rsdp = find_rsdp()?;
+    let rsdp = acpi::find_rsdp(unsafe { crate::timers::BOOT_RSDP_ADDR })?;
     let hpetsdt: Option<&'static AcpiSdtHeader>;
 
     if rsdp.revision >= 2 && rsdp.xsdt_addr != 0 {
@@ -508,7 +355,7 @@ fn find_hpet_table() -> Option<&'static AcpiHpet> {
                 (rsdp.xsdt_addr + core::mem::size_of::<AcpiSdtHeader>() as u64) as *const u64,
                 entry_count,
             );
-            hpetsdt = find_table_in_xsdt(entries, &HPET_SIGNATURE);
+            hpetsdt = acpi::find_table_in_xsdt(entries, &HPET_SIGNATURE);
         }
     } else {
         // Use RSDT (32-bit table pointers)
@@ -524,7 +371,7 @@ fn find_hpet_table() -> Option<&'static AcpiHpet> {
                 (rsdp.rsdt_addr as u64 + core::mem::size_of::<AcpiSdtHeader>() as u64) as *const u32,
                 entry_count,
             );
-            hpetsdt = find_table_in_rsdt(entries, &HPET_SIGNATURE);
+            hpetsdt = acpi::find_table_in_rsdt(entries, &HPET_SIGNATURE);
         }
     }
 

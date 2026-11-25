@@ -135,16 +135,13 @@ impl VirtioTransport {
 
     // ── MMIO helpers ───────────────────────────────────────────────
     fn mmio_read32(&self, base: u64, offset: u64) -> u32 {
-        unsafe { (base as *const u32).add((offset / 4) as usize).read_volatile() }
+        unsafe { crate::hal::mmio::read32((base + offset) as usize) }
     }
     fn mmio_write32(&self, base: u64, offset: u64, val: u32) {
-        unsafe { (base as *mut u32).add((offset / 4) as usize).write_volatile(val) }
+        unsafe { crate::hal::mmio::write32((base + offset) as usize, val) }
     }
     fn mmio_write64(&self, base: u64, offset: u64, val: u64) {
-        unsafe {
-            let p = (base + offset) as *mut u64;
-            p.write_volatile(val);
-        }
+        unsafe { crate::hal::mmio::write64((base + offset) as usize, val) }
     }
     // ── High-level operations ──────────────────────────────────────
 
