@@ -1,7 +1,8 @@
 use alloc::vec::Vec;
 use spin::Mutex;
 use core::sync::atomic::{AtomicU64, Ordering};
-use crate::object::{ObOperations, ObId};
+use crate::object::{ObError, ObOperations, ObId};
+use crate::slot_table::SlotTable;
 
 const MAX_SECTIONS: usize = 32;
 
@@ -13,79 +14,49 @@ struct SectionView {
 
 #[derive(Debug, Clone)]
 struct SectionEntry {
-    used: bool,
     size: u64,
     prot: u32,
     ob_id: ObId,
     views: Vec<SectionView>,
 }
 
-impl SectionEntry {
-    fn unused() -> Self {
-        SectionEntry {
-            used: false,
-            size: 0,
-            prot: 0,
-            ob_id: 0,
-            views: Vec::new(),
-        }
-    }
-}
-
 pub struct SectionManager {
-    sections: Vec<SectionEntry>,
+    sections: SlotTable<SectionEntry, MAX_SECTIONS>,
 }
 
 impl SectionManager {
     const fn new() -> Self {
         SectionManager {
-            sections: Vec::new(),
+            sections: SlotTable::new(),
         }
     }
 
-    pub fn alloc(&mut self, ob_id: ObId, size: u64, prot: u32) -> Option<u32> {
+    pub fn alloc(&mut self, ob_id: ObId, size: u64, prot: u32) -> Result<u32, ObError> {
         if size == 0 || size > 0x100000 {
-            return None;
+            return Err(ObError::InvalidParam);
         }
-        for (i, s) in self.sections.iter_mut().enumerate() {
-            if !s.used {
-                s.used = true;
-                s.size = size;
-                s.prot = prot;
-                s.ob_id = ob_id;
-                s.views.clear();
-                return Some(i as u32);
-            }
-        }
-        if self.sections.len() < MAX_SECTIONS {
-            let id = self.sections.len() as u32;
-            self.sections.push(SectionEntry {
-                used: true,
-                size,
-                prot,
-                ob_id,
-                views: Vec::new(),
-            });
-            return Some(id);
-        }
-        None
+        let entry = SectionEntry {
+            size,
+            prot,
+            ob_id,
+            views: Vec::new(),
+        };
+        self.sections
+            .alloc(entry)
+            .map(|index| index as u32)
+            .map_err(|_| ObError::TableFull)
     }
 
     pub fn free(&mut self, section_id: u32) {
-        if let Some(s) = self.sections.get_mut(section_id as usize) {
-            for view in s.views.drain(..) {
+        if let Some(mut section) = self.sections.free(section_id as usize) {
+            for view in section.views.drain(..) {
                 unmap_view_pages(view.base, view.size);
             }
-            *s = SectionEntry::unused();
         }
     }
 
     pub fn map_view(&mut self, section_id: u32) -> Option<u64> {
-        let size = {
-            let s = self.sections.get(section_id as usize)?;
-            if !s.used { return None; }
-            s.size
-        };
+        let size = self.sections.get(section_id as usize)?.size;
 
         let aligned_size = (size + 0xFFF) & !0xFFF;
         let base = allocate_mmap_region(aligned_size)?;
@@ -113,11 +84,11 @@ impl SectionManager {
     }
 
     pub fn size(&self, section_id: u32) -> u64 {
-        self.sections.get(section_id as usize).map_or(0, |s| if s.used { s.size } else { 0 })
+        self.sections.get(section_id as usize).map_or(0, |s| s.size)
     }
 
     pub fn prot(&self, section_id: u32) -> u32 {
-        self.sections.get(section_id as usize).map_or(0, |s| if s.used { s.prot } else { 0 })
+        self.sections.get(section_id as usize).map_or(0, |s| s.prot)
     }
 }
 
@@ -181,7 +152,7 @@ impl ObOperations for SectionObOps {
 
 pub static SECTION_OPS: SectionObOps = SectionObOps;
 
-pub fn alloc_section(ob_id: ObId, size: u64, prot: u32) -> Option<u32> {
+pub fn alloc_section(ob_id: ObId, size: u64, prot: u32) -> Result<u32, ObError> {
     SECTION_MANAGER.lock().alloc(ob_id, size, prot)
 }
 
@@ -205,10 +176,18 @@ pub fn register_section_tests() {
         mgr.free(id);
     });
 
+    test_case!("section_table_full", {
+        let mut mgr = SectionManager::new();
+        for i in 0..MAX_SECTIONS {
+            test_true!(mgr.alloc(i as u64, 4096, 3).is_ok());
+        }
+        test_eq!(mgr.alloc(999, 4096, 3), Err(ObError::TableFull));
+    });
+
     test_case!("section_invalid_size", {
         let mut mgr = SectionManager::new();
-        test_true!(mgr.alloc(42, 0, 3).is_none());
-        test_true!(mgr.alloc(42, 0x200000, 3).is_none());
+        test_true!(mgr.alloc(42, 0, 3).is_err());
+        test_true!(mgr.alloc(42, 0x200000, 3).is_err());
     });
 
     test_case!("section_uses_mmap_page", {
