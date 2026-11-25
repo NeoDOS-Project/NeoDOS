@@ -35,6 +35,7 @@ pub const EVENT_DRIVER_UNLOAD: EventType = 13;    // FROZEN v0.42
 pub const EVENT_DRIVER_UNLOAD_ACK: EventType = 14;// FROZEN v0.42
 pub const EVENT_NMI_WATCHDOG: EventType = 15;     // FROZEN v0.42
 pub const EVENT_MOUSE_INPUT: EventType = 16;      // PS/2 mouse raw bytes
+#[allow(dead_code)] // ABI event slot, no in-tree producer yet
 pub const EVENT_NETWORK_PACKET: EventType = 17;   // NIC received a packet (data0=nic_id, data1=len)
 /// Network interface configuration changed (a writer applied an IP/gateway).
 /// Waiters (the Ring 3 network applier) block on this via an Event object
@@ -48,10 +49,13 @@ pub const EVENT_RTC_WRITE: EventType = 32;
 /// Kernel → pci.nem: read a config dword.  data0[31:0] = packed BDF+offset.
 pub const EVENT_PCI_READ_CONFIG: EventType    = 0x1000;
 /// Kernel → pci.nem: write a config dword.  data0 = packed BDF+offset, data1 = value.
+#[allow(dead_code)] // ABI slot used by pci.nem
 pub const EVENT_PCI_WRITE_CONFIG: EventType   = 0x1001;
 /// pci.nem → kernel: result of a config read.  data0 = packed BDF+offset, data1 = value.
+#[allow(dead_code)] // ABI slot used by pci.nem
 pub const EVENT_PCI_READ_RESULT: EventType    = 0x1002;
 /// pci.nem → kernel: config write acknowledged.
+#[allow(dead_code)] // ABI slot used by pci.nem
 pub const EVENT_PCI_WRITE_DONE: EventType     = 0x1003;
 /// Kernel → pci.nem: configure MSI for a device.
 /// data0[63:32] = vector, data0[31:0] = packed BDF, data1 = cap_offset.
@@ -62,20 +66,26 @@ pub const EVENT_KEYDOWN: EventType = 27;
 pub const EVENT_KEYUP: EventType = 28;
 pub const EVENT_KEY_CHAR: EventType = 29;
 pub const EVENT_KBD_MODIFIER: EventType = 30;
+#[allow(dead_code)] // reserved keyboard ABI slot
 pub const EVENT_KBD_REPEAT: EventType = 31;
 pub const EVENT_USER: EventType = 0x2000;
 pub const EVENT_WILDCARD: EventType = 0xFFFFFFFF;
 
 pub const SOURCE_HAL: EventSource = 0;
+#[allow(dead_code)] // reserved source id
 pub const SOURCE_DRIVER: EventSource = 1;
 pub const SOURCE_KERNEL: EventSource = 2;
+#[allow(dead_code)] // reserved source id
 pub const SOURCE_USERLAND: EventSource = 3;
 
 pub const EVENT_FLAG_NONE: u32 = 0;
 pub const EVENT_FLAG_URGENT: u32 = 1 << 0;
+#[allow(dead_code)] // reserved event flag
 pub const EVENT_FLAG_BROADCAST: u32 = 1 << 1;
+#[allow(dead_code)] // reserved event flag
 pub const EVENT_FLAG_DYN_PAYLOAD: u32 = 1 << 4;
 
+#[allow(dead_code)] // public ABI error code
 pub const ERR_EVENT_BUS_FULL: i64 = -16;
 
 // ── Event struct (ABI-stable, used by NEM drivers) ──
@@ -108,6 +118,7 @@ pub type EventCallback = fn(&Event);
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum EventPriority {
+    #[allow(dead_code)] // reserved priority level
     High = 0,
     Normal = 1,
 }
@@ -157,6 +168,7 @@ impl EventFilter {
 pub struct HandlerEntry {
     pub filter: EventFilter,
     pub callback: EventCallback,
+    #[allow(dead_code)] // kept for handler diagnostics
     pub name: &'static str,
 }
 
