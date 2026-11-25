@@ -73,6 +73,16 @@ Each process's handle table (`HandleTable`) is a `Vec<HandleEntry>` with fds
 free slot >= 3. The `ob_object()` variant also stores `desired_access` in
 offset for SeAccessCheck re-verification.
 
+### Bounded slot tables
+
+Fixed-capacity managers (timers, semaphores, sections and event handlers) store
+their entries in `slot_table::SlotTable<T, N>` (`src/slot_table.rs`). `alloc()`
+returns `Result<usize, SlotTableFull>`, so exhaustion is distinguishable from an
+invalid argument; the owning manager maps it to `ObError::TableFull` (and invalid
+parameters to `ObError::InvalidParam`). There is no silent `None`/`false`
+overflow. Pipes and the IRP pool keep their own storage because they carry
+additional per-entry semantics, and remain a follow-up for the same abstraction.
+
 ## ObType Enum
 
 | Value | Type | Description |

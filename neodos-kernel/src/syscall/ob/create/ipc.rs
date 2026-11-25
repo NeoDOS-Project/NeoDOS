@@ -59,10 +59,10 @@ pub(super) fn dispatch(
                 Err(e) => return err_to_u64(ob_err_to_syscall(e)),
             };
             let sem_id = match crate::object::semaphore::alloc_semaphore(ob_id, initial_count, max_count) {
-                Some(id) => id,
-                None => {
+                Ok(id) => id,
+                Err(e) => {
                     let _ = crate::object::ob_close_object(ob_id);
-                    return err_to_u64(SyscallError::Inval);
+                    return err_to_u64(ob_err_to_syscall(e));
                 }
             };
             {
@@ -103,10 +103,10 @@ pub(super) fn dispatch(
                 Err(e) => return err_to_u64(ob_err_to_syscall(e)),
             };
             let timer_id = match crate::object::timer::alloc_timer(ob_id, period_ms, periodic) {
-                Some(id) => id,
-                None => {
+                Ok(id) => id,
+                Err(e) => {
                     let _ = crate::object::ob_close_object(ob_id);
-                    return err_to_u64(SyscallError::NoMem);
+                    return err_to_u64(ob_err_to_syscall(e));
                 }
             };
             {
@@ -147,10 +147,10 @@ pub(super) fn dispatch(
                 Err(e) => return err_to_u64(ob_err_to_syscall(e)),
             };
             let section_id = match crate::object::section::alloc_section(ob_id, size, prot) {
-                Some(id) => id,
-                None => {
+                Ok(id) => id,
+                Err(e) => {
                     let _ = crate::object::ob_close_object(ob_id);
-                    return err_to_u64(SyscallError::NoMem);
+                    return err_to_u64(ob_err_to_syscall(e));
                 }
             };
             {

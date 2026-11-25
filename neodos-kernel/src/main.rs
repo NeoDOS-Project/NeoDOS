@@ -43,6 +43,7 @@ pub use drivers::nem::format as nem;
 mod eventbus;
 mod dpc;
 mod memory;
+mod slot_table;
 pub mod syscall;
 mod apc;
 mod irp;

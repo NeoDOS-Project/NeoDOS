@@ -2,6 +2,7 @@ use core::cell::UnsafeCell;
 use core::sync::atomic::{AtomicU64, AtomicUsize, Ordering, compiler_fence};
 use spin::Mutex;
 use core::ptr;
+use crate::slot_table::SlotTable;
 use crate::test_eq;
 use crate::test_true;
 
@@ -234,7 +235,7 @@ pub struct EventBus {
     next_id: AtomicU64,
 
     /// Handlers with subscription filters (up to 64)
-    handlers: Mutex<[Option<HandlerEntry>; MAX_HANDLERS]>,
+    handlers: Mutex<SlotTable<HandlerEntry, MAX_HANDLERS>>,
 }
 
 impl EventBus {
@@ -245,7 +246,7 @@ impl EventBus {
             tail: AtomicUsize::new(0),
             high_queue: HighPriorityQueue::new(),
             next_id: AtomicU64::new(1),
-            handlers: Mutex::new([None; MAX_HANDLERS]),
+            handlers: Mutex::new(SlotTable::new()),
         }
     }
 
@@ -343,7 +344,7 @@ impl EventBus {
             flags: 0,
         };
         let handlers = self.handlers.lock();
-        handlers.iter().flatten().filter(|h| h.filter.matches(&dummy)).count()
+        handlers.iter().filter(|(_, h)| h.filter.matches(&dummy)).count()
     }
 
     /// Register a handler with a subscription filter
@@ -354,22 +355,19 @@ impl EventBus {
         name: &'static str,
     ) -> Result<(), ()> {
         let mut handlers = self.handlers.lock();
-        for slot in handlers.iter_mut() {
-            if slot.is_none() {
-                *slot = Some(HandlerEntry { filter, callback, name });
-                return Ok(());
-            }
-        }
-        Err(())
+        handlers
+            .alloc(HandlerEntry { filter, callback, name })
+            .map(|_| ())
+            .map_err(|_| ())
     }
 
     /// Unregister a handler by callback function pointer
     pub fn unregister_handler(&self, callback: EventCallback) -> bool {
         let mut handlers = self.handlers.lock();
-        for slot in handlers.iter_mut() {
-            if let Some(h) = slot {
+        for index in 0..MAX_HANDLERS {
+            if let Some(h) = handlers.get(index) {
                 if ptr::fn_addr_eq(h.callback, callback) {
-                    *slot = None;
+                    handlers.free(index);
                     return true;
                 }
             }
@@ -381,7 +379,7 @@ impl EventBus {
 
     fn dispatch_one_event(&self, event: &Event) {
         let handlers = self.handlers.lock();
-        for h in handlers.iter().flatten() {
+        for (_, h) in handlers.iter() {
             if h.filter.matches(event) {
                 (h.callback)(event);
             }
@@ -573,6 +571,17 @@ fn tevent_filter_source_mask() -> Result<(), &'static str> {
     Ok(())
 }
 
+fn tevent_handler_table_full() -> Result<(), &'static str> {
+    fn cb(_: &Event) {}
+    let bus = EventBus::new();
+    for _ in 0..MAX_HANDLERS {
+        bus.register_handler(EVENT_TIMER_TICK, cb, "full")
+            .map_err(|_| "handler registration failed")?;
+    }
+    test_true!(bus.register_handler(EVENT_TIMER_TICK, cb, "overflow").is_err());
+    Ok(())
+}
+
 pub fn register_tests() {
     crate::testing::register("event_create", tevent_create);
     crate::testing::register("event_push_pop", tevent_push_pop);
@@ -582,6 +591,7 @@ pub fn register_tests() {
     crate::testing::register("event_handler_register_dispatch", tevent_handler_register_dispatch);
     crate::testing::register("event_handler_type_filter", tevent_handler_type_filter);
     crate::testing::register("event_unregister_handler", tevent_unregister_handler);
+    crate::testing::register("event_handler_table_full", tevent_handler_table_full);
     crate::testing::register("event_empty_queue", tevent_empty_queue);
     crate::testing::register("ev_filter_by_type", tevent_v2_filter_by_type);
     crate::testing::register("ev_strict_filter", tevent_strict_filter);

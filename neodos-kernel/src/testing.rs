@@ -254,6 +254,7 @@ pub fn register_tests() {
     crate::object::timer::register_timer_tests();
     crate::object::semaphore::register_semaphore_tests();
     crate::object::section::register_section_tests();
+    crate::slot_table::register_tests();
     crate::vfs::mount::register_mount_tests();
     crate::vfs::io::register_tests();
     crate::work_queue::register_tests();

@@ -1,6 +1,7 @@
-use crate::object::{ObOperations, ObId};
+use crate::object::{ObError, ObOperations, ObId};
 use crate::log::LogSubsys;
 use crate::kwait::{self, WaitReason};
+use crate::slot_table::SlotTable;
 use spin::Mutex;
 
 const MAX_TIMERS: usize = 64;
@@ -20,7 +21,6 @@ enum TimerType {
 
 #[derive(Debug, Clone, Copy)]
 struct TimerEntry {
-    used: bool,
     state: TimerState,
     timer_type: TimerType,
     period_ms: u64,
@@ -28,65 +28,47 @@ struct TimerEntry {
     ob_id: ObId,
 }
 
-impl TimerEntry {
-    const fn unused() -> Self {
-        TimerEntry {
-            used: false,
-            state: TimerState::Idle,
-            timer_type: TimerType::Oneshot,
-            period_ms: 0,
-            remaining_ms: 0,
-            ob_id: 0,
-        }
-    }
-}
-
 pub struct TimerManager {
-    timers: [TimerEntry; MAX_TIMERS],
+    timers: SlotTable<TimerEntry, MAX_TIMERS>,
 }
 
 impl TimerManager {
     const fn new() -> Self {
         TimerManager {
-            timers: [TimerEntry::unused(); MAX_TIMERS],
+            timers: SlotTable::new(),
         }
     }
 
-    pub fn alloc(&mut self, ob_id: ObId, period_ms: u64, periodic: bool) -> Option<u32> {
-        for (i, t) in self.timers.iter_mut().enumerate() {
-            if !t.used {
-                t.used = true;
-                t.state = TimerState::Idle;
-                t.timer_type = if periodic { TimerType::Periodic } else { TimerType::Oneshot };
-                t.period_ms = period_ms;
-                t.remaining_ms = 0;
-                t.ob_id = ob_id;
-                return Some(i as u32);
-            }
-        }
-        None
+    pub fn alloc(&mut self, ob_id: ObId, period_ms: u64, periodic: bool) -> Result<u32, ObError> {
+        let entry = TimerEntry {
+            state: TimerState::Idle,
+            timer_type: if periodic { TimerType::Periodic } else { TimerType::Oneshot },
+            period_ms,
+            remaining_ms: 0,
+            ob_id,
+        };
+        self.timers
+            .alloc(entry)
+            .map(|index| index as u32)
+            .map_err(|_| ObError::TableFull)
     }
 
     pub fn free(&mut self, timer_id: u32) {
-        if let Some(t) = self.timers.get_mut(timer_id as usize) {
-            *t = TimerEntry::unused();
-        }
+        self.timers.free(timer_id as usize);
     }
 
     pub fn start(&mut self, timer_id: u32) -> bool {
         if let Some(t) = self.timers.get_mut(timer_id as usize) {
-            if t.used {
-                t.state = TimerState::Running;
-                t.remaining_ms = t.period_ms;
-                return true;
-            }
+            t.state = TimerState::Running;
+            t.remaining_ms = t.period_ms;
+            return true;
         }
         false
     }
 
     pub fn cancel(&mut self, timer_id: u32) -> bool {
         if let Some(t) = self.timers.get_mut(timer_id as usize) {
-            if t.used && t.state == TimerState::Running {
+            if t.state == TimerState::Running {
                 t.state = TimerState::Idle;
                 t.remaining_ms = 0;
                 return true;
@@ -96,25 +78,19 @@ impl TimerManager {
     }
 
     pub fn tick(&mut self) {
-        for i in 0..MAX_TIMERS {
-            let expired = {
-                let t = &mut self.timers[i];
-                if !t.used || t.state != TimerState::Running {
-                    continue;
-                }
-                if t.remaining_ms > 1 {
-                    t.remaining_ms -= 1;
-                    continue;
-                }
-                t.remaining_ms = 0;
-                t.state = TimerState::Expired;
-                t.timer_type == TimerType::Periodic
-            };
-            if expired {
-                if let Some(t) = self.timers.get_mut(i) {
-                    t.state = TimerState::Running;
-                    t.remaining_ms = t.period_ms;
-                }
+        for (i, t) in self.timers.iter_mut() {
+            if t.state != TimerState::Running {
+                continue;
+            }
+            if t.remaining_ms > 1 {
+                t.remaining_ms -= 1;
+                continue;
+            }
+            t.remaining_ms = 0;
+            t.state = TimerState::Expired;
+            if t.timer_type == TimerType::Periodic {
+                t.state = TimerState::Running;
+                t.remaining_ms = t.period_ms;
             }
             kwait::kwait_wake(&WaitReason::Timer { timer_id: i as u32 });
         }
@@ -141,7 +117,7 @@ pub fn tick() {
     TIMER_MANAGER.lock().tick();
 }
 
-pub fn alloc_timer(ob_id: ObId, period_ms: u64, periodic: bool) -> Option<u32> {
+pub fn alloc_timer(ob_id: ObId, period_ms: u64, periodic: bool) -> Result<u32, ObError> {
     TIMER_MANAGER.lock().alloc(ob_id, period_ms, periodic)
 }
 
@@ -173,6 +149,14 @@ pub fn register_timer_tests() {
         mgr.free(id3);
     });
 
+    test_case!("timer_table_full", {
+        let mut mgr = TimerManager::new();
+        for i in 0..MAX_TIMERS {
+            test_true!(mgr.alloc(i as u64, 100, false).is_ok());
+        }
+        test_eq!(mgr.alloc(999, 100, false), Err(ObError::TableFull));
+    });
+
     test_case!("timer_start_cancel", {
         let mut mgr = TimerManager::new();
         let id = mgr.alloc(42, 100, false).unwrap();
@@ -187,11 +171,11 @@ pub fn register_timer_tests() {
         mgr.start(id);
         // After 1 tick, still running
         mgr.tick();
-        let t = mgr.timers[id as usize];
+        let t = *mgr.timers.get(id as usize).unwrap();
         test_eq!(t.state, TimerState::Running);
         // After 2nd tick, expired
         mgr.tick();
-        let t = mgr.timers[id as usize];
+        let t = *mgr.timers.get(id as usize).unwrap();
         test_eq!(t.state, TimerState::Expired);
         mgr.free(id);
     });
@@ -202,7 +186,7 @@ pub fn register_timer_tests() {
         mgr.start(id);
         mgr.tick();
         mgr.tick();
-        let t = mgr.timers[id as usize];
+        let t = *mgr.timers.get(id as usize).unwrap();
         test_eq!(t.state, TimerState::Running);
         test_eq!(t.remaining_ms, t.period_ms);
         mgr.free(id);
@@ -221,7 +205,6 @@ pub fn register_timer_tests() {
         let mut mgr = TimerManager::new();
         let id = mgr.alloc(42, 100, false).unwrap();
         mgr.free(id);
-        let t = mgr.timers[id as usize];
-        test_true!(!t.used);
+        test_true!(mgr.timers.get(id as usize).is_none());
     });
 }
