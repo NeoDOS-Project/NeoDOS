@@ -192,6 +192,16 @@ pub fn parse_nem_v3(data: &[u8]) -> Option<ParsedNemV3<'_>> {
         return None; // max 1MB per driver
     }
 
+    // AUDIT-002: the loader allocates `total_mem_size` bytes and then copies
+    // every section into it. Reject a header whose sections do not fit before
+    // any allocation or copy happens.
+    let section_bytes = header.text_size as u64
+        + header.rodata_size as u64
+        + header.data_size as u64;
+    if section_bytes > header.total_mem_size as u64 {
+        return None;
+    }
+
     // Validate offsets
     let hdr_end = header.header_size as usize;
     if hdr_end > data.len() { return None; }
@@ -364,6 +374,83 @@ pub fn build_valid_nem_v3(
     raw
 }
 
+/// Test builder: one `R_NEM_64` relocation against a defined symbol whose
+/// `value` is chosen by the caller (used to exercise symbol bounds checks).
+pub fn build_nem_v3_with_symbol(name: &str, code: &[u8], sym_value: u32) -> alloc::vec::Vec<u8> {
+    let name_bytes = name.as_bytes();
+    let name_len_padded = ((name_bytes.len() + 1) + 3) & !3;
+    let mut name_buf = alloc::vec::Vec::with_capacity(name_len_padded);
+    name_buf.extend_from_slice(name_bytes);
+    name_buf.push(0);
+    while name_buf.len() < name_len_padded {
+        name_buf.push(0);
+    }
+
+    let relocs_off = NEM_HEADER_SIZE_V3 + name_len_padded as u32;
+    let syms_off = relocs_off + NEM_RELOC_SIZE as u32;
+    let strtab_off = syms_off + NEM_SYMBOL_SIZE as u32;
+    let strtab: &[u8] = b"target\0";
+
+    let hdr = NemHeaderV3 {
+        magic: *b"NEM3",
+        version: NEM_VERSION_3,
+        header_size: NEM_HEADER_SIZE_V3,
+        flags: 0,
+        abi_min: ABI_MIN_VALID,
+        abi_target: ABI_TARGET,
+        abi_max: ABI_MAX_VALID,
+        driver_type: NemDriverType::Lifecycle as u16,
+        category: DriverCategory::Boot as u16,
+        text_size: code.len() as u32,
+        rodata_size: 0,
+        data_size: 0,
+        bss_size: 16,
+        total_mem_size: code.len() as u32 + 16,
+        entry_init: 0,
+        entry_event: 0,
+        entry_fini: 0,
+        num_relocs: 1,
+        relocs_offset: relocs_off,
+        syms_offset: syms_off,
+        strtab_offset: strtab_off,
+        name_offset: NEM_HEADER_SIZE_V3,
+    };
+
+    let reloc = NemReloc {
+        offset: 0,
+        section: NEM_SECT_TEXT as u16,
+        r_type: R_NEM_64,
+        sym_idx: 0,
+        addend: 0,
+    };
+    let symbol = NemSymbol {
+        name_off: 0,
+        value: sym_value,
+        section: NEM_SECT_TEXT as u16,
+        info: 0,
+        _pad1: 0,
+        _pad2: 0,
+    };
+
+    let mut raw = alloc::vec::Vec::new();
+    raw.extend_from_slice(unsafe {
+        core::slice::from_raw_parts(
+            &hdr as *const NemHeaderV3 as *const u8,
+            core::mem::size_of::<NemHeaderV3>(),
+        )
+    });
+    raw.extend_from_slice(&name_buf);
+    raw.extend_from_slice(unsafe {
+        core::slice::from_raw_parts(&reloc as *const NemReloc as *const u8, NEM_RELOC_SIZE)
+    });
+    raw.extend_from_slice(unsafe {
+        core::slice::from_raw_parts(&symbol as *const NemSymbol as *const u8, NEM_SYMBOL_SIZE)
+    });
+    raw.extend_from_slice(strtab);
+    raw.extend_from_slice(code);
+    raw
+}
+
 pub fn register_nem_tests() {
     use crate::test_case;
     use crate::test_eq;
@@ -437,5 +524,20 @@ pub fn register_nem_tests() {
         test_eq!(p.relocs[0].r_type, R_NEM_PC32);
         test_eq!(p.relocs[1].offset, 0x20);
         test_eq!(p.relocs[1].r_type, R_NEM_64);
+    });
+
+    // Deterministic mutation coverage for the header/name region: every byte
+    // is replaced by boundary values and the parser must return None/Some
+    // without panicking (AUDIT-002 / #810).
+    test_case!("nem_v3_parse_header_mutation_matrix", {
+        let code = [0x90u8; 16];
+        let base = build_valid_nem_v3("FUZZ", &code, &[], &[], 0, &[]);
+        for idx in 0..base.len().min(NEM_HEADER_SIZE_V3 as usize) {
+            for val in [0u8, 1, 0x7F, 0xFF] {
+                let mut raw = base.clone();
+                raw[idx] = val;
+                let _ = parse_nem_v3(&raw);
+            }
+        }
     });
 }

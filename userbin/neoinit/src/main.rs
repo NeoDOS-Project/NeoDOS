@@ -70,7 +70,7 @@ fn spawn_and_wait(path: &str, as_user: bool) -> Result<u32, i64> {
     Ok(0)
 }
 
-fn try_spawn_test(path: &str, tag: &str) {
+fn try_spawn_test_as(path: &str, tag: &str, as_user: bool) {
     let mut ob_path_buf = [0u8; 512];
     let bytes = path.as_bytes();
     let total = OB_FS_PREFIX.len() + bytes.len();
@@ -81,12 +81,24 @@ fn try_spawn_test(path: &str, tag: &str) {
         Ok(s) => s,
         Err(_) => return,
     };
-    match spawn_and_wait(ob_path, false) {
+    match spawn_and_wait(ob_path, as_user) {
         Ok(_) => write_str(b"[neoinit] test completed: "),
         Err(_) => write_str(b"[neoinit] test not found or failed: "),
     }
     write_str(tag.as_bytes());
     write_str(b"\r\n");
+}
+
+fn try_spawn_test(path: &str, tag: &str) {
+    try_spawn_test_as(path, tag, false);
+}
+
+/// Spawn a test binary with argv through the shared args buffer. The kernel
+/// copies it into the child's EPROCESS before the parent continues.
+fn try_spawn_test_with_args(path: &str, tag: &str, as_user: bool, args: &[u8]) {
+    libneodos::args::write_args(args);
+    try_spawn_test_as(path, tag, as_user);
+    libneodos::args::write_args(b"");
 }
 
 #[no_mangle]
@@ -176,6 +188,13 @@ pub extern "C" fn _start() -> ! {
         try_spawn_test("C:\\System\\Tools\\netsrv.nxe", "NETSRV");
         try_spawn_test("C:\\System\\Tools\\stresscmd.nxe", "STRESSCMD");
         try_spawn_test("C:\\System\\Tools\\shtest.nxe", "SHTEST");
+
+        // AUDIT-001 / #809 end-to-end probe: cmdtest runs once with the
+        // unprivileged account (must be denied) and once as SYSTEM (must not be
+        // blocked by the authorization gate).
+        try_spawn_test_with_args("C:\\Programs\\cmdtest.nxe", "NEMAUTH-USER", true, b"NEMAUTH");
+        try_spawn_test_with_args("C:\\Programs\\cmdtest.nxe", "NEMAUTH-ADMIN", false, b"NEMAUTH");
+        try_spawn_test_with_args("C:\\Programs\\cmdtest.nxe", "NEMLOAD", false, b"NEMLOAD");
     }
 
     // ── Run network test if enabled (requires bridged networking) ──

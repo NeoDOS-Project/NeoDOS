@@ -6,6 +6,12 @@
 
 ### Security
 
+- **Hardening del loader NEM (#809/#810/#811).** `ObCreate(Driver)` exige
+  administrador y una ruta bajo `C:\System\Drivers` (legacy o canónica); el
+  parser rechaza secciones que no caben en `total_mem_size`; las relocaciones
+  validan sección, offset y valor de símbolo antes de escribir, y un rechazo
+  libera el slot aislado o el fallback de heap. Cobertura end-to-end en
+  `cmdtest` (`NEMAUTH-USER`, `NEMAUTH-ADMIN`, `NEMLOAD`).
 - **Cierre del arco de identidad (#38/#65/#67).** `SessionUnlock` (59)
   re-autentica la contraseña de la sesión y la devuelve a `Active` conservando
   el token. El spawn dentro de una sesión exige ser su creador, administrador o
