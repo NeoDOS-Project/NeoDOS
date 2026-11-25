@@ -39,7 +39,7 @@ fn requested_session_id(path: &str) -> Result<Option<u32>, ()> {
         return Err(());
     }
     let id: u32 = rest.parse().map_err(|_| ())?;
-    if id == 0 {
+    if id < crate::security::session::SESSION_ID_MIN {
         return Err(());
     }
     Ok(Some(id))
@@ -89,9 +89,12 @@ pub(super) fn dispatch(
                 }
                 Err(_) => return err_to_u64(SyscallError::NoMem),
             };
+            let owner_pid = crate::hal::without_interrupts(|| {
+                crate::scheduler::current_scheduler().lock().current_pid()
+            });
             if crate::security::SESSIONS
                 .lock()
-                .register(Some(id), ob_id, vt_num)
+                .register(Some(id), ob_id, vt_num, owner_pid)
                 .is_err()
             {
                 let _ = crate::object::ob_destroy_object(ob_id);

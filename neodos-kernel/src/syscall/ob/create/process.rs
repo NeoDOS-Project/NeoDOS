@@ -47,11 +47,30 @@ pub(super) fn dispatch(
                     Some(id) => id,
                     None => return err_to_u64(SyscallError::Inval),
                 };
+                let caller_pid = crate::hal::without_interrupts(|| {
+                    crate::scheduler::current_scheduler().lock().current_pid()
+                });
                 let token = {
                     let mgr = crate::security::SESSIONS.lock();
                     match mgr.get(session_id) {
                         Some(s) if s.state == crate::security::session::SessionState::Active => {
-                            s.token.clone()
+                            // Using another process's session requires
+                            // SE_IMPERSONATE_PRIVILEGE; the login UI may use
+                            // the session it just created.
+                            let token = s.token.clone();
+                            let privileged = crate::syscall::is_current_admin()
+                                || s.owner_pid == caller_pid;
+                            match token {
+                                Some(t)
+                                    if privileged
+                                        || t.privileges
+                                            & crate::security::token::SE_IMPERSONATE_PRIVILEGE
+                                            != 0 =>
+                                {
+                                    Some(t)
+                                }
+                                _ => None,
+                            }
                         }
                         _ => None,
                     }

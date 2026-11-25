@@ -54,10 +54,12 @@ pub struct Sid {
 - Logon binds a token to an `ObType::Session` object; `LOGON`/`RUNAS` spawn a
   shell with that session token (bit 33). See "Sessions and logon" below.
 
-## Sessions and logon (v0.54)
+## Sessions and logon (v0.55)
 
-`security/session.rs` owns `SESSION_MANAGER`, a bounded table (16 entries) of
-login sessions. `ObCreate(Session)` creates `\Session\{id}` (id auto-assigned
+`security/session.rs` owns `SESSION_MANAGER`, a bounded table (16 slots) of
+login sessions. Real session ids start at 2: id 1 belongs to the phase-1
+interactive token (`Token::new_user()`), which has no registered session, so a
+logoff can never invalidate the wrong processes. `ObCreate(Session)` creates `\Session\{id}` (id auto-assigned
 when the path is `\Session`) in `LoggedOff` and returns a handle.
 
 - **Logon** — `ObSetInfo(SessionLogon)` with `ObSessionCredentials`
@@ -65,14 +67,20 @@ when the path is `\Session`) in `LoggedOff` and returns a handle.
   SAM and binds `Token::from_sam(entry, session_id)` to the session
   (`Active`). Wrong credentials return `EPERM`; an already-active session
   returns `EEXIST`.
-- **Lock / logoff** — `SessionLock`/`SessionLogoff` are restricted to an
-  administrator or the session's own identity. Logoff drops the token and
+- **Lock / unlock / logoff** — `SessionLock`/`SessionLogoff` are restricted to
+  an administrator or the session's own identity. Logoff drops the token and
   invalidates every copy already handed to processes: `SeAccessCheck` denies a
   token whose registered session is no longer `Active` (`session_id == 0` and
-  unregistered ids are unaffected).
+  unregistered ids are unaffected). `SessionUnlock` (59) re-authenticates the
+  session user's password and restores `Active` while keeping the token. A
+  logged-off session invalidates its tokens; a session-bound NeoShell notices
+  the closed session before its next command and exits, returning to the
+  previous shell.
 - **Process identity** — `ObCreate(Process)` bit 33 spawns the child with the
   active token of the session in attrs bits 40..47; bit 32 keeps the phase-1
-  default-account path. Both bits together are rejected.
+  default-account path. Both bits together are rejected. Spawning into a
+  session requires being its creator (`Session.owner_pid`), an administrator,
+  or holding `SE_IMPERSONATE_PRIVILEGE` (bit 12).
 - **Query** — `ObInfoClass::SessionInfo` (52) returns id, state, VT, admin flag,
   login sequence, username, user SID and the live process count.
 - **Credentials** — SAM stores `SHA-256(salt || password)` with a per-entry

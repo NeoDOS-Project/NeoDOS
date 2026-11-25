@@ -177,6 +177,8 @@ pub enum ObSetInfoClass {
     SessionLock = 57,
     /// Log off a session and invalidate issued tokens (`#39`).
     SessionLogoff = 58,
+    /// Unlock a locked session by re-authenticating its user (`#38`).
+    SessionUnlock = 59,
 }
 
 /// Backward-compatible constants for `ObSetInfoClass`.
@@ -294,6 +296,7 @@ pub struct ObFileSecurity {
 /// ObEnumEntry — ABI-compatible with kernel's ObEnumEntry (RAX=64).
 /// Backward compatible: first 44 bytes same as v0.44, new fields mode+size at end.
 #[repr(C)]
+#[derive(Clone, Copy)]
 pub struct ObEnumEntry {
     pub id: u64,
     pub obj_type: u32,
@@ -304,6 +307,15 @@ pub struct ObEnumEntry {
 }
 
 impl ObEnumEntry {
+    pub const EMPTY: ObEnumEntry = ObEnumEntry {
+        id: 0,
+        obj_type: 0,
+        name: [0u8; 32],
+        mode: 0,
+        _pad: [0u8; 2],
+        size: 0,
+    };
+
     pub fn name_str(&self) -> &str {
         let end = self.name.iter().position(|&b| b == 0).unwrap_or(32);
         core::str::from_utf8(&self.name[..end]).unwrap_or("<?>")
@@ -496,6 +508,24 @@ pub fn ob_session_logon(fd: u8, username: &str, password: &str) -> Result<(), i6
 /// Drop the session token and invalidate every token issued for the session.
 pub fn ob_session_logoff(fd: u8) -> Result<(), i64> {
     sys_ob_set_info(fd, ObSetInfoClass::SessionLogoff, &[])
+}
+
+/// Re-authenticate the session user and unlock the session.
+pub fn ob_session_unlock(fd: u8, password: &str) -> Result<(), i64> {
+    let mut creds = ObSessionCredentials {
+        username: [0u8; 32],
+        password: [0u8; 64],
+    };
+    let p = password.as_bytes();
+    let pl = p.len().min(63);
+    creds.password[..pl].copy_from_slice(&p[..pl]);
+    let bytes = unsafe {
+        core::slice::from_raw_parts(
+            &creds as *const ObSessionCredentials as *const u8,
+            core::mem::size_of::<ObSessionCredentials>(),
+        )
+    };
+    sys_ob_set_info(fd, ObSetInfoClass::SessionUnlock, bytes)
 }
 
 /// Query session metadata (state, identity, process count).

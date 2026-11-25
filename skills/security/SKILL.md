@@ -285,6 +285,8 @@ let parsed = parse_sam(&bytes).unwrap();
 - ACEs are matched against the primary SID and all group SIDs.
 - Tokens are copied at spawn; mutating a parent token does not affect children.
 - SAM usernames are case-insensitive and zero-padded to 32 bytes.
+- `SessionUnlock` (59) re-authenticates the session password; spawning into a
+  session requires its creator, an administrator, or `SE_IMPERSONATE_PRIVILEGE`.
 - Session IDs isolate terminal sessions. `security/session.rs` binds tokens to
   `\Session\{id}`; `SeAccessCheck` denies tokens of a logged-off session.
   Logon is `ObSetInfo(SessionLogon)`; spawn-in-session uses `ObCreate(Process)`

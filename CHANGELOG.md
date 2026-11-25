@@ -6,6 +6,13 @@
 
 ### Security
 
+- **Cierre del arco de identidad (#38/#65/#67).** `SessionUnlock` (59)
+  re-autentica la contraseña de la sesión y la devuelve a `Active` conservando
+  el token. El spawn dentro de una sesión exige ser su creador, administrador o
+  tener `SE_IMPERSONATE_PRIVILEGE`. `who.nxe` enumera `\Session` con
+  `SessionInfo` y `logoff.nxe` cierra la sesión del shell (que termina al quedar
+  su token invalidado). `RUNAS /user:<cuenta> <comando>` ejecuta un `.NXE` con
+  argumentos en la sesión autenticada; sin comando abre un shell.
 - **Sesiones de login y elevación (#37/#39/#40/#67).** `SessionManager` con
   objetos `\Session\{id}` (`ObType::Session`, estados Active/Locked/LoggedOff),
   autenticación de contraseñas SAM (`SHA-256(salt || password)`) y tokens ligados

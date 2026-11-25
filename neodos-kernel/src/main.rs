@@ -86,7 +86,7 @@ pub const KERNEL_VERSION: &str = concat!(
 );
 
 const BOOTINFO_MAGIC: u32 = 0x4E444F53; // "NDOS" in ASCII
-const KERNEL_VERSION_CODE: u32 = (54) << 8 | 0; // v0.54.0
+const KERNEL_VERSION_CODE: u32 = (55) << 8 | 0; // v0.55.0
 
 #[repr(C)]
 pub struct BootInfo {
