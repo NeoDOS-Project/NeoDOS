@@ -27,12 +27,22 @@
 //! Completion callbacks are dispatched via the high-priority work queue.
 
 use alloc::boxed::Box;
-use core::sync::atomic::{AtomicU32, Ordering};
+use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use spin::Mutex;
 use crate::work_queue::WORK_QUEUE;
 use crate::{test_case, test_eq, test_ne, test_true};
 
 const IRP_POOL_SIZE: usize = 64;
+
+/// Number of `irp_alloc` calls rejected because the slot for the generated ID
+/// was still in use (pool exhausted or `id % IRP_POOL_SIZE` collision).
+static IRP_ALLOC_FAILURES: AtomicU64 = AtomicU64::new(0);
+
+/// Total number of IRP allocations rejected by the pool.
+#[inline]
+pub fn irp_alloc_failures() -> u64 {
+    IRP_ALLOC_FAILURES.load(Ordering::Relaxed)
+}
 
 /// Magic number for IRP waiting — F-03 full-width 64-bit: high 32 tag, low 32 id.
 pub const IRP_WAIT_MAGIC: u64 = 0xAAAA_0000_0000_0000;
@@ -189,7 +199,13 @@ pub fn irp_alloc(
 ) -> Option<IrpId> {
     let id = IRP_POOL.next_id.fetch_add(1, Ordering::Relaxed);
     with_pool(|pool| {
-        let irp = pool.alloc(id)?;
+        let irp = match pool.alloc(id) {
+            Some(irp) => irp,
+            None => {
+                IRP_ALLOC_FAILURES.fetch_add(1, Ordering::Relaxed);
+                return None;
+            }
+        };
         irp.op = op;
         irp.lba = lba;
         irp.count = count;
@@ -294,7 +310,9 @@ pub fn irp_complete(irp_id: IrpId, status: IrpStatus) {
                 WORK_QUEUE.process_high();
             });
             if !WORK_QUEUE.push_high(irp_cb_dispatch, ptr) {
-                let _ = unsafe { Box::from_raw(ptr.cast::<IrpCbDispatch>()) };
+                // The queue is still full after draining it: run the completion
+                // inline so a full queue can never lose a driver callback.
+                irp_cb_dispatch(ptr);
             }
         }
     }
@@ -416,6 +434,23 @@ fn test_irp_free_reuse() -> Result<(), &'static str> {
         .ok_or("alloc2 failed")?;
     test_true!(id2 != 0);
     irp_free(id2);
+    Ok(())
+}
+
+fn test_irp_alloc_exhaustion_counted() -> Result<(), &'static str> {
+    let before = irp_alloc_failures();
+    let mut ids = alloc::vec::Vec::new();
+    loop {
+        match irp_alloc(IrpOp::Read, 0, 1, core::ptr::null_mut(), 512, None, core::ptr::null_mut()) {
+            Some(id) => ids.push(id),
+            None => break,
+        }
+    }
+    test_true!(ids.len() <= IRP_POOL_SIZE);
+    test_eq!(irp_alloc_failures(), before + 1);
+    for id in ids {
+        irp_free(id);
+    }
     Ok(())
 }
 
@@ -684,6 +719,7 @@ pub fn register_tests() {
     test_case!("irp_error_status", { test_irp_error_status()?; });
     test_case!("irp_alloc_unique_ids", { test_irp_alloc_unique_ids()?; });
     test_case!("irp_free_reuse", { test_irp_free_reuse()?; });
+    test_case!("irp_alloc_exhaustion_counted", { test_irp_alloc_exhaustion_counted()?; });
     test_case!("irp_queue_fifo", { test_irp_queue_fifo()?; });
     test_case!("irp_queue_wraparound", { test_irp_queue_wraparound()?; });
     test_case!("irp_callback_dispatched", { test_irp_callback_dispatched()?; });

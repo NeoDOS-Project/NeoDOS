@@ -8,7 +8,7 @@
 //! Queues use a lock-free SPSC ring buffer (IRQ-safe push, consumer must disable interrupts).
 
 use core::cell::UnsafeCell;
-use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering, compiler_fence};
+use core::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering, compiler_fence};
 use crate::{test_eq, test_true};
 
 const CAPACITY: usize = 64;
@@ -33,6 +33,7 @@ pub struct WorkQueue {
     head: AtomicUsize,
     tail: AtomicUsize,
     pub pending: AtomicBool,
+    overflows: AtomicU64,
 }
 
 unsafe impl Sync for WorkQueue {}
@@ -45,16 +46,19 @@ impl WorkQueue {
             head: AtomicUsize::new(0),
             tail: AtomicUsize::new(0),
             pending: AtomicBool::new(false),
+            overflows: AtomicU64::new(0),
         }
     }
 
     /// Push a work item. IRQ-safe, lock-free.
-    /// Returns false if the queue is full.
+    /// Returns false if the queue is full; the rejected item is counted in
+    /// [`Self::overflow_count`].
     pub fn push(&self, func: WorkFn, data: *mut u8) -> bool {
         let tail = self.tail.load(Ordering::Relaxed);
         let head = self.head.load(Ordering::Acquire);
         let next = (tail + 1) % CAPACITY;
         if next == head {
+            self.overflows.fetch_add(1, Ordering::Relaxed);
             return false;
         }
         unsafe {
@@ -64,6 +68,12 @@ impl WorkQueue {
         self.tail.store(next, Ordering::Release);
         self.pending.store(true, Ordering::Release);
         true
+    }
+
+    /// Number of work items rejected because the queue was full.
+    #[inline]
+    pub fn overflow_count(&self) -> u64 {
+        self.overflows.load(Ordering::Relaxed)
     }
 
     /// Pop a work item. Must be called with interrupts disabled.
@@ -268,6 +278,19 @@ fn test_wq_overflow() -> Result<(), &'static str> {
     Ok(())
 }
 
+fn test_wq_overflow_counted() -> Result<(), &'static str> {
+    fn dummy(_: *mut u8) {}
+    let wq = WorkQueue::new();
+    for i in 0..CAPACITY - 1 {
+        test_true!(wq.push(dummy, i as *mut u8));
+    }
+    test_eq!(wq.overflow_count(), 0);
+    test_true!(!wq.push(dummy, core::ptr::null_mut()));
+    test_eq!(wq.overflow_count(), 1);
+    test_eq!(wq.pending_count(), CAPACITY - 1);
+    Ok(())
+}
+
 fn test_wq_high_low_isolation() -> Result<(), &'static str> {
     static H_COUNT: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
     static L_COUNT: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
@@ -313,6 +336,7 @@ pub fn register_tests() {
     crate::testing::register("wq_fifo_order", test_wq_fifo_order);
     crate::testing::register("wq_empty_queue", test_wq_empty_queue);
     crate::testing::register("wq_overflow", test_wq_overflow);
+    crate::testing::register("wq_overflow_counted", test_wq_overflow_counted);
     crate::testing::register("wq_high_low_isolation", test_wq_high_low_isolation);
     crate::testing::register("wq_pending_flag", test_wq_pending_flag);
 }

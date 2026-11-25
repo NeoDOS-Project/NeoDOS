@@ -76,7 +76,8 @@ impl DpcQueue {
 
     /// Enqueue a DPC for deferred execution.
     /// Safe to call from DIRQL context (interrupts disabled by hardware).
-    /// If the queue is full, the DPC is silently dropped.
+    /// Returns false if the queue is full. Callers that must account for loss
+    /// should use [`insert_queue_dpc`], which increments `DPC_DROPPED_COUNT`.
     #[inline]
     pub fn enqueue(&mut self, function: DpcFn, context: *mut u8) -> bool {
         if self.count as usize >= DPC_QUEUE_SIZE {
