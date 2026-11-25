@@ -107,29 +107,6 @@ fn se_access_check_inner(
     check_dacl(dacl, &token.sid, &token.groups, desired_access)
 }
 
-/// SID-only variant for callers without a full `Token` (no group membership).
-///
-/// Same NULL/empty DACL semantics as `se_access_check`; the trustee is the
-/// single supplied SID.
-pub fn se_access_check_sid(
-    token_sid: &Sid,
-    is_admin: bool,
-    dacl: Option<&Acl>,
-    desired_access: u32,
-) -> bool {
-    if is_admin {
-        return true;
-    }
-    let dacl = match dacl {
-        Some(a) => a,
-        None => return true, // NULL DACL → full access
-    };
-    if dacl.is_empty() {
-        return false; // empty DACL → deny all
-    }
-    check_dacl(dacl, token_sid, &[], desired_access)
-}
-
 /// Emit SACL audit records for an access attempt.
 ///
 /// No-op unless auditing is enabled and the descriptor carries a SACL with a

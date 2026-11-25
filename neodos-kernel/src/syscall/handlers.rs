@@ -2,7 +2,7 @@
 //! All functions are `pub(super)` for SSDT registration in `mod.rs`.
 
 use crate::log::LogSubsys;
-use crate::scheduler::{self, ThreadState};
+use crate::scheduler;
 use crate::net::types::Ipv4Addr;
 use super::{err_to_u64, SyscallError, is_user_ptr_valid, copy_user_string,
            copy_from_user, copy_to_user,
@@ -274,61 +274,6 @@ pub(super) fn handler_dup2(regs: super::Registers) -> u64 {
 
     set_current_handle(new_fd, src_entry);
     new_fd as u64
-}
-
-pub(super) fn handler_waitpid(regs: super::Registers) -> u64 {
-    let wait_pid = regs.rbx as u32;
-
-    if wait_pid == 0xFFFFFFFF {
-        let child_pid = crate::hal::without_interrupts(|| {
-            let s = crate::scheduler::current_scheduler();
-            let scheduler = s.lock();
-            let my_pid = scheduler.current_pid();
-            for ep in scheduler.eprocesses.iter().flatten() {
-                if ep.parent_pid == my_pid && ep.thread_count == 0 {
-                    return Some(ep.pid);
-                }
-            }
-            None
-        });
-
-        if let Some(pid) = child_pid {
-            crate::scheduler::cleanup_terminated_process(pid);
-            return pid as u64;
-        }
-        crate::hal::without_interrupts(|| {
-            let s = crate::scheduler::current_scheduler();
-            let mut lock = s.lock();
-            let tid = lock.current_tid_for_this_cpu();
-            if tid > 0 {
-                if let Some(k) = lock.current_kthread_mut() {
-                    // Phase 13-A: record yield intent; `syscall_try_resched`
-                    // saves `rsp` and publishes the thread.
-                    k.yield_requested = true;
-                }
-            }
-        });
-        set_need_resched();
-        0
-    } else {
-        let is_terminated = crate::hal::without_interrupts(|| {
-            let s = crate::scheduler::current_scheduler();
-            let scheduler = s.lock();
-            if let Some(ep) = scheduler.find_eprocess(wait_pid) {
-                ep.thread_count == 0
-            } else {
-                true
-            }
-        });
-
-        if is_terminated {
-            crate::scheduler::cleanup_terminated_process(wait_pid);
-            0
-        } else {
-            crate::kwait::kwait_block(crate::kwait::WaitReason::ChildExit { pid: wait_pid });
-            err_to_u64(SyscallError::Again)
-        }
-    }
 }
 
 pub(super) fn handler_close(regs: super::Registers) -> u64 {

@@ -144,23 +144,6 @@ impl ObNamespace {
         self.resolve_symlink_internal(path, 0)
     }
 
-    pub fn lookup_path_no_follow(&self, path: &str) -> Result<ObId, &'static str> {
-        let components = Self::parse_path(path)?;
-        if components.is_empty() {
-            return Err(OB_NOT_FOUND);
-        }
-        let mut current = &self.root;
-        for i in 0..components.len() {
-            let is_last = i == components.len() - 1;
-            let key = name_to_key(components[i]);
-            if is_last {
-                return current.children.get(&key).copied().ok_or(OB_NOT_FOUND);
-            }
-            current = current.child_dirs.get(&key).ok_or(OB_NOT_FOUND)?;
-        }
-        Err(OB_NOT_FOUND)
-    }
-
     pub fn lookup_symlink(&self, path: &str) -> Result<SymlinkEntry, &'static str> {
         let components = Self::parse_path(path)?;
         if components.is_empty() {
