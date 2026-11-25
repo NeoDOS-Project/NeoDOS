@@ -54,12 +54,7 @@ static mut ANSI_CSI_PARAMS: [u16; 8] = [0; 8];
 static mut ANSI_CSI_COUNT: usize = 0;
 static mut ANSI_CSI_HAS_DIGIT: bool = false;
 
-// ── Public helpers for tests ──────────────────────────────────────────────
-pub fn get_row() -> usize { ROW.load(Ordering::SeqCst) }
-pub fn get_col() -> usize { COL.load(Ordering::SeqCst) }
-pub fn get_fg() -> u32 { ANSI_FG.load(Ordering::Relaxed) }
-pub fn get_bg() -> u32 { ANSI_BG.load(Ordering::Relaxed) }
-pub fn get_bold() -> bool { ANSI_BOLD.load(Ordering::Relaxed) }
+// ── ANSI cursor/attribute state ───────────────────────────────────────────
 
 pub(crate) fn xterm_256_to_rgb(index: u8) -> u32 {
     if index < 16 {

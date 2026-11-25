@@ -7,24 +7,43 @@ use crate::panic_classification::PanicClass;
 
 // ── Exception type constants (shared with libneodos user-mode) ──
 
+#[allow(dead_code)] // architectural exception vector
 pub const EXCEPTION_DIVIDE_ERROR: u32 = 0;
+#[allow(dead_code)] // architectural exception vector
 pub const EXCEPTION_DEBUG: u32 = 1;
+#[allow(dead_code)] // architectural exception vector
 pub const EXCEPTION_NMI: u32 = 2;
+#[allow(dead_code)] // architectural exception vector
 pub const EXCEPTION_BREAKPOINT: u32 = 3;
+#[allow(dead_code)] // architectural exception vector
 pub const EXCEPTION_OVERFLOW: u32 = 4;
+#[allow(dead_code)] // architectural exception vector
 pub const EXCEPTION_BOUND_RANGE: u32 = 5;
+#[allow(dead_code)] // architectural exception vector
 pub const EXCEPTION_INVALID_OPCODE: u32 = 6;
+#[allow(dead_code)] // architectural exception vector
 pub const EXCEPTION_DEVICE_NOT_AVAILABLE: u32 = 7;
+#[allow(dead_code)] // architectural exception vector
 pub const EXCEPTION_DOUBLE_FAULT: u32 = 8;
+#[allow(dead_code)] // architectural exception vector
 pub const EXCEPTION_INVALID_TSS: u32 = 10;
+#[allow(dead_code)] // architectural exception vector
 pub const EXCEPTION_SEGMENT_NOT_PRESENT: u32 = 11;
+#[allow(dead_code)] // architectural exception vector
 pub const EXCEPTION_STACK_SEGMENT_FAULT: u32 = 12;
+#[allow(dead_code)] // architectural exception vector
 pub const EXCEPTION_GPF: u32 = 13;
+#[allow(dead_code)] // architectural exception vector
 pub const EXCEPTION_PAGE_FAULT: u32 = 14;
+#[allow(dead_code)] // architectural exception vector
 pub const EXCEPTION_X87: u32 = 16;
+#[allow(dead_code)] // architectural exception vector
 pub const EXCEPTION_ALIGNMENT_CHECK: u32 = 17;
+#[allow(dead_code)] // architectural exception vector
 pub const EXCEPTION_MACHINE_CHECK: u32 = 18;
+#[allow(dead_code)] // architectural exception vector
 pub const EXCEPTION_SIMD: u32 = 19;
+#[allow(dead_code)] // architectural exception vector
 pub const EXCEPTION_VIRTUALIZATION: u32 = 20;
 
 // ── Exception action enum ──

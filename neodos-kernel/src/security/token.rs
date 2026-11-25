@@ -7,23 +7,38 @@ use alloc::vec::Vec;
 
 // ── Privilege flags ─────────────────────────────────────────────────
 
+#[allow(dead_code)] // reserved for privilege enforcement (#56)
 pub const SE_CREATE_TOKEN_PRIVILEGE: u64 = 1 << 0;
+#[allow(dead_code)] // reserved for privilege enforcement (#56)
 pub const SE_TCB_PRIVILEGE: u64 = 1 << 1;
+#[allow(dead_code)] // reserved for privilege enforcement (#56)
 pub const SE_LOAD_DRIVER_PRIVILEGE: u64 = 1 << 2;
+#[allow(dead_code)] // reserved for privilege enforcement (#56)
 pub const SE_SHUTDOWN_PRIVILEGE: u64 = 1 << 3;
+#[allow(dead_code)] // reserved for privilege enforcement (#56)
 pub const SE_DEBUG_PRIVILEGE: u64 = 1 << 4;
+#[allow(dead_code)] // reserved for privilege enforcement (#56)
 pub const SE_SYSTEM_ENVIRONMENT_PRIVILEGE: u64 = 1 << 5;
+#[allow(dead_code)] // reserved for privilege enforcement (#56)
 pub const SE_CHANGE_NOTIFY_PRIVILEGE: u64 = 1 << 6;
+#[allow(dead_code)] // reserved for privilege enforcement (#56)
 pub const SE_BACKUP_PRIVILEGE: u64 = 1 << 7;
+#[allow(dead_code)] // reserved for privilege enforcement (#56)
 pub const SE_RESTORE_PRIVILEGE: u64 = 1 << 8;
+#[allow(dead_code)] // reserved for privilege enforcement (#56)
 pub const SE_TAKE_OWNERSHIP_PRIVILEGE: u64 = 1 << 9;
+#[allow(dead_code)] // reserved for privilege enforcement (#56)
 pub const SE_INCREASE_QUOTA_PRIVILEGE: u64 = 1 << 10;
+#[allow(dead_code)] // reserved for privilege enforcement (#56)
 pub const SE_MANAGE_VOLUME_PRIVILEGE: u64 = 1 << 11;
 /// Impersonate another user's session (e.g. a trusted logon service opening a
 /// session it does not own). Granted to administrators/SYSTEM by default.
+#[allow(dead_code)] // reserved for privilege enforcement (#56)
 pub const SE_IMPERSONATE_PRIVILEGE: u64 = 1 << 12;
 
+#[allow(dead_code)] // reserved for privilege enforcement (#56)
 pub const SE_ADMIN_PRIVILEGES: u64 = 0xFFFF;
+#[allow(dead_code)] // reserved for privilege enforcement (#56)
 pub const SE_USER_PRIVILEGES: u64 = SE_CHANGE_NOTIFY_PRIVILEGE;
 
 // ── Integrity levels (NT Mandatory Integrity Control) ───────────────

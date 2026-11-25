@@ -1,16 +1,11 @@
-use core::ptr::read_volatile;
 use crate::log::LogSubsys;
 
 // ── MSRs ───────────────────────────────────────────────────────────
 const IA32_APIC_BASE: u32 = 0x1B;
 const IA32_APIC_BASE_ENABLE: u64 = 1 << 11;
-const IA32_APIC_BASE_X2APIC: u64 = 1 << 10;
-const IA32_APIC_BASE_BSP: u64 = 1 << 8;
 const IA32_APIC_BASE_ADDR_MASK: u64 = 0xFFFF_FFFF_FFFF_F000;
 
 // ── Local APIC register offsets (MMIO from base) ───────────────────
-const APIC_ID_REG: u64          = 0x020;
-const APIC_VERSION_REG: u64     = 0x030;
 const APIC_LVT_TIMER: u64       = 0x320;
 const APIC_TIMER_INIT_COUNT: u64 = 0x380;
 const APIC_TIMER_CUR_COUNT: u64 = 0x390;
@@ -19,10 +14,8 @@ const APIC_SVR: u64             = 0x0F0;   // Spurious Interrupt Vector
 const APIC_EOI: u64             = 0x0B0;
 
 // ── LVT Timer bits ─────────────────────────────────────────────────
-const APIC_LVT_TIMER_MASKED: u32      = 1 << 16;
 const APIC_LVT_TIMER_PERIODIC: u32    = 1 << 17;
 const APIC_LVT_TIMER_ONE_SHOT: u32    = 0 << 17;
-const APIC_LVT_TIMER_TSC_DEADLINE: u32 = 2 << 17;
 
 // ── Divider values ─────────────────────────────────────────────────
 const APIC_DIVIDE_1: u32   = 0b1011;
@@ -49,11 +42,6 @@ unsafe fn rdmsr(msr: u32) -> u64 {
     crate::hal::raw::raw_read_msr(msr)
 }
 
-#[inline]
-unsafe fn wrmsr(msr: u32, val: u64) {
-    crate::hal::raw::raw_write_msr(msr, val);
-}
-
 // ── MMIO helpers ───────────────────────────────────────────────────
 
 #[inline]
@@ -74,11 +62,6 @@ unsafe fn set_apic_base(base: u64) {
 }
 
 // ── Public API ─────────────────────────────────────────────────────
-
-/// Return the APIC MMIO base address (0 if not initialized).
-pub fn apic_base() -> u64 {
-    unsafe { APIC_BASE }
-}
 
 /// Return the calibrated APIC bus frequency in KHz (0 if not calibrated).
 pub fn apic_bus_khz() -> u64 {
@@ -314,46 +297,6 @@ fn divider_value(div_reg: u32) -> u64 {
         APIC_DIVIDE_64 => 64,
         APIC_DIVIDE_128 => 128,
         _ => 16,
-    }
-}
-
-/// Send End-Of-Interrupt to the APIC (write 0 to EOI register).
-pub unsafe fn apic_eoi() {
-    if APIC_BASE != 0 {
-        apic_write(APIC_EOI, 0);
-    }
-}
-
-/// Read the APIC ID of the current CPU.
-pub fn apic_id() -> u32 {
-    unsafe {
-        if APIC_BASE != 0 {
-            (apic_read(APIC_ID_REG) >> 24) & 0xFF
-        } else {
-            0
-        }
-    }
-}
-
-/// Check if this is the Bootstrap Processor (BSP).
-pub fn is_bsp() -> bool {
-    unsafe {
-        let base = rdmsr(IA32_APIC_BASE);
-        (base & IA32_APIC_BASE_BSP) != 0
-    }
-}
-
-/// Get a CPU's APIC ID from its index.
-/// Requires the KPRCB to be initialized for that CPU.
-pub fn get_apic_id_for_cpu(cpu: u32) -> Option<u32> {
-    if cpu as usize >= crate::arch::x64::cpu_local::MAX_CPUS {
-        return None;
-    }
-    unsafe {
-        let kprcb = crate::arch::x64::cpu_local::KPRCB_PAGES[cpu as usize];
-        if kprcb == 0 { return None; }
-        let apic_id = core::ptr::read_volatile((kprcb + 4) as *const u32);
-        Some(apic_id)
     }
 }
 
