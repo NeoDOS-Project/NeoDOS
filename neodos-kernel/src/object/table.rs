@@ -403,8 +403,7 @@ pub fn ob_create_object_path(
 
     let native_id = match obj_type {
         ObType::Pipe => {
-            let pipe_id = crate::object::pipe::PIPE_MANAGER.alloc()
-                .ok_or(ObError::OutOfMemory)?;
+            let pipe_id = crate::object::pipe::PIPE_MANAGER.alloc()?;
             pipe_id as u64
         }
         _ => attrs as u64,

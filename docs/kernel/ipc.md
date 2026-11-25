@@ -4,7 +4,7 @@
 
 ### Architecture
 
-Dynamic pipe storage using `PipeManager { pipes: Mutex<Vec<Option<Mutex<PipeInner>>>>, kobj_ids: Mutex<Vec<Option<ObId>>> }` (since v0.41). Each `PipeInner` contains a boxed ring buffer (`Box<[u8; 4096]>`), read/write cursors, and reference counts.
+Static slots using `PipeManager { pipes: Mutex<SlotTable<PipeEntry, MAX_PIPES>> }`, where `PipeEntry` holds the per-pipe `Mutex<PipeInner>` and its ObId. Each `PipeInner` contains a boxed ring buffer (`Box<[u8; 4096]>`), read/write cursors, and reference counts. `alloc()` returns `Result<u8, ObError>` and reports `TableFull` when all 16 slots are in use.
 
 Reference-counted: auto-freed when all reader/writer file descriptors are closed. `pipe_close()` decrements refcount; the buffer is freed when it reaches 0.
 
@@ -23,12 +23,15 @@ After a writer writes data, it calls `wake_pipe_readers(pipe_id)` which scans th
 ### Pipe Manager API
 
 ```rust
+struct PipeEntry {
+    inner: Mutex<PipeInner>,
+    kobj_id: Option<ObId>,
+}
 pub struct PipeManager {
-    pipes: Mutex<Vec<Option<Mutex<PipeInner>>>>,
-    kobj_ids: Mutex<Vec<Option<ObId>>>,
+    pipes: Mutex<SlotTable<PipeEntry, MAX_PIPES>>,
 }
 impl PipeManager {
-    pub fn alloc(&self) -> Option<u8>;
+    pub fn alloc(&self) -> Result<u8, ObError>; // Err(TableFull) when full
     pub fn inc_read_ref(&self, pipe_id: u8);
     pub fn inc_write_ref(&self, pipe_id: u8);
     pub fn dec_read_ref(&self, pipe_id: u8);
@@ -108,7 +111,7 @@ File handles carry a per-open `offset` field (u64) allowing independent read/wri
 
 ### Global Pool
 
-64 IRP slots with sequential IDs via `AtomicU32`. `irp_alloc()` returns `IrpId` (1-indexed u32). `irp_free(id)` returns to pool.
+64 IRP slots (`SlotTable<Irp, IRP_POOL_SIZE>`) with sequential IDs via `AtomicU32`; the slot is `id % IRP_POOL_SIZE`, reserved with `alloc_at`. `irp_alloc()` returns `IrpId` (1-indexed u32) or `None` when that slot is still in use. `irp_free(id)` returns to pool.
 
 ### IrpQueue
 
