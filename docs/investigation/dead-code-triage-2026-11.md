@@ -42,8 +42,11 @@ The compiler `dead_code` inventory went from **329 to 226** warnings.
 
 ## Policy
 
-1. New code must not increase the `dead_code` count.
+1. New code must not increase the `dead_code` count: CI runs
+   `python3 scripts/check-dead-code.py --json-file <build.json>` against
+   `dead-code-baseline.txt`.
 2. An API added ahead of its caller needs a doc comment, an owning issue and a
-   site-local `#[allow(dead_code)]` with the reason.
+   site-local `#[allow(dead_code)]` with the reason; add the diagnostic to the
+   baseline only when it is triaged.
 3. Security/diagnostic hooks are wired, not deleted, unless the owning feature is
    explicitly dropped.
