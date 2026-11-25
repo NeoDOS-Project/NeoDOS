@@ -3,9 +3,12 @@
 > **Autor:** Arquitecto Jefe de Sistemas Operativos
 > **Versión:** v0.2
 > **Fecha:** 2026-06-23
-> **Estado:** Documento histórico (v0.44.1) — implementado parcialmente.
+> **Estado:** Documento histórico (v0.44.1) — implementado parcialmente. No usar como referencia de ABI.
 > **Nota:** las numeraciones de syscalls citadas (p. ej. `RAX 60–66`) están obsoletas;
-> el ABI vigente es `docs/kernel/syscalls.md` (Ob 40–48, Cm 50–59).
+> el ABI vigente está en [`syscalls.md`](syscalls.md) (Ob RAX 40–48, Cm 50–59) y los
+> tipos e info classes en [`objects.md`](objects.md).
+> Las rutas y nombres de este documento (`src/kobj/*`, `src/pipe.rs`, `ob_resolve_path`)
+> describen el estado pre-v0.50.
 
 ---
 
@@ -481,7 +484,7 @@ La URN actual (`neodos://<scheme>/<path>`) se convierte en un frontend de Ob:
 
 ## 12. Nuevas Syscalls
 
-### 12.1 Slot Allocation
+### 12.1 Slot Allocation (histórico — el ABI actual usa RAX 40–48)
 
 | RAX | Syscall | Args | Reemplaza | Estado |
 | ----- | --------- | ------ | ----------- | -------- |

@@ -13,9 +13,9 @@
 The Registry (`src/cm/`) is an NT-style cell-based hive system:
 
 - **CmManager** (`src/cm/mod.rs`, 882 lines): global state holding up to 8 mounted hives in `Vec<HiveMount>`.
-- **Hive** (`src/cm/hive.rs`, 755 lines): flat array of 2048 `Option<Cell>` slots. Cells types: `Free(0)`, `Key(1)`, `Value(2)`, `Security(3)`.
+- **Hive** (`src/cm/hive/`, 755 lines): flat array of 2048 `Option<Cell>` slots. Cells types: `Free(0)`, `Key(1)`, `Value(2)`, `Security(3)`.
 - **Persistence**: NEOH binary format (magic `NEOH`, version 1, `wrapping_add` checksum). Flush serializes entire hive to `C:\System\Registry\<name>.hiv`.
-- **Syscalls**: RAX 67-76 (`cm_open_key`, `cm_create_key`, `cm_query_value`, `cm_set_value`, `cm_enum_key`, `cm_enum_value`, `cm_delete_key`, `cm_flush_key`, `cm_load_hive`, `cm_unload_hive`).
+- **Syscalls**: RAX 50-59 (`cm_open_key`, `cm_create_key`, `cm_query_value`, `cm_set_value`, `cm_enum_key`, `cm_enum_value`, `cm_delete_key`, `cm_flush_key`, `cm_load_hive`, `cm_unload_hive`).
 - **Ob integration**: ObInfoClass::RegistryKey (21), ObInfoClass::RegistryValue (22), ObSetInfoClass::RegistryCreateKey (23), RegistryDeleteKey (24), RegistrySetValue (25), RegistryDeleteValue (26).
 - **Boot**: Phase 3.881 mounts SYSTEM hive, creates defaults (NeoInit shell, DHCP, WaitForNetwork).
 
@@ -268,7 +268,7 @@ New binary: `userbin/regedit/` — full registry editor:
 
 ### 2.7 No New Syscalls or Ob Types
 
-All improvements use existing syscalls (RAX 67-76) and ObInfoClass/ObSetInfoClass variants (21-26). No new RAX numbers needed.
+All improvements use existing syscalls (RAX 50-59) and ObInfoClass/ObSetInfoClass variants (21-26). No new RAX numbers needed.
 
 ---
 
@@ -300,7 +300,7 @@ All improvements use existing syscalls (RAX 67-76) and ObInfoClass/ObSetInfoClas
 
 | Component | Nature of Change |
 | ----------- | ----------------- |
-| `src/cm/hive.rs` | Fix free list (next-fit), add `delete_value()`, iterative `delete_key`, per-cell dirty tracking, growable `Vec` |
+| `src/cm/hive/` | Fix free list (next-fit), add `delete_value()`, iterative `delete_key`, per-cell dirty tracking, growable `Vec` |
 | `src/cm/mod.rs` | Fix unmount flush, add multi-hive boot, add WAL mount/replay, add security checks in CRUD dispatch |
 | `src/cm/security.rs` | **New file**: key ACL creation, inheritance, `SeAccessCheck` integration |
 | `src/cm/wal.rs` | **New file**: write-ahead log, replay, checkpoint |
@@ -397,7 +397,7 @@ pub fn wal_checkpoint(name: &str, hive: &Hive) -> Result<(), ()>
 ### Fixed `RegistryDeleteValue` Syscall (existing, unchanged ABI)
 
 ```text
-RAX 63 (ob_set_info), info_class = ObSetInfoClass::RegistryDeleteValue (26)
+RAX 43 (ob_set_info), info_class = ObSetInfoClass::RegistryDeleteValue (26)
   Args: RBX = key_fd, RCX = buf (value name)
   Returns: 0 on success, negative error
   Errors: -NoEnt if value not found
@@ -491,9 +491,9 @@ RAX 63 (ob_set_info), info_class = ObSetInfoClass::RegistryDeleteValue (26)
 
 | Step | Files | Description |
 | ------ | ------- | ------------- |
-| 1.1 | `src/cm/hive.rs` | Fix free list: replace `free_head`/`scan_next_free` with next-fit linear scan from `next_alloc_hint`. Change `cells` to `Vec<Option<Cell>>`. |
-| 1.2 | `src/cm/hive.rs` | Add `delete_value()`: unlink from value linked list, call `free_cell()`. |
-| 1.3 | `src/cm/hive.rs` | Rewrite `delete_key()` as iterative with explicit Vec stack. |
+| 1.1 | `src/cm/hive/` | Fix free list: replace `free_head`/`scan_next_free` with next-fit linear scan from `next_alloc_hint`. Change `cells` to `Vec<Option<Cell>>`. |
+| 1.2 | `src/cm/hive/` | Add `delete_value()`: unlink from value linked list, call `free_cell()`. |
+| 1.3 | `src/cm/hive/` | Rewrite `delete_key()` as iterative with explicit Vec stack. |
 | 1.4 | `src/syscall/cm.rs` | Fix `RegistryDeleteValue` handler to call `cm_delete_value()` (via a new `cm_delete_value()` in `mod.rs`) instead of the `REG_NONE` hack. |
 | 1.5 | `src/cm/mod.rs` | Fix `cm_unload_hive()`: flush dirty data before unmounting. |
 | 1.6 | `src/cm/mod.rs` | Fix `cm_flush_key()` deadlock: acquire lock once for clone, flush, mark_clean. |
@@ -516,8 +516,8 @@ RAX 63 (ob_set_info), info_class = ObSetInfoClass::RegistryDeleteValue (26)
 
 | Step | Files | Description |
 | ------ | ------- | ------------- |
-| 3.1 | `src/cm/hive.rs` | Add `dirty_cells: BitVec` field. Modify `slot_mut()` to set dirty bit. |
-| 3.2 | `src/cm/hive.rs` | Add `serialize_dirty()` for incremental flush. |
+| 3.1 | `src/cm/hive/` | Add `dirty_cells: BitVec` field. Modify `slot_mut()` to set dirty bit. |
+| 3.2 | `src/cm/hive/` | Add `serialize_dirty()` for incremental flush. |
 | 3.3 | `src/cm/cache.rs` | Wire CellCache into `slot()`/`slot_mut()` — check cache before linear scan. |
 | 3.4 | `src/cm/mod.rs` | Update `cm_flush_key()/cm_flush_all_hives()` to use per-cell dirty tracking. |
 
@@ -542,7 +542,7 @@ RAX 63 (ob_set_info), info_class = ObSetInfoClass::RegistryDeleteValue (26)
 | 5.2 | `src/cm/mod.rs` | Integrate `wal_log()` into `cm_set_value`, `cm_create_key`, `cm_delete_key`, `cm_delete_value`. |
 | 5.3 | `src/cm/mod.rs` | Integrate `wal_replay()` into `cm_load_hive` (run after deserialize, before mount). |
 | 5.4 | `src/cm/mod.rs` | Integrate `wal_checkpoint()` into `cm_flush_key()`. |
-| 5.5 | `src/cm/hive.rs` | Change serializer to use the full/wrapping_add checksum, add version header for `NEOHv2`. |
+| 5.5 | `src/cm/hive/` | Change serializer to use the full/wrapping_add checksum, add version header for `NEOHv2`. |
 
 **Test gate:** Phase 5 tests 1-5 pass.
 

@@ -96,7 +96,7 @@ crates**, and explain in §10 why NXLs are not warranted now.
 | Audited branch | `develop` | `git rev-parse --abbrev-ref HEAD` |
 | Audited commit | `8c6865c806f2ac4009a99195d938c36ab9df044d` | `git rev-parse HEAD` |
 | Working tree | clean (`git status --porcelain` empty) | — |
-| Kernel version | v0.51.5, tests 890, ABI v8, SSDT RAX 0–99 (37 assigned) | `AGENTS.md:3` |
+| Kernel version | v0.55.0, tests 1,042, ABI v8, SSDT RAX 0–99 (37 assigned) | `AGENTS.md:3` |
 | Build tool | NeoDev 0.3.0 (`neodev`) | `neodev --version` |
 
 The session working directory (`/home/amartinper/rust-os`) is **not** a git
@@ -133,7 +133,7 @@ Status vocabulary used throughout (per the task's requirement to distinguish):
 | DNS resolution (userland) | UDP transport + cache in `libnet`; protocol in `libdns`; **blocking wait via `ob_wait_timeout`** | `libnet/src/dns.rs`; `libdns/src/*`; 27 pass / 1 ignored | Cache entries **never expire** (TTL ignored); no TCP fallback; kernel parser retired (#312) | High |
 | Kernel TCP state machine | Handshake/ACK/FIN/RTO/buffers; loopback e2e test | `neodos-kernel/src/net/tcp.rs`; `net/tests/net.rs:513` | No OOO reassembly; no window scale/congestion; no TIME_WAIT; no writability wake | High |
 | **Userland TCP connect** | **Works** **[re-audited]**: `SocketConnect` → `socket_connect_user` → `tcp_connect` (SYN); `netcli`/`netsrv`/`tcptest` validated | `syscall/ob/set/net.rs`; `net/socket.rs`; `userbin/tcptest`; #692 | — (fixed) | High |
-| Blocking socket wait / timeout | **Present** **[re-audited]**: `ob_wait` on sockets blocks on Connect/Accept/Read; `sys_ob_wait_timeout` bounds it (#696) | `syscall/ob/wait.rs`; `libneodos/src/syscall/ob.rs`; #307, #696 | No writability wait; EOF not distinguished from `EAGAIN`; `sys_poll` timeout ignored | High |
+| Blocking socket wait / timeout | **Present** **[re-audited]**: `ob_wait` on sockets blocks on Connect/Accept/Read; `sys_ob_wait_timeout` bounds it (#696) | `neodos-kernel/src/syscall/ob/wait.rs`; `libneodos/src/syscall/ob.rs`; #307, #696 | No writability wait; EOF not distinguished from `EAGAIN`; `sys_poll` timeout ignored | High |
 | TCP next-hop/gateway | **Present** (`tcp_mac_for` → `nic_next_hop`) | `neodos-kernel/src/net/tcp.rs:278-284` (all send sites) | Per-socket NIC binding (#317); #315 appears stale | High |
 | HTTP / HTTPS / curl | Absent | repo-wide grep negative (see §16) | Whole capability | High |
 | TLS / PKI | Absent | no TLS/SSL code | Whole capability | High |
@@ -891,7 +891,7 @@ Ordering is evidence-driven; Phase 1 is independent of Phases 2–5.
 | External-crate policy vs TLS | Cannot ship HTTPS without a vetted dependency | Decide RustCrypto-style pure-Rust stack; record license/audit |
 | Wrong system clock | Bad cert decisions, wrong local time | Fail closed for updates when clock unsynced |
 | Scope creep into full package manager | Overreach; #411 is post-1.0 | Restrict updater to signed user-mode artifacts |
-| Stale docs (#315, timezone row in `ntpd.md`, Registry RAX 67–76) | Misleads implementers | Correct docs as part of each phase |
+| Stale docs (#315, timezone row in `ntpd.md`, Registry RAX 50–59) | Misleads implementers | Correct docs as part of each phase |
 
 ### 14.2 Unresolved questions
 

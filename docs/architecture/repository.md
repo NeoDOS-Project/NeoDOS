@@ -26,9 +26,9 @@ neodos/
 ├── libconsole-nxl/         # NXL DLL — console/progress
 ├── libnet-nxl/             # NXL DLL — networking
 ├── libnet/                 # User-mode networking library
-├── userbin/                # 52 user binaries (PID 1, shell, utilities)
+├── userbin/                # 61 user binaries (PID 1, shell, utilities)
 ├── drivers/                # 10 standalone NEM drivers
-├── tools/                  # 5 Rust host tools + 1 Python script
+├── tools/                  # Rust host tools (crash dump, hives, i18n, keyboard, HTTP E2E) + nem-pack.py
 │   ├── crashdump/          # Crash dump decoder
 │   ├── gen-hiv/            # Registry hive generator
 │   ├── kbdcompile/         # Keyboard layout compiler (.klc → .kbd)
@@ -69,7 +69,7 @@ kernel              ─── (no external deps beyond Rust std)
 kernel (NEM ABI)    ←─── drivers/* (10 standalone)
 kernel (syscall ABI) ←── libneodos
 kernel (NXL ABI)    ←─── libneodos-nxl, libmath-nxl, libconsole-nxl, libnet-nxl
-libneodos           ←─── userbin/* (52 binaries), libnet, libneodos-nxl
+libneodos           ←─── userbin/* (61 binaries), libnet, libneodos-nxl
 libnet-nxl          ───→ kernel (net subsystem)
 libnet              ───→ libneodos, libnet-nxl
 neodev (host)       ───→ build artifacts (read-only)
@@ -142,10 +142,10 @@ kbdcompile (host)   ───→ data/keyboard (layout sources)
 
 | Component | Repository | Reasoning |
 |-----------|-----------|-----------|
-| `neodev` | `NeoDev` | Fully standalone host tool. Standard Rust deps (clap, anyhow, serde). Changes at own pace. Can version independently. Build/test/image creation for any repo. |
+| `neodev` | [`NeoDev`](https://github.com/NeoDOS-Project/NeoDev) | Fully standalone host tool. Standard Rust deps (clap, anyhow, serde). Changes at own pace. Can version independently. Build/test/image creation for any repo. |
 | `neodos-lsp` + `scripts/mcp_server` | `NeoDOS Dev Server` (merged) | **Migrated.** LSP + MCP merged into single Rust workspace at [neodos-dev-server](https://github.com/NeoDOS-Project/neodos-dev-server). Shared toolkit (neodos-toolkit) + LSP binary + MCP binary. |
 | `nltc, kbdcompile, xkbcompile` | `NeoToolchain` or separate | Host-side compilers for OS data formats. Can evolve independently of kernel version. |
-| `nxdump, nxeinfo, nxpkg` | `NeoTools` | UX-focused analysis tools. Independent release cycle. Useful for OS analysis even without building kernel. |
+| `nxdump, nxeinfo, nxpkg` | [`NeoTools`](https://github.com/NeoDOS-Project/NeoTools) | UX-focused analysis tools. Independent release cycle. Useful for OS analysis even without building kernel. |
 | `scripts/mcp_server` | `NeoMCP` | Python MCP server for AI-assisted development. Completely independent of kernel. |
 | `data/locale/*` | `NeoTranslations` | Translation data. Community contributions don't need kernel access. Can be translated entirely by non-developers. |
 
@@ -183,7 +183,7 @@ NeoDOS-Project/
 |-----------|-------|
 | Contents | Kernel, bootloader, libneodos, all NXLs, userbin/, drivers/, core scripts (build, check_deps), core docs |
 | Dependencies | None (self-contained) |
-| Versioning | Semantic v0.x.x (current: v0.49.0) |
+| Versioning | Semantic v0.x.x (current: v0.55.0) |
 | Release strategy | Tagged releases, CHANGELOG-driven |
 | CI | Build kernel + bootloader, run kernel tests, build userbin, build disk image |
 | Artifacts | `kernel.elf`, `bootloader.efi`, `*.nxe`, `*.nxl`, `*.nem`, `disk_image.img` |
