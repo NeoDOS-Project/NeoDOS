@@ -100,6 +100,39 @@ fn run_nem_auth_probe() -> u32 {
 /// real loader; the kernel must reject them with an error, never panic.
 const NEM_LOAD_ARG: &[u8] = b"NEMLOAD";
 
+/// Ring 3 probe for #761: write patterns inside the identity-mapped user
+/// window (the last four pages, normally an unused slot) and read them back.
+/// With the window reserved in the buddy allocator this cannot corrupt kernel
+/// page tables or heap objects; the guest must survive and see its pattern.
+const USERWIN_ARG: &[u8] = b"USERWIN";
+const USERWIN_START: u64 = 0x023F_C000; // USER_LIMIT (0x2400000) - 16 KiB
+
+fn run_user_window_probe() -> u32 {
+    write_str(b"[USERWIN] start\r\n");
+    let mut ok = true;
+    for page in 0..4u64 {
+        let addr = (USERWIN_START + page * 0x1000) as *mut u8;
+        unsafe {
+            core::ptr::write_bytes(addr, 0xA5, 0x1000);
+            let mut off = 0usize;
+            while off < 0x1000 {
+                if core::ptr::read(addr.add(off)) != 0xA5 {
+                    ok = false;
+                    break;
+                }
+                off += 64;
+            }
+        }
+    }
+    if ok {
+        write_str(b"[USERWIN] PASS wrote 16 KiB inside user window\r\n");
+        0
+    } else {
+        write_str(b"[USERWIN] FAIL pattern mismatch\r\n");
+        1
+    }
+}
+
 fn build_bad_nem(buf: &mut [u8; 128], bad_reloc: bool) -> usize {
     // NemHeaderV3 (80 bytes) + name + optional reloc + text section.
     buf.fill(0);
@@ -313,6 +346,9 @@ pub extern "C" fn _start() -> ! {
     }
     if libneodos::args::trim_ascii(&raw_args) == NEM_LOAD_ARG {
         syscall::sys_exit(run_nem_loader_probe());
+    }
+    if libneodos::args::trim_ascii(&raw_args) == USERWIN_ARG {
+        syscall::sys_exit(run_user_window_probe());
     }
 
     let mut passed = 0u32;

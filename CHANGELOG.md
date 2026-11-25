@@ -110,6 +110,12 @@
 
 ### Fixed
 
+- **Ventana de usuario 4–36 MB reservada en el buddy (#761).** El kernel ya no
+  puede asignar marcos en el rango identity-mapped accesible desde Ring 3, así
+  que ninguna page table, heap o buffer del kernel queda aliasado por userland.
+  Guard con contador y panic, test de reserva, walk de todas las page tables y
+  probe Ring 3 (`USERWIN`) que escribe 16 KiB en la ventana sin corromper el
+  kernel. Documentado en `docs/memory/memory.md`.
 - **TCP malformado: panic remoto por `data_offset` fuera del segmento (#814).**
   `parse_tcp_segment` comprobaba `data_offset >= 20` pero no que el offset
   cupiera en el segmento; un paquete de 20–39 B con offset 15 hacía

@@ -195,6 +195,7 @@ pub extern "C" fn _start() -> ! {
         try_spawn_test_with_args("C:\\Programs\\cmdtest.nxe", "NEMAUTH-USER", true, b"NEMAUTH");
         try_spawn_test_with_args("C:\\Programs\\cmdtest.nxe", "NEMAUTH-ADMIN", false, b"NEMAUTH");
         try_spawn_test_with_args("C:\\Programs\\cmdtest.nxe", "NEMLOAD", false, b"NEMLOAD");
+        try_spawn_test_with_args("C:\\Programs\\cmdtest.nxe", "USERWIN", true, b"USERWIN");
     }
 
     // ── Run network test if enabled (requires bridged networking) ──
