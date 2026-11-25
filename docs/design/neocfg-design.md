@@ -239,7 +239,7 @@ tr!("power.actions"):
 
 **Implementación** (vía Power Manager API, una vez implementado):
 
-- `ob_open("\Device\PowerManager")` → cache fd en static
+- `ob_open("\System\PowerManager")` → cache fd en static
 - Query: `ob_query_info(fd, PowerPlanInfo=32)` → `PowerPlanInfo`
 - Set plan: `ob_set_info(fd, PowerSetPlan=41, &plan_index)`
 - Shutdown: `ob_set_info(fd, PowerShutdown=37, &[])` (no retorna)
@@ -456,7 +456,7 @@ NeoCfg no extiende el kernel. Es una aplicación Ring 3 que **consume** APIs exi
 | Enumerar servicios | `ob_enum(\Service)` + `ob_query_info(ServiceStatus=31)` | RAX 44, clase 31 |
 | Cambiar teclado | `ob_set_info(KeyboardLayout=5)` | Clase 5 |
 | Leer teclado | `ob_query_info(KeyboardLayout=14)` | Clase 14 |
-| Abrir Power Manager (futuro) | `ob_open(\Device\PowerManager)` | RAX 40 |
+| Abrir Power Manager (futuro) | `ob_open(\System\PowerManager)` | RAX 40 |
 | Consultar plan (futuro) | `ob_query_info(PowerPlanInfo=32)` | Clase 32 |
 | Cambiar plan (futuro) | `ob_set_info(PowerSetPlan=41)` | Clase 41 |
 | Apagar (futuro) | `ob_set_info(PowerShutdown=37)` | Clase 37 |
@@ -802,7 +802,7 @@ userbin/neocfg/
 
 **Archivos:** `src/modules/power.rs`
 
-1. Intentar `ob_open("\Device\PowerManager")`
+1. Intentar `ob_open("\System\PowerManager")`
 2. Si falla (Not Found) → mostrar `tr!("power.not_available")`, retornar
 3. Si existe (futuro) → implementar menú completo con planes, shutdown, reboot
 4. Esperar tecla, retornar

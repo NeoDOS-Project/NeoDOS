@@ -30,7 +30,7 @@ NeoDOS es un sistema operativo de 64 bits con arquitectura híbrida (kernel mono
 
 - Código 100% Rust (sin C en la base)
 - HAL con asm aislado en `hal/raw/`
-- 890 tests automáticos en kernel
+- 1,042 tests automáticos en kernel
 - Certificación de drivers con 7 estados
 - Sistema de capacidades para control de acceso granular
 - IRQL framework para prioridad de interrupciones
@@ -95,7 +95,7 @@ NeoDOS es un sistema operativo moderno de 64 bits para la plataforma x86-64, dis
 
 6. **La compatibilidad es un contrato.** Una vez que una syscall, una estructura ABI, o un formato de driver se declara estable, no cambia. El versionado semántico se aplica a nivel de kernel, no solo de API.
 
-7. **Los tests son especificación.** 890 tests no son una métrica de calidad — son la especificación ejecutable del comportamiento del kernel. Si no hay test, el comportamiento no está definido.
+7. **Los tests son especificación.** 1,042 tests no son una métrica de calidad — son la especificación ejecutable del comportamiento del kernel. Si no hay test, el comportamiento no está definido.
 
 ---
 
@@ -280,6 +280,10 @@ Security Descriptor (por objeto)
 | Crash dump framework | ✅ Bien | Lock-free ring, serial dump |
 | FSCK | ✅ Bien | Superblock + inode + directory walk |
 | Driver isolation (X4) | ✅ Bien | Pointer validation, sandbox mode |
+| TCP/IP stack + NIC drivers | ✅ Bien | ARP, IPv4, TCP, UDP, DHCP, DNS; e1000 and virtio-net |
+| Power Manager | ✅ Bien | Power plans, ACPI S5/reset, coordinated shutdown |
+| Persistent Registry | ✅ Bien | Hives, cells, Cm syscalls (RAX 50–59) |
+| Security model | ✅ Bien | SID, token, groups, privileges and login sessions |
 
 ### 5.2 Lo que necesita refactorización (MEJORAR)
 
@@ -287,11 +291,11 @@ Security Descriptor (por objeto)
 | ----------- | ---------- | ----------- |
 | Arrays fijos | 8 subsistemas con límites duros | **ALTA** |
 | Buddy bitmap 4GB | Frame allocator no escala a >4GB | **ALTA** |
-| User window 4MB | Demasiado pequeño para aplicaciones reales | **ALTA** |
+| User window 4–36 MB | El buddy allocator no reserva el rango completo (#761) | **ALTA** |
 | Static buffers en syscalls | BIN_BUF/CMD_BUF de 64KB, no reentrantes | **ALTA** |
 | Sin ASLR | Todas las cargas en direcciones fijas | **MEDIA** |
 | Scheduler linear scans | O(n) en busca de threads | **MEDIA** |
-| Security model incompleto | Sin grupos, sin privilegios, sin audit | **MEDIA** |
+| Security model | Sin SACL/audit trail; herencia de ACE limitada | **MEDIA** |
 | VFS drive letters | Es el modelo NT (\DosDevices\C: → \Device\...) | ✅ Correcto — no tocar |
 | Pipe 4KB × 16 | Pequeño y limitado | **MEDIA** |
 | SeAccessCheck simplista | Sin herencia de ACE, sin SACL | **BAJA** |
@@ -300,11 +304,8 @@ Security Descriptor (por objeto)
 
 | Componente | Descripción | Prioridad |
 | ----------- | ------------- | ----------- |
-| Red/Networking | NIC driver + TCP/IP stack | **MEDIA** |
 | sys_fork (o clone) | Creación ligera de procesos | **BAJA** (no NT-style) |
-| Gestión de energía | Suspend/resume, S-states | **BAJA** |
 | Árbol de dispositivos | Enumeración jerárquica | **MEDIA** |
-| Registry persistente | Base de datos de configuración | **MEDIA** |
 | Per-process namespace | Vistas de sistema de archivos por proceso | **BAJA** |
 | Audit trail | Registro de eventos de seguridad | **BAJA** |
 | Symlinks en VFS | Enlaces simbólicos en sistema de archivos | **BAJA** |
@@ -315,7 +316,7 @@ Security Descriptor (por objeto)
 | -------- | ------------- | --------- | ------------ |
 | Arrays fijos saturan | Alta (próximos 6 meses) | Alto (pánico en runtime) | Convertir a dinámicos (Vec/ slab) |
 | Buddy bitmap overflow | Media (si RAM >4GB) | Alto (kernel no arranca) | Bitmap dinámico por rango |
-| User window overflow | Alta (al crecer apps) | Medio (carga ELF falla) | Ampliar a 32MB mínimo |
+| User window overflow | Alta (al crecer apps) | Medio (carga ELF falla) | Reservar la ventana 4–36 MB en el buddy (#761) |
 | Static buffers corruptos | Baja | Alto (data race silencioso) | Reemplazar por allocaciones dinámicas |
 | Sin ASLR → exploit | Media (con user-mode) | Medio | Implementar ASLR básico |
 
@@ -791,7 +792,7 @@ HAL ─── Arch (x86_64)
 | Métrica | Actual | Objetivo v1.0 |
 | --------- | -------- | --------------- |
 | Líneas de código kernel | ~45.580 | <60K |
-| Tests automáticos | 890 (test_case!) | >800 |
+| Tests automáticos | 1,042 (test_case!) | >800 |
 | Cobertura de líneas | ~60% | >90% |
 | Syscalls (handlers SSDT) | 29 | 50–60 |
 | Procesos simultáneos | Ilimitado (Vec dinámica) | Ilimitado |

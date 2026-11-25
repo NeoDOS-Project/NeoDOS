@@ -141,7 +141,7 @@ NeoDOS follows an **NT-inspired hybrid model**:
 | `src/security/sam.rs` | Wire to filesystem, add write-back on mutation |
 | `src/security/token.rs` | Add UserProfile reference, creation audit |
 | `src/scheduler/mod.rs` | Token-based process creation, session tracking |
-| `src/syscall/ob.rs` | Token query on Process/Thread, user creation syscalls |
+| `src/syscall/ob/` | Token query on Process/Thread, user creation syscalls |
 | `src/object/types.rs` | New ObType::User, ObType::Session |
 | `src/fs/neofs/neodos_dir.rs` | Extend DirEntryV2 with owner SID field |
 | `src/fs/vfs.rs` | Add permission checking in VFS operations |
@@ -283,7 +283,7 @@ Session = 19,
 ### 4.2 New ObInfoClass Variants
 
 ```rust
-// For sys_ob_query_info (RAX=62):
+// For sys_ob_query_info (RAX=42):
 SessionInfo = 24,   // session_id, user_sid, state, login_time, process_count
 UserInfo = 25,      // username, full_name, flags (queried via session or by SID)
 GroupInfo = 26,     // group name, member count, description
@@ -294,7 +294,7 @@ TokenInfo = 28,     // query current process token (sid, groups, privileges)
 ### 4.3 New ObSetInfoClass Variants
 
 ```rust
-// For sys_ob_set_info (RAX=63):
+// For sys_ob_set_info (RAX=43):
 SessionLock = 28,        // Lock a session (requires admin)
 SessionLogoff = 29,      // Log off a session (requires admin)
 SessionDisconnect = 30,  // Disconnect without logging off
@@ -726,7 +726,7 @@ No new syscalls needed. All operations go through the existing Ob API:
 | Logoff | `sy_ob_set_info(SessionLogoff)` | Terminates session |
 | List sessions | `sy_ob_enum(\Session\)` | Enumerate session objects |
 
-**Rationale:** No need for `sys_login`, `sys_logout`, etc. The Ob API (RAX 60-66) is already a generic "operate on objects" mechanism. Adding ObType::Session and a few ObInfoClass/ObSetInfoClass variants is sufficient.
+**Rationale:** No need for `sys_login`, `sys_logout`, etc. The Ob API (RAX 40-48) is already a generic "operate on objects" mechanism. Adding ObType::Session and a few ObInfoClass/ObSetInfoClass variants is sufficient.
 
 ### 11.2 libneodos Wrappers
 
@@ -889,11 +889,11 @@ pub fn token_set_integrity_level(fd: i64, level: IntegrityLevel) -> Result<(), i
 | `src/security/acl.rs` | Add integrity level to SecurityDescriptor | S |
 | `src/security/mod.rs` | Add USR-001..024 test registration | S |
 | `src/object/types.rs` | Add ObType::Session=19, ObInfoClass variants 24-28, ObSetInfoClass variants 28-32 | S |
-| `src/syscall/ob.rs` | Add Session handler, extend Process/Thread info with token data, VFS permission checks, token query, integrity level lowering | XL |
+| `src/syscall/ob/` | Add Session handler, extend Process/Thread info with token data, VFS permission checks, token query, integrity level lowering | XL |
 | `src/fs/neofs/neodos_dir.rs` | Extend DirEntryV2 with owner_sid, backward compat | M |
 | `src/fs/neofs/neodos_v2.rs` | Write/read owner_sid, superblock feature flag | M |
 | `src/fs/vfs.rs` | Add permission check in VFS operations, default perms by extension | L |
-| `src/cm/hive.rs` | Wire sec_desc_cell, default SD on key creation | M |
+| `src/cm/hive/` | Wire sec_desc_cell, default SD on key creation | M |
 | `src/cm/security.rs` | New file: Registry ACL checking | M |
 | `src/cm/mod.rs` | Add user profile hive, SAM persistence | M |
 | `src/scheduler/mod.rs` | Token-based spawn, session tracking, integrity inheritance | M |
@@ -940,10 +940,10 @@ pub fn token_set_integrity_level(fd: i64, level: IntegrityLevel) -> Result<(), i
 
 | Step | Files | Description |
 | ------ | ------- | ------------- |
-| 2.1 | `src/syscall/ob.rs` | Handler for `ob_create(Session)` — create session object, allocate session_id |
-| 2.2 | `src/syscall/ob.rs` | Handler for `ObInfoClass::SessionInfo` (24) |
-| 2.3 | `src/syscall/ob.rs` | Handler for `ObSetInfoClass::SessionLock/Logoff` (28-29) |
-| 2.4 | `src/syscall/ob.rs` | Handler for `ObSetInfoClass::ChangePassword` (31) |
+| 2.1 | `src/syscall/ob/` | Handler for `ob_create(Session)` — create session object, allocate session_id |
+| 2.2 | `src/syscall/ob/` | Handler for `ObInfoClass::SessionInfo` (24) |
+| 2.3 | `src/syscall/ob/` | Handler for `ObSetInfoClass::SessionLock/Logoff` (28-29) |
+| 2.4 | `src/syscall/ob/` | Handler for `ObSetInfoClass::ChangePassword` (31) |
 | 2.5 | `src/infra/globals.rs` | Add `SESSION_MANAGER: Mutex<SessionManager>` |
 | 2.6 | `libneodos/src/syscall.rs` | Add session/CRUD wrappers |
 | 2.7 | `userbin/neologon/` | New binary: login prompt, SAM authentication, session creation |
@@ -958,7 +958,7 @@ pub fn token_set_integrity_level(fd: i64, level: IntegrityLevel) -> Result<(), i
 | 3.1 | `src/fs/neofs/neodos_dir.rs` | Add `owner_sid: Sid` to DirEntryV2 |
 | 3.2 | `src/fs/neofs/neodos_v2.rs` | Superblock `FEATURE_OWNER_SID` flag, backward compat read |
 | 3.3 | `src/fs/vfs.rs` | Add `check_vfs_access()` function |
-| 3.4 | `src/syscall/ob.rs` | Wire permission checks in VFS operations |
+| 3.4 | `src/syscall/ob/` | Wire permission checks in VFS operations |
 | 3.5 | `src/fs/vfs.rs` | Default permissions by file extension |
 
 ### Phase 4 — Registry Security (v0.53.x)
@@ -967,7 +967,7 @@ pub fn token_set_integrity_level(fd: i64, level: IntegrityLevel) -> Result<(), i
 
 | Step | Files | Description |
 | ------ | ------- | ------------- |
-| 4.1 | `src/cm/hive.rs` | Default `sec_desc_cell` on key creation |
+| 4.1 | `src/cm/hive/` | Default `sec_desc_cell` on key creation |
 | 4.2 | `src/cm/security.rs` | New: `cm_check_access()` for registry ACL checking |
 | 4.3 | `src/cm/mod.rs` | Wire ACL check in all Cm syscall handlers |
 | 4.4 | `src/cm/mod.rs` | User profile hive at `\Registry\User\{sid}` |
@@ -979,9 +979,9 @@ pub fn token_set_integrity_level(fd: i64, level: IntegrityLevel) -> Result<(), i
 | Step | Files | Description |
 | ------ | ------- | ------------- |
 | 5.1 | `src/security/access.rs` | Add integrity level check to SeAccessCheck |
-| 5.2 | `src/syscall/ob.rs` | Handler for `ObSetInfoClass::SetIntegrityLevel` (32) — can only lower |
+| 5.2 | `src/syscall/ob/` | Handler for `ObSetInfoClass::SetIntegrityLevel` (32) — can only lower |
 | 5.3 | `src/syscall/permission.rs` | Wire `has_privilege()` checks in all admin-only syscalls |
-| 5.4 | `src/syscall/ob.rs` | Handler for `ObInfoClass::TokenInfo` (28) |
+| 5.4 | `src/syscall/ob/` | Handler for `ObInfoClass::TokenInfo` (28) |
 
 ### Phase 6 — Tools (v0.55.x)
 
@@ -1004,7 +1004,7 @@ pub fn token_set_integrity_level(fd: i64, level: IntegrityLevel) -> Result<(), i
 
 2. **Session is the runtime boundary.** Processes belong to sessions. Sessions have tokens. Tokens have SIDs. SIDs are resolved through SAM.
 
-3. **No new syscalls.** All operations go through the existing Ob API (RAX 60-66). Session management is `ob_create(Session)`, `ob_set_info(SessionLock)`, etc.
+3. **No new syscalls.** All operations go through the existing Ob API (RAX 40-48). Session management is `ob_create(Session)`, `ob_set_info(SessionLock)`, etc.
 
 4. **Backward compatibility by default.** Old processes without sessions get a default "Session 0" (SYSTEM). Old NE2 volumes without owner_sid get a default "unknown" owner. Permissions default to world-access until explicitly locked down.
 

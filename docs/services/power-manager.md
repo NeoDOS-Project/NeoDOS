@@ -710,7 +710,7 @@ pub extern "C" fn poweroff() -> !;  // Updated to try ACPI S5 first
 1. **No automatic builds.** All changes compilable with `cargo build` in `neodos-kernel/`.
 2. **Tests before commit.** All 825 existing tests must pass + new power tests.
 3. **No new Ring 0 shell commands.** Power commands (POWEROFF, REBOOT) remain built-in in neoshell, using public API.
-4. **RAX ≥ 77 → sys_ob_*.** Power operations use existing `ob_set_info`/`ob_query_info` with new info classes. No new RAX needed beyond existing 60–66.
+4. **RAX ≥ 77 → sys_ob_*.** Power operations use existing `ob_set_info`/`ob_query_info` with new info classes. No new RAX needed beyond existing 40–48.
 5. **Code is truth.** Update docs when architecture changes.
 6. **NT-like design.** Power Manager is a kernel object accessible via Ob namespace, following the pattern of `\Device\Tcp`, `\Device\Udp`.
 

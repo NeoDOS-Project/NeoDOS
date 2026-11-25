@@ -47,8 +47,8 @@ PS/2 IRQ (IDT handler)
 | `neodos-kernel/src/input/manager.rs` | `InputManager`: 4 VT queues, dispatch | 78 |
 | `neodos-kernel/src/input/vt.rs` | `VtInputQueue`: ring buffer 4096 bytes, lock-free SPSC | 66 |
 | `neodos-kernel/src/syscall/handlers.rs:441-507` | `handler_read()`: stdin → VT queue pop, bloqueo | 66 |
-| `neodos-kernel/src/syscall/ob.rs:1277-1283` | `ob_query_info(KeyboardLayout)`: lee KEYBOARD_LAYOUT | 6 |
-| `neodos-kernel/src/syscall/ob.rs:1921-1935` | `ob_set_info(KeyboardLayout)`: escribe KEYBOARD_LAYOUT, push EVENT_KEYB_LAYOUT | 15 |
+| `neodos-kernel/src/syscall/ob/query/` | `ob_query_info(KeyboardLayout)`: lee KEYBOARD_LAYOUT | 6 |
+| `neodos-kernel/src/syscall/ob/set/` | `ob_set_info(KeyboardLayout)`: escribe KEYBOARD_LAYOUT, push EVENT_KEYB_LAYOUT | 15 |
 | `neodos-kernel/src/syscall/mod.rs:231` | `KEYBOARD_LAYOUT: AtomicU8 = 1` (default Spanish) | 1 |
 | `neodos-kernel/src/object/types.rs` | `ObInfoClass::KeyboardLayout=14`, `ObSetInfoClass::KeyboardLayout=5` | definiciones |
 | `neodos-kernel/src/boot/mod.rs:246-248` | Crea `\Global\Info\Keyboard` (ObType::Key, native_id=9) | 3 |
@@ -196,7 +196,7 @@ KeyboardDevice = 22,
 | `src/object/types.rs` | Añadir `KeyboardDevice = 22` a `ObType`, `ob_type_list` |
 | `src/object/types.rs` | Añadir `KeyboardInfo = 35`, `KeyboardCaps = 36` a `ObInfoClass` |
 | `src/object/types.rs` | Añadir `KeyboardSetLayout = 43`, `KeyboardSetRepeatDelay = 44`, `KeyboardSetRepeatRate = 45`, `KeyboardSetLeds = 46`, `KeyboardSetModifier = 47` a `ObSetInfoClass` |
-| `src/syscall/ob.rs` | Añadir dispatch para info classes 35–36 (query) y 43–47 (set) sobre `\Device\Keyboard` |
+| `src/syscall/ob/` | Añadir dispatch para info classes 35–36 (query) y 43–47 (set) sobre `\Device\Keyboard` |
 | `src/syscall/mod.rs` | Eliminar `KEYBOARD_LAYOUT: AtomicU8` (reemplazado por NeoKBD) |
 | `src/eventbus/mod.rs` | Añadir `EVENT_KEYDOWN = 27`, `EVENT_KEYUP = 28`, `EVENT_KEY_CHAR = 29`, `EVENT_KBD_MODIFIER = 30`, `EVENT_KBD_REPEAT = 31` |
 | `src/main.rs` | Añadir PHASE 3.875: `kbd::kbd_init()` (después de input init, antes de driver loader) |
@@ -801,7 +801,7 @@ object::namespace::ob_insert_object("\\Device\\Keyboard", kbd_id);
 
 ### Step 4: Syscall dispatch (1 day)
 
-**Archivos:** `src/syscall/ob.rs`
+**Archivos:** `src/syscall/ob/`
 
 1. En `handler_ob_query_info`:
    - Añadir match arm para clase 35 (KeyboardInfo): escribir `KbdState`

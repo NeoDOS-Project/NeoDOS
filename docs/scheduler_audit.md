@@ -5,7 +5,7 @@
 
 ## Context
 
-- 890 kernel tests pass on clean `develop` branch
+- 1,042 kernel tests pass on clean `develop` branch
 - The system works via O(n) global priority scan fallback in `schedule()` (step 3)
 - The per-CPU runqueue fast path (steps 1-2) is effectively dead code for Running→Ready transitions
 - The earlier PID 5 triple-fault investigation showed RSP = `0xDEADBEEFCAFEBABE` (stack canary value) — not directly caused by these scheduler bugs, but the inconsistency window in P0-1/P0-4 could mask the real crash cause
@@ -86,7 +86,7 @@ The Blocked→Ready paths are all correct (they enqueue). The only violation is 
 - `neodos-kernel/src/scheduler/mod.rs` — lines 1181-1204, 1247-1382, 1544-1567
 - `neodos-kernel/src/syscall/handlers.rs` — lines 85-103, 192-211, 327-380, 588-614
 - `neodos-kernel/src/syscall/mod.rs` — lines 340-472, 778
-- `neodos-kernel/src/syscall/ob.rs` — lines 3244-3267
+- `neodos-kernel/src/syscall/ob/`
 - `neodos-kernel/src/arch/x64/idt.rs` — lines 640-1034
 - `neodos-kernel/src/kwait/mod.rs` — lines 102-134
 - `neodos-kernel/src/apc/mod.rs` — lines 95-128
