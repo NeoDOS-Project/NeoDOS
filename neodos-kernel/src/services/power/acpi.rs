@@ -1,39 +1,13 @@
 use core::sync::atomic::{AtomicBool, Ordering};
 use core::ptr::read_volatile;
+use crate::hal::acpi::{self, AcpiSdtHeader, Rsdp};
 use crate::{test_true, test_eq};
 
-const RSDP_SIGNATURE: [u8; 8] = *b"RSD PTR ";
 const FACP_SIGNATURE: [u8; 4] = *b"FACP";
 const RSDT_SIGNATURE: [u8; 4] = *b"RSDT";
 const XSDT_SIGNATURE: [u8; 4] = *b"XSDT";
 
 const PM1_SLP_EN: u16 = 1 << 13;
-
-#[repr(C, packed)]
-struct Rsdp {
-    signature: [u8; 8],
-    checksum: u8,
-    oem_id: [u8; 6],
-    revision: u8,
-    rsdt_addr: u32,
-    length: u32,
-    xsdt_addr: u64,
-    ext_checksum: u8,
-    reserved: [u8; 3],
-}
-
-#[repr(C, packed)]
-struct AcpiSdtHeader {
-    signature: [u8; 4],
-    length: u32,
-    revision: u8,
-    checksum: u8,
-    oem_id: [u8; 6],
-    oem_table_id: [u8; 8],
-    oem_revision: u32,
-    creator_id: u32,
-    creator_revision: u32,
-}
 
 pub struct AcpiPowerState {
     pub pm1a_cnt_blk: u16,
@@ -59,101 +33,6 @@ static mut ACPI_POWER: AcpiPowerState = AcpiPowerState {
 
 static INITIALIZED: AtomicBool = AtomicBool::new(false);
 
-fn acpi_checksum(data: &[u8]) -> bool {
-    let mut sum: u8 = 0;
-    for &byte in data {
-        sum = sum.wrapping_add(byte);
-    }
-    sum == 0
-}
-
-fn validate_rsdp(ptr: *const Rsdp) -> bool {
-    unsafe {
-        if (*ptr).signature != RSDP_SIGNATURE {
-            return false;
-        }
-        if !acpi_checksum(core::slice::from_raw_parts(ptr as *const u8, 20)) {
-            return false;
-        }
-        if (*ptr).revision >= 2
-            && !acpi_checksum(core::slice::from_raw_parts(ptr as *const u8, 36))
-        {
-            return false;
-        }
-        true
-    }
-}
-
-fn scan_range_for_rsdp(start: u64, end: u64) -> Option<&'static Rsdp> {
-    let mut addr = start;
-    while addr + 16 <= end {
-        let ptr = addr as *const Rsdp;
-        unsafe {
-            if (*ptr).signature == RSDP_SIGNATURE
-                && acpi_checksum(core::slice::from_raw_parts(ptr as *const u8, 20))
-            {
-                return Some(&*ptr);
-            }
-        }
-        addr += 16;
-    }
-    None
-}
-
-fn find_rsdp() -> Option<&'static Rsdp> {
-    let boot_rsdp = unsafe { crate::timers::BOOT_RSDP_ADDR };
-    if boot_rsdp != 0 {
-        let ptr = boot_rsdp as *const Rsdp;
-        if validate_rsdp(ptr) {
-            return Some(unsafe { &*ptr });
-        }
-    }
-    if let Some(rsdp) = scan_range_for_rsdp(0xE0000, 0x100000) {
-        return Some(rsdp);
-    }
-    let ebda_seg = unsafe { crate::hal::raw::raw_inw(0x40E) } as u64;
-    if ebda_seg > 0 {
-        let ebda_addr = ebda_seg << 4;
-        if let Some(rsdp) = scan_range_for_rsdp(ebda_addr, ebda_addr + 1024) {
-            return Some(rsdp);
-        }
-    }
-    if let Some(rsdp) = scan_range_for_rsdp(0xC0000, 0xE0000) {
-        return Some(rsdp);
-    }
-    if let Some(rsdp) = scan_range_for_rsdp(0x80000, 0xA0000) {
-        return Some(rsdp);
-    }
-    if let Some(rsdp) = scan_range_for_rsdp(0x0, 0x10000) {
-        return Some(rsdp);
-    }
-    None
-}
-
-fn find_table_in_rsdt(rsdt: &[u32], signature: &[u8; 4]) -> Option<&'static AcpiSdtHeader> {
-    for &entry in rsdt {
-        let sdt = entry as u64 as *const AcpiSdtHeader;
-        unsafe {
-            if (*sdt).signature == *signature {
-                return Some(&*sdt);
-            }
-        }
-    }
-    None
-}
-
-fn find_table_in_xsdt(xsdt: &[u64], signature: &[u8; 4]) -> Option<&'static AcpiSdtHeader> {
-    for &entry in xsdt {
-        let sdt = entry as *const AcpiSdtHeader;
-        unsafe {
-            if (*sdt).signature == *signature {
-                return Some(&*sdt);
-            }
-        }
-    }
-    None
-}
-
 fn find_fadt_table(rsdp: &Rsdp) -> Option<&'static AcpiSdtHeader> {
     if rsdp.revision >= 2 && rsdp.xsdt_addr != 0 {
         let xsdt_ptr = rsdp.xsdt_addr as *const AcpiSdtHeader;
@@ -168,7 +47,7 @@ fn find_fadt_table(rsdp: &Rsdp) -> Option<&'static AcpiSdtHeader> {
                 (rsdp.xsdt_addr + core::mem::size_of::<AcpiSdtHeader>() as u64) as *const u64,
                 entry_count,
             );
-            return find_table_in_xsdt(entries, &FACP_SIGNATURE);
+            return acpi::find_table_in_xsdt(entries, &FACP_SIGNATURE);
         }
     }
     let rsdt_ptr = rsdp.rsdt_addr as u64 as *const AcpiSdtHeader;
@@ -183,7 +62,7 @@ fn find_fadt_table(rsdp: &Rsdp) -> Option<&'static AcpiSdtHeader> {
             (rsdp.rsdt_addr as u64 + core::mem::size_of::<AcpiSdtHeader>() as u64) as *const u32,
             entry_count,
         );
-        find_table_in_rsdt(entries, &FACP_SIGNATURE)
+        acpi::find_table_in_rsdt(entries, &FACP_SIGNATURE)
     }
 }
 
@@ -341,7 +220,7 @@ fn decode_aml_integer(data: &[u8], cursor: &mut usize) -> Option<u16> {
 }
 
 pub fn acpi_parse_fadt() -> Option<AcpiPowerState> {
-    let rsdp = find_rsdp()?;
+    let rsdp = acpi::find_rsdp(unsafe { crate::timers::BOOT_RSDP_ADDR })?;
     let fadt_hdr = find_fadt_table(rsdp)?;
     let (pm1a, pm1b, reset_reg) = parse_fadt(fadt_hdr);
     let dsdt_addr = read_u32_at(fadt_hdr as *const AcpiSdtHeader as *const u8, 0x28) as u64;

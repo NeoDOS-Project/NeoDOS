@@ -3,6 +3,7 @@ pub mod raw;
 pub mod safe;
 pub mod pci;
 pub mod mmio;
+pub mod acpi;
 pub mod tests;
 
 pub use x64::*;
