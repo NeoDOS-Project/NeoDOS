@@ -842,53 +842,6 @@ pub fn is_bsp() -> bool {
     msr::is_bsp()
 }
 
-// ── IPI sending ──────────────────────────────────────────────────────────
-
-/// IPI vector for reschedule notification.
-pub const IPI_RESCHEDULE: u8 = 0xF0;
-
-/// IPI vector for TLB shootdown.
-pub const IPI_TLB_SHOOTDOWN: u8 = 0xF1;
-
-/// Send an IPI to a specific CPU by APIC ID.
-///
-/// # Safety
-/// The APIC ID must be valid and the IPI vector must have a registered handler.
-pub unsafe fn send_ipi(dest_apic_id: u32, vector: u8) {
-    lapic_write_icr(
-        ((dest_apic_id as u64) << 32)
-        | (vector as u64)
-        | (ICR_TRIGGER_EDGE as u64)
-        | (ICR_LEVEL_ASSERT as u64)
-    );
-}
-
-/// Send an IPI to all CPUs (including self).
-///
-/// # Safety
-/// Same requirements as `send_ipi`.
-pub unsafe fn send_ipi_all(vector: u8) {
-    lapic_write_icr(
-        (3u64 << 18) // shorthand: all including self
-        | (vector as u64)
-        | (ICR_TRIGGER_EDGE as u64)
-        | (ICR_LEVEL_ASSERT as u64)
-    );
-}
-
-/// Send an IPI to all CPUs excluding self.
-///
-/// # Safety
-/// Same requirements as `send_ipi`.
-pub unsafe fn send_ipi_all_excl_self(vector: u8) {
-    lapic_write_icr(
-        (ICR_SHORTHAND_ALL_EXCL_SELF as u64)
-        | (vector as u64)
-        | (ICR_TRIGGER_EDGE as u64)
-        | (ICR_LEVEL_ASSERT as u64)
-    );
-}
-
 // ── Tests ────────────────────────────────────────────────────────────────
 
 pub fn register_smp_tests() {
