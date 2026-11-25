@@ -1,0 +1,11 @@
+[package]
+name = "abi-manifest"
+version = "0.1.0"
+edition = "2021"
+description = "Generate and verify the NeoDOS kernel ABI manifest (syscalls, Ob types, NEM ABI)"
+
+[[bin]]
+name = "abi-manifest"
+path = "src/main.rs"
+
+[dependencies]
