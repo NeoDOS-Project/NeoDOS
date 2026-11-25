@@ -4,6 +4,10 @@ use alloc::vec::Vec;
 pub const NULL_CELL: u32 = 0xFFFFFFFF;
 pub const MAX_CELLS: usize = 2048;
 
+/// Maximum payload accepted for a single registry value. Bounds the kernel
+/// allocation and hive growth triggered by `cm_set_value` (#112 audit).
+pub const MAX_VALUE_DATA: usize = 64 * 1024;
+
 pub const REG_NONE: u32 = 0;
 pub const REG_SZ: u32 = 1;
 pub const REG_DWORD: u32 = 2;

@@ -67,6 +67,9 @@ pub fn handler_ob_set_info(regs: crate::syscall::Registers) -> u64 {
             }
             return err_to_u64(SyscallError::Inval);
         }
+        if buf_size > crate::syscall::ob::query::MAX_OB_IO_BUF {
+            return err_to_u64(SyscallError::Inval);
+        }
         if !is_user_ptr_valid(buf_ptr, buf_size as u64) {
             if info_class == ObSetInfoClass::SetNicIp as u32 {
                 kdebug!(LogSubsys::Object, "ObSetInfo SetNicIp: REJECTED (invalid user ptr)");
