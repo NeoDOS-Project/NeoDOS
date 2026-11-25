@@ -4,6 +4,7 @@ pub mod layout;
 pub mod slab;
 
 use core::mem::size_of;
+use core::sync::atomic::{AtomicU64, Ordering};
 use spin::Mutex;
 use lazy_static::lazy_static;
 use crate::log::LogSubsys;
@@ -389,6 +390,12 @@ pub fn init(boot_info: &crate::BootInfo) {
         buddy::mark_used_region(bitmap_phys, bitmap_pages as u64 * 4096);
     }
 
+    // #761: the user window (4-36 MB) is identity-mapped with USER_ACCESSIBLE
+    // in the shared page tables. Those physical frames belong to Ring 3 code
+    // and stacks, so the buddy allocator must never hand them to the kernel:
+    // a page table or heap object placed there would be writable from Ring 3.
+    buddy::mark_used_region(USER_WINDOW.0, USER_WINDOW.1 - USER_WINDOW.0);
+
     // Firmware page tables and read-only (W^X) RAM are still live: keep them
     // out of the buddy allocator until the kernel installs its own tables.
     unsafe { reserve_firmware_paging_frames(); }
@@ -498,8 +505,30 @@ pub fn memory_map() -> MemoryMap {
     *MMAP.lock()
 }
 
+/// Frames handed out inside the user window (must stay zero). Diagnostic
+/// counter for the #761 invariant guard.
+static USER_WINDOW_ALLOCS: AtomicU64 = AtomicU64::new(0);
+
+pub fn user_window_alloc_count() -> u64 {
+    USER_WINDOW_ALLOCS.load(Ordering::Relaxed)
+}
+
+#[inline]
+fn overlaps_user_window(addr: u64, size: u64) -> bool {
+    let (start, end) = USER_WINDOW;
+    addr < end && addr.saturating_add(size) > start
+}
+
 pub fn allocate_frame() -> Option<u64> {
-    buddy::allocate_frame()
+    let addr = buddy::allocate_frame()?;
+    if overlaps_user_window(addr, PAGE_SIZE) {
+        USER_WINDOW_ALLOCS.fetch_add(1, Ordering::Relaxed);
+        panic!(
+            "buddy allocator returned frame 0x{:x} inside USER_WINDOW",
+            addr
+        );
+    }
+    Some(addr)
 }
 
 pub fn free_frame(phys: u64) {
@@ -507,7 +536,17 @@ pub fn free_frame(phys: u64) {
 }
 
 pub fn alloc_frames(order: usize) -> Option<u64> {
-    buddy::alloc_frames(order)
+    let addr = buddy::alloc_frames(order)?;
+    let size = PAGE_SIZE << order;
+    if overlaps_user_window(addr, size) {
+        USER_WINDOW_ALLOCS.fetch_add(1, Ordering::Relaxed);
+        panic!(
+            "buddy allocator returned {}-frame block 0x{:x} inside USER_WINDOW",
+            1usize << order,
+            addr
+        );
+    }
+    Some(addr)
 }
 
 pub fn free_frames(phys: u64, order: usize) {
@@ -558,6 +597,70 @@ pub fn register_stress_tests() {
         // Sizing from the 1 TiB ECAM window used to request 32 MB.
         test_true!(bitmap_words_for(0x1000_0000_0000) > 4_000_000);
         test_true!(bitmap_words_for(0x2000_0000) < bitmap_words_for(0x1000_0000_0000));
+    });
+
+    // Regression for #761: the identity-mapped user window must be reserved in
+    // the buddy allocator, so no kernel allocation can alias Ring 3 memory.
+    test_case!("memory_user_window_reserved", {
+        let base = crate::arch::x64::paging::USER_BASE;
+        let limit = crate::arch::x64::paging::USER_LIMIT;
+        test_true!(!buddy::is_free_frame(base));
+        test_true!(!buddy::is_free_frame(limit - PAGE_SIZE));
+
+        let mut frames = Vec::new();
+        for _ in 0..128 {
+            match allocate_frame() {
+                Some(p) => {
+                    test_true!(p < base || p >= limit);
+                    frames.push(p);
+                }
+                None => break,
+            }
+        }
+        for p in frames {
+            free_frame(p);
+        }
+
+        let block = alloc_frames(2).expect("alloc_frames failed");
+        test_true!(block + 4 * PAGE_SIZE <= base || block >= limit);
+        free_frames(block, 2);
+        test_eq!(user_window_alloc_count(), 0);
+    });
+
+    // Every page-table frame must live outside the user window; otherwise a
+    // Ring 3 write could rewrite the tables that map the kernel (#761).
+    test_case!("memory_page_tables_outside_user_window", {
+        let base = crate::arch::x64::paging::USER_BASE;
+        let limit = crate::arch::x64::paging::USER_LIMIT;
+        let outside = |p: u64| !(p < limit && p + PAGE_SIZE > base);
+
+        let cr3 = crate::hal::read_cr3() & !0xFFF;
+        test_true!(outside(cr3));
+        let pml4 = cr3 as *const u64;
+        for i in 0..512usize {
+            let e1 = unsafe { *pml4.add(i) };
+            if e1 & PTE_PRESENT == 0 || e1 & PTE_HUGE != 0 {
+                continue;
+            }
+            let pdpt = (e1 & PTE_ADDR_MASK) as *const u64;
+            test_true!(outside(pdpt as u64));
+            for j in 0..512usize {
+                let e2 = unsafe { *pdpt.add(j) };
+                if e2 & PTE_PRESENT == 0 || e2 & PTE_HUGE != 0 {
+                    continue;
+                }
+                let pd = (e2 & PTE_ADDR_MASK) as *const u64;
+                test_true!(outside(pd as u64));
+                for k in 0..512usize {
+                    let e3 = unsafe { *pd.add(k) };
+                    if e3 & PTE_PRESENT == 0 || e3 & PTE_HUGE != 0 {
+                        continue;
+                    }
+                    let pt = (e3 & PTE_ADDR_MASK) as *const u64;
+                    test_true!(outside(pt as u64));
+                }
+            }
+        }
     });
 
     test_case!("buddy_alloc_free_sanity", {

@@ -102,6 +102,25 @@ on overlap detection. `init_default()` defines the canonical layout:
 any two reserved regions, all regions fit within detected physical memory, and
 critical regions (kernel_image, kernel_heap) are non-overlapping.
 
+### Ventana de usuario 4–36 MB (#761)
+
+`USER_BASE..USER_LIMIT` (0x0040_0000..0x0240_0000) is identity-mapped with
+`USER_ACCESSIBLE`; each process slot (code + stack) lives directly at its
+physical address. Because the kernel uses a single CR3, a frame allocated to the
+kernel inside that range would be readable and writable from Ring 3 — including
+page tables, which would allow arbitrary mappings.
+
+At boot, `memory::init()` marks the whole window as used in the buddy bitmap and
+rebuilds the free lists, so `allocate_frame()`/`alloc_frames()` never return a
+frame there. The wrappers also keep a diagnostic counter and panic if the
+invariant is ever violated. The window remains reserved for user slots; it is
+not general-purpose memory.
+
+This closes the physical aliasing bug, but **not** process-to-process isolation:
+all slots are still mapped in the same address space and a process can read or
+write another process's slot. Per-process page tables (and SMEP/SMAP/NX) remain
+tracked separately (#639 and the process-isolation work).
+
 ## Kernel Slab Allocator
 
 Source: `src/memory/slab.rs`. 9 power-of-2 size classes (`CACHE_SIZES = [8, 16, 32, 64, 128, 256, 512, 1024, 2048]`):
