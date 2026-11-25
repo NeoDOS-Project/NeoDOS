@@ -177,6 +177,52 @@ pub fn register() {
         test_eq!(hdr.dst_port(), 53);
         test_eq!(hdr.len(), 8);
     });
+    test_case!("net_tcp_parse_rejects_data_offset_past_end", {
+        // AUDIT-006 / #814: data offset 15 (60 bytes) on 20- and 39-byte
+        // segments used to panic on `&data[60..]`. The parser must reject it.
+        use crate::net::tcp::parse_tcp_segment;
+
+        let mut seg20 = [0u8; 20];
+        seg20[12] = 0xF0;
+        test_eq!(parse_tcp_segment(&seg20), None);
+
+        let mut seg39 = [0u8; 39];
+        seg39[12] = 0xF0;
+        test_eq!(parse_tcp_segment(&seg39), None);
+
+        let mut seg40 = [0u8; 40];
+        seg40[12] = 0xF0;
+        test_eq!(parse_tcp_segment(&seg40), None);
+
+        // Offset 15 (60 bytes) exactly fits a 60-byte segment: empty payload.
+        let mut seg60 = [0u8; 60];
+        seg60[12] = 0xF0;
+        let parsed60 = parse_tcp_segment(&seg60).unwrap();
+        test_eq!(parsed60.6.len(), 0);
+
+        // Boundary: offset 5 (20 bytes) exactly fits a 20-byte header.
+        let mut ok = [0u8; 20];
+        ok[12] = 0x50;
+        test_true!(parse_tcp_segment(&ok).is_some());
+
+        // Offset 5 with a 4-byte payload yields exactly that payload.
+        let mut with_payload = [0u8; 24];
+        with_payload[12] = 0x50;
+        with_payload[20..24].copy_from_slice(b"PING");
+        let parsed = parse_tcp_segment(&with_payload).unwrap();
+        test_eq!(parsed.6, &b"PING"[..]);
+
+        // Integration: the dispatch path must drop the segment without panic.
+        let mut bad = [0u8; 20];
+        bad[12] = 0xF0;
+        crate::net::socket::tcp_dispatch(
+            Ipv4Addr::new([10, 0, 0, 1]),
+            Ipv4Addr::new([10, 0, 0, 2]),
+            &bad,
+        );
+        test_true!(true);
+    });
+
     test_case!("net_socket_addr_fmt", {
         let addr = SocketAddrV4::new(Ipv4Addr::new([192, 168, 1, 1]), 8080);
         test_eq!(format!("{}", addr), "192.168.1.1:8080");

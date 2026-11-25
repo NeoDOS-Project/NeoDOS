@@ -110,6 +110,11 @@
 
 ### Fixed
 
+- **TCP malformado: panic remoto por `data_offset` fuera del segmento (#814).**
+  `parse_tcp_segment` comprobaba `data_offset >= 20` pero no que el offset
+  cupiera en el segmento; un paquete de 20–39 B con offset 15 hacía
+  `&data[60..]` y panicaba el kernel. Ahora se descarta antes de la slice, con
+  tests del parser y de `tcp_dispatch`.
 - **Escritura con dos ficheros abiertos en el mismo directorio (#753).** La
   entrada cacheada de un fichero guardaba la raíz del B-tree del directorio en
   el momento del `lookup`. Si otro fichero del mismo directorio crecía el árbol

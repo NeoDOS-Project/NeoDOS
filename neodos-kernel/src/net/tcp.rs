@@ -1193,7 +1193,12 @@ pub fn parse_tcp_segment(data: &[u8]) -> Option<(u16, u16, u32, u32, u8, u16, &[
     let data_offset = (data[12] >> 4) as usize * 4;
     let flags = data[13];
     let window = u16::from_be_bytes([data[14], data[15]]);
-    if data_offset < 20 { return None; }
+    // AUDIT-006 / #814: the data-offset nibble is attacker-controlled and can
+    // point past the captured segment. Validate it before slicing, otherwise a
+    // single malformed packet panics the kernel (remote DoS).
+    if data_offset < 20 || data_offset > data.len() {
+        return None;
+    }
     Some((src_port, dst_port, seq, ack, flags, window, &data[data_offset..]))
 }
 
