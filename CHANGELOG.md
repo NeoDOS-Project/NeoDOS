@@ -6,6 +6,12 @@
 
 ### Security
 
+- **Endurecimiento de ObSetInfo (#812/#813/#817).** `ObjectName` rechaza
+  renombrar objetos del namespace y convertir un nombre en ruta (evita fabricar
+  rutas VFS para `FileDelete`/`VfsRename`); la DACL solo la cambia el propietario
+  o un administrador; fsck, etiqueta de volumen, IP/gateway y control de
+  servicios exigen administrador (y `ACCESS_WRITE` en el FS). `label` y `fsck`
+  abren con escritura cuando mutan.
 - **Hardening del loader NEM (#809/#810/#811).** `ObCreate(Driver)` exige
   administrador y una ruta bajo `C:\System\Drivers` (legacy o canónica); el
   parser rechaza secciones que no caben en `total_mem_size`; las relocaciones

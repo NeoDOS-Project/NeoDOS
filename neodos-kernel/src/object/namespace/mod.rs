@@ -76,6 +76,31 @@ pub fn init_object_namespace() {
     ob_namespace_debug();
 }
 
+/// Namespace subtrees whose object names are kernel-owned. Renaming one of
+/// these objects from user mode could fabricate a VFS path used later by
+/// `FileDelete`/`VfsRename` (AUDIT-004 / #812).
+pub fn is_protected_path(path: &str) -> bool {
+    const PREFIXES: &[&str] = &[
+        "\\global\\filesystem\\",
+        "\\global\\info\\",
+        "\\device\\",
+        "\\driver\\",
+        "\\process\\",
+        "\\service\\",
+        "\\session\\",
+        "\\system\\",
+        "\\registry\\",
+        "\\filesystem\\",
+        "\\dosdevices\\",
+        "\\ob\\",
+    ];
+    let lower = path.to_ascii_lowercase();
+    PREFIXES.iter().any(|prefix| {
+        lower.starts_with(prefix)
+            || lower == prefix.trim_end_matches('\\')
+    })
+}
+
 pub fn ob_insert_object(path: &str, obj_id: ObId) -> Result<(), &'static str> {
     OB_NAMESPACE.lock().insert_object(path, obj_id)
 }

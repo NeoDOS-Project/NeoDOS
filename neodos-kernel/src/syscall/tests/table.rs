@@ -9,6 +9,7 @@ use super::super::{SYSCALL_TABLE, SYSCALL_PERMISSIONS, check_syscall_permission,
 pub fn register_syscall_table_tests() {
     use crate::test_case;
     use crate::test_eq;
+    use crate::test_false;
     use crate::test_true;
 
     test_case!("syscall_table_sparse_dispatch", {
@@ -54,6 +55,44 @@ pub fn register_syscall_table_tests() {
         ));
         test_true!(!is_allowed_driver_path("C:\\System\\Drivers\\evil.dll"));
         test_true!(!is_allowed_driver_path(""));
+    });
+
+    test_case!("object_name_protected_namespaces", {
+        use crate::object::namespace::is_protected_path;
+
+        test_true!(is_protected_path("\\Global\\FileSystem\\C:\\boot.cfg"));
+        test_true!(is_protected_path("\\Global\\FileSystem"));
+        test_true!(is_protected_path("\\Device\\Keyboard"));
+        test_true!(is_protected_path("\\Process\\12"));
+        test_true!(is_protected_path("\\Service\\NeoInit"));
+        test_true!(is_protected_path("\\Registry\\Machine"));
+        test_false!(is_protected_path("eproc/12"));
+        test_false!(is_protected_path("PIPE_R0"));
+    });
+
+    test_case!("ob_rename_and_privileged_set_policy", {
+        use crate::security::acl::ACCESS_WRITE;
+        use crate::syscall::ob::set::{object_rename_allowed, require_admin_for_set_info};
+
+        // Protected namespace objects cannot be renamed, even by an admin.
+        test_true!(object_rename_allowed(
+            true,
+            0,
+            "\\Global\\FileSystem\\C:\\boot.cfg",
+            "leaf"
+        )
+        .is_err());
+        // The new name must be a leaf, not a path.
+        test_true!(object_rename_allowed(true, 0, "eproc/1", "a\\b").is_err());
+        test_true!(object_rename_allowed(true, 0, "eproc/1", "C:\\x").is_err());
+        // Non-admin needs a writable handle.
+        test_true!(object_rename_allowed(false, 0, "eproc/1", "leaf").is_err());
+        test_true!(object_rename_allowed(false, ACCESS_WRITE, "eproc/1", "leaf").is_ok());
+        test_true!(object_rename_allowed(true, 0, "eproc/1", "leaf").is_ok());
+
+        // Privileged ObSetInfo classes (services, NIC, volume, fsck).
+        test_true!(require_admin_for_set_info(true).is_ok());
+        test_true!(require_admin_for_set_info(false).is_err());
     });
 
     test_case!("driver_load_authorization_policy", {
