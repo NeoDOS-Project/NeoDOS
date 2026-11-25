@@ -31,6 +31,40 @@ pub fn register_syscall_table_tests() {
         test_true!(create_obj_type(99).is_none());
     });
 
+    test_case!("driver_load_path_policy", {
+        use crate::syscall::ob::create::is_allowed_driver_path;
+
+        // Trusted driver directory, with either separator.
+        test_true!(is_allowed_driver_path(
+            "\\Global\\FileSystem\\C:\\System\\Drivers\\e1000.nem"
+        ));
+        test_true!(is_allowed_driver_path("C:\\System\\Drivers\\ata.nem"));
+        test_true!(is_allowed_driver_path("C:/System/Drivers/rtc.nem"));
+        test_true!(is_allowed_driver_path("c:\\system\\drivers\\x.NEM"));
+        test_true!(is_allowed_driver_path(
+            "C:\\NeoDOS\\System\\drivers\\e1000.nem"
+        ));
+
+        // Outside the trusted directory, traversal, or wrong extension.
+        test_true!(!is_allowed_driver_path(
+            "\\Global\\FileSystem\\C:\\Users\\me\\evil.nem"
+        ));
+        test_true!(!is_allowed_driver_path(
+            "C:\\System\\Drivers\\..\\..\\Users\\evil.nem"
+        ));
+        test_true!(!is_allowed_driver_path("C:\\System\\Drivers\\evil.dll"));
+        test_true!(!is_allowed_driver_path(""));
+    });
+
+    test_case!("driver_load_authorization_policy", {
+        use crate::syscall::ob::create::authorize_driver_load;
+
+        let trusted = "\\Global\\FileSystem\\C:\\System\\Drivers\\e1000.nem";
+        test_true!(authorize_driver_load(true, trusted).is_ok());
+        test_true!(authorize_driver_load(true, "C:\\Users\\me\\evil.nem").is_err());
+        test_true!(authorize_driver_load(false, trusted).is_err());
+    });
+
     test_case!("syscall_permission_admin_check", {
         let result = check_syscall_permission(58, false);
         test_true!(result.is_err());

@@ -15,6 +15,8 @@ mod service;
 mod driver;
 mod session;
 
+pub(crate) use driver::{authorize_driver_load, is_allowed_driver_path};
+
 /// Map a user-supplied object-type discriminant (`ob_create` RCX) to a concrete
 /// `ObType`. Only these types may be created from user mode.
 pub(crate) fn create_obj_type(v: u32) -> Option<crate::object::ObType> {

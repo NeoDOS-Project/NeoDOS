@@ -171,7 +171,19 @@ pub fn load_nem_v3(data: &[u8]) -> Result<NemV3LoadResult, &'static str> {
     let text_size = parsed.header.text_size as u64;
     let rodata_size = parsed.header.rodata_size as u64;
     let data_size = parsed.header.data_size as u64;
-    let bss_size = total as u64 - text_size - rodata_size - data_size;
+    // AUDIT-002 (defense in depth): the parser already rejects sections that do
+    // not fit in `total_mem_size`, but a second checked computation here keeps
+    // the allocation/copy invariant local and makes an underflow impossible.
+    let section_bytes = text_size
+        .checked_add(rodata_size)
+        .and_then(|v| v.checked_add(data_size))
+        .ok_or("Driver section sizes overflow")?;
+    if section_bytes > total as u64 {
+        return Err("Driver sections exceed total_mem_size");
+    }
+    let bss_size = (total as u64)
+        .checked_sub(section_bytes)
+        .ok_or("Driver section sizes exceed total_mem_size")?;
 
     // Try to allocate from isolated region first
     let (base, isolated) = match alloc_driver_memory(total) {
@@ -211,15 +223,28 @@ pub fn load_nem_v3(data: &[u8]) -> Result<NemV3LoadResult, &'static str> {
 
     // Apply relocations
     for reloc in parsed.relocs {
-        apply_relocation(
+        if let Err(e) = apply_relocation(
             reloc,
             text_base,
             rodata_base,
             data_base,
             bss_base,
+            text_size,
+            rodata_size,
+            data_size,
+            bss_size,
             parsed.symbols,
             parsed.strtab,
-        )?;
+        ) {
+            // AUDIT-003: a rejected relocation must not leak the slot/heap
+            // allocation made for this image.
+            if isolated {
+                isolation::free_driver_slot(0xFFFF_FFFE);
+            } else {
+                unsafe { free_heap_fallback(base, total); }
+            }
+            return Err(e);
+        }
     }
 
     // Find entry points (first by symbol name, fallback to header offset)
@@ -354,22 +379,42 @@ fn find_entry_event(
 
 // ── Relocation ──
 
+#[allow(clippy::too_many_arguments)]
 fn apply_relocation(
     reloc: &NemReloc,
     text_base: *mut u8,
     rodata_base: *mut u8,
     data_base: *mut u8,
     bss_base: *mut u8,
+    text_size: u64,
+    rodata_size: u64,
+    data_size: u64,
+    bss_size: u64,
     symbols: &[NemSymbol],
     strtab: &[u8],
 ) -> Result<(), &'static str> {
-    let section_base = match reloc.section as u8 {
-        NEM_SECT_TEXT => text_base,
-        NEM_SECT_RODATA => rodata_base,
-        NEM_SECT_DATA => data_base,
-        crate::nem::NEM_SECT_BSS => bss_base,
+    let (section_base, section_size) = match reloc.section as u8 {
+        NEM_SECT_TEXT => (text_base, text_size),
+        NEM_SECT_RODATA => (rodata_base, rodata_size),
+        NEM_SECT_DATA => (data_base, data_size),
+        crate::nem::NEM_SECT_BSS => (bss_base, bss_size),
         _ => return Err("Invalid relocation section"),
     };
+
+    // AUDIT-003: the target of a relocation is attacker-controlled input. A
+    // value outside the image is an arbitrary Ring-0 write (LAPIC/IOAPIC, page
+    // tables, other driver slots), so validate the destination before writing.
+    let write_len: u64 = match reloc.r_type {
+        R_NEM_64 => 8,
+        R_NEM_PC32 | R_NEM_PLT32 | R_NEM_32 | R_NEM_32S => 4,
+        _ => return Err("Unknown relocation type"),
+    };
+    if (reloc.offset as u64)
+        .checked_add(write_len)
+        .map_or(true, |end| end > section_size)
+    {
+        return Err("Relocation offset out of bounds");
+    }
 
     let place = unsafe { section_base.add(reloc.offset as usize) };
 
@@ -382,13 +427,16 @@ fn apply_relocation(
             let addr = resolve_export(sym_name).ok_or("Unresolved kernel symbol")?;
             (addr as u64, true)
         } else {
-            let sym_section_base = match sym.section as u8 {
-                NEM_SECT_TEXT => text_base,
-                NEM_SECT_RODATA => rodata_base,
-                NEM_SECT_DATA => data_base,
-                crate::nem::NEM_SECT_BSS => bss_base,
+            let (sym_section_base, sym_section_size) = match sym.section as u8 {
+                NEM_SECT_TEXT => (text_base, text_size),
+                NEM_SECT_RODATA => (rodata_base, rodata_size),
+                NEM_SECT_DATA => (data_base, data_size),
+                crate::nem::NEM_SECT_BSS => (bss_base, bss_size),
                 _ => return Err("Invalid symbol section"),
             };
+            if sym.value as u64 > sym_section_size {
+                return Err("Symbol value out of bounds");
+            }
             (unsafe { sym_section_base.add(sym.value as usize) } as u64, false)
         }
     } else {
@@ -578,5 +626,126 @@ pub fn register_v3_loader_tests() {
         let loaded_data = unsafe { core::slice::from_raw_parts(r.data_base, data.len()) };
         test_eq!(loaded_data, &data[..]);
         unsafe { unload_nem_v3(&r); }
+    });
+
+    test_case!("v3_reject_sections_exceed_total", {
+        use crate::nem::build_valid_nem_v3;
+        let code = [0x90u8; 32];
+        let mut raw = build_valid_nem_v3("OVERSIZE", &code, &[], &[], 0, &[]);
+        // NemHeaderV3::total_mem_size is at offset 44.
+        raw[44..48].copy_from_slice(&8u32.to_le_bytes());
+        test_eq!(crate::nem::parse_nem_v3(&raw), None);
+        test_true!(load_nem_v3(&raw).is_err());
+    });
+
+    test_case!("v3_reject_reloc_out_of_bounds", {
+        use crate::nem::{build_valid_nem_v3, NemReloc, R_NEM_64};
+        let code = [0x90u8; 32];
+        let relocs = [
+            NemReloc { offset: 0x40, section: 0, r_type: R_NEM_64, sym_idx: 0xFF, addend: 0 },
+        ];
+        let raw = build_valid_nem_v3("BADRELOC", &code, &[], &[], 0, &relocs);
+        test_true!(load_nem_v3(&raw).is_err());
+    });
+
+    test_case!("v3_reloc_at_section_end_ok", {
+        use crate::nem::{build_valid_nem_v3, NemReloc, R_NEM_64};
+        let code = [0x90u8; 32];
+        let relocs = [
+            NemReloc { offset: 24, section: 0, r_type: R_NEM_64, sym_idx: 0xFF, addend: 0 },
+        ];
+        let raw = build_valid_nem_v3("RELOCEND", &code, &[], &[], 0, &relocs);
+        let result = load_nem_v3(&raw);
+        test_true!(result.is_ok());
+        let r = result.unwrap();
+        let written = unsafe { core::ptr::read((r.text_base.add(24)) as *const u64) };
+        test_eq!(written, r.text_base as u64);
+        unsafe { unload_nem_v3(&r); }
+    });
+
+    test_case!("v3_reject_reloc_rodata_out_of_bounds", {
+        use crate::nem::{build_valid_nem_v3, NemReloc, R_NEM_64};
+        let code = [0x90u8; 16];
+        let rodata = b"12345678";
+        // 8-byte write at offset 4 of an 8-byte rodata section.
+        let relocs = [
+            NemReloc { offset: 4, section: 1, r_type: R_NEM_64, sym_idx: 0xFF, addend: 0 },
+        ];
+        let raw = build_valid_nem_v3("BADROD", &code, rodata, &[], 0, &relocs);
+        test_true!(load_nem_v3(&raw).is_err());
+    });
+
+    test_case!("v3_reject_reloc_data_out_of_bounds", {
+        use crate::nem::{build_valid_nem_v3, NemReloc, R_NEM_64};
+        let code = [0x90u8; 16];
+        let data = [0u8; 4];
+        // 8-byte write into a 4-byte data section.
+        let relocs = [
+            NemReloc { offset: 0, section: 2, r_type: R_NEM_64, sym_idx: 0xFF, addend: 0 },
+        ];
+        let raw = build_valid_nem_v3("BADDAT", &code, &[], &data, 0, &relocs);
+        test_true!(load_nem_v3(&raw).is_err());
+    });
+
+    test_case!("v3_reloc_into_bss_ok", {
+        use crate::nem::{build_valid_nem_v3, NemReloc, R_NEM_64};
+        let code = [0x90u8; 16];
+        let relocs = [
+            NemReloc { offset: 0, section: 3, r_type: R_NEM_64, sym_idx: 0xFF, addend: 0 },
+        ];
+        let raw = build_valid_nem_v3("BSSRELOC", &code, &[], &[], 16, &relocs);
+        let result = load_nem_v3(&raw);
+        test_true!(result.is_ok());
+        let r = result.unwrap();
+        unsafe { unload_nem_v3(&r); }
+    });
+
+    test_case!("v3_reject_symbol_out_of_bounds", {
+        use crate::nem::build_nem_v3_with_symbol;
+        let code = [0x90u8; 16];
+        // Symbol claims to live at 0x100 in a 16-byte text section.
+        let raw = build_nem_v3_with_symbol("SYMOOB", &code, 0x100);
+        test_true!(load_nem_v3(&raw).is_err());
+    });
+
+    test_case!("v3_accept_symbol_in_bounds", {
+        use crate::nem::build_nem_v3_with_symbol;
+        let code = [0x90u8; 16];
+        let raw = build_nem_v3_with_symbol("SYMOK", &code, 8);
+        let result = load_nem_v3(&raw);
+        test_true!(result.is_ok());
+        let r = result.unwrap();
+        unsafe { unload_nem_v3(&r); }
+    });
+
+    test_case!("v3_load_unaligned_total_ok", {
+        use crate::nem::build_valid_nem_v3;
+        let code = [0x90u8; 16];
+        // total_mem_size = 16 + 1 = 17 (not page aligned).
+        let raw = build_valid_nem_v3("UNALIGN", &code, &[], &[], 1, &[]);
+        let result = load_nem_v3(&raw);
+        test_true!(result.is_ok());
+        let r = result.unwrap();
+        unsafe { unload_nem_v3(&r); }
+    });
+
+    // Deterministic relocation matrix: every section/offset combination must
+    // either load or be rejected without panicking (AUDIT-003 / #811).
+    test_case!("v3_reloc_matrix_no_panic", {
+        use crate::nem::{build_valid_nem_v3, NemReloc, R_NEM_64};
+        let code = [0x90u8; 16];
+        let rodata = [0u8; 8];
+        let data = [0u8; 8];
+        for section in 0..=3u16 {
+            for offset in [0u32, 4, 8, 12, 16, 20, 24, 32] {
+                let relocs = [
+                    NemReloc { offset, section, r_type: R_NEM_64, sym_idx: 0xFF, addend: 0 },
+                ];
+                let raw = build_valid_nem_v3("FUZZREL", &code, &rodata, &data, 8, &relocs);
+                if let Ok(r) = load_nem_v3(&raw) {
+                    unsafe { unload_nem_v3(&r); }
+                }
+            }
+        }
     });
 }
