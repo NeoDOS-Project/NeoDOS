@@ -116,6 +116,10 @@
 
 ### Fixed
 
+- **Referencias en duplicación/herencia de handles (#815).** `HandleEntry::duplicate`
+  adquiere la referencia Ob y del extremo de pipe; `dup2` y la herencia de
+  stdio del hijo la usan, y `close` libera ambos. Cerrar un fd ya no invalida
+  el duplicado ni libera el pipe que el hijo sigue usando.
 - **Bypass de ACL del padre con `/` o ruta relativa (#816).** `FileCreate` y
   `mkdir` usan `paths::parent_dir`, que acepta `\` y `/` y resuelve la raíz del
   volumen cuando no hay separador. Antes `C:/…` y `C:x` se saltaban la DACL del
