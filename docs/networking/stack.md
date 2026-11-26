@@ -208,7 +208,9 @@ meant merely "connected").
 
 ```text
 NIC (e1000)
-  -> poll_packet() -> 2048 byte buffer
+  -> poll_packet(capacity) -> at most `capacity` bytes (driver returns
+     -EMSGSIZE and drops the frame if it does not fit; the kernel bridge
+     also rejects a reported length larger than its buffer)
     -> ethernet::EthernetHeader parse (dst MAC, src MAC, ethertype)
       |
       +-> ARP (ethertype 0x0806):

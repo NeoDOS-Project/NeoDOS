@@ -425,6 +425,12 @@ fn e1000_send_to(slot: usize, buf: *const u8, len: u32) -> i32 {
 }
 
 fn e1000_poll_to(slot: usize, buf: *mut u8, out_len: *mut u32) -> i32 {
+    if buf.is_null() || out_len.is_null() {
+        return -1;
+    }
+    // The caller passes the destination capacity in *out_len (#821). Never
+    // write a frame larger than that buffer.
+    let capacity = unsafe { *out_len } as usize;
     let mmio = MMIO[slot].load(Ordering::Relaxed);
 
     // Publish link state (throttled, #529): the NEM bridge has no link-query
@@ -454,6 +460,16 @@ fn e1000_poll_to(slot: usize, buf: *mut u8, out_len: *mut u32) -> i32 {
         write_reg(mmio, REG_RDT, (old_rdt + 1) % NUM_RX_DESC as u32);
         RX_CUR[slot].store((rx_cur + 1) as u32, Ordering::Relaxed);
         return -1;
+    }
+
+    if pkt_len > capacity {
+        // Drop the frame but return the descriptor to the NIC.
+        rx_descs[rx_cur].status = 0;
+        core::sync::atomic::fence(core::sync::atomic::Ordering::Release);
+        let old_rdt = read_reg(mmio, REG_RDT);
+        write_reg(mmio, REG_RDT, (old_rdt + 1) % NUM_RX_DESC as u32);
+        RX_CUR[slot].store((rx_cur + 1) as u32, Ordering::Relaxed);
+        return -2; // -EMSGSIZE
     }
 
     let rx_buf = unsafe { &BUF_POOL[slot].0[rx_cur * RX_BUF_SIZE..] };

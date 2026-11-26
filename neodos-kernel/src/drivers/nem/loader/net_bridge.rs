@@ -61,8 +61,16 @@ impl NetworkInterface for NemNetworkDevice {
         }
         let mut len: u32 = buf.len() as u32;
         let rc = unsafe { (self.poll_fn)(self.device_id, buf.as_mut_ptr(), &mut len as *mut u32) };
-        if rc == 0 && len > 0 { Some(len as usize) } else { None }
+        if rc == 0 { poll_len_within(buf.len(), len) } else { None }
     }
+}
+
+/// Validate the length reported by a driver `poll` against the caller's
+/// capacity. A buggy driver must never make the kernel read past its buffer
+/// (#821).
+pub(crate) fn poll_len_within(capacity: usize, reported: u32) -> Option<usize> {
+    let len = reported as usize;
+    if len > 0 && len <= capacity { Some(len) } else { None }
 }
 
 #[no_mangle]
