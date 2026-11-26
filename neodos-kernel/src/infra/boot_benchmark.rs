@@ -10,67 +10,32 @@ use core::sync::atomic::{AtomicU64, AtomicU32, AtomicBool, Ordering};
 
 // ── TSC-based high-precision timer ──────────────────────────────────
 
-/// Read the CPU Time-Stamp Counter (RDTSC).
+/// Initialise TSC calibration.  Call once, early in boot.
 #[inline(always)]
 pub fn rdtsc() -> u64 {
-    unsafe { crate::hal::raw::raw_read_tsc() }
+    crate::hal::rdtsc()
 }
 
-/// Estimate TSC frequency by timing against the PIT (Channel 2).
-/// Returns approximate ticks-per-millisecond.
-fn calibrate_tsc_khz() -> u64 {
-    // Use PIT channel 2 for a ~10 ms delay (11932 ticks @ 1.193182 MHz)
-    const PIT_HZ: u64 = 1_193_182;
-    const DELAY_TICKS: u16 = 11932; // ~10 ms
-
-    // Gate PIT channel 2 on
-    let gate = crate::hal::inb(0x61);
-    crate::hal::outb(0x61, (gate & 0xFD) | 0x01);
-    // Mode 0, channel 2
-    crate::hal::outb(0x43, 0xB0);
-    crate::hal::outb(0x42, (DELAY_TICKS & 0xFF) as u8);
-    crate::hal::outb(0x42, (DELAY_TICKS >> 8) as u8);
-
-    // Reset gate to start countdown
-    let gate2 = crate::hal::inb(0x61);
-    crate::hal::outb(0x61, gate2 & 0xFE);
-    crate::hal::outb(0x61, gate2 | 0x01);
-
-    let start = rdtsc();
-    // Wait for PIT output bit (bit 5 of port 0x61)
-    while (crate::hal::inb(0x61) & 0x20) == 0 {}
-    let end = rdtsc();
-
-    let elapsed = end.saturating_sub(start);
-    // elapsed ticks in ~10 ms → ticks/ms = elapsed / 10
-    let khz = elapsed / 10;
-    if khz == 0 { 1000 } else { khz } // fallback 1 GHz
-}
-
-static TSC_KHZ: AtomicU64 = AtomicU64::new(0);
-
-/// Initialise TSC calibration.  Call once, early in boot.
 pub fn init() {
-    let khz = calibrate_tsc_khz();
-    TSC_KHZ.store(khz, Ordering::Relaxed);
+    let khz = crate::hal::init_tsc();
     kinfo!(LogSubsys::Bench, "TSC calibrated: {} ticks/ms", khz);
 }
 
 /// Get calibrated TSC frequency in ticks per millisecond.
 pub fn get_tsc_khz() -> u64 {
-    TSC_KHZ.load(Ordering::Relaxed)
+    crate::hal::tsc_khz()
 }
 
 /// Current timestamp in TSC ticks.
 #[inline]
 pub fn boot_time_now() -> u64 {
-    rdtsc()
+    crate::hal::rdtsc()
 }
 
 /// Convert tick delta to milliseconds.
 #[inline]
 pub fn elapsed_ms(start: u64, end: u64) -> u64 {
-    let khz = TSC_KHZ.load(Ordering::Relaxed);
+    let khz = crate::hal::tsc_khz();
     if khz == 0 { return 0; }
     end.saturating_sub(start) / khz
 }

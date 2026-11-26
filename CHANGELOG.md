@@ -200,6 +200,11 @@
 
 ### Changed
 
+- **Baseline de dependencias 141 → 90 (lote 1, #823).** `abi_freeze` pasa a
+  `boot/`, `panic_classification` a `arch/x64/idt/`, los tests de la puerta
+  admin a `syscall/tests`, `MODE_DIR` a constantes locales y los helpers TSC a
+  `hal`. `neodev check-deps`: 90 entradas, sin violaciones nuevas.
+
 - **Primer lote del baseline de dependencias (#823).** `arch` deja de importar
   `globals`/VFS: el loader de páginas `mmap` file-backed vive en
   `fs/vfs/mmap.rs` y `boot` lo registra con `paging::set_mmap_file_loader`.

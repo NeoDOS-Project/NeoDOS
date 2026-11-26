@@ -98,3 +98,45 @@ static KEEP_TIME_INCREMENT_TICKS: unsafe extern "C" fn() = increment_ticks;
 static KEEP_TIME_GET_TICK_RATE: unsafe extern "C" fn() -> u64 = get_tick_rate;
 #[used]
 static KEEP_TIME_INIT_TIMER: unsafe extern "C" fn() = init_system_timer;
+
+// ── TSC helpers (shared by net/benchmarks; HAL is a legal dependency) ──
+
+static TSC_KHZ: AtomicU64 = AtomicU64::new(0);
+
+/// Read the CPU Time-Stamp Counter (RDTSC).
+#[inline(always)]
+pub fn rdtsc() -> u64 {
+    unsafe { raw::raw_read_tsc() }
+}
+
+/// Calibrate the TSC against PIT channel 2 (~10 ms). Returns ticks/ms.
+fn calibrate_tsc_khz() -> u64 {
+    const DELAY_TICKS: u16 = 11932; // ~10 ms at 1.193182 MHz
+
+    let gate = crate::hal::inb(0x61);
+    crate::hal::outb(0x61, (gate & 0xFD) | 0x01);
+    crate::hal::outb(0x43, 0xB0);
+    crate::hal::outb(0x42, (DELAY_TICKS & 0xFF) as u8);
+    crate::hal::outb(0x42, (DELAY_TICKS >> 8) as u8);
+    let gate2 = crate::hal::inb(0x61);
+    crate::hal::outb(0x61, gate2 & 0xFE);
+    crate::hal::outb(0x61, gate2 | 0x01);
+
+    let start = rdtsc();
+    while (crate::hal::inb(0x61) & 0x20) == 0 {}
+    let end = rdtsc();
+    let khz = end.saturating_sub(start) / 10;
+    if khz == 0 { 1000 } else { khz }
+}
+
+/// Initialise TSC calibration once, early in boot. Returns ticks/ms.
+pub fn init_tsc() -> u64 {
+    let khz = calibrate_tsc_khz();
+    TSC_KHZ.store(khz, Ordering::Relaxed);
+    khz
+}
+
+/// Calibrated TSC frequency in ticks per millisecond (0 before init).
+pub fn tsc_khz() -> u64 {
+    TSC_KHZ.load(Ordering::Relaxed)
+}

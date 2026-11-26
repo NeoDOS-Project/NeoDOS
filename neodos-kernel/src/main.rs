@@ -72,9 +72,11 @@ mod id_index; // NEODOS-05 (#635): O(1) id index (Obj table + scheduler)
 // Cross-cutting infrastructure now lives under `infra/`.
 mod infra;
 pub use infra::{
-    abi_freeze, boot_benchmark, cpu, elf, globals, handle, invariants, lock_order,
-    nxl, panic_classification, trace, usermode, work_queue,
+    boot_benchmark, cpu, elf, globals, handle, invariants, lock_order,
+    nxl, trace, usermode, work_queue,
 };
+pub use boot::abi_freeze;
+pub use arch::x64::idt::panic_classification;
 
 use graphics::FramebufferInfo;
 

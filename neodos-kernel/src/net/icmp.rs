@@ -16,15 +16,15 @@ pub fn arp_resolve_wait(
     }
     // Fire the request (a fast reply may already populate the cache).
     let _ = crate::net::arp::arp_resolve_on(nic_id, target_ip);
-    let start = crate::boot_benchmark::rdtsc();
-    let per_us = (crate::boot_benchmark::get_tsc_khz() / 1000).max(1);
+    let start = crate::hal::rdtsc();
+    let per_us = (crate::hal::tsc_khz() / 1000).max(1);
     let max_ticks = per_us.saturating_mul(timeout_us);
     loop {
         crate::net::network_poll_all();
         if let Some(m) = crate::net::arp::arp_lookup(target_ip) {
             return Some(m);
         }
-        if crate::boot_benchmark::rdtsc().wrapping_sub(start) > max_ticks {
+        if crate::hal::rdtsc().wrapping_sub(start) > max_ticks {
             return None;
         }
         core::hint::spin_loop();
@@ -227,8 +227,8 @@ pub fn icmp_ping(dest_ip: crate::net::types::Ipv4Addr, timeout_us: u64) -> Optio
         ktrace!(crate::log::LogSubsys::Arp, "Request sent for {}", arp_target);
 
         // Poll for ARP reply with RDTSC-based timeout (500ms)
-        let arp_start = crate::boot_benchmark::rdtsc();
-        let arp_tsc_per_us = crate::boot_benchmark::get_tsc_khz() / 1000;
+        let arp_start = crate::hal::rdtsc();
+        let arp_tsc_per_us = crate::hal::tsc_khz() / 1000;
         let arp_timeout_ticks = arp_tsc_per_us * 500_000;
 
         loop {
@@ -237,7 +237,7 @@ pub fn icmp_ping(dest_ip: crate::net::types::Ipv4Addr, timeout_us: u64) -> Optio
                 ktrace!(crate::log::LogSubsys::Arp, "Resolved {} -> {}", arp_target, mac);
                 return Some(mac);
             }
-            let now = crate::boot_benchmark::rdtsc();
+            let now = crate::hal::rdtsc();
             if now.wrapping_sub(arp_start) > arp_timeout_ticks {
                 kdebug!(crate::log::LogSubsys::Arp, "Timeout resolving {}", arp_target);
                 return None;
@@ -291,18 +291,18 @@ pub fn icmp_ping(dest_ip: crate::net::types::Ipv4Addr, timeout_us: u64) -> Optio
 
     // Poll for ICMP echo reply
     LAST_PING_REPLY.store(0, Ordering::Release);
-    let start = crate::boot_benchmark::rdtsc();
-    let tsc_per_us = crate::boot_benchmark::get_tsc_khz() / 1000;
+    let start = crate::hal::rdtsc();
+    let tsc_per_us = crate::hal::tsc_khz() / 1000;
     let max_ticks = tsc_per_us * timeout_us;
 
     loop {
         crate::net::network_poll_all();
         if LAST_PING_REPLY.load(Ordering::Acquire) == id as u64 {
-            let elapsed = crate::boot_benchmark::rdtsc().wrapping_sub(start);
+            let elapsed = crate::hal::rdtsc().wrapping_sub(start);
             ktrace!(crate::log::LogSubsys::Icmp, "Echo Reply id={} rtt={}us", id, elapsed / tsc_per_us.max(1));
             return Some(elapsed / tsc_per_us.max(1));
         }
-        let now = crate::boot_benchmark::rdtsc();
+        let now = crate::hal::rdtsc();
         if now.wrapping_sub(start) > max_ticks {
             kdebug!(crate::log::LogSubsys::Icmp, "Timeout waiting for Echo Reply id={}", id);
             return None;

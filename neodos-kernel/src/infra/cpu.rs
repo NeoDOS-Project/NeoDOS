@@ -232,7 +232,7 @@ pub fn get_cpu_info_full() -> CpuInfoFull {
     info.is_bsp = smp::is_bsp();
 
     // Timer / frequency
-    info.tsc_khz = crate::boot_benchmark::get_tsc_khz();
+    info.tsc_khz = crate::hal::tsc_khz();
     info.timer_source = timers::active() as u8;
     info.tick_rate_hz = crate::hal::get_tick_rate();
 

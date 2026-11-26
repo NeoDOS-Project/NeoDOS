@@ -4,6 +4,7 @@
 //! mount, scheduler, security, Ring 3 hand-off). `main.rs::rust_start` is the
 //! thin `#[no_mangle]` entrypoint that calls it.
 
+pub mod abi_freeze;
 use crate::*;
 use crate::{BootInfo, BOOTINFO_MAGIC, KERNEL_VERSION, KERNEL_VERSION_CODE};
 use crate::fs::fat32::Fat32Driver;

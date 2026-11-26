@@ -17,6 +17,8 @@ use crate::exception::{
 };
 
 
+pub mod panic_classification;
+
 mod diag;
 
 pub use diag::timer::timer_diag_dump;
