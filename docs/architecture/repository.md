@@ -399,3 +399,30 @@ No immediate migration. All proposals are for **post-v1.0** unless otherwise not
 - **REPO-SEP-005.** Extract NeoDOS-LSP to separate repo
 - **REPO-SEP-006.** Move docs/ to NeoDocs repo after v1.0 stability
 - **REPO-SEP-007.** Re-evaluate drivers/ separation at v1.0 when NEM ABI is frozen
+
+---
+
+## 8. Dependency baseline reduction order (#823)
+
+`neodev check-deps` fails on any new violation; the file
+`check-deps-baseline.txt` lists the accepted ones (INV-1 exceptions).
+`neodev check-deps` must keep the count decreasing, never growing. Reduction
+order, smallest blast radius first:
+
+1. **`arch → globals`** — done: the file-backed `mmap` loader moved to
+   `fs/vfs/mmap.rs` and is registered from `boot` via
+   `paging::set_mmap_file_loader`; `arch` no longer imports `PAGE_CACHE`/VFS.
+2. **`drivers → fs`** — boot loader/hot reload read `.nem` via VFS; move the
+   read helper behind a loader callback or into the boot layer.
+3. **`fs → drivers`** — VFS partition/GPT and block-device glue; introduce a
+   block-device trait boundary owned by `fs`.
+4. **`scheduler → input`** — `wake.rs` foreground-pid cleanup; move it to an
+   input callback or the syscall layer.
+5. **`infra → scheduler`** — ELF/panic helpers consume scheduler types; split
+   the shared types into a leaf module.
+6. **HAL exceptions** — `timers`/`interrupts`/`power` (#436–#438) and PCI test
+   `drivers` (#426) once their APIs are callback-based.
+
+Each step keeps `cargo build` + `neodev test` green and removes its lines from
+the baseline in the same PR. The baseline file is the ratchet: a PR that adds a
+line is rejected by CI.

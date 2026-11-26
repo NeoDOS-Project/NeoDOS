@@ -448,6 +448,10 @@ pub unsafe fn init(boot_info: &BootInfo) -> ! {
             letter);
     }
 
+    // Arch handles the demand-paging fault but must not depend on VFS/globals
+    // (INV-1). Wire the file-backed loader now that the filesystems are up.
+    crate::arch::x64::paging::set_mmap_file_loader(vfs::mmap::load_file_mmap_page);
+
     drivers::ps2::set_leds(0b111); // All ON = storage ready
 
     // A4.4: Initialize Input Manager (VT subsystem)
