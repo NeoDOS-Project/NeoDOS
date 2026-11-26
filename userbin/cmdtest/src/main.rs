@@ -107,6 +107,38 @@ const NEM_LOAD_ARG: &[u8] = b"NEMLOAD";
 const USERWIN_ARG: &[u8] = b"USERWIN";
 const USERWIN_START: u64 = 0x023F_C000; // USER_LIMIT (0x2400000) - 16 KiB
 
+/// Ring 3 probe for #816: creating through `/` or a drive-relative path must
+/// still authorize the parent directory.
+const PATHSLASH_ARG: &[u8] = b"PATHSLASH";
+
+fn run_pathslash_probe() -> u32 {
+    write_str(b"[PATHSLASH] start\r\n");
+    let mut ok = true;
+    for path in [
+        "C:/NeoDOS/System/__slash_probe",
+        "C:__slash_probe",
+    ] {
+        match syscall::ob_file_create(path) {
+            Err(e) if e == EPERM => {}
+            Ok(fd) => {
+                let _ = syscall::ob_file_delete(fd);
+                write_str(b"[PATHSLASH] FAIL created in protected parent\r\n");
+                ok = false;
+            }
+            Err(_) => {
+                write_str(b"[PATHSLASH] FAIL unexpected error\r\n");
+                ok = false;
+            }
+        }
+    }
+    if ok {
+        write_str(b"[PATHSLASH] PASS slash/relative parent denied\r\n");
+        0
+    } else {
+        1
+    }
+}
+
 /// Ring 3 probe for #813/#817: privileged ObSetInfo classes must return EPERM
 /// for an unprivileged caller (NIC reconfiguration, volume label, fsck repair).
 const PRIVSET_ARG: &[u8] = b"PRIVSET";
@@ -409,6 +441,9 @@ pub extern "C" fn _start() -> ! {
     }
     if libneodos::args::trim_ascii(&raw_args) == PRIVSET_ARG {
         syscall::sys_exit(run_privset_probe());
+    }
+    if libneodos::args::trim_ascii(&raw_args) == PATHSLASH_ARG {
+        syscall::sys_exit(run_pathslash_probe());
     }
 
     let mut passed = 0u32;

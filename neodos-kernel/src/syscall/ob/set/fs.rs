@@ -204,9 +204,15 @@ pub(super) fn dispatch(
             };
             if !path_str.contains(':') { return err_to_u64(SyscallError::Inval); }
             let token = crate::security::current_token();
-            let parent_descriptor = if let Some(parent) = path_str.rsplit_once('\\').map(|(p, _)| p) {
+            // Accept `\` and `/` (the VFS treats them as equivalent) and check
+            // the volume root when there is no separator (AUDIT-008 / #816).
+            let parent = match crate::paths::parent_dir(&path_str) {
+                Some(p) => p,
+                None => return err_to_u64(SyscallError::Inval),
+            };
+            let parent_descriptor = {
                 let info = crate::globals::with_vfs(|vfs| {
-                    let (drive, node) = vfs.resolve_path(parent).ok()?;
+                    let (drive, node) = vfs.resolve_path(&parent).ok()?;
                     let descriptor = vfs.security_bytes(drive, node.inode);
                     let allowed = crate::security::access::vfs_access_check(
                         &token,
@@ -218,10 +224,8 @@ pub(super) fn dispatch(
                 match info {
                     Some((true, descriptor)) => descriptor,
                     Some((false, _)) => return err_to_u64(SyscallError::Perm),
-                    None => None,
+                    None => return err_to_u64(SyscallError::NoEnt),
                 }
-            } else {
-                None
             };
             let node = match crate::globals::with_vfs(|vfs| vfs.create(&path_str)) {
                 Ok(n) => n,

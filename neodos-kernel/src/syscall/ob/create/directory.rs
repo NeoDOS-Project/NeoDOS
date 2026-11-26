@@ -21,11 +21,14 @@ pub(super) fn dispatch(
             if let Some(vfs_path) = path_str.strip_prefix("\\Global\\FileSystem\\") {
                 if !vfs_path.is_empty() {
                     let token = crate::security::current_token();
-                    let parent_descriptor = if let Some(parent) =
-                        vfs_path.rsplit_once('\\').map(|(p, _)| p)
-                    {
+                    // Same separator/root rule as FileCreate (AUDIT-008 / #816).
+                    let parent = match crate::paths::parent_dir(vfs_path) {
+                        Some(p) => p,
+                        None => return err_to_u64(SyscallError::Inval),
+                    };
+                    let parent_descriptor = {
                         let info = crate::globals::with_vfs(|vfs| {
-                            let (drive, node) = vfs.resolve_path(parent).ok()?;
+                            let (drive, node) = vfs.resolve_path(&parent).ok()?;
                             let descriptor = vfs.security_bytes(drive, node.inode);
                             let allowed = crate::security::access::vfs_access_check(
                                 &token,
@@ -38,10 +41,8 @@ pub(super) fn dispatch(
                         match info {
                             Some((true, descriptor)) => descriptor,
                             Some((false, _)) => return err_to_u64(SyscallError::Perm),
-                            None => None,
+                            None => return err_to_u64(SyscallError::NoEnt),
                         }
-                    } else {
-                        None
                     };
                     let node = match crate::globals::with_vfs(|vfs| vfs.mkdir(vfs_path)) {
                         Ok(n) => n,
