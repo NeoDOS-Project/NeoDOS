@@ -573,7 +573,7 @@ pub(super) fn handler_driver_unload(regs: super::Registers) -> u64 {
         Err(_) => return err_to_u64(SyscallError::Fault),
     };
 
-    match crate::drivers::hotreload::unload_driver(&name, force) {
+    match crate::syscall::unload_driver(&name, force) {
         Ok(_) => 0,
         Err(_) => err_to_u64(SyscallError::Io),
     }

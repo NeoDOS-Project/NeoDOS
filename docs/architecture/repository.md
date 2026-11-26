@@ -418,6 +418,10 @@ order, smallest blast radius first:
    (baseline 141 → 90).
    Batch 2 moved PCI config access to `hal::pci` (MSI/virtio) and benchmark
    counters to `hal::bench` hooks (AHCI/virtio-blk): 90 → 73.
+   Batch 3 moved GPT parsing to `fs/vfs/gpt.rs`, replaced the remaining
+   `drivers → fs` mode-bit imports with local constants, wired MSI's
+   `pci.nem` probe and syscall's driver-unload/HST wake through hooks, and
+   re-exported `PageCache` via `globals`: 73 → 60.
 2. **`drivers → fs`** — boot loader/hot reload read `.nem` via VFS; move the
    read helper behind a loader callback or into the boot layer.
 3. **`fs → drivers`** — VFS partition/GPT and block-device glue; introduce a

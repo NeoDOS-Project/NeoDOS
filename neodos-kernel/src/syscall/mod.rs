@@ -216,6 +216,25 @@ pub fn validate_abi() {
     kinfo!(LogSubsys::Syscall, "SSDT validated ({} assigned syscalls)", ASSIGNED.len());
 }
 
+
+/// Driver-unload hook (registered by boot/drivers; INV-1 keeps syscall out of
+/// the drivers layer).
+type DriverUnloadFn = fn(&str, bool) -> Result<String, &'static str>;
+static DRIVER_UNLOAD_HOOK: AtomicU64 = AtomicU64::new(0);
+
+pub fn set_driver_unload_hook(hook: DriverUnloadFn) {
+    DRIVER_UNLOAD_HOOK.store(hook as usize as u64, Ordering::Release);
+}
+
+pub(crate) fn unload_driver(name: &str, force: bool) -> Result<String, &'static str> {
+    let raw = DRIVER_UNLOAD_HOOK.load(Ordering::Acquire) as usize;
+    if raw == 0 {
+        return Err("driver unload unavailable");
+    }
+    let hook: DriverUnloadFn = unsafe { core::mem::transmute(raw) };
+    hook(name, force)
+}
+
 pub static NEED_RESCHED: AtomicBool = AtomicBool::new(false);
 pub static KEYBOARD_LAYOUT: AtomicU8 = AtomicU8::new(1);
 

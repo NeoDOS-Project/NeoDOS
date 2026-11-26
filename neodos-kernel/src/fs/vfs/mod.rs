@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 pub mod io;
+pub mod gpt;
 pub mod mmap;
 pub mod mount;
 pub mod partition;

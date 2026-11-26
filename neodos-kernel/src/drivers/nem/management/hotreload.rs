@@ -1,4 +1,6 @@
 // Hot Reload — driver unload/reload with graceful drain, ownership tracking, and ABI check
+// VFS mode bit (kept local to avoid drivers -> fs).
+const MODE_FILE: u16 = 0x80;
 //
 // W2. Hot reload drivers — Runtime loading/unloading/reloading without reboot
 //
@@ -474,7 +476,7 @@ pub fn reload_driver(path: &str) -> Result<alloc::string::String, &'static str> 
 fn read_whole_file(path: &str) -> Result<alloc::vec::Vec<u8>, ()> {
     crate::globals::with_vfs(|vfs| {
         let (drive_idx, node) = vfs.resolve_path(path).map_err(|_| ())?;
-        if node.mode & crate::fs::vfs::MODE_FILE == 0 {
+        if node.mode & MODE_FILE == 0 {
             return Err(());
         }
         let size = node.size as usize;

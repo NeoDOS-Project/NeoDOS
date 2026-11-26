@@ -47,7 +47,7 @@ pub fn handler_ob_destroy(regs: crate::syscall::Registers) -> u64 {
         } else {
             &name
         };
-        let _ = crate::drivers::hotreload::unload_driver(driver_name, false);
+        let _ = crate::syscall::unload_driver(driver_name, false);
     }
 
     if name.starts_with("\\Global\\FileSystem\\") {

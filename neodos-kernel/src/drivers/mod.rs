@@ -8,7 +8,7 @@ pub mod virtio;
 // Keep the pre-reorganization paths (`crate::drivers::<old>`) resolving so
 // call-sites outside `drivers/` do not have to change.
 pub use hw::{ahci as boot_ahci, ata, nvme, pci, ps2, rtc as rtc_bridge, virtio_blk};
-pub use storage::{block, gpt, manager as storage_manager};
+pub use storage::{block, manager as storage_manager};
 pub use nem::management::{abi, boot_loader, caps, dependency, driver_manager, hotreload, isolation, manifest};
 pub use nem::runtime as driver_runtime;
 

@@ -1,12 +1,12 @@
 #![allow(dead_code)]
 
 use crate::drivers::block::BlockDevice;
-use crate::drivers::gpt::{self, MAX_NEODOS_PARTITIONS};
+use crate::fs::vfs::gpt::{self, MAX_NEODOS_PARTITIONS};
 
 pub const MAX_PARTITIONS: usize = MAX_NEODOS_PARTITIONS;
 
 /// Re-export GPT GUIDs for backward compatibility
-pub use crate::drivers::gpt::{PART_TYPE_NEODOS, PART_TYPE_ESP};
+pub use crate::fs::vfs::gpt::{PART_TYPE_NEODOS, PART_TYPE_ESP};
 
 #[derive(Clone, Copy, Debug)]
 pub struct PartitionInfo {

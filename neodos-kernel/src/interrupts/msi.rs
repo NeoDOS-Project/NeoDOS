@@ -77,12 +77,22 @@ pub fn msi_free_vector(vector: u8) {
 
 /// Returns `true` when the `pci.nem` NEM driver is loaded and active.
 /// In that case, MSI configuration should be delegated via the event bus.
+static PCI_NEM_PROBE: core::sync::atomic::AtomicUsize =
+    core::sync::atomic::AtomicUsize::new(0);
+
+/// Register the driver-runtime probe without making `interrupts` depend on
+/// `drivers` (INV-1). The boot/driver layer wires this after loading drivers.
+pub fn set_pci_nem_probe(probe: fn() -> bool) {
+    PCI_NEM_PROBE.store(probe as usize, core::sync::atomic::Ordering::Release);
+}
+
 fn pci_nem_is_active() -> bool {
-    use crate::drivers::driver_runtime::{DRIVER_RUNTIME, DriverState};
-    let rt = DRIVER_RUNTIME.lock();
-    rt.get_by_name("pci")
-        .map(|d| d.state == DriverState::Active)
-        .unwrap_or(false)
+    let raw = PCI_NEM_PROBE.load(core::sync::atomic::Ordering::Acquire);
+    if raw == 0 {
+        return false;
+    }
+    let probe: fn() -> bool = unsafe { core::mem::transmute(raw) };
+    probe()
 }
 
 // ─── Helper: pack a BDF + offset into a single u32 ───────────────────────────

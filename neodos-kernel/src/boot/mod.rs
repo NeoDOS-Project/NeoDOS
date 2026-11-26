@@ -8,7 +8,7 @@ pub mod abi_freeze;
 use crate::*;
 use crate::{BootInfo, BOOTINFO_MAGIC, KERNEL_VERSION, KERNEL_VERSION_CODE};
 use crate::fs::fat32::Fat32Driver;
-use crate::drivers::gpt;
+use crate::fs::vfs::gpt;
 use crate::fs::neodos_v2::NeoDosFsV2;
 use crate::fs::vfs::partition::{PartitionInfo, PART_TYPE_NEODOS, PART_TYPE_ESP};
 use crate::fs::vfs::io::{IoStack, PageCacheLevel};
@@ -482,6 +482,10 @@ pub unsafe fn init(boot_info: &BootInfo) -> ! {
     // ============================================
     println!("[+] Initializing Boot Driver Loader...");
     drivers::boot_loader::boot_load_all();
+    // INV-1: MSI must not import drivers; wire the pci.nem probe here.
+    crate::interrupts::msi::set_pci_nem_probe(
+        crate::drivers::driver_runtime::pci_nem_active,
+    );
 
     // ============================================
     // PHASE 3.86: Reclaim AHCI port after NEM driver init
@@ -496,6 +500,8 @@ pub unsafe fn init(boot_info: &BootInfo) -> ! {
     drivers::rtc_bridge::init();
     nxl::init_nxl_region();
     drivers::hotreload::init_hot_reload();
+    crate::syscall::set_driver_unload_hook(crate::drivers::hotreload::unload_driver);
+    crate::drivers::nem::loader::hst::set_wake_hook(crate::syscall::wake_blocked_readers);
     nxl::load_nxl();
 
     // ============================================
