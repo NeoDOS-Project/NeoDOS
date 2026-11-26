@@ -216,9 +216,3 @@ pub fn find_capability(bus: u8, dev: u8, func: u8, cap_id: u8) -> Option<u8> {
 pub fn read_bar(bus: u8, dev: u8, func: u8, bar_index: u8) -> u32 {
     pci_config_read_dword(bus, dev, func, 0x10 + bar_index * 4)
 }
-
-pub fn read_bar64(bus: u8, dev: u8, func: u8, bar_index: u8) -> u64 {
-    let low = read_bar(bus, dev, func, bar_index) as u64;
-    let high = read_bar(bus, dev, func, bar_index + 1) as u64;
-    low | (high << 32)
-}
