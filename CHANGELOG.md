@@ -195,6 +195,12 @@
 
 ### Changed
 
+- **Documentación sincronizada (#820) y modelo de seguridad NEM (#824).**
+  README/docs/AGENTS reflejan v0.55.0 y 1.080 tests; se corrige el estado de
+  #767; `scripts/check-version.sh` vigila la deriva en CI; overview y NEM spec
+  describen las capacidades como aislamiento de fallos, no sandbox, con el
+  roadmap Ring 3/IOMMU.
+
 - **ABI de `console.nxl` declarado una sola vez (#594).** `libconsole-nxl` y
   `libneodos::console` mantenían copias byte a byte de `ConsoleAbiTable`; ahora
   ambas usan el crate `libconsole-abi` y el consumidor rechaza una tabla con

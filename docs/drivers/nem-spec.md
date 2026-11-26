@@ -127,6 +127,14 @@ Unloaded → Loaded → Initialized → Registered → Bound → Active
                           Faulted                 Unloading → Unloaded
 ```
 
+## Security Model
+
+Capabilities and the `hst_*` checks are **cooperative fault isolation**, not a
+sandbox: a loaded NEM is native Ring-0 code and can issue direct MMIO or
+instructions. Treat the loader as an administrator-only trust boundary
+(authenticated path, ideally signed images) and keep Ring 3/IOMMU execution as
+the long-term isolation target (#58, #824).
+
 ## Related Documentation
 
 - [overview.md](overview.md) — Driver architecture, isolation, capabilities

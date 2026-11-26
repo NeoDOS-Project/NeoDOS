@@ -60,9 +60,9 @@ NeoDOS Kernel (x86_64-unknown-none)
    - Service Manager init (PHASE 3.882): load service definitions from Registry, create \Service\ namespace, resolve dependencies
    - Power Manager runtime init (PHASE 3.883): load plans and policies from Registry
    - ABI validation + ABI freeze check (PHASE 3.9)
-   - Kernel self-tests (1,042 tests) + netpump kernel-thread spawn + benchmarks (PHASE 4)
+   - Kernel self-tests (1,080 tests) + netpump kernel-thread spawn + benchmarks (PHASE 4)
    - Auto-start services (PHASE 4): start System/Auto services in dependency order
-   - Ring 3 shell via NeoInit PID 1 (neoshell.nxe, 1,042 kernel tests + user commands)
+   - Ring 3 shell via NeoInit PID 1 (neoshell.nxe, 1,080 kernel tests + user commands)
 ```
 
 ## Disco único GPT
@@ -150,7 +150,7 @@ The memory map buffer is intentionally leaked by the bootloader after `ExitBootS
 
 ## Driver Architecture (v0.16+)
 
-NeoDOS implements a **layered driver architecture** with full hardware access mediation. No driver touches hardware directly; all access goes through `driver → Event Bus → HAL ABI v0.4 → hardware`.
+NeoDOS implements a **layered driver architecture**. Built-in kernel drivers go through `HAL ABI v0.4`; NEM drivers are native Ring-0 code loaded into isolated regions and may program MMIO directly through the exported primitives. Capabilities gate the `hst_*` entry points, not arbitrary instructions: treat them as fault-isolation/cooperative policy, not a security sandbox at the level of Ring 3/IOMMU.
 
 ```text
 ┌──────────────────────────────────────────────────────────┐
@@ -555,7 +555,7 @@ Beyond the NEM driver framework, the kernel includes integrated hardware drivers
 
 ### 11. Test Coverage
 
-The kernel testing framework includes **1,042 tests** (200+ test_case! macros) with suites dedicated to the driver architecture:
+The kernel testing framework includes **1,080 tests** (200+ test_case! macros) with suites dedicated to the driver architecture:
 
 | Suite | Tests | Description |
 | ------- | ------- | ------------- |
@@ -587,7 +587,7 @@ The kernel testing framework includes **1,042 tests** (200+ test_case! macros) w
 | Security | 23 | NT6 Security: SID format, Token (groups/privileges/session_id), ACL allow/deny, SeAccessCheck, admin bypass, SAM database (parse/serialize, 64 entries) |
 | URN | 15 | NT5.5 Unified Resource Namespace: parse schemes, resolve file/device, Ob frontend (OB-025) |
 
-Tests run automatically at boot. The kernel runs 1,042 tests (200+ test_case! registrations). After boot, NeoInit spawns its user-mode test binaries when enabled via the registry (`userbin/neoinit/src/main.rs`), including the network test `C:\System\Tools\dhcptest.nxe`. Additional boot stress testing via `scripts/stress_boot.sh`.
+Tests run automatically at boot. The kernel runs 1,080 tests (200+ test_case! registrations). After boot, NeoInit spawns its user-mode test binaries when enabled via the registry (`userbin/neoinit/src/main.rs`), including the network test `C:\System\Tools\dhcptest.nxe`. Additional boot stress testing via `scripts/stress_boot.sh`.
 
 ---
 
