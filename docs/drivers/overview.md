@@ -211,6 +211,12 @@ DEMAND drivers cannot escalate -- this is a hard security boundary.
 
 Each `hst_*` export function calls `check_cap()` before executing.
 
+> **Security boundary:** capabilities and X4 regions isolate faults and gate
+> the `hst_*` ABI; they are **not** a sandbox against malicious native code.
+> A NEM driver runs in Ring 0 and can bypass `hst_*` with direct MMIO or
+> instructions. Only trusted, authenticated images may be loaded (see
+> #809/#824); Ring 3 drivers and IOMMU mediation remain future work (#58).
+
 ## X4 Driver Isolation
 
 Source: `src/drivers/nem/management/isolation.rs`. Dedicated 16 MB region at

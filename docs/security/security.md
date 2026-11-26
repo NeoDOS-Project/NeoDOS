@@ -291,8 +291,10 @@ security table:
 - Descriptor codec: `security/acl.rs` (`NDSD` v1), bounded to 1 KiB and 32 ACEs.
 - Only NT DACLs are used; there are no UNIX owner/group/mode bits.
 
-The Ring 3 enforcement is still blocked by #767 (all processes are admin);
-kernel tests use synthetic SYSTEM/Administrators/user tokens.
+Ring 3 identity is no longer admin-only: NeoInit spawns the shell with the
+unprivileged `NeoDOS` account (ObCreate bit 32) and logon sessions bind their
+own tokens. Kernel tests still use synthetic SYSTEM/Administrators/user tokens
+to exercise both sides of each check.
 
 ### SACL and auditing (`ACE_TYPE_SYSTEM_AUDIT = 2`)
 

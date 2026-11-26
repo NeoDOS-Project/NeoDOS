@@ -110,6 +110,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: scripts/check-skills.sh
         run: ./scripts/check-skills.sh
+      - name: scripts/check-version.sh
+        run: ./scripts/check-version.sh
       - name: scripts/check-irq-locks.sh (INV-3 / Rule 3.5.1)
         run: ./scripts/check-irq-locks.sh
 
