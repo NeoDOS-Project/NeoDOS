@@ -116,6 +116,11 @@
 
 ### Fixed
 
+- **Capacidad del buffer en `poll_packet` (#821).** e1000 usa `*out_len` como
+  capacidad y descarta con `-EMSGSIZE` las tramas que no caben; el bridge del
+  kernel rechaza longitudes mayores que su buffer. Test
+  `net_poll_len_respects_capacity`.
+
 - **`mmap` respeta `prot` y aplica NX (#819).** Las páginas anónimas y
   file-backed derivan `WRITABLE` del VMA y llevan NX cuando la CPU lo soporta;
   un mapping `PROT_READ` ya no es escribible. Test
