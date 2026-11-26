@@ -80,4 +80,27 @@ pub fn register() {
         test_eq!(ep.mmap_regions.len(), 1);
         test_eq!(ep.mmap_regions[0].base, 0x20001000);
     });
+
+    test_case!("mmap_page_flags_follow_prot", {
+        // #819: PROT_READ must map read-only; all mmap data is NX.
+        use x86_64::structures::paging::PageTableFlags;
+        let virt = 0x21FF_E000u64;
+
+        let _ = crate::arch::x64::paging::mmap_alloc_page(virt, false).unwrap();
+        let e = crate::hal::walk_ptes_4k(virt).unwrap();
+        test_true!(e.flags().contains(PageTableFlags::USER_ACCESSIBLE));
+        test_true!(!e.flags().contains(PageTableFlags::WRITABLE));
+        if crate::arch::x64::features::nx_enabled() {
+            test_true!(e.flags().contains(PageTableFlags::NO_EXECUTE));
+        }
+        crate::arch::x64::paging::mmap_free_page(virt);
+
+        let _ = crate::arch::x64::paging::mmap_alloc_page(virt, true).unwrap();
+        let e = crate::hal::walk_ptes_4k(virt).unwrap();
+        test_true!(e.flags().contains(PageTableFlags::WRITABLE));
+        if crate::arch::x64::features::nx_enabled() {
+            test_true!(e.flags().contains(PageTableFlags::NO_EXECUTE));
+        }
+        crate::arch::x64::paging::mmap_free_page(virt);
+    });
 }

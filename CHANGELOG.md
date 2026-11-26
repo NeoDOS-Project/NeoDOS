@@ -116,6 +116,10 @@
 
 ### Fixed
 
+- **`mmap` respeta `prot` y aplica NX (#819).** Las páginas anónimas y
+  file-backed derivan `WRITABLE` del VMA y llevan NX cuando la CPU lo soporta;
+  un mapping `PROT_READ` ya no es escribible. Test
+  `mmap_page_flags_follow_prot`.
 - **Cota del buffer de recepción UDP (#818).** `udp_dispatch` limita cada
   socket a `UDP_RECV_BUF` (16 KiB); un flood remoto ya no puede agotar el heap
   del kernel. Test `net_udp_recv_buffer_capped`.

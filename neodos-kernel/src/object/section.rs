@@ -131,7 +131,7 @@ fn map_section_view(base: u64, size: u64, _writable: bool) -> bool {
             unmap_view_pages(base, addr - base);
             return false;
         }
-        if crate::arch::x64::paging::mmap_alloc_page(addr).is_none() {
+        if crate::arch::x64::paging::mmap_alloc_page(addr, true).is_none() {
             unmap_view_pages(base, addr - base);
             return false;
         }
