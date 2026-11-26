@@ -29,7 +29,7 @@ use crate::log::LogSubsys;
 // ── Constants ──
 
 /// Base address of the isolated driver memory region.
-pub const DRIVER_ISO_BASE: u64 = 0x3000_0000;   // 768 MB
+pub use crate::memory::layout::DRIVER_ISO_BASE;
 /// Total size of the isolated driver region.
 pub const DRIVER_ISO_SIZE: u64 = 0x100_0000;    // 16 MB
 pub const DRIVER_ISO_END: u64 = DRIVER_ISO_BASE + DRIVER_ISO_SIZE;

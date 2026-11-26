@@ -115,3 +115,6 @@ pub fn init_default() {
 pub fn reserve_region(base: u64, size: u64, name: &[u8]) -> bool {
     LAYOUT.lock().reserve_region(base, size, name, 0)
 }
+
+/// Base of the NEM driver isolation region (mirrored by drivers::isolation).
+pub const DRIVER_ISO_BASE: u64 = 0x3000_0000;

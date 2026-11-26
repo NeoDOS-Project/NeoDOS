@@ -1,7 +1,7 @@
 //! Scheduler Eprocess impl — extracted from mod.rs
 use alloc::string::ToString;
 use crate::scheduler::types::{Eprocess, Kthread};
-use crate::scheduler::address_space;
+use crate::memory::address_space;
 
 impl Eprocess {
     pub fn new_idle(pid: u32) -> Self {

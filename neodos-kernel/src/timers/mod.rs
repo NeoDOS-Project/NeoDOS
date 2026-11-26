@@ -25,6 +25,7 @@ pub static mut BOOT_RSDP_ADDR: u64 = 0;
 /// Set the active timer source.
 pub fn set_active(source: TimerSource) {
     ACTIVE_TIMER.store(source as u8, Ordering::SeqCst);
+    crate::hal::set_timer_source(source as u8);
 }
 
 /// Get the active timer source.

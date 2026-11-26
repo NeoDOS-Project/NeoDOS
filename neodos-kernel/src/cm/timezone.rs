@@ -16,7 +16,7 @@
 //! DST boundaries are evaluated on the UTC date for simplicity (the smallest
 //! unit is a day). This is intentionally not a full IANA tzdata engine.
 
-use crate::drivers::rtc_bridge::DateTime;
+use crate::hal::DateTime;
 
 pub const TZ_KEY: &str = "CurrentControlSet\\Control\\TimeZoneInformation";
 

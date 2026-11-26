@@ -6,6 +6,16 @@ pub static TIMER_TICKS: AtomicU64 = AtomicU64::new(0);
 /// System tick rate in Hz. Defaults to the PIT rate until the timer subsystem
 /// registers the real source (see `set_timer_hooks`).
 static TICK_RATE_HZ: AtomicU64 = AtomicU64::new(18);
+static TIMER_SOURCE: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(0);
+
+/// Timer source identifier pushed by the timer subsystem (0=PIT,1=HPET,2=APIC).
+pub fn set_timer_source(source: u8) {
+    TIMER_SOURCE.store(source, Ordering::Relaxed);
+}
+
+pub fn timer_source() -> u8 {
+    TIMER_SOURCE.load(Ordering::Relaxed)
+}
 
 /// Optional busy-wait hook (`fn(u32)`, microseconds); 0 = not registered.
 static SLEEP_HOOK: AtomicUsize = AtomicUsize::new(0);
@@ -146,4 +156,16 @@ pub fn elapsed_ms(start: u64, end: u64) -> u64 {
     let khz = tsc_khz();
     if khz == 0 { return 0; }
     end.saturating_sub(start) / khz
+}
+
+/// Wall-clock date/time fields used by RTC and timezone code.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(C)]
+pub struct DateTime {
+    pub second: u8,
+    pub minute: u8,
+    pub hour: u8,
+    pub day: u8,
+    pub month: u8,
+    pub year: u8,
 }

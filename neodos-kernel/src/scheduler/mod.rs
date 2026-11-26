@@ -4,7 +4,6 @@
 //! - KTHREAD: per-thread CPU context, priority, time slice, kernel stack
 //! - Schedule operates on threads, lazy CR3 swap across EPROCESS boundaries
 
-pub mod address_space;
 pub mod types;
 pub mod stack;
 pub mod process;
@@ -14,6 +13,7 @@ pub mod smp;
 pub mod aging;
 pub mod lifecycle;
 pub mod wake;
+pub use wake::set_foreground_clear_hook;
 pub mod schedule;
 pub mod snapshot;
 pub mod accounting;

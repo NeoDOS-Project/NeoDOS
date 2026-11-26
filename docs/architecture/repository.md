@@ -422,6 +422,9 @@ order, smallest blast radius first:
    `drivers → fs` mode-bit imports with local constants, wired MSI's
    `pci.nem` probe and syscall's driver-unload/HST wake through hooks, and
    re-exported `PageCache` via `globals`: 73 → 60.
+   Batch 4 moved `AddressSpace` to `memory`, `DateTime`/timer source to
+   `hal`, the benchmark registry reader and foreground-clear hook to `boot`,
+   and the driver isolation base to `memory/layout`: 60 → 48.
 2. **`drivers → fs`** — boot loader/hot reload read `.nem` via VFS; move the
    read helper behind a loader callback or into the boot layer.
 3. **`fs → drivers`** — VFS partition/GPT and block-device glue; introduce a

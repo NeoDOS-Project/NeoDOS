@@ -1,3 +1,4 @@
+pub mod address_space;
 pub mod allocator;
 pub mod buddy;
 pub mod layout;
@@ -451,7 +452,7 @@ pub fn validate_layout_consistency() {
             "layout kernel_heap mismatch");
     }
     if let Some(r) = l.find_region(b"driver_iso\0") {
-        assert_eq!(r.base, crate::drivers::isolation::DRIVER_ISO_BASE,
+        assert_eq!(r.base, crate::memory::layout::DRIVER_ISO_BASE,
             "layout DRIVER_ISO_BASE mismatch");
     }
 }

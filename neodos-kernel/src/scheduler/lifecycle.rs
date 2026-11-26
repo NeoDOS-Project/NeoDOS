@@ -618,7 +618,7 @@ impl Scheduler {
             exit_code: 0,
             obj_id,
             ob_id,
-            address_space: crate::scheduler::address_space::AddressSpace::new(),
+            address_space: crate::memory::address_space::AddressSpace::new(),
             token: parent_token,
             vt_num: 0,
             args: [0u8; 256],

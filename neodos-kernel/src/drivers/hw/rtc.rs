@@ -9,14 +9,7 @@ static RTC_MONTH: AtomicU8 = AtomicU8::new(0);
 static RTC_YEAR: AtomicU8 = AtomicU8::new(0);
 static RTC_VALID: AtomicBool = AtomicBool::new(false);
 
-pub struct DateTime {
-    pub second: u8,
-    pub minute: u8,
-    pub hour: u8,
-    pub day: u8,
-    pub month: u8,
-    pub year: u8,
-}
+pub use crate::hal::DateTime;
 
 fn rtc_data_handler(event: &crate::eventbus::Event) {
     let packed = event.data0;
