@@ -116,6 +116,9 @@
 
 ### Fixed
 
+- **Cota del buffer de recepción UDP (#818).** `udp_dispatch` limita cada
+  socket a `UDP_RECV_BUF` (16 KiB); un flood remoto ya no puede agotar el heap
+  del kernel. Test `net_udp_recv_buffer_capped`.
 - **Referencias en duplicación/herencia de handles (#815).** `HandleEntry::duplicate`
   adquiere la referencia Ob y del extremo de pipe; `dup2` y la herencia de
   stdio del hijo la usan, y `close` libera ambos. Cerrar un fd ya no invalida
