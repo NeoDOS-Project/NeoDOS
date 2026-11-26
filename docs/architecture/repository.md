@@ -409,9 +409,13 @@ No immediate migration. All proposals are for **post-v1.0** unless otherwise not
 `neodev check-deps` must keep the count decreasing, never growing. Reduction
 order, smallest blast radius first:
 
-1. **`arch → globals`** — done: the file-backed `mmap` loader moved to
+1. **`arch → globals`** — done (#823): the file-backed `mmap` loader moved to
    `fs/vfs/mmap.rs` and is registered from `boot` via
    `paging::set_mmap_file_loader`; `arch` no longer imports `PAGE_CACHE`/VFS.
+   Batch 1 also moved `abi_freeze` to `boot/`, `panic_classification` to
+   `arch/x64/idt/`, the security syscall-gate tests to `syscall/tests`,
+   `MODE_DIR` to local constants and the TSC helpers to `hal`
+   (baseline 141 → 90).
 2. **`drivers → fs`** — boot loader/hot reload read `.nem` via VFS; move the
    read helper behind a loader callback or into the boot layer.
 3. **`fs → drivers`** — VFS partition/GPT and block-device glue; introduce a

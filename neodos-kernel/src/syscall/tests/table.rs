@@ -104,6 +104,19 @@ pub fn register_syscall_table_tests() {
         test_true!(authorize_driver_load(false, trusted).is_err());
     });
 
+    test_case!("se_admin_required_syscall_gate", {
+        let perm = SYSCALL_PERMISSIONS[58];
+        test_true!(perm.admin); // driver_unload requires admin
+    });
+
+    test_case!("se_user_denied_admin_syscall", {
+        let user = crate::security::token::Token::new_user();
+        test_true!(!user.is_admin_token());
+        let result = check_syscall_permission(58, false);
+        test_true!(result.is_err());
+        test_eq!(result.unwrap_err(), err_to_u64(SyscallError::Perm));
+    });
+
     test_case!("syscall_permission_admin_check", {
         let result = check_syscall_permission(58, false);
         test_true!(result.is_err());

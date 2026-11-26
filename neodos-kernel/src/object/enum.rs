@@ -2,6 +2,9 @@
 use alloc::vec::Vec;
 use crate::object::types::{ObError, ObEnumEntry, ObType};
 
+/// `MODE_DIR` from the VFS (kept local to avoid object -> fs).
+const MODE_DIR: u16 = 0x40;
+
 /// Enumerate objects in a namespace directory by path.
 /// Returns a list of ObEnumEntry values.
 /// VFS-3.1: `\Global\FileSystem\` paths delegate to VFS, not namespace.
@@ -45,7 +48,7 @@ pub fn ob_enum_directory(path: &str) -> Result<alloc::vec::Vec<ObEnumEntry>, ObE
                 vfs.resolve_path(vfs_path)
             }).map_err(|_| ObError::NotFound)?;
 
-            if (node.mode & crate::fs::vfs::MODE_DIR) == 0 {
+            if (node.mode & MODE_DIR) == 0 {
                 return Err(ObError::InvalidParam);
             }
 
@@ -62,7 +65,7 @@ pub fn ob_enum_directory(path: &str) -> Result<alloc::vec::Vec<ObEnumEntry>, ObE
                         let bytes = dir_entry.name.as_bytes();
                         let len = bytes.len().min(31);
                         name[..len].copy_from_slice(&bytes[..len]);
-                        let obj_type = if (dir_entry.node.mode & crate::fs::vfs::MODE_DIR) != 0 {
+                        let obj_type = if (dir_entry.node.mode & MODE_DIR) != 0 {
                             ObType::Directory
                         } else {
                             ObType::Filesystem

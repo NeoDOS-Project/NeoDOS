@@ -280,13 +280,13 @@ lazy_static! {
 static FLUSH_LOCK: Mutex<()> = Mutex::new(());
 
 fn tsc_per_us() -> u64 {
-    (crate::boot_benchmark::get_tsc_khz() / 1000).max(1)
+    (crate::hal::tsc_khz() / 1000).max(1)
 }
 
 /// Current TSC, for modules that are not allowed to depend on
 /// `boot_benchmark` directly (dependency-graph isolation).
 pub fn tcp_now_tsc() -> u64 {
-    crate::boot_benchmark::rdtsc()
+    crate::hal::rdtsc()
 }
 
 /// Convert a millisecond timeout into absolute TSC ticks (`ms * 1000µs *
@@ -302,8 +302,8 @@ pub fn tsc_ticks_from_ms(ms: u64, tsc_per_us: u64) -> u64 {
 /// precedent as `tcp_deadline_from_ms`. Derive sub-millisecond deltas as
 /// `(tsc2 - tsc1) / tsc_khz` ms.
 pub fn tcp_high_res_time() -> (u64, u32) {
-    let khz = crate::boot_benchmark::get_tsc_khz();
-    (crate::boot_benchmark::rdtsc(), khz.min(u32::MAX as u64) as u32)
+    let khz = crate::hal::tsc_khz();
+    (crate::hal::rdtsc(), khz.min(u32::MAX as u64) as u32)
 }
 
 /// TSC ticks in `ms`, for net modules that must not import `boot_benchmark`.
@@ -313,7 +313,7 @@ pub fn tcp_ticks_from_ms(ms: u64) -> u64 {
 
 /// Absolute TSC deadline for a millisecond timeout.
 pub fn tcp_deadline_from_ms(ms: u64) -> u64 {
-    crate::boot_benchmark::rdtsc().wrapping_add(tsc_ticks_from_ms(ms, tsc_per_us()))
+    crate::hal::rdtsc().wrapping_add(tsc_ticks_from_ms(ms, tsc_per_us()))
 }
 
 /// Resolve the source IP for an outgoing segment.
@@ -468,7 +468,7 @@ pub fn tcp_connect(id: u32, remote: SocketAddrV4) -> bool {
             conn.send_ack = 0;
             conn.retries = 0;
             conn.fin_pending = false;
-            conn.last_tx_tsc = crate::boot_benchmark::rdtsc();
+            conn.last_tx_tsc = crate::hal::rdtsc();
             (conn.local, conn.send_base)
         } else {
             return false;
@@ -668,7 +668,7 @@ fn send_fin_segment(local: SocketAddrV4, remote: SocketAddrV4, seq: u32, ack: u3
 /// NIC_REGISTRY-first order of the RX path can never deadlock against this.
 pub fn tcp_tick() {
     let _flush = FLUSH_LOCK.lock();
-    let now = crate::boot_benchmark::rdtsc();
+    let now = crate::hal::rdtsc();
     let per_us = tsc_per_us();
     struct Work {
         id: u32,
@@ -1249,7 +1249,7 @@ pub fn tcp_send_syn_ack(socket_id: usize, src_port: u16, dst_port: u16, their_se
             conn.send_base = my_seq;
             conn.send_seq = my_seq.wrapping_add(1);
             conn.retries = 0;
-            conn.last_tx_tsc = crate::boot_benchmark::rdtsc();
+            conn.last_tx_tsc = crate::hal::rdtsc();
         }
     }
     // The reply must travel us -> peer. `dst_ip` is our address (the SYN's
@@ -1279,7 +1279,7 @@ pub fn tcp_handle_ack(socket_id: usize, their_seq: u32, their_ack: u32, window: 
         Some(id) => id,
         None => return,
     };
-    let now = crate::boot_benchmark::rdtsc();
+    let now = crate::hal::rdtsc();
     let mut became_established = false;
     // ACK drained unacknowledged bytes: send-buffer space opened up.
     let mut space_freed = false;

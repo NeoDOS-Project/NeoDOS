@@ -3,6 +3,9 @@ use alloc::vec::Vec;
 use crate::object::types::{ObError, ObId, ObType};
 use crate::object::table::{OB_TABLE, OB_SECURITY, ob_lookup, ob_create_object, ob_reference, ob_destroy_object, ob_close_object, FILE_HANDLE_OPS};
 
+/// `MODE_DIR` from the VFS (kept local to avoid object -> fs).
+const MODE_DIR: u16 = 0x40;
+
 /// May `token` replace the security descriptor of `id`?
 ///
 /// NT semantics: the owner or an administrator. Objects without a descriptor
@@ -108,7 +111,7 @@ pub fn ob_open_path(
                     let Ok((drive, node)) = vfs.resolve_path(&prefix) else {
                         return Err(VfsOpenError::NotFound);
                     };
-                    if node.mode & crate::fs::vfs::MODE_DIR == 0 {
+                    if node.mode & MODE_DIR == 0 {
                         return Err(VfsOpenError::NotFound);
                     }
                     let descriptor = vfs.security_bytes(drive, node.inode);
@@ -136,7 +139,7 @@ pub fn ob_open_path(
                     ) {
                         return Err(ObError::AccessDenied);
                     }
-                    let is_dir = (node.mode & crate::fs::vfs::MODE_DIR) != 0;
+                    let is_dir = (node.mode & MODE_DIR) != 0;
                     let obj_type = if is_dir { ObType::Directory } else { ObType::Filesystem };
                     let obj_id = ob_create_object(obj_type, path_str, node.inode as u64, drive_idx as u32, Some(&FILE_HANDLE_OPS))?;
                     ob_reference(obj_id)?;
