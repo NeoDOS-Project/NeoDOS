@@ -366,3 +366,12 @@ pub fn register_exception_tests() {
 // ── NXL AbiTable entry for sys_set_exception_handler ──
 // The user-mode library calls through the NXL export table.
 // The kernel's syscall handler (RAX=29) invokes set_thread_exception_handler.
+
+/// Initialize the TEB contents at `addr` (mapped by arch/paging).
+pub fn init_teb_at(addr: u64) {
+    let teb_ptr = addr as *mut Teb;
+    unsafe {
+        core::ptr::write(teb_ptr, Teb::new());
+        (*teb_ptr).teb_self = addr;
+    }
+}

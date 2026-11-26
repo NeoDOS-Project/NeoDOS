@@ -112,7 +112,7 @@ pub fn queue_user_apc(tid: u32, function: ApcFn, context: *mut u8) -> bool {
                 {
                     k.waiting_for = None;
                     scheduler::Scheduler::make_thread_ready(k);
-                    crate::syscall::set_need_resched();
+                    crate::scheduler::request_resched();
                 }
                 true
             } else {
@@ -309,7 +309,7 @@ pub extern "C" fn apc_dispatch_on_syscall_return() {
     let kcount = dispatch_kernel_apcs();
     if kcount > 0 {
         // Kernel APCs may have queued work
-        crate::syscall::set_need_resched();
+        crate::scheduler::request_resched();
     }
     // Dispatch one user APC (I/O completion, events)
     if has_pending_user_apcs() {
@@ -365,7 +365,7 @@ pub fn block_current_alertable() -> bool {
             k.waiting_for = Some(APC_WAIT_MAGIC);
         }
     }
-    crate::syscall::set_need_resched();
+    crate::scheduler::request_resched();
     unsafe { crate::hal::irql::lower_irql(old_irql) };
     true
 }

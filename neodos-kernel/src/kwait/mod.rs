@@ -125,7 +125,7 @@ pub fn kwait_block(reason: WaitReason) {
         k.waiting_for = Some(magic);
         crate::trace_sched_state!(k.tid, before, k.state.to_u8(), 3u8); // KWAIT_BLOCK
     }
-    crate::syscall::set_need_resched();
+    crate::scheduler::request_resched();
     drop(lock);
     unsafe { irql::lower_irql(old_irql) };
 }
@@ -143,7 +143,7 @@ pub fn kwait_wake(reason: &WaitReason) {
         if k.waiting_for == Some(magic) && matches!(k.state, ThreadState::Blocked { .. }) {
             k.waiting_for = None;
             scheduler::Scheduler::make_thread_ready(k);
-            crate::syscall::set_need_resched();
+            crate::scheduler::request_resched();
         }
     }
     drop(scheduler);

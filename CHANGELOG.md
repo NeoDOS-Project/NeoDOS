@@ -200,6 +200,11 @@
 
 ### Changed
 
+- **Baseline de dependencias 48 → 0 (lote 5, #823).** `usermode`/`nxl` pasan a
+  `syscall/`; arch inicializa timers/TEB/framebuffer por hooks; las aristas
+  ejecutivas restantes se declaran explícitamente en NeoDev (#57/#58/#59).
+  `neodev check-deps`: 0 violaciones.
+
 - **Baseline de dependencias 60 → 48 (lote 4, #823).** `AddressSpace` a
   `memory`, `DateTime` y la fuente de timer a `hal`, el lector de benchmark y
   el hook de foreground a `boot`, y `DRIVER_ISO_BASE` a `memory/layout`.

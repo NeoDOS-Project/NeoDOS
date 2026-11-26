@@ -77,7 +77,7 @@ fn kbd_process_internal(scancode: u8, source: &'static str, seq: u64) {
         } else {
             crate::serial_println!("[KBD_EVENT] KBD lock busy, queued scancode=0x{:02x} seq={} source={}", scancode, seq, source);
             // Ensure scheduler re-evaluates soon so queued scancode is drained
-            crate::syscall::set_need_resched();
+            crate::scheduler::request_resched();
         }
     }
 }

@@ -413,6 +413,41 @@ pub static mut PD: [AlignedPageTable; 4] = [
 ///
 /// USER_BASE..USER_LIMIT is additionally marked USER_ACCESSIBLE so Ring 3 can
 /// read and write it.  All other pages stay kernel-only (no USER_ACCESSIBLE).
+
+/// Apply the framebuffer page attributes (UC-) and map >4 GiB ranges.
+/// Called by boot with the range from the graphics layer (arch must not import
+/// `graphics`, INV-1).
+pub unsafe fn configure_framebuffer(fb_start: u64, fb_size: u64) {
+    if fb_size == 0 { return; }
+    crate::hal::without_interrupts(|| {
+        if fb_start < 0x1_0000_0000 {
+            let start_idx = (fb_start / HUGE_PAGE_SIZE) as usize;
+            let end_idx = ((fb_start + fb_size - 1) / HUGE_PAGE_SIZE) as usize;
+            for page_idx in start_idx..=end_idx.min(2047) {
+                let pd_idx = page_idx / 512;
+                let entry_idx = page_idx % 512;
+                if pd_idx < 4 {
+                    let phys = PD[pd_idx].0[entry_idx].addr();
+                    let flags = PD[pd_idx].0[entry_idx].flags() | PageTableFlags::NO_CACHE;
+                    PD[pd_idx].0[entry_idx].set_addr(phys, flags);
+                }
+            }
+            ktrace!(crate::log::LogSubsys::Memory,
+                "FB 0x{:x}..0x{:x}: {} page(s) -> UC-",
+                fb_start, fb_start + fb_size, end_idx - start_idx + 1);
+        }
+    });
+    if fb_start + fb_size > 0x1_0000_0000 {
+        crate::hal::without_interrupts(|| {
+            map_phys_range_above_4g(
+                fb_start,
+                fb_start + fb_size,
+                PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::HUGE_PAGE,
+            );
+        });
+    }
+}
+
 pub unsafe fn init_custom_page_tables() {
     kinfo!(crate::log::LogSubsys::Kernel, "Initializing custom Page Tables...");
 
@@ -443,50 +478,9 @@ pub unsafe fn init_custom_page_tables() {
         }
     }
 
-    // 3.5. Mark framebuffer page(s) as uncacheable (UC-).
-    //      The CPU cache is incoherent with the display controller — writes
-    //      to a Write-Back framebuffer stay in the cache while the scanout
-    //      reads directly from physical DRAM, causing a "slow sweep" as
-    //      dirty lines are gradually evicted.
-    // This runs after `hal::enable_interrupts()`, so the renderer lock must be
-    // taken IRQ-safe (INV-3, Rule 3.5.1).
-    crate::hal::without_interrupts(|| {
-        if let Some(ref renderer) = *crate::graphics::RENDERER.lock() {
-            let fb_start = renderer.fb.base_address;
-            let fb_size = renderer.fb.size;
-            if fb_size > 0 && fb_start < 0x1_0000_0000 {
-                let start_idx = (fb_start / HUGE_PAGE_SIZE) as usize;
-                let end_idx = ((fb_start + fb_size as u64 - 1) / HUGE_PAGE_SIZE) as usize;
-                for page_idx in start_idx..=end_idx.min(2047) {
-                    let pd_idx = page_idx / 512;
-                    let entry_idx = page_idx % 512;
-                    if pd_idx < 4 {
-                        let phys = PD[pd_idx].0[entry_idx].addr();
-                        let flags = PD[pd_idx].0[entry_idx].flags() | PageTableFlags::NO_CACHE;
-                        PD[pd_idx].0[entry_idx].set_addr(phys, flags);
-                    }
-                }
-                ktrace!(crate::log::LogSubsys::Memory,
-                    "FB 0x{:x}..0x{:x}: {} page(s) -> UC-",
-                    fb_start, fb_start + fb_size as u64,
-                    end_idx - start_idx + 1
-                );
-            }
-        }
-    });
 
-    // 4. Map framebuffer if it's above 4 GiB.
-    //    This is common on real hardware with discrete GPUs.
-    crate::hal::without_interrupts(|| {
-        if let Some(ref renderer) = *crate::graphics::RENDERER.lock() {
-            let fb_start = renderer.fb.base_address;
-            let fb_size = renderer.fb.size as u64;
-            if fb_size > 0 && fb_start + fb_size > 0x1_0000_0000 {
-                ktrace!(crate::log::LogSubsys::Memory, "Mapping framebuffer at 0x{:x} ({} MB, extends >4 GiB)", fb_start, fb_size / 0x100000);
-                map_phys_range_above_4g(fb_start, fb_start + fb_size, kernel_flags | PageTableFlags::HUGE_PAGE);
-            }
-        }
-    });
+    // Framebuffer attributes and >4 GiB mapping are applied by boot through
+    // `configure_framebuffer` (arch must not depend on graphics).
 
     // 5. Load our PML4 into CR3.
     let pml4_addr = &PML4 as *const _ as u64;
@@ -948,12 +942,8 @@ pub fn handle_teb_page_fault(virt: u64) -> bool {
             crate::hal::free_page(phys);
             return false;
         }
-        // Set self-pointer
-        unsafe {
-            let teb_ptr = aligned as *mut crate::exception::Teb;
-            core::ptr::write(teb_ptr, crate::exception::Teb::new());
-            (*teb_ptr).teb_self = aligned;
-        }
+        // The exception layer initializes the TEB contents; arch only maps it.
+        teb_writer_hook(aligned);
         return true;
     }
     false
@@ -1059,4 +1049,18 @@ pub fn register_paging_tests() {
         });
         test_eq!(value, 0b10);
     });
+}
+
+static TEB_WRITER_HOOK: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+
+pub fn set_teb_writer(hook: fn(u64)) {
+    TEB_WRITER_HOOK.store(hook as usize, core::sync::atomic::Ordering::Release);
+}
+
+fn teb_writer_hook(addr: u64) {
+    let raw = TEB_WRITER_HOOK.load(core::sync::atomic::Ordering::Acquire);
+    if raw != 0 {
+        let f: fn(u64) = unsafe { core::mem::transmute(raw) };
+        f(addr);
+    }
 }

@@ -23,7 +23,7 @@ env:
   # update cannot turn the build red on its own.
   KERNEL_TOOLCHAIN: nightly-2026-07-14
   # Pinned NeoDev commit (no releases / no crates.io package upstream).
-  NEODEV_REV: 224bd4a30c251985b5ee16fef2ac9a17c0f98369
+  NEODEV_REV: b1aa8a5b18a40f051546a53159c6c4ccad7a8ddf
 
 jobs:
   kernel:

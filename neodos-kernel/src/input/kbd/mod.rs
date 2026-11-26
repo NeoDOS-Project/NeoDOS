@@ -287,7 +287,7 @@ impl NeoKbd {
         // ctrl column. Interrupts the foreground process if there is one.
         if (mods & KBD_CTRL) != 0 && code == 0x2E {
             if crate::input::manager::request_foreground_interrupt() {
-                crate::syscall::set_need_resched();
+                crate::scheduler::request_resched();
                 return;
             }
         }
@@ -313,7 +313,7 @@ impl NeoKbd {
                     // process instead of queueing ETX for whoever is reading.
                     // Only atomics + the IRQ-safe work queue run here.
                     if b == 0x03 && crate::input::manager::request_foreground_interrupt() {
-                        crate::syscall::set_need_resched();
+                        crate::scheduler::request_resched();
                         continue;
                     }
                     if crate::input::push_byte(b).is_err() {

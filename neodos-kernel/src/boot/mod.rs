@@ -87,6 +87,12 @@ pub unsafe fn init(boot_info: &BootInfo) -> ! {
         println!("[!] ACPI power management not available");
     }
     timers::init();
+    arch::x64::smp::set_timer_hooks(
+        timers::apic::init_apic_enable,
+        timers::apic::init_apic_timer_ap,
+        timers::hpet::dump_madt,
+    );
+    arch::x64::paging::set_teb_writer(exception::init_teb_at);
     if timers::active() == timers::TimerSource::Hpet {
         println!("[+] Initializing APIC timer...");
         if timers::apic::init_apic_timer() {
@@ -260,6 +266,9 @@ pub unsafe fn init(boot_info: &BootInfo) -> ! {
         arch::x64::paging::init_custom_page_tables();
     }
     crate::serial_println!("[PAGING] after init_custom_page_tables");
+    if let Some((fb_start, fb_size)) = graphics::framebuffer_range() {
+        unsafe { arch::x64::paging::configure_framebuffer(fb_start, fb_size); }
+    }
 
     // Split heap region huge pages into 4 KB PTs for demand paging
     arch::x64::paging::init_heap_demand_paging();

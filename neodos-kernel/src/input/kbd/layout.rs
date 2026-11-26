@@ -1,4 +1,6 @@
 use alloc::vec::Vec;
+// VFS mode bit (kept local to avoid input -> fs).
+const MODE_FILE: u16 = 0x80;
 use crate::kbd::{KbdLayoutInfo, KBD_SHIFT, KBD_CTRL, KBD_ALTGR};
 
 #[repr(C)]
@@ -75,7 +77,7 @@ const KBD_MAGIC: [u8; 4] = [b'K', b'B', b'D', 0];
 pub fn load_kbd(path: &str) -> Result<KbdLayout, ()> {
     let data: Vec<u8> = crate::globals::with_vfs(|vfs| -> Result<Vec<u8>, ()> {
         let (drive_idx, node) = vfs.resolve_path(path).map_err(|_| ())?;
-        if node.mode & crate::fs::vfs::MODE_FILE == 0 {
+        if node.mode & MODE_FILE == 0 {
             return Err(());
         }
         // Size the buffer from the inode: layout files grow with their compose

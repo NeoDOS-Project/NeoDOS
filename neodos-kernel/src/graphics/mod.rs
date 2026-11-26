@@ -70,3 +70,10 @@ pub fn init(fb: FramebufferInfo) {
     renderer.clear(0x000000); // Black
     crate::hal::without_interrupts(|| *RENDERER.lock() = Some(renderer));
 }
+
+/// Framebuffer physical range for the paging layer (avoids arch -> graphics).
+pub fn framebuffer_range() -> Option<(u64, u64)> {
+    crate::hal::without_interrupts(|| {
+        RENDERER.lock().as_ref().map(|r| (r.fb.base_address, r.fb.size as u64))
+    })
+}

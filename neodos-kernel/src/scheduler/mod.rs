@@ -882,3 +882,13 @@ pub fn wake_thread_joiner(tid: u32) {
 
 pub mod tests;
 pub use tests::register_tests;
+
+/// Global reschedule request (per-CPU flag mirror for compatibility).
+pub static NEED_RESCHED: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
+
+/// Ask the current CPU to reschedule at the next safe boundary.
+pub fn request_resched() {
+    NEED_RESCHED.store(true, core::sync::atomic::Ordering::SeqCst);
+    unsafe { crate::arch::x64::cpu_local::this_cpu_set_need_resched(true); }
+}

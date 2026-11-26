@@ -73,9 +73,10 @@ mod id_index; // NEODOS-05 (#635): O(1) id index (Obj table + scheduler)
 mod infra;
 pub use infra::{
     boot_benchmark, cpu, elf, globals, handle, invariants, lock_order,
-    nxl, trace, usermode, work_queue,
+    trace, work_queue,
 };
 pub use boot::abi_freeze;
+pub use syscall::{nxl, usermode};
 pub use arch::x64::idt::panic_classification;
 
 use graphics::FramebufferInfo;
