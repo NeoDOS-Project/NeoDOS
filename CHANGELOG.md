@@ -195,6 +195,10 @@
 
 ### Changed
 
+- **Tabla de permisos de syscalls sin campos muertos (#822).** `caps`/`ring_min`
+  nunca se evaluaban; se eliminan para no aparentar defensas inexistentes. La
+  única puerta adicional sigue siendo `admin`.
+
 - **Documentación sincronizada (#820) y modelo de seguridad NEM (#824).**
   README/docs/AGENTS reflejan v0.55.0 y 1.080 tests; se corrige el estado de
   #767; `scripts/check-version.sh` vigila la deriva en CI; overview y NEM spec

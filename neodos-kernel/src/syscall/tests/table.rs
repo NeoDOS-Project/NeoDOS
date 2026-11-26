@@ -146,7 +146,7 @@ pub fn register_syscall_table_tests() {
         test_true!(SYSCALL_TABLE[0].is_some());
         test_true!(SYSCALL_TABLE[1].is_some());
 
-        test_eq!(SYSCALL_PERMISSIONS[0].ring_min, 3);
+        test_eq!(SYSCALL_PERMISSIONS[0].admin, false);
         test_eq!(SYSCALL_PERMISSIONS[35].admin, true);
 
         test_true!(SYSCALL_TABLE[46].is_some());
