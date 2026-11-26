@@ -252,42 +252,40 @@ pub(super) fn handler_dup2(regs: super::Registers) -> u64 {
     let old_fd = regs.rbx as u8;
     let new_fd = regs.rcx as u8;
 
+    if old_fd == new_fd {
+        return if current_handle_entry(old_fd).is_open() {
+            new_fd as u64
+        } else {
+            err_to_u64(SyscallError::BadF)
+        };
+    }
+
     let src_entry = current_handle_entry(old_fd);
     if !src_entry.is_open() {
         return err_to_u64(SyscallError::BadF);
     }
 
-    let dst_entry = current_handle_entry(new_fd);
-    if dst_entry.is_pipe_read() {
-        crate::object::pipe::PIPE_MANAGER.dec_read_ref(dst_entry.native_id().unwrap_or(0) as u8);
-    } else if dst_entry.is_pipe_write() {
-        crate::object::pipe::PIPE_MANAGER.dec_write_ref(dst_entry.native_id().unwrap_or(0) as u8);
-    } else if dst_entry.has_ob_object() {
-        let _ = crate::object::ob_close_object(dst_entry.object_id);
+    // Each fd owns its own reference; close the destination's references and
+    // give the duplicate a fresh one (#815).
+    let dup = src_entry.duplicate();
+    let mut dst_entry = current_handle_entry(new_fd);
+    if dst_entry.is_open() {
+        dst_entry.close();
     }
 
-    if src_entry.is_pipe_read() {
-        crate::object::pipe::PIPE_MANAGER.inc_read_ref(src_entry.native_id().unwrap_or(0) as u8);
-    } else if src_entry.is_pipe_write() {
-        crate::object::pipe::PIPE_MANAGER.inc_write_ref(src_entry.native_id().unwrap_or(0) as u8);
-    }
-
-    set_current_handle(new_fd, src_entry);
+    set_current_handle(new_fd, dup);
     new_fd as u64
 }
 
 pub(super) fn handler_close(regs: super::Registers) -> u64 {
     let fd = regs.rbx as u8;
-    let entry = current_handle_entry(fd);
-    if entry.is_pipe_read() {
-        crate::object::pipe::PIPE_MANAGER.dec_read_ref(entry.native_id().unwrap_or(0) as u8);
-    } else if entry.is_pipe_write() {
-        crate::object::pipe::PIPE_MANAGER.dec_write_ref(entry.native_id().unwrap_or(0) as u8);
-    }
-    if entry.object_id != 0 {
-        let _ = crate::object::ob_close_object(entry.object_id);
-    }
-    set_current_handle(fd, crate::handle::HandleEntry::closed());
+    crate::hal::without_interrupts(|| {
+        let s = scheduler::current_scheduler();
+        let mut lock = s.lock();
+        if let Some(ep) = lock.current_eprocess_mut() {
+            ep.handle_table[fd as usize].close();
+        }
+    });
     0
 }
 

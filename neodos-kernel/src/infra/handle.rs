@@ -101,11 +101,34 @@ impl HandleEntry {
         HandleEntry { object_id, offset: 0, access: _access_mask }
     }
 
-    /// Close this handle: release the Ob reference.
-    /// Only calls ob_close_object if the ObObject is still alive.
+    /// Duplicate this handle, acquiring the same references the original
+    /// owns (Ob object + pipe end). Used by dup2 and child stdio inheritance
+    /// so closing one copy cannot destroy the resource for the other (#815).
+    pub fn duplicate(&self) -> Self {
+        if self.is_pipe_read() {
+            crate::object::pipe::PIPE_MANAGER
+                .inc_read_ref(self.native_id().unwrap_or(0) as u8);
+        } else if self.is_pipe_write() {
+            crate::object::pipe::PIPE_MANAGER
+                .inc_write_ref(self.native_id().unwrap_or(0) as u8);
+        }
+        if self.has_ob_object() {
+            let _ = crate::object::ob_reference(self.object_id);
+        }
+        *self
+    }
+
+    /// Close this handle: release the pipe end and/or the Ob reference.
     /// Double-close and stale-handle scenarios are safe.
     pub fn close(&mut self) {
-        if self.has_ob_object() && self.is_valid() {
+        if self.is_pipe_read() {
+            crate::object::pipe::PIPE_MANAGER
+                .dec_read_ref(self.native_id().unwrap_or(0) as u8);
+        } else if self.is_pipe_write() {
+            crate::object::pipe::PIPE_MANAGER
+                .dec_write_ref(self.native_id().unwrap_or(0) as u8);
+        }
+        if self.has_ob_object() {
             let _ = ob_close_object(self.object_id);
         }
         *self = HandleEntry::closed();
@@ -450,6 +473,21 @@ pub fn register_tests() {
         test_true!(!e2.is_valid());
         e2.close();
         test_true!(!e2.is_open());
+    });
+
+    test_case!("handle_duplicate_keeps_object_alive", {
+        let entry = HandleEntry::file(0, 500);
+        let obj_id = entry.object_id;
+        let dup = entry.duplicate();
+
+        let mut first = entry;
+        first.close();
+        test_true!(crate::object::ob_lookup(obj_id).is_some());
+        test_true!(dup.is_valid());
+
+        let mut second = dup;
+        second.close();
+        test_true!(crate::object::ob_lookup(obj_id).is_none());
     });
 
     test_case!("vfs_ownership_stdio_always_valid", {

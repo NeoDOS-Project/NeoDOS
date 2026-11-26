@@ -296,13 +296,9 @@ pub(crate) fn normalize_dos_path(path: &str) -> String {
 }
 
 pub(crate) fn copy_handle_entry_for_child(entry: &crate::handle::HandleEntry) -> crate::handle::HandleEntry {
-    if let Some(obj) = entry.obj_type() {
-        if obj == crate::object::ObType::Pipe {
-            if let Some(_nid) = entry.native_id() {
-            }
-        }
-    }
-    *entry
+    // The child owns its own reference: closing the parent's fd must not
+    // destroy the pipe/file still in use by the child (#815).
+    entry.duplicate()
 }
 
 pub(crate) fn resolve_chdir_target(path_str: String) -> Result<(u8, String), SyscallError> {
