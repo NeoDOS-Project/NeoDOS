@@ -585,16 +585,26 @@ pub fn init_mmap_demand_paging() {
 
 /// Allocate a physical 4 KB page and map it as USER_ACCESSIBLE at `virt`.
 /// `virt` must be in the mmap range and 4 KB-aligned.
-pub fn mmap_alloc_page(virt: u64) -> Option<u64> {
+/// PTE flags for a mmap page: USER + PRESENT, writable only when the VMA
+/// allows it, and NX whenever the CPU supports it (W^X, #819 / #639).
+fn mmap_pte_flags(writable: bool) -> u64 {
+    let mut flags = 0x4; // USER_ACCESSIBLE (PRESENT comes from map_page)
+    if writable {
+        flags |= 0x2;
+    }
+    if crate::arch::x64::features::nx_enabled() {
+        flags |= 1u64 << 63;
+    }
+    flags
+}
+
+pub fn mmap_alloc_page(virt: u64, writable: bool) -> Option<u64> {
     if !is_mmap_virtual_addr(virt) || virt & 0xFFF != 0 {
         return None;
     }
     let phys = crate::hal::alloc_page();
     if phys.is_null() { return None; }
-    // PRESENT | WRITABLE | USER_ACCESSIBLE, plus NX when the CPU supports it:
-    // mmap data is never executable (W^X, NEODOS-09 / #639).
-    let nx = if crate::arch::x64::features::nx_enabled() { 1u64 << 63 } else { 0 };
-    let rc = crate::hal::map_page(phys as u64, virt, 0x6 | nx);
+    let rc = crate::hal::map_page(phys as u64, virt, mmap_pte_flags(writable));
     if rc != 0 { return None; }
     Some(phys as u64)
 }
@@ -680,7 +690,7 @@ pub fn handle_mmap_page_fault(virt: u64, user: bool, write: bool) -> bool {
 
     if region.flags & 1 != 0 {
         // Anonymous: allocate zero-filled page
-        match mmap_alloc_page(aligned) {
+        match mmap_alloc_page(aligned, region.prot & 2 != 0) {
             Some(phys) => {
                 ktrace!(crate::log::LogSubsys::Memory, "Demand-alloc anon 4K @ 0x{:x} → phys 0x{:x}", aligned, phys);
                 true
@@ -737,7 +747,11 @@ fn load_file_mmap_page(virt: u64, region: &MmapRegion) -> bool {
         }
     }
 
-    let rc = crate::hal::map_page(phys_addr, virt, 0x7);
+    let rc = crate::hal::map_page(
+        phys_addr,
+        virt,
+        mmap_pte_flags(region.prot & 2 != 0),
+    );
     if rc != 0 {
         crate::hal::free_page(phys);
         return false;
