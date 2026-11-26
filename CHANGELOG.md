@@ -116,6 +116,10 @@
 
 ### Fixed
 
+- **Bypass de ACL del padre con `/` o ruta relativa (#816).** `FileCreate` y
+  `mkdir` usan `paths::parent_dir`, que acepta `\` y `/` y resuelve la raíz del
+  volumen cuando no hay separador. Antes `C:/…` y `C:x` se saltaban la DACL del
+  directorio padre. Probe Ring 3 `[PATHSLASH] PASS`.
 - **Ventana de usuario 4–36 MB reservada en el buddy (#761).** El kernel ya no
   puede asignar marcos en el rango identity-mapped accesible desde Ring 3, así
   que ninguna page table, heap o buffer del kernel queda aliasado por userland.

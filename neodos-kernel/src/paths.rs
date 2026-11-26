@@ -30,6 +30,7 @@
 //! built with the new tree keeps working while the call sites are migrated one
 //! by one. The mapping is pure and unit-tested.
 
+use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 
@@ -111,6 +112,30 @@ fn match_legacy(path: &str, table: &[(&str, &str)]) -> Option<String> {
 
 /// Paths to try, in order, for `path`: the canonical spelling first (when one
 /// exists) and then the original.
+/// Parent directory of a DOS path, accepting both `\` and `/`.
+///
+/// The VFS treats both separators as equivalent, so authorization must too
+/// (AUDIT-008 / #816). A path without a separator after the drive colon is
+/// relative to the volume root (`C:\`). Returns `None` when there is no drive.
+pub fn parent_dir(path: &str) -> Option<String> {
+    let colon = path.find(':')?;
+    // DOS drive letter only (`C:`), never an Ob namespace path.
+    if colon != 1 || colon + 1 >= path.len() {
+        return None;
+    }
+    let mut last_sep = None;
+    for (i, b) in path.bytes().enumerate() {
+        if i > colon && (b == b'\\' || b == b'/') {
+            last_sep = Some(i);
+        }
+    }
+    match last_sep {
+        Some(i) if i > colon + 1 => Some(String::from(&path[..i])),
+        Some(i) => Some(String::from(&path[..=i])),
+        None => Some(format!("{}\\", &path[..=colon])),
+    }
+}
+
 pub fn canonical_candidates(path: &str) -> Vec<String> {
     match canonicalize(path) {
         Some(canon) => {
@@ -191,6 +216,16 @@ pub fn register_tests() {
         test_eq!(canonicalize("C:\\NeoDOS\\System\\neoshell.nxe"), None);
         test_eq!(canonicalize("C:\\Users\\Administrator"), None);
         test_eq!(canonicalize("A:\\EFI\\BOOT"), None);
+    });
+
+    test_case!("paths_parent_dir_accepts_both_separators", {
+        test_eq!(parent_dir("C:\\Users\\NeoDOS\\x").as_deref(), Some("C:\\Users\\NeoDOS"));
+        test_eq!(parent_dir("C:/Users/NeoDOS/x").as_deref(), Some("C:/Users/NeoDOS"));
+        test_eq!(parent_dir("C:\\x").as_deref(), Some("C:\\"));
+        test_eq!(parent_dir("C:/x").as_deref(), Some("C:/"));
+        test_eq!(parent_dir("C:x").as_deref(), Some("C:\\"));
+        test_eq!(parent_dir("\\Global\\FileSystem\\C:\\x"), None);
+        test_eq!(parent_dir(""), None);
     });
 
     test_case!("paths_candidates_put_canonical_first", {
