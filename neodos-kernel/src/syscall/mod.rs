@@ -13,7 +13,9 @@
 //!   Non-negative (≥ 0)  → success
 //!   Negative (< 0)       → error (`-SyscallError`)
 
+pub mod nxl;
 pub mod table;
+pub mod usermode;
 pub mod permission;
 mod handlers;
 mod ob;
@@ -235,12 +237,11 @@ pub(crate) fn unload_driver(name: &str, force: bool) -> Result<String, &'static 
     hook(name, force)
 }
 
-pub static NEED_RESCHED: AtomicBool = AtomicBool::new(false);
+pub use crate::scheduler::NEED_RESCHED;
 pub static KEYBOARD_LAYOUT: AtomicU8 = AtomicU8::new(1);
 
 pub fn set_need_resched() {
-    NEED_RESCHED.store(true, Ordering::SeqCst);
-    unsafe { crate::arch::x64::cpu_local::this_cpu_set_need_resched(true); }
+    crate::scheduler::request_resched();
 }
 
 /// Diagnostic switch used to isolate syscall-return scheduling from syscall

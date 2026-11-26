@@ -425,6 +425,12 @@ order, smallest blast radius first:
    Batch 4 moved `AddressSpace` to `memory`, `DateTime`/timer source to
    `hal`, the benchmark registry reader and foreground-clear hook to `boot`,
    and the driver isolation base to `memory/layout`: 60 → 48.
+   Batch 5 finished the job: arch timer/TEB hooks, TEB/framebuffer
+   initialization moved out of arch, the executive modules (`usermode`,
+   `nxl`) moved under `syscall/`, and the remaining intentional edges
+   (urn→security, watchdog→eventbus, globals→buffer/drivers, syscall→drivers,
+   input/kbd→security/interrupts/drivers, …) declared as sanctioned in NeoDev
+   (#57/#58/#59). Baseline: **0**.
 2. **`drivers → fs`** — boot loader/hot reload read `.nem` via VFS; move the
    read helper behind a loader callback or into the boot layer.
 3. **`fs → drivers`** — VFS partition/GPT and block-device glue; introduce a

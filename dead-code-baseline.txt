@@ -124,9 +124,9 @@ src/hal/raw/mod.rs	associated function `from_raw` is never used
 src/hal/raw/mod.rs	struct `GdtDescriptor` is never constructed
 src/infra/boot_benchmark.rs	constant `PIT_HZ` is never used
 src/infra/elf.rs	constant `DT_RELAENT` is never used
-src/infra/nxl.rs	constant `SLOT` is never used
-src/infra/nxl.rs	field `size` is never read
-src/infra/usermode.rs	function `exit_to_kernel` is never used
+src/syscall/nxl.rs	constant `SLOT` is never used
+src/syscall/nxl.rs	field `size` is never read
+src/syscall/usermode.rs	function `exit_to_kernel` is never used
 src/input/kbd/config.rs	constant `REG_PATH` is never used
 src/input/kbd/event.rs	function `kbd_next_seq` is never used
 src/input/vt.rs	function `vt_counts` is never used

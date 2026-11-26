@@ -11,7 +11,5 @@ pub mod globals;
 pub mod handle;
 pub mod invariants;
 pub mod lock_order;
-pub mod nxl;
 pub mod trace;
-pub mod usermode;
 pub mod work_queue;

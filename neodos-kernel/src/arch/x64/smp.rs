@@ -482,8 +482,8 @@ pub extern "sysv64" fn ap_entry(stack_top: u64) -> ! {
     // Enable this CPU's local APIC and start its periodic timer, then enable
     // interrupts. Until `AP_SCHED_ACTIVE` the timer handler early-returns, so
     // the AP idles without touching the scheduler (deterministic test suite).
-    crate::timers::apic::init_apic_enable();
-    if !crate::timers::apic::init_apic_timer_ap() {
+    apic_enable_hook();
+    if !apic_timer_hook() {
         loop { unsafe { crate::hal::raw::raw_hlt_once(); } }
     }
     crate::hal::enable_interrupts();
@@ -696,7 +696,7 @@ pub fn init_smp() -> usize {
     crate::serial_println!("[SMP] KPRCB PTRS filled: [0]=0x{:x} [1]=0x{:x}", unsafe { AP_KPRCB_PTRS[0] }, unsafe { AP_KPRCB_PTRS[1] });
 
     crate::serial_println!("[SMP] calling dump_madt");
-    crate::timers::hpet::dump_madt();
+    madt_dump_hook();
     crate::serial_println!("[SMP] dump_madt done");
 
     // Step 2: Detect AP count by checking if we have any APs
@@ -865,4 +865,28 @@ pub fn register_smp_tests() {
         }
         Ok(())
     });
+}
+
+// Timer hooks: arch must not depend on timers (INV-1). Boot registers these.
+static APIC_ENABLE_HOOK: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+static APIC_TIMER_HOOK: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+static MADT_DUMP_HOOK: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+
+pub fn set_timer_hooks(enable: fn() -> bool, timer: fn() -> bool, dump: fn()) {
+    APIC_ENABLE_HOOK.store(enable as usize, core::sync::atomic::Ordering::Release);
+    APIC_TIMER_HOOK.store(timer as usize, core::sync::atomic::Ordering::Release);
+    MADT_DUMP_HOOK.store(dump as usize, core::sync::atomic::Ordering::Release);
+}
+
+fn apic_enable_hook() {
+    let raw = APIC_ENABLE_HOOK.load(core::sync::atomic::Ordering::Acquire);
+    if raw != 0 { let f: fn() -> bool = unsafe { core::mem::transmute(raw) }; let _ = f(); }
+}
+fn apic_timer_hook() -> bool {
+    let raw = APIC_TIMER_HOOK.load(core::sync::atomic::Ordering::Acquire);
+    if raw != 0 { let f: fn() -> bool = unsafe { core::mem::transmute(raw) }; f() } else { false }
+}
+fn madt_dump_hook() {
+    let raw = MADT_DUMP_HOOK.load(core::sync::atomic::Ordering::Acquire);
+    if raw != 0 { let f: fn() = unsafe { core::mem::transmute(raw) }; f(); }
 }

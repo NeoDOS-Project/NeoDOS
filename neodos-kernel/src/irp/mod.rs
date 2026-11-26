@@ -252,7 +252,7 @@ fn irp_wake_waiter(pid: u32) {
         {
             k.waiting_for = None;
             crate::scheduler::Scheduler::make_thread_ready(k);
-            crate::syscall::set_need_resched();
+            crate::scheduler::request_resched();
         }
     }
 }
