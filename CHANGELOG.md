@@ -200,6 +200,11 @@
 
 ### Changed
 
+- **Baseline de dependencias 90 → 73 (lote 2, #823).** MSI y virtio usan
+  `hal::pci`; AHCI/virtio-blk emiten contadores por hooks `hal::bench` en vez
+  de importar `boot_benchmark`. NeoDev actualizado (PR #56) para las rutas de
+  `abi_freeze`/`panic_classification`; pin de CI a `224bd4a`.
+
 - **Baseline de dependencias 141 → 90 (lote 1, #823).** `abi_freeze` pasa a
   `boot/`, `panic_classification` a `arch/x64/idt/`, los tests de la puerta
   admin a `syscall/tests`, `MODE_DIR` a constantes locales y los helpers TSC a

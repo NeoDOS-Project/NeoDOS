@@ -136,3 +136,89 @@ pub fn register_tests() {
         test_eq!(r3, 0xE000_0000 | ((7_u64) << 12) | 0xFF);
     });
 }
+
+// ── Config-space primitives (shared by interrupts/drivers) ──────────
+//
+// Kept in the HAL so MSI and virtio can read/write PCI config without
+// depending on `drivers` (INV-1 / #823).
+
+const CONFIG_ADDRESS: u16 = 0xCF8;
+const CONFIG_DATA: u16 = 0xCFC;
+
+/// ECAM-backed read (MMIO) or legacy PIO fallback.
+pub fn pci_config_read_dword(bus: u8, dev: u8, func: u8, offset: u8) -> u32 {
+    if ecam_is_active() {
+        unsafe { ecam_read_config_dword(bus, dev, func, offset) }
+    } else {
+        let addr = 0x8000_0000u32
+            | ((bus as u32) << 16)
+            | ((dev as u32) << 11)
+            | ((func as u32) << 8)
+            | (offset as u32 & 0xFC);
+        crate::hal::outl(CONFIG_ADDRESS, addr);
+        crate::hal::inl(CONFIG_DATA)
+    }
+}
+
+pub fn pci_config_read_word(bus: u8, dev: u8, func: u8, offset: u8) -> u16 {
+    let aligned = offset & 0xFC;
+    let dword = pci_config_read_dword(bus, dev, func, aligned);
+    ((dword >> ((offset & 3) * 8)) & 0xFFFF) as u16
+}
+
+pub fn pci_config_write_dword(bus: u8, dev: u8, func: u8, offset: u8, value: u32) {
+    if ecam_is_active() {
+        unsafe { ecam_write_config_dword(bus, dev, func, offset, value); }
+    } else {
+        let addr = 0x8000_0000u32
+            | ((bus as u32) << 16)
+            | ((dev as u32) << 11)
+            | ((func as u32) << 8)
+            | (offset as u32 & 0xFC);
+        crate::hal::outl(CONFIG_ADDRESS, addr);
+        crate::hal::outl(CONFIG_DATA, value);
+    }
+}
+
+pub fn pci_config_write_word(bus: u8, dev: u8, func: u8, offset: u8, value: u16) {
+    let aligned = offset & 0xFC;
+    let dword = pci_config_read_dword(bus, dev, func, aligned);
+    let shift = (offset & 3) * 8;
+    let mask = !(0xFFFFu32 << shift);
+    pci_config_write_dword(
+        bus,
+        dev,
+        func,
+        aligned,
+        (dword & mask) | ((value as u32) << shift),
+    );
+}
+
+/// Scan the capability list for `cap_id`. Bounded to 48 hops.
+pub fn find_capability(bus: u8, dev: u8, func: u8, cap_id: u8) -> Option<u8> {
+    let status = pci_config_read_word(bus, dev, func, 0x06);
+    if (status & (1 << 4)) == 0 {
+        return None;
+    }
+    let mut ptr = (pci_config_read_word(bus, dev, func, 0x34) & 0xFF) as u8;
+    let mut guard = 0u8;
+    while ptr != 0 && guard < 48 {
+        let header = pci_config_read_word(bus, dev, func, ptr);
+        if (header & 0xFF) as u8 == cap_id {
+            return Some(ptr);
+        }
+        ptr = ((header >> 8) & 0xFF) as u8;
+        guard += 1;
+    }
+    None
+}
+
+pub fn read_bar(bus: u8, dev: u8, func: u8, bar_index: u8) -> u32 {
+    pci_config_read_dword(bus, dev, func, 0x10 + bar_index * 4)
+}
+
+pub fn read_bar64(bus: u8, dev: u8, func: u8, bar_index: u8) -> u64 {
+    let low = read_bar(bus, dev, func, bar_index) as u64;
+    let high = read_bar(bus, dev, func, bar_index + 1) as u64;
+    low | (high << 32)
+}

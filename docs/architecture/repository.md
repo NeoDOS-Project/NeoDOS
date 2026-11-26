@@ -416,6 +416,8 @@ order, smallest blast radius first:
    `arch/x64/idt/`, the security syscall-gate tests to `syscall/tests`,
    `MODE_DIR` to local constants and the TSC helpers to `hal`
    (baseline 141 → 90).
+   Batch 2 moved PCI config access to `hal::pci` (MSI/virtio) and benchmark
+   counters to `hal::bench` hooks (AHCI/virtio-blk): 90 → 73.
 2. **`drivers → fs`** — boot loader/hot reload read `.nem` via VFS; move the
    read helper behind a loader callback or into the boot layer.
 3. **`fs → drivers`** — VFS partition/GPT and block-device glue; introduce a

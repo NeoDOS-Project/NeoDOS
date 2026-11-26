@@ -18,6 +18,14 @@ pub fn rdtsc() -> u64 {
 
 pub fn init() {
     let khz = crate::hal::init_tsc();
+    crate::hal::bench::set_hooks(&crate::hal::bench::BenchHooks {
+        ahci_cmd_start,
+        ahci_cmd_polled,
+        ahci_cmd_done,
+        ahci_cmd_timeout,
+        ahci_dma_failure,
+        virtio_cmd: || { VIRTIO_COMMANDS.fetch_add(1, Ordering::Relaxed); },
+    });
     kinfo!(LogSubsys::Bench, "TSC calibrated: {} ticks/ms", khz);
 }
 

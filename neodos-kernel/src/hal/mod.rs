@@ -1,3 +1,4 @@
+pub mod bench;
 pub mod x64;
 pub mod raw;
 pub mod safe;
