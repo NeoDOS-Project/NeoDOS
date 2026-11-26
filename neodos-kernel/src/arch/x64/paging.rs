@@ -587,7 +587,7 @@ pub fn init_mmap_demand_paging() {
 /// `virt` must be in the mmap range and 4 KB-aligned.
 /// PTE flags for a mmap page: USER + PRESENT, writable only when the VMA
 /// allows it, and NX whenever the CPU supports it (W^X, #819 / #639).
-fn mmap_pte_flags(writable: bool) -> u64 {
+pub(crate) fn mmap_pte_flags(writable: bool) -> u64 {
     let mut flags = 0x4; // USER_ACCESSIBLE (PRESENT comes from map_page)
     if writable {
         flags |= 0x2;
@@ -703,65 +703,33 @@ pub fn handle_mmap_page_fault(virt: u64, user: bool, write: bool) -> bool {
     }
 }
 
-/// Load a single 4 KB page from a file-backed mmap region.
-/// Checks the global PageCache first; on miss, reads via VFS (which populates the cache).
+/// File-backed mmap loader registered by the VFS layer at boot. Arch must not
+/// depend on globals/VFS (INV-1); the boot code wires the hook after mounting.
+type MmapFileLoader = fn(u64, u8, u32, u32, u64, u16) -> bool;
+
+static MMAP_FILE_LOADER: core::sync::atomic::AtomicUsize =
+    core::sync::atomic::AtomicUsize::new(0);
+
+pub fn set_mmap_file_loader(loader: MmapFileLoader) {
+    MMAP_FILE_LOADER.store(loader as usize, core::sync::atomic::Ordering::Release);
+}
+
 fn load_file_mmap_page(virt: u64, region: &MmapRegion) -> bool {
-    let offset_in_file = (virt - region.base) as usize;
-    let file_size = region.file_size as usize;
-    let block_num = offset_in_file / 4096;
-
-    let phys = crate::hal::alloc_page();
-    if phys.is_null() { return false; }
-    let phys_addr = phys as u64;
-
-    unsafe { core::ptr::write_bytes(phys_addr as *mut u8, 0, 4096); }
-
-    let bytes_to_read = core::cmp::min(4096, file_size.saturating_sub(offset_in_file));
-    let mut from_cache = false;
-
-    if bytes_to_read > 0 {
-        let dest_slice =
-            unsafe { core::slice::from_raw_parts_mut(phys_addr as *mut u8, bytes_to_read) };
-
-        {
-            // Arch layer: `check-deps` forbids arch -> globals, and this path
-            // runs from the page-fault handler with interrupts already
-            // disabled, so a raw cache peek is safe here. The rest of the
-            // filesystem locks arch does not touch.
-            let pc_lock = crate::globals::PAGE_CACHE.lock();
-            if let Some(cached) = pc_lock.peek_inode(region.drive, region.inode, block_num as u32) {
-                let to_copy = bytes_to_read.min(4096);
-                dest_slice[..to_copy].copy_from_slice(&cached[..to_copy]);
-                from_cache = true;
-            }
-        }
-
-        if !from_cache {
-            let result = crate::globals::with_vfs(|vfs| {
-                vfs.read(region.drive as usize, region.inode, offset_in_file as u64, dest_slice)
-            });
-            if result.is_err() {
-                crate::hal::free_page(phys);
-                return false;
-            }
-        }
-    }
-
-    let rc = crate::hal::map_page(
-        phys_addr,
-        virt,
-        mmap_pte_flags(region.prot & 2 != 0),
-    );
-    if rc != 0 {
-        crate::hal::free_page(phys);
+    let raw = MMAP_FILE_LOADER.load(core::sync::atomic::Ordering::Acquire);
+    if raw == 0 {
         return false;
     }
-
-    kdebug!(crate::log::LogSubsys::Memory,
-        "Demand-load file 4K @ 0x{:x} (inode={}, offset={}, cache={})",
-        virt, region.inode, offset_in_file, from_cache
-    );
-    true
+    // SAFETY: only `set_mmap_file_loader` writes this slot, with a valid
+    // function pointer of this exact type.
+    let loader: MmapFileLoader = unsafe { core::mem::transmute(raw) };
+    loader(
+        virt,
+        region.drive,
+        region.inode,
+        region.file_size,
+        region.base,
+        region.prot,
+    )
 }
 
 /// Split a 2 MB huge page at `virt` into 512 × 4 KB page table entries.

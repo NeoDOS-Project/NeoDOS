@@ -200,6 +200,12 @@
 
 ### Changed
 
+- **Primer lote del baseline de dependencias (#823).** `arch` deja de importar
+  `globals`/VFS: el loader de páginas `mmap` file-backed vive en
+  `fs/vfs/mmap.rs` y `boot` lo registra con `paging::set_mmap_file_loader`.
+  Baseline 143 → 141; orden de reducción documentado en
+  `docs/architecture/repository.md`.
+
 - **Tabla de permisos de syscalls sin campos muertos (#822).** `caps`/`ring_min`
   nunca se evaluaban; se eliminan para no aparentar defensas inexistentes. La
   única puerta adicional sigue siendo `admin`.

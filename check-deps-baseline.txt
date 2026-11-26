@@ -3,8 +3,6 @@
 # Classification/reduction tracked in NeoDev issue #20.
   arch/x64/paging.rs: imports 'exception::Teb' which contains forbidden dep(s): exception
   arch/x64/paging.rs: imports 'exception::Teb::new' which contains forbidden dep(s): exception
-  arch/x64/paging.rs: imports 'globals::PAGE_CACHE' which contains forbidden dep(s): globals
-  arch/x64/paging.rs: imports 'globals::with_vfs' which contains forbidden dep(s): globals
   arch/x64/paging.rs: imports 'graphics::RENDERER' which contains forbidden dep(s): graphics
   arch/x64/smp.rs: imports 'timers::apic::init_apic_enable' which contains forbidden dep(s): timers
   arch/x64/smp.rs: imports 'timers::apic::init_apic_timer_ap' which contains forbidden dep(s): timers
