@@ -31,7 +31,7 @@ use crate::log::LogSubsys;
 use crate::scheduler::{self, ThreadState};
 
 pub use table::{Registers, SyscallFn, MAX_SYSCALL};
-pub use permission::{SyscallPermission, CAP_ADMIN};
+pub use permission::SyscallPermission;
 
 // Import handler functions from sub-modules for SSDT registration
 use self::handlers::*;

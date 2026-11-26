@@ -243,11 +243,8 @@ pub fn register_security_tests() {
     // ── NT6.4 Tests ─────────────────────────────────────────────────
 
     test_case!("se_admin_required", {
-        let (tx, _rx) = {
-            let perm = crate::syscall::SYSCALL_PERMISSIONS[58];
-            (perm.admin, perm.ring_min)
-        };
-        test_true!(tx);  // syscall 58 (driver_unload) requires admin
+        let perm = crate::syscall::SYSCALL_PERMISSIONS[58];
+        test_true!(perm.admin); // syscall 58 (driver_unload) requires admin
     });
 
     test_case!("se_user_denied_admin_syscall", {
