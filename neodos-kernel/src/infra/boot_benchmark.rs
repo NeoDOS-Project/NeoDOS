@@ -6,7 +6,7 @@
 
 use crate::log::LogSubsys;
 
-use core::sync::atomic::{AtomicU64, AtomicU32, AtomicBool, Ordering};
+use core::sync::atomic::{AtomicU64, AtomicU32, AtomicBool, AtomicUsize, Ordering};
 
 // ── TSC-based high-precision timer ──────────────────────────────────
 
@@ -298,20 +298,23 @@ pub static ENABLE_AHCI_DEBUG_OUTPUT: AtomicBool = AtomicBool::new(true);
 
 /// Initialize boot configuration with default values.
 /// Configuration can be changed at runtime using the BENCH shell command.
+/// Registry reader registered by boot (INV-1: benchmark must not import cm).
+type ConfigReader = fn() -> Option<(bool, bool)>;
+static CONFIG_READER: AtomicUsize = AtomicUsize::new(0);
+
+pub fn set_config_reader(reader: ConfigReader) {
+    CONFIG_READER.store(reader as usize, Ordering::Release);
+}
+
 pub fn load_config() {
-    // Read BenchmarkReport and AhciDebug from registry
-    // Default (no value or non-zero) = true
-    if let Ok(key) = crate::cm::cm_open_key(0, "CurrentControlSet\\Control") {
-        if let Ok(vc) = crate::cm::cm_query_value(key, "BenchmarkReport") {
-            if let Some(v) = vc.as_dword() {
-                ENABLE_BOOT_BENCHMARK_REPORT.store(v != 0, Ordering::Relaxed);
-            }
-        }
-        if let Ok(vc) = crate::cm::cm_query_value(key, "AhciDebug") {
-            if let Some(v) = vc.as_dword() {
-                ENABLE_AHCI_DEBUG_OUTPUT.store(v != 0, Ordering::Relaxed);
-            }
-        }
+    let raw = CONFIG_READER.load(Ordering::Acquire);
+    if raw == 0 {
+        return;
+    }
+    let reader: ConfigReader = unsafe { core::mem::transmute(raw) };
+    if let Some((report, debug)) = reader() {
+        ENABLE_BOOT_BENCHMARK_REPORT.store(report, Ordering::Relaxed);
+        ENABLE_AHCI_DEBUG_OUTPUT.store(debug, Ordering::Relaxed);
     }
 
     kinfo!(LogSubsys::Bench, "Config flags: BENCHMARK_REPORT={}, AHCI_DEBUG={}",

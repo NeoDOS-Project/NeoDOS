@@ -200,6 +200,10 @@
 
 ### Changed
 
+- **Baseline de dependencias 60 → 48 (lote 4, #823).** `AddressSpace` a
+  `memory`, `DateTime` y la fuente de timer a `hal`, el lector de benchmark y
+  el hook de foreground a `boot`, y `DRIVER_ISO_BASE` a `memory/layout`.
+
 - **Baseline de dependencias 73 → 60 (lote 3, #823).** GPT pasa a
   `fs/vfs/gpt.rs`; los drivers NEM usan constantes locales de modo; MSI
   consulta `pci.nem` por hook; `syscall` descarga drivers y despierta lectores

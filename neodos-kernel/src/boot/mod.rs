@@ -480,6 +480,9 @@ pub unsafe fn init(boot_info: &BootInfo) -> ! {
     // Auto-scan and load BOOT .nem drivers first,
     // then SYSTEM .nem drivers.
     // ============================================
+    crate::scheduler::set_foreground_clear_hook(
+        crate::input::manager::clear_foreground_pid,
+    );
     println!("[+] Initializing Boot Driver Loader...");
     drivers::boot_loader::boot_load_all();
     // INV-1: MSI must not import drivers; wire the pci.nem probe here.
@@ -688,6 +691,7 @@ pub unsafe fn init(boot_info: &BootInfo) -> ! {
     boot_benchmark::mark(boot_benchmark::BootStage::ShellReady);
 
     // Load benchmark configuration from BOOT.CFG (now that VFS is mounted)
+    boot_benchmark::set_config_reader(bench_config_from_registry);
     boot_benchmark::load_config();
 
     // Detect which storage driver was selected
@@ -730,9 +734,9 @@ pub unsafe fn init(boot_info: &BootInfo) -> ! {
     kinfo!(LogSubsys::Init, "allocated slot {} at code_base=0x{:x}",
         slot.slot_idx, slot.code_base);
 
-    let mut addr_space = scheduler::address_space::AddressSpace::new();
+    let mut addr_space = memory::address_space::AddressSpace::new();
     let (entry, loaded, boot_name) = {
-        let try_load = |path: &str, addr: &mut scheduler::address_space::AddressSpace| -> Option<u64> {
+        let try_load = |path: &str, addr: &mut memory::address_space::AddressSpace| -> Option<u64> {
             crate::serial_println!("[INIT_DEBUG] before resolve path: {}", path);
             let mut bin_buf = alloc::vec![0u8; 65536];
             let mut result = None;
@@ -775,7 +779,7 @@ pub unsafe fn init(boot_info: &BootInfo) -> ! {
         };
 
         // Primary: NeoInit.nxe. Fallback: try Neoshell.nxe directly.
-        let mut addr = scheduler::address_space::AddressSpace::new();
+        let mut addr = memory::address_space::AddressSpace::new();
         // Phase 14-A: track the human-readable name of the init binary actually
         // loaded (primary NeoInit, fallback NeoShell).
         let mut boot_name: &str = "neoinit";
@@ -847,3 +851,22 @@ pub unsafe fn init(boot_info: &BootInfo) -> ! {
     crate::hal::halt();
 }
 
+
+/// Registry-backed benchmark flags; kept in boot so `boot_benchmark` does not
+/// depend on the Configuration Manager (INV-1).
+fn bench_config_from_registry() -> Option<(bool, bool)> {
+    let key = crate::cm::cm_open_key(0, "CurrentControlSet\\Control").ok()?;
+    let mut report = true;
+    let mut debug = true;
+    if let Ok(vc) = crate::cm::cm_query_value(key, "BenchmarkReport") {
+        if let Some(v) = vc.as_dword() {
+            report = v != 0;
+        }
+    }
+    if let Ok(vc) = crate::cm::cm_query_value(key, "AhciDebug") {
+        if let Some(v) = vc.as_dword() {
+            debug = v != 0;
+        }
+    }
+    Some((report, debug))
+}

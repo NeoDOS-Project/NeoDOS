@@ -10,7 +10,6 @@
   buffer/page_cache/mod.rs: imports 'drivers::block::BlockDevice' which contains forbidden dep(s): drivers
   irp/mod.rs: imports 'syscall::set_need_resched' which contains forbidden dep(s): syscall
   irp/mod.rs: imports 'work_queue::WORK_QUEUE' which contains forbidden dep(s): work_queue
-  memory/mod.rs: imports 'drivers::isolation::DRIVER_ISO_BASE' which contains forbidden dep(s): drivers
   syscall/ob/create/driver.rs: imports 'drivers::nem::load_nem_driver' which contains forbidden dep(s): drivers/nem
   syscall/ob/query/devices.rs: imports 'drivers::driver_runtime::DRIVER_RUNTIME' which contains forbidden dep(s): drivers/driver_runtime
   syscall/ob/query/devices.rs: imports 'drivers::driver_runtime::get_driver' which contains forbidden dep(s): drivers/driver_runtime
@@ -19,7 +18,6 @@
   syscall/ob/set/time.rs: imports 'drivers::rtc_bridge::request_datetime' which contains forbidden dep(s): drivers/rtc_bridge
   syscall/ob/set/time.rs: imports 'drivers::rtc_bridge::set_datetime' which contains forbidden dep(s): drivers/rtc_bridge
   syscall/resched.rs: imports 'invariants::is_in_timer_irq' which contains forbidden dep(s): invariants
-  scheduler/wake.rs: imports 'input::manager::clear_foreground_pid' which contains forbidden dep(s): input
   apc/mod.rs: imports 'syscall::set_need_resched' which contains forbidden dep(s): syscall
   urn/mod.rs: imports 'security::DEFAULT_SYSTEM_TOKEN' which contains forbidden dep(s): security
   urn/mod.rs: imports 'security::acl::ACCESS_READ' which contains forbidden dep(s): security
@@ -38,16 +36,6 @@
   input/kbd/mod.rs: imports 'syscall::wake_blocked_readers' which contains forbidden dep(s): syscall
   input/manager.rs: imports 'syscall::interrupt_foreground_work' which contains forbidden dep(s): syscall
   input/manager.rs: imports 'work_queue::WORK_QUEUE' which contains forbidden dep(s): work_queue
-  cm/timezone.rs: imports 'drivers::rtc_bridge::DateTime' which contains forbidden dep(s): drivers
-  infra/globals.rs: imports 'buffer::page_cache::PageCache' which contains forbidden dep(s): buffer
-  infra/globals.rs: imports 'drivers::block::BlockDeviceManager' which contains forbidden dep(s): drivers
-  infra/globals.rs: imports 'drivers::block::BlockDeviceManager::new' which contains forbidden dep(s): drivers
-  infra/elf.rs: imports 'scheduler::address_space' which contains forbidden dep(s): scheduler
-  infra/elf.rs: imports 'scheduler::address_space::ELF_ERR_HEAP_COLLISION' which contains forbidden dep(s): scheduler
-  infra/elf.rs: imports 'scheduler::address_space::ELF_ERR_KERNEL_COLLISION' which contains forbidden dep(s): scheduler
-  infra/elf.rs: imports 'scheduler::address_space::ELF_ERR_MMAP_COLLISION' which contains forbidden dep(s): scheduler
-  infra/elf.rs: imports 'scheduler::address_space::ELF_ERR_VADDR_OUT_OF_RANGE' which contains forbidden dep(s): scheduler
-  infra/elf.rs: imports 'scheduler::address_space::{AddressSpace, SegmentInfo}' which contains forbidden dep(s): scheduler
   infra/nxl.rs: imports 'fs::vfs' which contains forbidden dep(s): fs, vfs
   infra/nxl.rs: imports 'fs::vfs::Vfs' which contains forbidden dep(s): fs, vfs
   infra/nxl.rs: imports 'fs::vfs::{VfsNode, MODE_DIR, MODE_FILE}' which contains forbidden dep(s): fs, vfs
@@ -58,6 +46,6 @@
   infra/usermode.rs: imports 'object' which contains forbidden dep(s): object
   infra/usermode.rs: imports 'object::ObType' which contains forbidden dep(s): object
   infra/usermode.rs: imports 'security::DEFAULT_SYSTEM_TOKEN' which contains forbidden dep(s): security
-  infra/cpu.rs: imports 'timers' which contains forbidden dep(s): timers
-  infra/boot_benchmark.rs: imports 'cm::cm_open_key' which contains forbidden dep(s): cm
-  infra/boot_benchmark.rs: imports 'cm::cm_query_value' which contains forbidden dep(s): cm
+  infra/globals.rs: imports 'buffer::page_cache::PageCache' which contains forbidden dep(s): buffer
+  infra/globals.rs: imports 'drivers::block::BlockDeviceManager' which contains forbidden dep(s): drivers
+  infra/globals.rs: imports 'drivers::block::BlockDeviceManager::new' which contains forbidden dep(s): drivers

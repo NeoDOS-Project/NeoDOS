@@ -15,7 +15,7 @@
 use core::ptr::copy_nonoverlapping;
 use core::mem::size_of;
 use alloc::vec::Vec;
-use crate::scheduler::address_space::{AddressSpace, SegmentInfo};
+use crate::memory::address_space::{AddressSpace, SegmentInfo};
 use crate::log::LogSubsys;
 
 // ── ELF64 constants ──
@@ -811,7 +811,7 @@ pub fn register_elf_tests() {
         test_true!(result.is_err());
         match result {
             Err(ElfLoadError::AddressSpaceViolation(e)) => {
-                test_eq!(e, crate::scheduler::address_space::ELF_ERR_KERNEL_COLLISION);
+                test_eq!(e, crate::memory::address_space::ELF_ERR_KERNEL_COLLISION);
             }
             _ => test_true!(false),
         }
@@ -826,7 +826,7 @@ pub fn register_elf_tests() {
         test_true!(result.is_err());
         match result {
             Err(ElfLoadError::AddressSpaceViolation(e)) => {
-                test_eq!(e, crate::scheduler::address_space::ELF_ERR_KERNEL_COLLISION);
+                test_eq!(e, crate::memory::address_space::ELF_ERR_KERNEL_COLLISION);
             }
             _ => test_true!(false),
         }
@@ -841,7 +841,7 @@ pub fn register_elf_tests() {
         test_true!(result.is_err());
         match result {
             Err(ElfLoadError::AddressSpaceViolation(e)) => {
-                test_eq!(e, crate::scheduler::address_space::ELF_ERR_MMAP_COLLISION);
+                test_eq!(e, crate::memory::address_space::ELF_ERR_MMAP_COLLISION);
             }
             _ => test_true!(false),
         }
@@ -887,7 +887,7 @@ pub fn register_elf_tests() {
         test_true!(result.is_err());
         match result {
             Err(ElfLoadError::AddressSpaceViolation(e)) => {
-                test_eq!(e, crate::scheduler::address_space::ELF_ERR_HEAP_COLLISION);
+                test_eq!(e, crate::memory::address_space::ELF_ERR_HEAP_COLLISION);
             }
             _ => test_true!(false),
         }
@@ -940,7 +940,7 @@ pub fn register_elf_tests() {
         test_true!(result.is_err());
         match result {
             Err(ElfLoadError::AddressSpaceViolation(e)) => {
-                test_eq!(e, crate::scheduler::address_space::ELF_ERR_KERNEL_COLLISION);
+                test_eq!(e, crate::memory::address_space::ELF_ERR_KERNEL_COLLISION);
             }
             _ => test_true!(false),
         }
@@ -957,7 +957,7 @@ pub fn register_elf_tests() {
         test_true!(result.is_err());
         match result {
             Err(ElfLoadError::AddressSpaceViolation(e)) => {
-                test_eq!(e, crate::scheduler::address_space::ELF_ERR_VADDR_OUT_OF_RANGE);
+                test_eq!(e, crate::memory::address_space::ELF_ERR_VADDR_OUT_OF_RANGE);
             }
             _ => test_true!(false),
         }

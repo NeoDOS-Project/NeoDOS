@@ -11,7 +11,6 @@
 
 use crate::arch::x64::cpu_local;
 use crate::arch::x64::smp;
-use crate::timers;
 
 // ── Legacy CpuInfo (backward compatible) ────────────────────────────
 
@@ -233,7 +232,7 @@ pub fn get_cpu_info_full() -> CpuInfoFull {
 
     // Timer / frequency
     info.tsc_khz = crate::hal::tsc_khz();
-    info.timer_source = timers::active() as u8;
+    info.timer_source = crate::hal::timer_source();
     info.tick_rate_hz = crate::hal::get_tick_rate();
 
     info
