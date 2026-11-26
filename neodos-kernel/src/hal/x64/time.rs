@@ -140,3 +140,10 @@ pub fn init_tsc() -> u64 {
 pub fn tsc_khz() -> u64 {
     TSC_KHZ.load(Ordering::Relaxed)
 }
+
+/// Convert a TSC delta to milliseconds using the calibrated frequency.
+pub fn elapsed_ms(start: u64, end: u64) -> u64 {
+    let khz = tsc_khz();
+    if khz == 0 { return 0; }
+    end.saturating_sub(start) / khz
+}

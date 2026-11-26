@@ -96,7 +96,7 @@ fn pack_bdf(bus: u8, dev: u8, func: u8) -> u32 {
 
 /// Write MSI registers directly. Used when `pci.nem` is not active.
 fn configure_msi_direct(bus: u8, dev: u8, func: u8, cap: u8, vector: u8) {
-    use crate::drivers::pci::{
+    use crate::hal::pci::{
         pci_config_read_word, pci_config_write_dword, pci_config_write_word,
     };
 
@@ -158,9 +158,9 @@ const MSIX_VECTOR_CTRL_MASK: u32 = 1;
 pub fn configure_msix_entry(
     bus: u8, dev: u8, func: u8, entry_index: u16, vector: u8,
 ) -> Result<(), &'static str> {
-    use crate::drivers::pci::{pci_config_read_word, pci_config_read_dword, pci_config_write_word};
+    use crate::hal::pci::{pci_config_read_word, pci_config_read_dword, pci_config_write_word};
 
-    let cap = crate::drivers::pci::find_capability(bus, dev, func, 0x11)
+    let cap = crate::hal::pci::find_capability(bus, dev, func, 0x11)
         .ok_or("Device has no MSI-X capability")?;
 
     let msg_ctrl = pci_config_read_word(bus, dev, func, cap + 2);
@@ -173,13 +173,13 @@ pub fn configure_msix_entry(
     let bir = (bir_offset & 0x7) as u8;
     let table_offset = (bir_offset & 0xFFFF_FFF8) as u64;
 
-    let bar_raw = crate::drivers::pci::read_bar(bus, dev, func, bir);
+    let bar_raw = crate::hal::pci::read_bar(bus, dev, func, bir);
     if bar_raw == 0 || (bar_raw & 1) != 0 {
         return Err("MSI-X BAR is I/O space or not present");
     }
     let is_64bit = (bar_raw & 0x6) == 0x4;
     let bar_base = if is_64bit {
-        let high = crate::drivers::pci::read_bar(bus, dev, func, bir + 1) as u64;
+        let high = crate::hal::pci::read_bar(bus, dev, func, bir + 1) as u64;
         ((bar_raw & 0xFFFF_FFF0) as u64) | (high << 32)
     } else {
         (bar_raw & 0xFFFF_FFF0) as u64
@@ -267,9 +267,9 @@ pub fn configure_msix_entries(
     bus: u8, dev: u8, func: u8, num_entries: u16,
     handler: fn(vector: u8),
 ) -> Result<alloc::vec::Vec<u8>, &'static str> {
-    let cap = crate::drivers::pci::find_capability(bus, dev, func, 0x11)
+    let cap = crate::hal::pci::find_capability(bus, dev, func, 0x11)
         .ok_or("Device has no MSI-X capability")?;
-    let msg_ctrl = crate::drivers::pci::pci_config_read_word(bus, dev, func, cap + 2);
+    let msg_ctrl = crate::hal::pci::pci_config_read_word(bus, dev, func, cap + 2);
     let table_size = (msg_ctrl & 0x7FF) + 1;
     let count = num_entries.min(table_size);
 
@@ -372,7 +372,7 @@ pub fn msi_request(
     handler: fn(vector: u8),
 ) -> Result<u8, &'static str> {
     // 1. Find MSI capability (cap ID 0x05) — kernel always reads this itself.
-    let cap = crate::drivers::pci::find_capability(bus, dev, func, 0x05)
+    let cap = crate::hal::pci::find_capability(bus, dev, func, 0x05)
         .ok_or("Device has no MSI capability")?;
 
     // 2. Allocate a free IDT vector.
@@ -406,9 +406,9 @@ pub fn msi_request(
 /// and return the vector to the free pool.
 pub fn msi_release(bus: u8, dev: u8, func: u8, vector: u8) {
     // Disable MSI Enable bit via direct access (always safe to write directly).
-    if let Some(cap) = crate::drivers::pci::find_capability(bus, dev, func, 0x05) {
-        let ctrl = crate::drivers::pci::pci_config_read_word(bus, dev, func, cap + 2);
-        crate::drivers::pci::pci_config_write_word(bus, dev, func, cap + 2, ctrl & !0x0001);
+    if let Some(cap) = crate::hal::pci::find_capability(bus, dev, func, 0x05) {
+        let ctrl = crate::hal::pci::pci_config_read_word(bus, dev, func, cap + 2);
+        crate::hal::pci::pci_config_write_word(bus, dev, func, cap + 2, ctrl & !0x0001);
     }
     crate::arch::x64::idt::msi_unregister_handler(vector);
     msi_free_vector(vector);

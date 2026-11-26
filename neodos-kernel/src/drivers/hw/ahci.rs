@@ -563,8 +563,8 @@ impl BootAhci {
             }
 
             fence(Ordering::SeqCst);
-            crate::boot_benchmark::ahci_cmd_start();
-            let cmd_start = crate::boot_benchmark::boot_time_now();
+            crate::hal::bench::ahci_cmd_start();
+            let cmd_start = crate::hal::rdtsc();
             port_write32(abar, port, PORT_CI, ci_mask);
 
             let mut poll_count: u64 = 0;
@@ -578,7 +578,7 @@ impl BootAhci {
                     break;
                 }
                 if poll_count.is_multiple_of(10_000)
-                    && crate::boot_benchmark::elapsed_ms(cmd_start, crate::boot_benchmark::boot_time_now()) > 5000 {
+                    && crate::hal::elapsed_ms(cmd_start, crate::hal::rdtsc()) > 5000 {
                         cmd_timed_out = true;
                         break;
                 }
@@ -588,9 +588,9 @@ impl BootAhci {
             if !ci_cleared {
                 cmd_timed_out = true;
             }
-            crate::boot_benchmark::ahci_cmd_polled(poll_count);
-            let wait = crate::boot_benchmark::elapsed_ms(cmd_start, crate::boot_benchmark::boot_time_now());
-            crate::boot_benchmark::ahci_cmd_done(wait);
+            crate::hal::bench::ahci_cmd_polled(poll_count);
+            let wait = crate::hal::elapsed_ms(cmd_start, crate::hal::rdtsc());
+            crate::hal::bench::ahci_cmd_done(wait);
 
             if !cmd_timed_out {
                 // Clear pending IS bits (write-1-to-clear) — between back-to-back commands.
@@ -604,7 +604,7 @@ impl BootAhci {
                 let tfd = port_read32(abar, port, PORT_TFD);
                 if (tfd & (TFD_BSY | TFD_DRQ | 1)) != 0 {
                     let serr = port_read32(abar, port, PORT_SERR);
-                    crate::boot_benchmark::ahci_dma_failure();
+                    crate::hal::bench::ahci_dma_failure();
                     kerror!(LogSubsys::Ahci,
                         "DMA error op={} lba={} tfd=0x{:02x} serr=0x{:08x}",
                         if is_write { "WR" } else { "RD" }, lba, tfd, serr);
@@ -625,7 +625,7 @@ impl BootAhci {
             let is_st = port_read32(abar, port, PORT_IS);
             let serr_st = port_read32(abar, port, PORT_SERR);
             let tfd_st = port_read32(abar, port, PORT_TFD);
-            crate::boot_benchmark::ahci_cmd_timeout();
+            crate::hal::bench::ahci_cmd_timeout();
             kwarn!(LogSubsys::Ahci,
                 "[AHCI_TIMEOUT] attempt={} slot={} lba={} count={} \
                  CI=0x{:08x} IS=0x{:08x} SERR=0x{:08x} TFD=0x{:08x}",
@@ -743,8 +743,8 @@ impl BootAhci {
             }
 
             fence(Ordering::SeqCst);
-            crate::boot_benchmark::ahci_cmd_start();
-            let cmd_start = crate::boot_benchmark::boot_time_now();
+            crate::hal::bench::ahci_cmd_start();
+            let cmd_start = crate::hal::rdtsc();
 
             // Issue all commands at once
             port_write32(abar, port, PORT_CI, ci_mask);
@@ -759,18 +759,18 @@ impl BootAhci {
                     break;
                 }
                 if poll_count.is_multiple_of(50_000)
-                    && crate::boot_benchmark::elapsed_ms(cmd_start, crate::boot_benchmark::boot_time_now()) > 2000 {
+                    && crate::hal::elapsed_ms(cmd_start, crate::hal::rdtsc()) > 2000 {
                         cmd_timed_out = true;
                         break;
                     }
                 core::hint::spin_loop();
             }
-            crate::boot_benchmark::ahci_cmd_polled(poll_count);
-            let wait = crate::boot_benchmark::elapsed_ms(cmd_start, crate::boot_benchmark::boot_time_now());
-            crate::boot_benchmark::ahci_cmd_done(wait);
+            crate::hal::bench::ahci_cmd_polled(poll_count);
+            let wait = crate::hal::elapsed_ms(cmd_start, crate::hal::rdtsc());
+            crate::hal::bench::ahci_cmd_done(wait);
 
             if cmd_timed_out {
-                crate::boot_benchmark::ahci_cmd_timeout();
+                crate::hal::bench::ahci_cmd_timeout();
             }
 
             // Check for errors and copy back data for reads

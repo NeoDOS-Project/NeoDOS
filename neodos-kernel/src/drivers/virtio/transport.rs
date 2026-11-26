@@ -2,9 +2,9 @@
 // Supports legacy I/O BAR (PCI 0.95 / 1.0 transitional) and modern MMIO BAR (VirtIO 1.0+).
 
 use core::sync::atomic::{fence, Ordering};
-use crate::drivers::pci::pci_config_read_word;
-use crate::drivers::pci::pci_config_read_dword;
-use crate::drivers::pci::pci_config_write_word;
+use crate::hal::pci::pci_config_read_word;
+use crate::hal::pci::pci_config_read_dword;
+use crate::hal::pci::pci_config_write_word;
 use crate::log::LogSubsys;
 
 

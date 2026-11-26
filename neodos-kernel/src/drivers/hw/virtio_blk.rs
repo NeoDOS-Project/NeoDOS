@@ -224,7 +224,7 @@ impl VirtIoBlk {
         }
         let data_len = if is_flush { 0 } else { (count as u32) * SECTOR_SIZE };
 
-        crate::boot_benchmark::VIRTIO_COMMANDS.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+        crate::hal::bench::virtio_cmd();
 
         let head = self.build_chain(type_, sector, buf, count, is_write);
         let _old_idx = unsafe { self.vring.submit_chain(head) };
