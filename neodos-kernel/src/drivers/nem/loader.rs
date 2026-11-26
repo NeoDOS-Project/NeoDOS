@@ -1,4 +1,6 @@
 // src/drivers/nem/loader.rs
+// VFS mode bit (kept local to avoid drivers -> fs).
+const MODE_FILE: u16 = 0x80;
 // NEM v3 Loader — loads standalone NEM v3 drivers from NeoFS
 //
 // This loader reads .nem files from the filesystem and loads them into kernel memory
@@ -53,7 +55,7 @@ pub fn load_nem(path: &str) -> Result<DriverId, &'static str> {
 pub fn read_file(path: &str) -> Result<Vec<u8>, ()> {
     crate::globals::with_vfs(|vfs| {
         let (drive_idx, node) = vfs.resolve_path(path).map_err(|_| ())?;
-        if node.mode & crate::fs::vfs::MODE_FILE == 0 {
+        if node.mode & MODE_FILE == 0 {
             return Err(());
         }
         let size = node.size as usize;

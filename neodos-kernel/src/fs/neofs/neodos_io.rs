@@ -4,7 +4,7 @@
 //! `INLINE_MAX` bytes (16; ver `neodos_dir.rs`).
 
 use crate::drivers::block::BlockDevice;
-use crate::buffer::page_cache::PageCache;
+use crate::globals::PageCache;
 use super::neodos_dir::{DirEntryV2, INLINE_MAX};
 use super::freelist::FreeList;
 

@@ -200,6 +200,11 @@
 
 ### Changed
 
+- **Baseline de dependencias 73 → 60 (lote 3, #823).** GPT pasa a
+  `fs/vfs/gpt.rs`; los drivers NEM usan constantes locales de modo; MSI
+  consulta `pci.nem` por hook; `syscall` descarga drivers y despierta lectores
+  por hooks; `PageCache` se re-exporta desde `globals`.
+
 - **Baseline de dependencias 90 → 73 (lote 2, #823).** MSI y virtio usan
   `hal::pci`; AHCI/virtio-blk emiten contadores por hooks `hal::bench` en vez
   de importar `boot_benchmark`. NeoDev actualizado (PR #56) para las rutas de

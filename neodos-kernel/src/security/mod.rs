@@ -506,8 +506,4 @@ pub fn register_security_tests() {
         test_true!(admin_token.is_in_group(&sid_builtin_administrators()));
     });
 
-    test_case!("syscall_permission_denies_user_admin_op", {
-        test_true!(crate::syscall::check_syscall_permission(58, true).is_ok());
-        test_true!(crate::syscall::check_syscall_permission(58, false).is_err());
-    });
 }

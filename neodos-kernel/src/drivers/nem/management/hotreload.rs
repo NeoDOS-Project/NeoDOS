@@ -474,7 +474,7 @@ pub fn reload_driver(path: &str) -> Result<alloc::string::String, &'static str> 
 fn read_whole_file(path: &str) -> Result<alloc::vec::Vec<u8>, ()> {
     crate::globals::with_vfs(|vfs| {
         let (drive_idx, node) = vfs.resolve_path(path).map_err(|_| ())?;
-        if node.mode & crate::fs::vfs::MODE_FILE == 0 {
+        if node.mode & 0x80 == 0 {
             return Err(());
         }
         let size = node.size as usize;

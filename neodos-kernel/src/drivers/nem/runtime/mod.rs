@@ -142,3 +142,12 @@ pub fn set_capabilities(id: DriverId, caps: u64) -> bool {
 pub fn get_capabilities(id: DriverId) -> Option<u64> {
     DRIVER_RUNTIME.lock().get_capabilities(id)
 }
+
+/// Probe used by the MSI layer through a function pointer (INV-1).
+pub fn pci_nem_active() -> bool {
+    let runtime = DRIVER_RUNTIME.lock();
+    runtime
+        .get_by_name("pci")
+        .map(|d| d.state == DriverState::Active)
+        .unwrap_or(false)
+}

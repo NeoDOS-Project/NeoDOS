@@ -1,8 +1,9 @@
 use alloc::vec::Vec;
+// VFS mode bits (kept local to avoid drivers -> fs).
+const MODE_DIR: u16 = 0x40;
+const MODE_FILE: u16 = 0x80;
 use alloc::string::String;
 use crate::nem::{self, DriverCategory, ABI_MIN_VALID, ABI_TARGET, ABI_MAX_VALID};
-use crate::fs::vfs::MODE_FILE;
-use crate::fs::vfs::MODE_DIR;
 #[allow(unused_imports)]
 use crate::drivers::driver_runtime::{self, DriverState};
 

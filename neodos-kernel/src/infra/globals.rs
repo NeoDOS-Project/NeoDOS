@@ -1,7 +1,7 @@
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use spin::Mutex;
 use lazy_static::lazy_static;
-use crate::buffer::page_cache::PageCache;
+pub use crate::buffer::page_cache::PageCache;
 
 /// Enable lock contention diagnostic output. Set to true at boot to trace
 /// VFS/PAGE_CACHE/BLOCK_DEVICES lock wait/acquisition/release.

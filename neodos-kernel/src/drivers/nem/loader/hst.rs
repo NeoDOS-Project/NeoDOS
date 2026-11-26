@@ -80,7 +80,7 @@ pub unsafe extern "C" fn hst_push_event(et: u32, src: u32, dev: u32, d0: u64, d1
 pub unsafe extern "C" fn hst_push_input_byte(byte: u8) {
     if !check_cap(CAP_INPUT) { return; }
     let _ = input::push_byte(byte);
-    crate::syscall::wake_blocked_readers();
+    wake_blocked_readers_hook();
 }
 pub unsafe extern "C" fn hst_get_ticks() -> u64 {
     if !check_cap(CAP_TIMING) { return 0; }
@@ -201,5 +201,20 @@ pub fn build_hst() -> HalServiceTable {
         get_ticks: hst_get_ticks,
         ack_irq: hst_ack_irq,
         log: hst_log,
+    }
+}
+
+static WAKE_HOOK: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+
+/// Registered by boot (syscall layer); keeps drivers out of `syscall`.
+pub fn set_wake_hook(hook: fn()) {
+    WAKE_HOOK.store(hook as usize, core::sync::atomic::Ordering::Release);
+}
+
+fn wake_blocked_readers_hook() {
+    let raw = WAKE_HOOK.load(core::sync::atomic::Ordering::Acquire);
+    if raw != 0 {
+        let f: fn() = unsafe { core::mem::transmute(raw) };
+        f();
     }
 }
