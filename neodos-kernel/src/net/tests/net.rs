@@ -171,15 +171,6 @@ pub fn register() {
 
         mgr.free_socket(id);
     });
-    test_case!("net_poll_len_respects_capacity", {
-        // #821: a driver must not report more bytes than the caller buffer.
-        use crate::drivers::nem::loader::net_bridge::poll_len_within;
-        test_eq!(poll_len_within(2048, 1500), Some(1500));
-        test_eq!(poll_len_within(2048, 2048), Some(2048));
-        test_eq!(poll_len_within(512, 2048), None);
-        test_eq!(poll_len_within(2048, 0), None);
-    });
-
     test_case!("net_udp_recv_buffer_capped", {
         // #818: a UDP flood must not grow the socket buffer without bound.
         use crate::net::socket::{udp_dispatch, UDP_RECV_BUF};

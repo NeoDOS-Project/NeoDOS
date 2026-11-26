@@ -261,5 +261,17 @@ pub fn register_driver_state_tests() {
 }
 
 pub fn register_driver_certification_tests() {
+    use crate::test_case;
+    use crate::test_eq;
+
     register_driver_state_tests();
+
+    test_case!("poll_len_respects_capacity", {
+        // #821: a driver must not report more bytes than the caller buffer.
+        use crate::drivers::nem::loader::net_bridge::poll_len_within;
+        test_eq!(poll_len_within(2048, 1500), Some(1500));
+        test_eq!(poll_len_within(2048, 2048), Some(2048));
+        test_eq!(poll_len_within(512, 2048), None);
+        test_eq!(poll_len_within(2048, 0), None);
+    });
 }
