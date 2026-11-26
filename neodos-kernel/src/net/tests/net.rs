@@ -171,6 +171,40 @@ pub fn register() {
 
         mgr.free_socket(id);
     });
+    test_case!("net_udp_recv_buffer_capped", {
+        // #818: a UDP flood must not grow the socket buffer without bound.
+        use crate::net::socket::{udp_dispatch, UDP_RECV_BUF};
+
+        let sock = SOCKET_MANAGER.lock().alloc_socket(SocketType::Udp).unwrap();
+        test_true!(socket_bind(
+            sock,
+            SocketAddrV4::new(Ipv4Addr::unspecified(), 0)
+        ));
+        let port = SOCKET_MANAGER
+            .lock()
+            .get_socket(sock)
+            .map(|s| s.local.port)
+            .unwrap_or(0);
+        test_true!(port != 0);
+
+        let chunk = [0u8; 1500];
+        for _ in 0..100 {
+            udp_dispatch(
+                Ipv4Addr::new([10, 0, 0, 1]),
+                1234,
+                port,
+                &chunk,
+            );
+        }
+        let len = SOCKET_MANAGER
+            .lock()
+            .get_socket(sock)
+            .map(|s| s.recv_buf.len())
+            .unwrap_or(0);
+        test_true!(len <= UDP_RECV_BUF);
+        crate::net::socket::socket_free(sock);
+    });
+
     test_case!("net_udp_header_checksum", {
         let hdr = UdpHeader::new(1234, 53, 0);
         test_eq!(hdr.src_port(), 1234);

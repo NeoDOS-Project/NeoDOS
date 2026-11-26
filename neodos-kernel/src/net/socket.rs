@@ -7,6 +7,10 @@ use crate::net::ipv4::{IPV4_HDR_MIN_LEN, IPV4_PROTO_UDP, build_ipv4_header, Ipv4
 use crate::net::nic::{nic_default_id, nic_get_ip, nic_next_hop, nic_send_packet, NIC_REGISTRY};
 use crate::net::arp::arp_resolve;
 
+/// Per-socket UDP receive cap. TCP uses `TCP_RECV_BUF`; without a cap a
+/// remote flood grows the kernel heap until OOM (#818).
+pub const UDP_RECV_BUF: usize = 16384;
+
 pub struct Socket {
     pub id: u32,
     pub socket_type: SocketType,
@@ -857,7 +861,8 @@ pub fn udp_dispatch(_src_ip: Ipv4Addr, src_port: u16, dst_port: u16, data: &[u8]
             && socket.local.port == dst_port
             && (socket.remote.port == 0 || socket.remote.port == src_port)
         {
-            socket.recv_buf.extend_from_slice(data);
+            let free = UDP_RECV_BUF.saturating_sub(socket.recv_buf.len());
+            socket.recv_buf.extend_from_slice(&data[..data.len().min(free)]);
             break;
         }
         // Bound UDP socket (not yet connected): deliver if dst_port matches local port
@@ -865,7 +870,8 @@ pub fn udp_dispatch(_src_ip: Ipv4Addr, src_port: u16, dst_port: u16, data: &[u8]
             && socket.local.port != 0
             && socket.local.port == dst_port
         {
-            socket.recv_buf.extend_from_slice(data);
+            let free = UDP_RECV_BUF.saturating_sub(socket.recv_buf.len());
+            socket.recv_buf.extend_from_slice(&data[..data.len().min(free)]);
             break;
         }
     }
